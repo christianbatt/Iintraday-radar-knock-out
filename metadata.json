@@ -1,0 +1,6 @@
+{
+  "name": "Intraday Radar",
+  "description": "Terminale di screening e analisi intraday per sottostanti Knock Out Trade Republic con rigoroso risk management e analisi catalizzatori.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
