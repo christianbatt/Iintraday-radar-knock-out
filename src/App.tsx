@@ -8,12 +8,16 @@ import {
   NewsItem,
   GeminiCatalystAnalysis,
   TradeJournalEntry,
+  SystemParameters,
+  OptimizationProposal,
 } from './types/radar';
 import { DEFAULT_TRADE_REPUBLIC_UNDERLYINGS } from './data/defaultUnderlyings';
 import { SAMPLE_JOURNAL_ENTRIES } from './data/sampleTrades';
 import {
   getDualTopCandidates,
   buildExecutionSetup,
+  DEFAULT_SYSTEM_PARAMETERS,
+  evaluateSystemOptimization,
 } from './utils/calculator';
 import {
   fetchSessionInfo,
@@ -28,6 +32,7 @@ import { RiskBanner } from './components/RiskBanner';
 import { Header } from './components/Header';
 import { ScreeningControls } from './components/ScreeningControls';
 import { DailyCircuitBreakerBanner } from './components/DailyCircuitBreakerBanner';
+import { SystemOptimizationBanner } from './components/SystemOptimizationBanner';
 import { DualExecutionHero } from './components/DualExecutionHero';
 import { TopCandidatesTable } from './components/TopCandidatesTable';
 import { TradeJournal } from './components/TradeJournal';
@@ -35,6 +40,7 @@ import { CsvManagerModal } from './components/CsvManagerModal';
 import { CatalystModal } from './components/CatalystModal';
 import { CreatorContactModal } from './components/CreatorContactModal';
 import { PwaUpdatePrompt } from './components/PwaUpdatePrompt';
+import { SystemOptimizerModal } from './components/SystemOptimizerModal';
 
 export default function App() {
   // 1. Underlyings State (strictly Trade Republic KO list)
@@ -128,6 +134,43 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('intraday_radar_journal', JSON.stringify(journalEntries));
   }, [journalEntries]);
+
+  // 6. System Parameters & Adaptive Self-Optimization (Every 20 Setups)
+  const [parameters, setParameters] = useState<SystemParameters>(() => {
+    try {
+      const saved = localStorage.getItem('intraday_radar_parameters');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // fallback
+    }
+    return DEFAULT_SYSTEM_PARAMETERS;
+  });
+
+  const [pendingProposal, setPendingProposal] = useState<OptimizationProposal | null>(() => {
+    try {
+      const saved = localStorage.getItem('intraday_radar_pending_proposal');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // fallback
+    }
+    return null;
+  });
+
+  const [isOptimizerModalOpen, setIsOptimizerModalOpen] = useState<boolean>(false);
+  const [optimizationNotification, setOptimizationNotification] = useState<string | null>(null);
+
+  // Sync parameters & proposal to localStorage
+  useEffect(() => {
+    localStorage.setItem('intraday_radar_parameters', JSON.stringify(parameters));
+  }, [parameters]);
+
+  useEffect(() => {
+    if (pendingProposal) {
+      localStorage.setItem('intraday_radar_pending_proposal', JSON.stringify(pendingProposal));
+    } else {
+      localStorage.removeItem('intraday_radar_pending_proposal');
+    }
+  }, [pendingProposal]);
 
   // Compute Daily Risk Tracker & Circuit Breaker
   const todayStr = new Date().toLocaleDateString('it-IT');
@@ -226,7 +269,7 @@ export default function App() {
       const futuresMapping = { EU: euChange, US: usChange };
 
       // 3. Dual-Market Ranking: Top 1 Europe, Top 1 USA, and All Ranked
-      const dual = getDualTopCandidates(rawQuotes, futuresMapping, { rsiFilterActive });
+      const dual = getDualTopCandidates(rawQuotes, futuresMapping, { rsiFilterActive, parameters });
 
       setTopCandidateEU(dual.topEU);
       setTopCandidateUS(dual.topUS);
@@ -245,16 +288,16 @@ export default function App() {
         resolveCandidateCatalyst(dual.topUS, activeFut?.usa),
       ]);
 
-      setSetupEU(buildExecutionSetup(dual.topEU, catEU, 'EU'));
-      setSetupUS(buildExecutionSetup(dual.topUS, catUS, 'US'));
+      setSetupEU(buildExecutionSetup(dual.topEU, catEU, 'EU', parameters));
+      setSetupUS(buildExecutionSetup(dual.topUS, catUS, 'US', parameters));
     } catch (err: any) {
       setScanError(`Errore durante il recupero dei dati di mercato: ${err.message || 'Controlla la connessione'}`);
     } finally {
       setIsScanning(false);
     }
-  }, [underlyings, currentSession, futures, rsiFilterActive]);
+  }, [underlyings, currentSession, futures, rsiFilterActive, parameters]);
 
-  // Re-rank instantly when RSI Filter is toggled
+  // Re-rank instantly when RSI Filter or parameters are changed
   useEffect(() => {
     if (quotes.length === 0) return;
     const activeFut = futures;
@@ -262,7 +305,7 @@ export default function App() {
     const usChange = activeFut?.usa?.sp500?.changePercent ?? (activeFut?.usa?.nasdaq?.changePercent ?? 0);
     const futuresMapping = { EU: euChange, US: usChange };
 
-    const dual = getDualTopCandidates(quotes, futuresMapping, { rsiFilterActive });
+    const dual = getDualTopCandidates(quotes, futuresMapping, { rsiFilterActive, parameters });
     setTopCandidateEU(dual.topEU);
     setTopCandidateUS(dual.topUS);
     setTopCandidates(dual.allRanked);
@@ -277,10 +320,10 @@ export default function App() {
       resolveCandidateCatalyst(dual.topEU, activeFut?.europe),
       resolveCandidateCatalyst(dual.topUS, activeFut?.usa),
     ]).then(([catEU, catUS]) => {
-      setSetupEU(buildExecutionSetup(dual.topEU, catEU, 'EU'));
-      setSetupUS(buildExecutionSetup(dual.topUS, catUS, 'US'));
+      setSetupEU(buildExecutionSetup(dual.topEU, catEU, 'EU', parameters));
+      setSetupUS(buildExecutionSetup(dual.topUS, catUS, 'US', parameters));
     });
-  }, [rsiFilterActive]);
+  }, [rsiFilterActive, parameters]);
 
   // Auto-refresh interval (Real-time live monitoring)
   useEffect(() => {
@@ -348,10 +391,10 @@ export default function App() {
 
       // Update setups if active candidate is either top EU or top US
       if (topCandidateEU?.quote.ticker === ticker) {
-        setSetupEU(buildExecutionSetup(cand, res, 'EU'));
+        setSetupEU(buildExecutionSetup(cand, res, 'EU', parameters));
       }
       if (topCandidateUS?.quote.ticker === ticker) {
-        setSetupUS(buildExecutionSetup(cand, res, 'US'));
+        setSetupUS(buildExecutionSetup(cand, res, 'US', parameters));
       }
     } catch (err) {
       console.error('Errore rianalisi:', err);
@@ -365,7 +408,7 @@ export default function App() {
     setSelectedCandidate(cand);
     const existingCat = catalystCache[cand.quote.ticker] || null;
     const market = cand.quote.market;
-    const newSetup = buildExecutionSetup(cand, existingCat, market);
+    const newSetup = buildExecutionSetup(cand, existingCat, market, parameters);
 
     if (market === 'EU') {
       setTopCandidateEU(cand);
@@ -393,10 +436,17 @@ export default function App() {
       pnlEur: 0,
       rMultiple: 0,
       outcome: 'BREAKEVEN',
+      status: 'OPEN',
       notes: `KO Strike ${tradeData.barrierStrike} | Leva ${tradeData.leverage}x | ${tradeData.suggestedCertificates} contratti. In monitoraggio.`,
       isPaper: tradeData.isPaper,
     };
     setJournalEntries((prev) => [entry, ...prev]);
+  };
+
+  const handleUpdateJournalTrade = (updated: TradeJournalEntry) => {
+    setJournalEntries((prev) =>
+      prev.map((t) => (t.id === updated.id ? updated : t))
+    );
   };
 
   const handleDeleteJournalTrade = (id: string) => {
@@ -405,6 +455,88 @@ export default function App() {
 
   const handleClearJournal = () => {
     setJournalEntries([]);
+    setPendingProposal(null);
+  };
+
+  // 7. System Optimization Proposal Execution (Accept / Reject / Audit)
+  const handleAcceptProposal = () => {
+    if (!pendingProposal || pendingProposal.proposedChanges.length === 0) return;
+
+    const newParams: SystemParameters = {
+      ...parameters,
+      version: parameters.version + 1,
+      lastUpdated: new Date().toISOString(),
+    };
+
+    pendingProposal.proposedChanges.forEach((change) => {
+      if (change.parameterKey === 'minScore') {
+        newParams.minScore = typeof change.proposedValue === 'number' ? change.proposedValue : parseInt(String(change.proposedValue)) || newParams.minScore;
+      } else if (change.parameterKey === 'minRvol') {
+        newParams.minRvol = typeof change.proposedValue === 'number' ? change.proposedValue : parseFloat(String(change.proposedValue)) || newParams.minRvol;
+      } else if (change.parameterKey === 'target1Multiplier') {
+        newParams.target1Multiplier = typeof change.proposedValue === 'number' ? change.proposedValue : parseFloat(String(change.proposedValue)) || newParams.target1Multiplier;
+      } else if (change.parameterKey === 'target2Multiplier') {
+        newParams.target2Multiplier = typeof change.proposedValue === 'number' ? change.proposedValue : parseFloat(String(change.proposedValue)) || newParams.target2Multiplier;
+      } else if (change.parameterKey === 'triggerOffsetPercent') {
+        newParams.triggerOffsetPercent = typeof change.proposedValue === 'number' ? change.proposedValue : parseFloat(String(change.proposedValue)) || newParams.triggerOffsetPercent;
+      } else if (change.parameterKey === 'normalRiskMultiplier') {
+        newParams.normalRiskMultiplier = typeof change.proposedValue === 'number' ? change.proposedValue : parseFloat(String(change.proposedValue)) || newParams.normalRiskMultiplier;
+      } else if (change.parameterKey === 'rsiFilterActive') {
+        newParams.rsiFilterActive = change.proposedValue === true || change.proposedValue === 'Attivo';
+        setRsiFilterActive(newParams.rsiFilterActive);
+      } else if (change.parameterKey === 'minGapEurope') {
+        newParams.minGapEurope = typeof change.proposedValue === 'number' ? change.proposedValue : parseFloat(String(change.proposedValue)) || newParams.minGapEurope;
+      } else if (change.parameterKey === 'minGapUSA') {
+        newParams.minGapUSA = typeof change.proposedValue === 'number' ? change.proposedValue : parseFloat(String(change.proposedValue)) || newParams.minGapUSA;
+      }
+    });
+
+    const acceptedProposal: OptimizationProposal = {
+      ...pendingProposal,
+      status: 'ACCEPTED',
+      appliedAt: new Date().toISOString(),
+    };
+
+    setParameters(newParams);
+    setPendingProposal(acceptedProposal);
+    setOptimizationNotification(`Parametri aggiornati alla Versione V${newParams.version}! Nuovi calcoli attivi.`);
+    setTimeout(() => setOptimizationNotification(null), 6000);
+
+    // Refresh setups immediately
+    if (topCandidateEU) {
+      setSetupEU(buildExecutionSetup(topCandidateEU, catalystCache[topCandidateEU.quote.ticker] || null, 'EU', newParams));
+    }
+    if (topCandidateUS) {
+      setSetupUS(buildExecutionSetup(topCandidateUS, catalystCache[topCandidateUS.quote.ticker] || null, 'US', newParams));
+    }
+  };
+
+  const handleRejectProposal = () => {
+    if (!pendingProposal) return;
+    const rejectedProposal: OptimizationProposal = {
+      ...pendingProposal,
+      status: 'REJECTED',
+    };
+    setPendingProposal(rejectedProposal);
+    setOptimizationNotification(`Proposta di ottimizzazione rifiutata. Parametri V${parameters.version} mantenuti invariati.`);
+    setTimeout(() => setOptimizationNotification(null), 5000);
+  };
+
+  const handleRunAuditOnDemand = () => {
+    const listToAudit = journalEntries.length > 0 ? journalEntries : SAMPLE_JOURNAL_ENTRIES;
+    const cycleNum = Math.max(1, Math.floor(listToAudit.length / 20));
+    const prop = evaluateSystemOptimization(listToAudit, parameters, cycleNum);
+    setPendingProposal(prop);
+    setOptimizationNotification(`Audit calcolato sui ${Math.min(20, listToAudit.length)} setup del ciclo.`);
+    setTimeout(() => setOptimizationNotification(null), 5000);
+  };
+
+  const handleLoadSampleTrades = () => {
+    setJournalEntries(SAMPLE_JOURNAL_ENTRIES);
+    const prop = evaluateSystemOptimization(SAMPLE_JOURNAL_ENTRIES, parameters, 1);
+    setPendingProposal(prop);
+    setOptimizationNotification('Caricati 20 setup storici completi nel diario (inclusi 4 Expired). Audit del ciclo pronto!');
+    setTimeout(() => setOptimizationNotification(null), 6000);
   };
 
   // Reset Server Cache
@@ -467,12 +599,44 @@ export default function App() {
           </div>
         )}
 
+        {/* Self-Optimization Notification Toast */}
+        {optimizationNotification && (
+          <div className="mb-6 p-3.5 rounded-xl bg-amber-950/50 border border-amber-500/60 text-amber-200 text-xs font-mono flex items-center justify-between animate-fadeIn shadow-lg shadow-amber-950/30">
+            <span className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+              <span>{optimizationNotification}</span>
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsOptimizerModalOpen(true)}
+                className="px-2.5 py-1 rounded bg-amber-500 text-slate-950 font-bold hover:bg-amber-400 transition-colors text-[11px] cursor-pointer"
+              >
+                Vedi Proposta
+              </button>
+              <button
+                onClick={() => setOptimizationNotification(null)}
+                className="text-amber-400 hover:text-white text-xs cursor-pointer ml-2"
+              >
+                Chiudi
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* 3. Daily Circuit Breaker Alert (Blocking Rule) */}
         <DailyCircuitBreakerBanner
           isTriggered={circuitBreakerActive}
           reason={circuitBreakerReason}
           tradesTodayCount={tradesTodayCount}
           dailyPnlPercent={dailyPnlPercent}
+        />
+
+        {/* 3.5. System Adaptive Self-Optimization Banner (20 Setups Cycle) */}
+        <SystemOptimizationBanner
+          proposal={pendingProposal}
+          parameters={parameters}
+          totalCompletedSetups={journalEntries.length}
+          onOpenAuditModal={() => setIsOptimizerModalOpen(true)}
         />
 
         {/* 4. Screening Controls (Mode Selector, Benchmark Futures, Scan CTA) */}
@@ -522,19 +686,32 @@ export default function App() {
           topUS={topCandidateUS}
         />
 
-        {/* 7. Trade Journal with Risk Management & Real-time KPIs */}
+        {/* 7. Trade Journal with Risk Management, Expired Tracking & Self-Optimization */}
         <TradeJournal
           entries={journalEntries}
           onAddEntry={(entry) => setJournalEntries((prev) => [entry, ...prev])}
+          onUpdateEntry={handleUpdateJournalTrade}
           onDeleteEntry={handleDeleteJournalTrade}
           onClearAll={handleClearJournal}
           accountCapital={accountCapital}
           isPaperMode={isPaperMode}
-          onLoadSampleTrades={() => setJournalEntries(SAMPLE_JOURNAL_ENTRIES)}
+          onLoadSampleTrades={handleLoadSampleTrades}
+          onOpenOptimizerModal={() => setIsOptimizerModalOpen(true)}
+          optimizationProposal={pendingProposal}
         />
       </main>
 
       {/* Modals */}
+      <SystemOptimizerModal
+        isOpen={isOptimizerModalOpen}
+        onClose={() => setIsOptimizerModalOpen(false)}
+        proposal={pendingProposal}
+        currentParameters={parameters}
+        onAcceptProposal={handleAcceptProposal}
+        onRejectProposal={handleRejectProposal}
+        onRunAuditOnDemand={handleRunAuditOnDemand}
+        trades={journalEntries}
+      />
       <CsvManagerModal
         isOpen={isCsvModalOpen}
         onClose={() => setIsCsvModalOpen(false)}

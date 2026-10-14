@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   TradeJournalEntry,
+  OptimizationProposal,
 } from '../types/radar';
 import {
   BookOpen,
@@ -16,30 +17,40 @@ import {
   XCircle,
   MinusCircle,
   TrendingUp,
+  Clock,
+  Sliders,
+  AlertTriangle,
 } from 'lucide-react';
 import { PerformanceSummary } from './PerformanceSummary';
 
 interface TradeJournalProps {
   entries: TradeJournalEntry[];
   onAddEntry: (entry: TradeJournalEntry) => void;
+  onUpdateEntry?: (entry: TradeJournalEntry) => void;
   onDeleteEntry: (id: string) => void;
   onClearAll: () => void;
   accountCapital: number;
   isPaperMode: boolean;
   onLoadSampleTrades?: () => void;
+  onOpenOptimizerModal?: () => void;
+  optimizationProposal?: OptimizationProposal | null;
 }
 
 export const TradeJournal: React.FC<TradeJournalProps> = ({
   entries,
   onAddEntry,
+  onUpdateEntry,
   onDeleteEntry,
   onClearAll,
   accountCapital,
   isPaperMode,
   onLoadSampleTrades,
+  onOpenOptimizerModal,
+  optimizationProposal,
 }) => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [filterMode, setFilterMode] = useState<'ALL' | 'PAPER' | 'REAL'>('ALL');
+  const [outcomeFilter, setOutcomeFilter] = useState<'ALL' | 'WIN' | 'LOSS' | 'BREAKEVEN' | 'EXPIRED'>('ALL');
   const [viewMode, setViewMode] = useState<'SUMMARY' | 'TABLE' | 'BOTH'>('SUMMARY');
 
   // New trade manual entry state
@@ -52,11 +63,13 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
   const [stopLoss, setStopLoss] = useState<number>(98.5);
   const [target1, setTarget1] = useState<number>(103);
   const [pnlEur, setPnlEur] = useState<number>(150);
+  const [manualOutcome, setManualOutcome] = useState<'AUTO' | 'WIN' | 'LOSS' | 'BREAKEVEN' | 'EXPIRED'>('AUTO');
   const [notes, setNotes] = useState('');
 
   const filteredEntries = entries.filter((e) => {
-    if (filterMode === 'PAPER') return e.isPaper;
-    if (filterMode === 'REAL') return !e.isPaper;
+    if (filterMode === 'PAPER' && !e.isPaper) return false;
+    if (filterMode === 'REAL' && e.isPaper) return false;
+    if (outcomeFilter !== 'ALL' && e.outcome !== outcomeFilter) return false;
     return true;
   });
 
@@ -64,11 +77,20 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
   const totalTrades = filteredEntries.length;
   const wins = filteredEntries.filter((e) => e.outcome === 'WIN');
   const losses = filteredEntries.filter((e) => e.outcome === 'LOSS');
+  const breakevens = filteredEntries.filter((e) => e.outcome === 'BREAKEVEN');
+  const expired = filteredEntries.filter((e) => e.outcome === 'EXPIRED');
+
   const winRate = totalTrades > 0 ? +((wins.length / totalTrades) * 100).toFixed(1) : 0;
+  const expiredRate = totalTrades > 0 ? +((expired.length / totalTrades) * 100).toFixed(1) : 0;
 
   const totalGainsEur = wins.reduce((acc, curr) => acc + curr.pnlEur, 0);
   const totalLossesEur = Math.abs(losses.reduce((acc, curr) => acc + curr.pnlEur, 0));
-  const profitFactor = totalLossesEur > 0 ? +(totalGainsEur / totalLossesEur).toFixed(2) : totalGainsEur > 0 ? 99.9 : 0;
+  const profitFactor =
+    totalLossesEur > 0
+      ? +(totalGainsEur / totalLossesEur).toFixed(2)
+      : totalGainsEur > 0
+      ? 99.9
+      : 0;
 
   const netPnlEur = +(filteredEntries.reduce((acc, curr) => acc + curr.pnlEur, 0)).toFixed(2);
   const netPnlPercent = accountCapital > 0 ? +((netPnlEur / accountCapital) * 100).toFixed(2) : 0;
@@ -96,11 +118,24 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
 
     const riskDistance = Math.abs(entryPrice - stopLoss) || 1;
     const gainedDistance = direction === 'LONG' ? exitPrice - entryPrice : entryPrice - exitPrice;
-    const rMultiple = +(gainedDistance / riskDistance).toFixed(2);
+    let rMultiple = +(gainedDistance / riskDistance).toFixed(2);
 
-    let outcome: 'WIN' | 'LOSS' | 'BREAKEVEN' = 'BREAKEVEN';
-    if (pnlEur > 2) outcome = 'WIN';
-    else if (pnlEur < -2) outcome = 'LOSS';
+    let finalOutcome: 'WIN' | 'LOSS' | 'BREAKEVEN' | 'EXPIRED' = 'BREAKEVEN';
+    let finalPnl = pnlEur;
+    let finalExitPrice = exitPrice;
+
+    if (manualOutcome === 'AUTO') {
+      if (pnlEur > 2) finalOutcome = 'WIN';
+      else if (pnlEur < -2) finalOutcome = 'LOSS';
+      else finalOutcome = 'BREAKEVEN';
+    } else {
+      finalOutcome = manualOutcome;
+      if (manualOutcome === 'EXPIRED') {
+        rMultiple = 0;
+        if (pnlEur === 150) finalPnl = -2.0; // default friction
+        finalExitPrice = entryPrice;
+      }
+    }
 
     const newEntry: TradeJournalEntry = {
       id: `trade-${Date.now()}`,
@@ -111,20 +146,69 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
       direction,
       strategy,
       entryPrice,
-      exitPrice,
+      exitPrice: finalExitPrice,
       stopLoss,
       target1,
-      pnlEur,
+      pnlEur: finalPnl,
       rMultiple,
-      outcome,
-      notes,
+      outcome: finalOutcome,
+      notes: notes || (finalOutcome === 'EXPIRED' ? 'Setup scaduto al cutoff orario senza raggiungere target né stop' : ''),
       isPaper: isPaperMode,
+      status: 'CLOSED',
+      closedAt: new Date().toISOString(),
     };
 
     onAddEntry(newEntry);
     setShowAddForm(false);
     setTicker('');
     setNotes('');
+  };
+
+  const handleQuickSetOutcome = (
+    trade: TradeJournalEntry,
+    newOutcome: 'WIN' | 'LOSS' | 'BREAKEVEN' | 'EXPIRED'
+  ) => {
+    let exitPrice = trade.exitPrice;
+    let pnlEur = trade.pnlEur;
+    let rMultiple = trade.rMultiple;
+    let notes = trade.notes;
+
+    if (newOutcome === 'WIN') {
+      exitPrice = trade.target1;
+      rMultiple = 1.6;
+      pnlEur = trade.pnlEur <= 0 ? 160 : trade.pnlEur;
+      notes = 'Target 1 centrato con pieno profitto.';
+    } else if (newOutcome === 'LOSS') {
+      exitPrice = trade.stopLoss;
+      rMultiple = -1.0;
+      pnlEur = trade.pnlEur >= 0 ? -100 : trade.pnlEur;
+      notes = 'Stop loss tassativo eseguito.';
+    } else if (newOutcome === 'BREAKEVEN') {
+      exitPrice = trade.entryPrice;
+      rMultiple = 0;
+      pnlEur = -2.0;
+      notes = 'Chiuso a pareggio (spese commissionali).';
+    } else if (newOutcome === 'EXPIRED') {
+      exitPrice = trade.entryPrice;
+      rMultiple = 0;
+      pnlEur = -2.0;
+      notes = 'Setup scaduto al cutoff di sessione: nessun breakout.';
+    }
+
+    const updated: TradeJournalEntry = {
+      ...trade,
+      outcome: newOutcome,
+      exitPrice,
+      pnlEur,
+      rMultiple,
+      notes,
+      status: 'CLOSED',
+      closedAt: new Date().toISOString(),
+    };
+
+    if (onUpdateEntry) {
+      onUpdateEntry(updated);
+    }
   };
 
   const handleExportJson = () => {
@@ -150,7 +234,7 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
               Diario di Trading & Statistiche di Performance
             </h2>
             <p className="text-xs text-slate-400">
-              Tracciamento rigoroso esecuzioni • Regola stop giornaliero -2% e max 2 trade/giorno
+              Tracciamento rigoroso esecuzioni • Regola stop giornaliero -2% e monitoraggio setup Scaduti (Expired)
             </p>
           </div>
         </div>
@@ -224,14 +308,62 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
             </button>
           </div>
 
+          {/* Outcome Filter */}
+          <div className="hidden sm:flex rounded-lg bg-slate-900 p-0.5 border border-slate-800 text-xs font-mono">
+            <button
+              onClick={() => setOutcomeFilter('ALL')}
+              className={`px-1.5 py-1 rounded-md transition-colors ${
+                outcomeFilter === 'ALL' ? 'bg-slate-800 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Tutti
+            </button>
+            <button
+              onClick={() => setOutcomeFilter('WIN')}
+              className={`px-1.5 py-1 rounded-md transition-colors ${
+                outcomeFilter === 'WIN' ? 'bg-emerald-950 text-emerald-300 font-bold border border-emerald-800' : 'text-slate-400 hover:text-emerald-300'
+              }`}
+            >
+              Win ({entries.filter(e => e.outcome === 'WIN').length})
+            </button>
+            <button
+              onClick={() => setOutcomeFilter('LOSS')}
+              className={`px-1.5 py-1 rounded-md transition-colors ${
+                outcomeFilter === 'LOSS' ? 'bg-rose-950 text-rose-300 font-bold border border-rose-800' : 'text-slate-400 hover:text-rose-300'
+              }`}
+            >
+              Loss ({entries.filter(e => e.outcome === 'LOSS').length})
+            </button>
+            <button
+              onClick={() => setOutcomeFilter('EXPIRED')}
+              className={`px-1.5 py-1 rounded-md transition-colors ${
+                outcomeFilter === 'EXPIRED' ? 'bg-amber-950 text-amber-300 font-bold border border-amber-800' : 'text-slate-400 hover:text-amber-300'
+              }`}
+            >
+              Expired ({entries.filter(e => e.outcome === 'EXPIRED').length})
+            </button>
+          </div>
+
+          {/* Open Optimizer Modal Button */}
+          {onOpenOptimizerModal && (
+            <button
+              onClick={onOpenOptimizerModal}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 text-xs font-mono transition-colors cursor-pointer"
+              title="Apri pannello di audit ogni 20 setup e gestione parametri"
+            >
+              <Sliders className="w-3.5 h-3.5 text-amber-400" />
+              <span>Ciclo Automiglioramento ({entries.length % 20}/20)</span>
+            </button>
+          )}
+
           {onLoadSampleTrades && (
             <button
               onClick={onLoadSampleTrades}
               className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-950/70 hover:bg-indigo-900/90 text-indigo-300 border border-indigo-700/60 text-xs font-mono transition-colors"
-              title="Carica 8 operazioni storiche dimostrative per testare grafici Recharts e statistiche"
+              title="Carica 20 operazioni storiche dimostrative per testare il ciclo di automiglioramento e gli expired"
             >
               <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Demo Trades</span>
+              <span>Demo 20 Setup</span>
             </button>
           )}
 
@@ -240,7 +372,7 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
               setShowAddForm(!showAddForm);
               if (!showAddForm && viewMode === 'SUMMARY') setViewMode('BOTH');
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>Aggiungi Trade</span>
@@ -277,7 +409,31 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
             <Award className="w-4 h-4 text-amber-400" />
             <span>{winRate}%</span>
           </div>
-          <span className="text-[10px] text-slate-500">{wins.length}W / {losses.length}L</span>
+          <span className="text-[10px] text-slate-500">
+            {wins.length}W / {losses.length}L / {breakevens.length}BE
+          </span>
+        </div>
+
+        {/* Expired Rate (Crucial!) */}
+        <div
+          className={`p-3 rounded-lg border ${
+            expiredRate >= 20 ? 'bg-rose-950/40 border-rose-600/60' : 'bg-slate-900 border-slate-800'
+          }`}
+        >
+          <span className="text-[10px] text-slate-400 block mb-1 flex items-center justify-between">
+            <span>Tasso Scaduti (Expired)</span>
+            <Clock className="w-3.5 h-3.5 text-amber-400" />
+          </span>
+          <div
+            className={`text-base font-bold ${
+              expiredRate >= 20 ? 'text-rose-400' : 'text-amber-300'
+            }`}
+          >
+            {expiredRate}%
+          </div>
+          <span className="text-[10px] text-slate-400">
+            {expired.length} su {totalTrades} non chiusi
+          </span>
         </div>
 
         {/* Profit Factor */}
@@ -286,7 +442,9 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
           <div className="text-base font-bold text-emerald-400">
             {profitFactor > 0 ? profitFactor.toFixed(2) : '0.00'}
           </div>
-          <span className="text-[10px] text-slate-500">Lorda +{totalGainsEur.toFixed(0)}€ / -{totalLossesEur.toFixed(0)}€</span>
+          <span className="text-[10px] text-slate-500">
+            Lorda +{totalGainsEur.toFixed(0)}€ / -{totalLossesEur.toFixed(0)}€
+          </span>
         </div>
 
         {/* Rapporto Medio R */}
@@ -320,15 +478,6 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
             -{maxDdEur.toFixed(0)} €
           </div>
           <span className="text-[10px] text-rose-300">-{maxDdPercent}% capitale</span>
-        </div>
-
-        {/* Daily Safety Status */}
-        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800">
-          <span className="text-[10px] text-slate-400 block mb-1">Governance Giornaliera</span>
-          <div className="text-xs font-bold text-slate-200">
-            Max 2 Trade / Giorno
-          </div>
-          <span className="text-[10px] text-amber-300">Stop G. -2% capitale</span>
         </div>
       </div>
 
@@ -395,6 +544,21 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
             </div>
 
             <div>
+              <label className="block text-slate-400 text-[11px] mb-1">Esito Specifico</label>
+              <select
+                value={manualOutcome}
+                onChange={(e) => setManualOutcome(e.target.value as any)}
+                className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1.5 text-white font-mono"
+              >
+                <option value="AUTO">Automatico (da P&L)</option>
+                <option value="WIN">WIN (Target Raggiunto)</option>
+                <option value="LOSS">LOSS (Stop Loss Colpito)</option>
+                <option value="BREAKEVEN">BREAKEVEN (Pareggio)</option>
+                <option value="EXPIRED">EXPIRED (Scaduto al Cutoff)</option>
+              </select>
+            </div>
+
+            <div>
               <label className="block text-slate-400 text-[11px] mb-1">Strategia</label>
               <select
                 value={strategy}
@@ -450,11 +614,11 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
               />
             </div>
 
-            <div className="sm:col-span-4">
+            <div className="sm:col-span-3">
               <label className="block text-slate-400 text-[11px] mb-1">Note sull'esecuzione</label>
               <input
                 type="text"
-                placeholder="es. Uscita su Target 1, confermato VWAP dopo 5 min..."
+                placeholder="es. Scaduto ore 11:30 senza rottura range, chiuso a mercato..."
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 className="w-full bg-slate-900 border border-slate-700 rounded-md px-2.5 py-1.5 text-white"
@@ -472,7 +636,7 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md font-bold shadow-md"
+              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md font-bold shadow-md cursor-pointer"
             >
               Salva Esecuzione
             </button>
@@ -484,125 +648,192 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
       {(viewMode === 'TABLE' || viewMode === 'BOTH') && (
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
-          <thead className="bg-slate-950 text-[11px] uppercase tracking-wider text-slate-400 border-b border-slate-800">
-            <tr>
-              <th className="py-2.5 px-3">Data & Ora</th>
-              <th className="py-2.5 px-3">Sottostante</th>
-              <th className="py-2.5 px-3">Direzione</th>
-              <th className="py-2.5 px-3">Strategia</th>
-              <th className="py-2.5 px-3 text-right">Ingresso</th>
-              <th className="py-2.5 px-3 text-right">Uscita</th>
-              <th className="py-2.5 px-3 text-right">Risultato (€)</th>
-              <th className="py-2.5 px-3 text-right">R-Multiple</th>
-              <th className="py-2.5 px-3 text-center">Esito</th>
-              <th className="py-2.5 px-3">Modalità</th>
-              <th className="py-2.5 px-3">Note</th>
-              <th className="py-2.5 px-3 text-right">Azione</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-800/60 font-mono">
-            {filteredEntries.map((trade) => {
-              const isWin = trade.outcome === 'WIN';
-              const isLoss = trade.outcome === 'LOSS';
+            <thead className="bg-slate-950 text-[11px] uppercase tracking-wider text-slate-400 border-b border-slate-800">
+              <tr>
+                <th className="py-2.5 px-3">Data & Ora</th>
+                <th className="py-2.5 px-3">Sottostante</th>
+                <th className="py-2.5 px-3">Direzione</th>
+                <th className="py-2.5 px-3">Strategia</th>
+                <th className="py-2.5 px-3 text-right">Ingresso</th>
+                <th className="py-2.5 px-3 text-right">Uscita</th>
+                <th className="py-2.5 px-3 text-right">Risultato (€)</th>
+                <th className="py-2.5 px-3 text-right">R-Multiple</th>
+                <th className="py-2.5 px-3 text-center">Esito</th>
+                <th className="py-2.5 px-3 text-center">Risoluzione Rapida</th>
+                <th className="py-2.5 px-3">Modalità</th>
+                <th className="py-2.5 px-3">Note</th>
+                <th className="py-2.5 px-3 text-right">Azione</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/60 font-mono">
+              {filteredEntries.map((trade) => {
+                const isWin = trade.outcome === 'WIN';
+                const isLoss = trade.outcome === 'LOSS';
+                const isExpired = trade.outcome === 'EXPIRED';
 
-              return (
-                <tr key={trade.id} className="hover:bg-slate-800/40 transition-colors">
-                  <td className="py-2 px-3 text-slate-400 text-[11px]">
-                    <div>{trade.date}</div>
-                    <div className="text-[10px] text-slate-500">
-                      {new Date(trade.timestamp).toLocaleTimeString('it-IT')}
-                    </div>
-                  </td>
-                  <td className="py-2 px-3 font-bold text-white">
-                    {trade.ticker}
-                    <span className="ml-1 text-[10px] font-normal text-slate-400">({trade.session})</span>
-                  </td>
-                  <td className="py-2 px-3">
-                    <span
-                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
-                        trade.direction === 'LONG'
-                          ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800'
-                          : 'bg-rose-950/60 text-rose-400 border-rose-800'
+                return (
+                  <tr key={trade.id} className="hover:bg-slate-800/40 transition-colors">
+                    <td className="py-2 px-3 text-slate-400 text-[11px]">
+                      <div>{trade.date}</div>
+                      <div className="text-[10px] text-slate-500">
+                        {new Date(trade.timestamp).toLocaleTimeString('it-IT')}
+                      </div>
+                    </td>
+                    <td className="py-2 px-3 font-bold text-white">
+                      {trade.ticker}
+                      <span className="ml-1 text-[10px] font-normal text-slate-400">({trade.session})</span>
+                    </td>
+                    <td className="py-2 px-3">
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                          trade.direction === 'LONG'
+                            ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800'
+                            : 'bg-rose-950/60 text-rose-400 border-rose-800'
+                        }`}
+                      >
+                        {trade.direction}
+                      </span>
+                    </td>
+                    <td className="py-2 px-3 text-slate-300 font-sans text-[11px] truncate max-w-[130px]">
+                      {trade.strategy}
+                    </td>
+                    <td className="py-2 px-3 text-right text-slate-300">
+                      {trade.entryPrice.toFixed(2)}
+                    </td>
+                    <td className="py-2 px-3 text-right text-white font-bold">
+                      {trade.exitPrice.toFixed(2)}
+                    </td>
+                    <td
+                      className={`py-2 px-3 text-right font-bold ${
+                        trade.pnlEur > 0
+                          ? 'text-emerald-400'
+                          : trade.pnlEur < 0
+                          ? 'text-rose-400'
+                          : 'text-slate-300'
                       }`}
                     >
-                      {trade.direction}
-                    </span>
-                  </td>
-                  <td className="py-2 px-3 text-slate-300 font-sans text-[11px] truncate max-w-[140px]">
-                    {trade.strategy}
-                  </td>
-                  <td className="py-2 px-3 text-right text-slate-300">
-                    {trade.entryPrice.toFixed(2)}
-                  </td>
-                  <td className="py-2 px-3 text-right text-white font-bold">
-                    {trade.exitPrice.toFixed(2)}
-                  </td>
-                  <td
-                    className={`py-2 px-3 text-right font-bold ${
-                      trade.pnlEur > 0 ? 'text-emerald-400' : trade.pnlEur < 0 ? 'text-rose-400' : 'text-slate-300'
-                    }`}
-                  >
-                    {trade.pnlEur > 0 ? `+${trade.pnlEur.toFixed(2)}` : trade.pnlEur.toFixed(2)} €
-                  </td>
-                  <td className="py-2 px-3 text-right font-bold">
-                    <span
-                      className={trade.rMultiple > 0 ? 'text-emerald-400' : trade.rMultiple < 0 ? 'text-rose-400' : 'text-slate-400'}
-                    >
-                      {trade.rMultiple > 0 ? `+${trade.rMultiple.toFixed(2)}R` : `${trade.rMultiple.toFixed(2)}R`}
-                    </span>
-                  </td>
-                  <td className="py-2 px-3 text-center">
-                    {isWin ? (
-                      <span className="inline-flex items-center gap-1 text-emerald-400 font-bold text-[11px]">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> WIN
+                      {trade.pnlEur > 0 ? `+${trade.pnlEur.toFixed(2)}` : trade.pnlEur.toFixed(2)} €
+                    </td>
+                    <td className="py-2 px-3 text-right font-bold">
+                      <span
+                        className={
+                          trade.rMultiple > 0
+                            ? 'text-emerald-400'
+                            : trade.rMultiple < 0
+                            ? 'text-rose-400'
+                            : 'text-slate-400'
+                        }
+                      >
+                        {trade.rMultiple > 0 ? `+${trade.rMultiple.toFixed(2)}R` : `${trade.rMultiple.toFixed(2)}R`}
                       </span>
-                    ) : isLoss ? (
-                      <span className="inline-flex items-center gap-1 text-rose-400 font-bold text-[11px]">
-                        <XCircle className="w-3.5 h-3.5" /> LOSS
+                    </td>
+                    <td className="py-2 px-3 text-center">
+                      {isWin ? (
+                        <span className="inline-flex items-center gap-1 text-emerald-400 font-bold text-[11px]">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> WIN
+                        </span>
+                      ) : isLoss ? (
+                        <span className="inline-flex items-center gap-1 text-rose-400 font-bold text-[11px]">
+                          <XCircle className="w-3.5 h-3.5" /> LOSS
+                        </span>
+                      ) : isExpired ? (
+                        <span className="inline-flex items-center gap-1 text-amber-400 font-bold text-[11px]">
+                          <Clock className="w-3.5 h-3.5" /> EXPIRED
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-slate-400 font-bold text-[11px]">
+                          <MinusCircle className="w-3.5 h-3.5" /> BE
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Quick Outcome Resolution Buttons */}
+                    <td className="py-2 px-3 text-center">
+                      <div className="inline-flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
+                        <button
+                          onClick={() => handleQuickSetOutcome(trade, 'WIN')}
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all ${
+                            isWin
+                              ? 'bg-emerald-600 text-white font-black shadow-sm'
+                              : 'text-slate-400 hover:text-emerald-300 hover:bg-emerald-950/40'
+                          }`}
+                          title="Segna come WIN (+1.6R Target 1)"
+                        >
+                          WIN
+                        </button>
+                        <button
+                          onClick={() => handleQuickSetOutcome(trade, 'LOSS')}
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all ${
+                            isLoss
+                              ? 'bg-rose-600 text-white font-black shadow-sm'
+                              : 'text-slate-400 hover:text-rose-300 hover:bg-rose-950/40'
+                          }`}
+                          title="Segna come LOSS (-1.0R Stop Loss)"
+                        >
+                          LOSS
+                        </button>
+                        <button
+                          onClick={() => handleQuickSetOutcome(trade, 'BREAKEVEN')}
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all ${
+                            trade.outcome === 'BREAKEVEN'
+                              ? 'bg-slate-700 text-white font-black'
+                              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                          }`}
+                          title="Segna come BREAKEVEN (Pareggio)"
+                        >
+                          BE
+                        </button>
+                        <button
+                          onClick={() => handleQuickSetOutcome(trade, 'EXPIRED')}
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all ${
+                            isExpired
+                              ? 'bg-amber-600 text-slate-950 font-black shadow-sm'
+                              : 'text-slate-400 hover:text-amber-300 hover:bg-amber-950/40'
+                          }`}
+                          title="Segna come EXPIRED (Scaduto al cutoff senza target né stop)"
+                        >
+                          EXP
+                        </button>
+                      </div>
+                    </td>
+
+                    <td className="py-2 px-3">
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-sans ${
+                          trade.isPaper
+                            ? 'bg-indigo-950 text-indigo-300 border border-indigo-800'
+                            : 'bg-amber-950 text-amber-300 border border-amber-800'
+                        }`}
+                      >
+                        {trade.isPaper ? 'Paper' : 'Reale'}
                       </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-slate-400 font-bold text-[11px]">
-                        <MinusCircle className="w-3.5 h-3.5" /> BE
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-2 px-3">
-                    <span
-                      className={`px-1.5 py-0.5 rounded text-[10px] font-sans ${
-                        trade.isPaper
-                          ? 'bg-indigo-950 text-indigo-300 border border-indigo-800'
-                          : 'bg-amber-950 text-amber-300 border border-amber-800'
-                      }`}
-                    >
-                      {trade.isPaper ? 'Paper' : 'Reale'}
-                    </span>
-                  </td>
-                  <td className="py-2 px-3 text-slate-400 font-sans text-[11px] truncate max-w-[150px]">
-                    {trade.notes || '—'}
-                  </td>
-                  <td className="py-2 px-3 text-right">
-                    <button
-                      onClick={() => onDeleteEntry(trade.id)}
-                      className="p-1 hover:bg-rose-950/60 text-slate-500 hover:text-rose-400 rounded transition-colors"
-                      title="Elimina voce"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    </td>
+                    <td className="py-2 px-3 text-slate-400 font-sans text-[11px] truncate max-w-[150px]" title={trade.notes}>
+                      {trade.notes || '—'}
+                    </td>
+                    <td className="py-2 px-3 text-right">
+                      <button
+                        onClick={() => onDeleteEntry(trade.id)}
+                        className="p-1 hover:bg-rose-950/60 text-slate-500 hover:text-rose-400 rounded transition-colors"
+                        title="Elimina voce dal diario"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {filteredEntries.length === 0 && (
+                <tr>
+                  <td colSpan={13} className="py-8 text-center text-slate-500 font-sans">
+                    Nessun trade registrato corrispondente ai filtri selezionati.
                   </td>
                 </tr>
-              );
-            })}
-
-            {filteredEntries.length === 0 && (
-              <tr>
-                <td colSpan={12} className="py-8 text-center text-slate-500 font-sans">
-                  Nessun trade registrato nel diario. I trade salvati dal calcolatore o aggiunti manualmente appariranno qui.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

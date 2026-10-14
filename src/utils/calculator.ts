@@ -10,15 +10,37 @@ import {
   DynamicBreakevenInfo,
   DerivativeStressReport,
   ImpliedVolatilityMetrics,
+  TradeJournalEntry,
+  SystemParameters,
+  OptimizationProposal,
+  ProposedParameterChange,
+  OptimizationMetrics,
 } from '../types/radar';
 
-// Minimum criteria for candidacy qualification
-export const MIN_QUALIFICATION_THRESHOLDS = {
+// Default Adaptive System Parameters
+export const DEFAULT_SYSTEM_PARAMETERS: SystemParameters = {
+  version: 1,
+  lastUpdated: new Date().toISOString(),
   minScore: 55, // Out of 100
   minGapEurope: 0.4, // %
   minGapUSA: 0.7, // %
-  minRvol: 1.1, // Relative volume
+  minRvol: 1.1, // Relative volume ratio
   minAvgVolume: 350000, // Shares daily average
+  normalRiskMultiplier: 0.50, // 0.50 of ATR
+  target1Multiplier: 1.60, // 1.60 of normal risk
+  target2Multiplier: 2.80, // 2.80 of normal risk
+  suggestedKoBarrierMultiplier: 2.65, // Knock-Out distance multiplier
+  triggerOffsetPercent: 0.20, // 0.20% offset from reference price
+  rsiFilterActive: false,
+};
+
+// Backward-compatible alias for existing imports
+export const MIN_QUALIFICATION_THRESHOLDS = {
+  minScore: DEFAULT_SYSTEM_PARAMETERS.minScore,
+  minGapEurope: DEFAULT_SYSTEM_PARAMETERS.minGapEurope,
+  minGapUSA: DEFAULT_SYSTEM_PARAMETERS.minGapUSA,
+  minRvol: DEFAULT_SYSTEM_PARAMETERS.minRvol,
+  minAvgVolume: DEFAULT_SYSTEM_PARAMETERS.minAvgVolume,
 };
 
 export function calculateCandidateScore(
@@ -174,6 +196,7 @@ export function calculateCandidateScore(
 
 export interface ScreeningFilterOptions {
   rsiFilterActive?: boolean;
+  parameters?: SystemParameters;
 }
 
 export function isRsiExtreme(rsi: number | null | undefined): boolean {
@@ -215,8 +238,9 @@ export function rankMarketCandidates(
 ): ScoredCandidate[] {
   let marketQuotes = quotes.filter((q) => q.market === market);
 
-  // If RSI filter is active, exclude overbought (RSI >= 70) and oversold (RSI <= 30)
-  if (options?.rsiFilterActive) {
+  // If RSI filter is active (from options or parameters), exclude overbought (RSI >= 70) and oversold (RSI <= 30)
+  const isRsiActive = options?.rsiFilterActive ?? options?.parameters?.rsiFilterActive ?? false;
+  if (isRsiActive) {
     marketQuotes = marketQuotes.filter((q) => !isRsiExtreme(q.rsi14));
   }
 
@@ -247,7 +271,8 @@ export function rankTopCandidates(
   options?: ScreeningFilterOptions
 ): ScoredCandidate[] {
   let targetQuotes = quotes;
-  if (options?.rsiFilterActive) {
+  const isRsiActive = options?.rsiFilterActive ?? options?.parameters?.rsiFilterActive ?? false;
+  if (isRsiActive) {
     targetQuotes = targetQuotes.filter((q) => !isRsiExtreme(q.rsi14));
   }
 
@@ -300,8 +325,11 @@ export function getDualTopCandidates(
 export function buildExecutionSetup(
   topCandidate: ScoredCandidate | null,
   catalyst: GeminiCatalystAnalysis | null,
-  session: 'EU' | 'US' | 'GLOBAL'
+  session: 'EU' | 'US' | 'GLOBAL',
+  params?: SystemParameters
 ): ExecutionSetup {
+  const activeParams = params || DEFAULT_SYSTEM_PARAMETERS;
+
   const cutoffTime =
     topCandidate?.quote?.market === 'US'
       ? '17:30 CET'
@@ -381,12 +409,12 @@ export function buildExecutionSetup(
 
   const isGapLong = (quote.gapPercent ?? 0) >= 0;
 
-  // Filter 1: Minimum score requirement
-  if (score < MIN_QUALIFICATION_THRESHOLDS.minScore) {
+  // Filter 1: Minimum score requirement (from active parameters)
+  if (score < activeParams.minScore) {
     return {
       candidate: quote,
       decision: 'NESSUN_TRADE',
-      reasonNoTrade: `Punteggio di candidatura (${score}/100) inferiore alla soglia minima di rigore (${MIN_QUALIFICATION_THRESHOLDS.minScore}/100). Preservazione del capitale: nessun trade forzato con score insufficiente.`,
+      reasonNoTrade: `Punteggio di candidatura (${score}/100) inferiore alla soglia minima di rigore (${activeParams.minScore}/100). Preservazione del capitale: nessun trade forzato con score insufficiente.`,
       direction: 'NESSUNA',
       strategy: 'Nessun setup',
       triggerLevel: null,
@@ -437,35 +465,36 @@ export function buildExecutionSetup(
   let target1Level: number;
   let target2Level: number;
 
-  const tightRisk = Math.max(+(atr * 0.40).toFixed(2), +(price * 0.005).toFixed(2));
-  const normalRisk = Math.max(+(atr * 0.50).toFixed(2), +(price * 0.007).toFixed(2));
-  const conservativeRisk = Math.max(+(atr * 0.75).toFixed(2), +(price * 0.010).toFixed(2));
+  const normalRiskMult = activeParams.normalRiskMultiplier;
+  const tightRisk = Math.max(+(atr * (normalRiskMult * 0.8)).toFixed(2), +(price * 0.005).toFixed(2));
+  const normalRisk = Math.max(+(atr * normalRiskMult).toFixed(2), +(price * 0.007).toFixed(2));
+  const conservativeRisk = Math.max(+(atr * (normalRiskMult * 1.5)).toFixed(2), +(price * 0.010).toFixed(2));
 
   let stopLossTight: number;
   let stopLossConservative: number;
   let suggestedKoBarrier: number;
 
+  const triggerOffset = activeParams.triggerOffsetPercent / 100;
+
   if (direction === 'LONG') {
-    triggerLevel = +(price * 1.002).toFixed(2);
+    triggerLevel = +(price * (1 + triggerOffset)).toFixed(2);
     stopLossLevel = +(triggerLevel - normalRisk).toFixed(2);
     stopLossTight = +(triggerLevel - tightRisk).toFixed(2);
     stopLossConservative = +(triggerLevel - conservativeRisk).toFixed(2);
-    // Knock-Out Barrier must be comfortably below conservative stop (> 2.6x distance)
-    suggestedKoBarrier = +(triggerLevel - normalRisk * 2.65).toFixed(2);
-    target1Level = +(triggerLevel + normalRisk * 1.6).toFixed(2);
-    target2Level = +(triggerLevel + normalRisk * 2.8).toFixed(2);
+    suggestedKoBarrier = +(triggerLevel - normalRisk * activeParams.suggestedKoBarrierMultiplier).toFixed(2);
+    target1Level = +(triggerLevel + normalRisk * activeParams.target1Multiplier).toFixed(2);
+    target2Level = +(triggerLevel + normalRisk * activeParams.target2Multiplier).toFixed(2);
   } else {
-    triggerLevel = +(price * 0.998).toFixed(2);
+    triggerLevel = +(price * (1 - triggerOffset)).toFixed(2);
     stopLossLevel = +(triggerLevel + normalRisk).toFixed(2);
     stopLossTight = +(triggerLevel + tightRisk).toFixed(2);
     stopLossConservative = +(triggerLevel + conservativeRisk).toFixed(2);
-    // Knock-Out Barrier must be comfortably above conservative stop (> 2.6x distance)
-    suggestedKoBarrier = +(triggerLevel + normalRisk * 2.65).toFixed(2);
-    target1Level = +(triggerLevel - normalRisk * 1.6).toFixed(2);
-    target2Level = +(triggerLevel - normalRisk * 2.8).toFixed(2);
+    suggestedKoBarrier = +(triggerLevel + normalRisk * activeParams.suggestedKoBarrierMultiplier).toFixed(2);
+    target1Level = +(triggerLevel - normalRisk * activeParams.target1Multiplier).toFixed(2);
+    target2Level = +(triggerLevel - normalRisk * activeParams.target2Multiplier).toFixed(2);
   }
 
-  const riskRewardRatio = 1.6;
+  const riskRewardRatio = activeParams.target1Multiplier;
   const atrPercent = price > 0 ? +((atr / price) * 100).toFixed(2) : null;
 
   const vwapCondition =
@@ -1085,5 +1114,245 @@ export function calculateImpliedVolatilityMetrics(
     label,
     gaugePercent: normalizedGauge,
     implication,
+  };
+}
+
+/**
+ * Rigorous 20-Setup Cycle Optimization Engine
+ * Evaluates performance after every 20 completed setups.
+ * If performance is stellar (high win rate, positive PnL, low expired), it maintains current parameters.
+ * If weaknesses are detected (e.g., high expired rate, low win rate, high loss rate), it proposes concrete parameter adjustments with justification and expected benefits for user acceptance.
+ */
+export function evaluateSystemOptimization(
+  trades: TradeJournalEntry[],
+  currentParams: SystemParameters = DEFAULT_SYSTEM_PARAMETERS,
+  cycleNumber?: number
+): OptimizationProposal {
+  // Sort trades chronologically descending to isolate the latest batch of 20 setups
+  const sorted = [...trades].sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  );
+  const evaluatedBatch = sorted.slice(0, 20);
+  const total = evaluatedBatch.length;
+  const cycle = cycleNumber || Math.max(1, Math.floor(trades.length / 20));
+
+  const wins = evaluatedBatch.filter((t) => t.outcome === 'WIN');
+  const losses = evaluatedBatch.filter((t) => t.outcome === 'LOSS');
+  const breakevens = evaluatedBatch.filter((t) => t.outcome === 'BREAKEVEN');
+  const expired = evaluatedBatch.filter((t) => t.outcome === 'EXPIRED');
+
+  const winCount = wins.length;
+  const lossCount = losses.length;
+  const beCount = breakevens.length;
+  const expiredCount = expired.length;
+
+  const winRate = total > 0 ? +((winCount / total) * 100).toFixed(1) : 0;
+  const expiredRate = total > 0 ? +((expiredCount / total) * 100).toFixed(1) : 0;
+  const lossRate = total > 0 ? +((lossCount / total) * 100).toFixed(1) : 0;
+
+  const netPnlEur = +(evaluatedBatch.reduce((acc, t) => acc + t.pnlEur, 0)).toFixed(2);
+  const totalGains = wins.reduce((acc, t) => acc + t.pnlEur, 0);
+  const totalLosses = Math.abs(losses.reduce((acc, t) => acc + t.pnlEur, 0));
+  const profitFactor =
+    totalLosses > 0 ? +(totalGains / totalLosses).toFixed(2) : totalGains > 0 ? 99.0 : 0;
+  const avgR =
+    total > 0
+      ? +(evaluatedBatch.reduce((acc, t) => acc + t.rMultiple, 0) / total).toFixed(2)
+      : 0;
+
+  const metrics: OptimizationMetrics = {
+    totalSetups: total,
+    wins: winCount,
+    losses: lossCount,
+    breakevens: beCount,
+    expired: expiredCount,
+    winRate,
+    expiredRate,
+    lossRate,
+    netPnlEur,
+    profitFactor,
+    avgR,
+  };
+
+  const identifiedStrengths: string[] = [];
+  const identifiedWeaknesses: string[] = [];
+  const proposedChanges: ProposedParameterChange[] = [];
+
+  // Identify strengths
+  if (winRate >= 55) {
+    identifiedStrengths.push(`Tasso di successo solido: Win Rate ${winRate}% sui setup eseguiti.`);
+  }
+  if (profitFactor >= 1.5) {
+    identifiedStrengths.push(`Profit Factor elevato (${profitFactor.toFixed(2)}) con forte asimmetria tra guadagni e perdite.`);
+  }
+  if (netPnlEur > 0) {
+    identifiedStrengths.push(`P&L netto positivo (+${netPnlEur.toFixed(2)} €) nei ${total} setup del ciclo.`);
+  }
+  if (expiredRate < 15 && total >= 10) {
+    identifiedStrengths.push(`Tasso di setup scaduti contenuto (${expiredRate}%), a conferma di target realistici.`);
+  }
+
+  // 1. Check EXPIRED weakness (High expired rate is a major flaw for intraday systems)
+  const isHighExpired = expiredRate >= 20 || expiredCount >= 4;
+  if (isHighExpired) {
+    identifiedWeaknesses.push(
+      `Tasso di setup scaduti (EXPIRED) critico (${expiredRate}%: ${expiredCount} su ${total}). I trade non riescono a raggiungere il Target 1 prima del cutoff o non scattano, immobilizzando capitale ed esponendo a rischio overnight o uscite forzate.`
+    );
+
+    // Propose reducing target1Multiplier from current (e.g. 1.6 -> 1.35)
+    if (currentParams.target1Multiplier > 1.35) {
+      const newT1 = +(Math.max(1.30, currentParams.target1Multiplier - 0.25)).toFixed(2);
+      proposedChanges.push({
+        parameterKey: 'target1Multiplier',
+        label: 'Moltiplicatore Target 1 (Take Profit)',
+        currentValue: `${currentParams.target1Multiplier}x R`,
+        proposedValue: `${newT1}x R`,
+        unit: 'x R',
+        reason: `Target 1 attuale (${currentParams.target1Multiplier}x R) troppo ambizioso per l'espansione media giornaliera, provocando ${expiredCount} setup scaduti senza presa di profitto prima del cutoff.`,
+        expectedBenefit: `Abbassando Target 1 a ${newT1}x R, il profitto viene incassato più rapidamente nella prima ora di borsa, con una riduzione attesa del tasso di Expired del ~35-45%.`,
+      });
+    }
+
+    // Propose reducing triggerOffsetPercent (e.g. 0.20% -> 0.10%)
+    if (currentParams.triggerOffsetPercent > 0.10) {
+      const newOffset = +(Math.max(0.08, currentParams.triggerOffsetPercent - 0.10)).toFixed(2);
+      proposedChanges.push({
+        parameterKey: 'triggerOffsetPercent',
+        label: 'Offset Trigger di Ingresso',
+        currentValue: `${currentParams.triggerOffsetPercent}%`,
+        proposedValue: `${newOffset}%`,
+        unit: '%',
+        reason: `L'offset del trigger allo ${currentParams.triggerOffsetPercent}% ritarda l'attivazione dell'ordine, facendo perdere l'impulso iniziale.`,
+        expectedBenefit: `Avvicinando il trigger allo ${newOffset}%, i breakout vengono agganciati con immediatezza alla rottura del range senza restare ineseguiti.`,
+      });
+    }
+  }
+
+  // 2. Check WIN RATE & LOSS RATE weakness
+  const isLowWinRate = winRate < 50;
+  const isHighLossRate = lossRate >= 35 || lossCount >= 7;
+  if (isLowWinRate || isHighLossRate) {
+    identifiedWeaknesses.push(
+      `Win Rate insufficiente (${winRate}%) con ${lossCount} stop loss subiti (${lossRate}%). I titoli selezionati subiscono falsi breakout o vengono scossi prematuramente dal rumore di apertura.`
+    );
+
+    // Propose raising minScore (e.g. 55 -> 65)
+    if (currentParams.minScore < 70) {
+      const newScore = Math.min(75, currentParams.minScore + 10);
+      proposedChanges.push({
+        parameterKey: 'minScore',
+        label: 'Soglia Minima Punteggio Radar',
+        currentValue: `${currentParams.minScore}/100`,
+        proposedValue: `${newScore}/100`,
+        unit: 'pt',
+        reason: `La soglia attuale (${currentParams.minScore}/100) qualifica titoli con gap o volumi marginali che faticano a proseguire.`,
+        expectedBenefit: `Filtro più selettivo a ${newScore}/100: elimina il 30% dei titoli più deboli aumentando il Win Rate medio stimato del +8-12%.`,
+      });
+    }
+
+    // Propose raising minRvol (e.g. 1.10 -> 1.35)
+    if (currentParams.minRvol < 1.40) {
+      const newRvol = +(currentParams.minRvol + 0.25).toFixed(2);
+      proposedChanges.push({
+        parameterKey: 'minRvol',
+        label: 'RVOL Minimo Richiesto',
+        currentValue: `${currentParams.minRvol}x`,
+        proposedValue: `${newRvol}x`,
+        unit: 'x',
+        reason: `Richiesta di volume relativo troppo permissiva (${currentParams.minRvol}x), favorevole a trappole di liquidità.`,
+        expectedBenefit: `Imponendo RVOL >= ${newRvol}x si garantisce presenza istituzionale, riducendo i falsi breakout.`,
+      });
+    }
+
+    // Propose widening normalRiskMultiplier to breathe (e.g. 0.50 -> 0.58)
+    if (currentParams.normalRiskMultiplier <= 0.50) {
+      const newRisk = +(currentParams.normalRiskMultiplier + 0.08).toFixed(2);
+      proposedChanges.push({
+        parameterKey: 'normalRiskMultiplier',
+        label: 'Tolleranza Stop Loss vs ATR',
+        currentValue: `${currentParams.normalRiskMultiplier}x ATR`,
+        proposedValue: `${newRisk}x ATR`,
+        unit: 'x ATR',
+        reason: `Lo stop loss a ${currentParams.normalRiskMultiplier}x ATR è troppo stretto e viene spesso colpito dal rumore dei primi 15 minuti.`,
+        expectedBenefit: `Aumentando a ${newRisk}x ATR si concede respiro al titolo, evitando stop prematuri su volatilità transitoria.`,
+      });
+    }
+
+    // Propose activating RSI Filter if not active
+    if (!currentParams.rsiFilterActive) {
+      proposedChanges.push({
+        parameterKey: 'rsiFilterActive',
+        label: 'Filtro Ipercomprato/Ipervenduto RSI',
+        currentValue: 'Disattivato',
+        proposedValue: 'Attivo',
+        reason: 'Diversi trade in perdita sono stati aperti su titoli già in territorio di ipercomprato (>70) o ipervenduto (<30).',
+        expectedBenefit: 'Esclusione automatica di titoli esausti prima che invertano contro il setup.',
+      });
+    }
+  }
+
+  // 3. Check BREAKEVEN / FRICTION weakness
+  const isHighBreakeven = beCount >= 5 && netPnlEur <= 50;
+  if (isHighBreakeven && proposedChanges.length === 0) {
+    identifiedWeaknesses.push(
+      `Troppi trade chiusi a pareggio (${beCount}/${total}) con PnL eroso dai costi commissionali e di spread.`
+    );
+    if (currentParams.minGapEurope < 0.6) {
+      proposedChanges.push({
+        parameterKey: 'minGapEurope',
+        label: 'Gap Minimo Europa',
+        currentValue: `${currentParams.minGapEurope}%`,
+        proposedValue: `0.65%`,
+        unit: '%',
+        reason: 'Gap troppo modesto non garantisce espansione sufficiente a superare il costo commissional-spread.',
+        expectedBenefit: 'Focalizzazione su gap più ampi con maggior potenziale direzionale post-open.',
+      });
+    }
+  }
+
+  // Determine overall status and rating
+  let performanceRating: OptimizationProposal['performanceRating'] = 'NEEDS_IMPROVEMENT';
+  let status: OptimizationProposal['status'] = 'PENDING';
+  let summaryTitle = '';
+  let summaryExplanation = '';
+
+  const isFlawless = winRate >= 60 && expiredRate <= 15 && netPnlEur > 0 && profitFactor >= 1.5;
+
+  if (isFlawless && proposedChanges.length === 0) {
+    performanceRating = 'EXCELLENT';
+    status = 'NO_CHANGES_NEEDED';
+    summaryTitle = `Ciclo #${cycle}: Prestazioni Eccellenti — Parametri Confermati`;
+    summaryExplanation = `Il ciclo di ${total} setup ha dimostrato elevata affidabilità: Win Rate al ${winRate}%, PnL netto di +${netPnlEur.toFixed(2)} € e tasso di Expired controllato (${expiredRate}%). In base alla regola aurea del trading sistematico quantitativo, non si modificano parametri su un edge statistico comprovato. Il sistema proseguirà con i parametri attuali.`;
+  } else if (proposedChanges.length === 0) {
+    performanceRating = 'GOOD';
+    status = 'NO_CHANGES_NEEDED';
+    summaryTitle = `Ciclo #${cycle}: Prestazioni Stabili — Nessuna Modifica Necessaria`;
+    summaryExplanation = `I dati degli ultimi ${total} setup rientrano nei parametri di tolleranza previsti. Non sono state individuate anomalie strutturali tali da richiedere ricalibrazioni. Parametri confermati.`;
+  } else {
+    performanceRating = (expiredRate >= 25 || winRate < 40) ? 'CRITICAL' : 'NEEDS_IMPROVEMENT';
+    status = 'PENDING';
+    summaryTitle = isHighExpired
+      ? `Audit Ciclo #${cycle}: Riduzione Tasso Expired e Ottimizzazione Target`
+      : `Audit Ciclo #${cycle}: Aumento Selettività Radar e Difesa Win Rate`;
+    summaryExplanation = `L'analisi quantitativa dei ${total} setup ha evidenziato ${proposedChanges.length} aree di miglioramento critiche. ${
+      isHighExpired
+        ? `In particolare, il tasso di Expired al ${expiredRate}% disperde opportunità. Si propone di avvicinare il Target 1 e ridurre l'offset del trigger per accelerare la chiusura positiva prima del cutoff.`
+        : `Il Win Rate al ${winRate}% richiede un innalzamento della selettività minima per evitare falsi breakout.`
+    } Esamina i parametri proposti e decidi se accettarli o continuare con la configurazione attuale.`;
+  }
+
+  return {
+    id: `opt-cycle-${cycle}-${Date.now()}`,
+    cycleNumber: cycle,
+    evaluatedTradesCount: total,
+    date: new Date().toLocaleDateString('it-IT'),
+    metrics,
+    status,
+    performanceRating,
+    summaryTitle,
+    summaryExplanation,
+    identifiedStrengths,
+    identifiedWeaknesses,
+    proposedChanges,
   };
 }

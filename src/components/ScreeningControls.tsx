@@ -8,7 +8,6 @@ import {
   Database,
   Radio,
   Globe,
-  Sliders,
   Filter,
 } from 'lucide-react';
 
@@ -48,27 +47,35 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
 
   const renderFutureItem = (
     label: string,
+    subLabel: string,
     data: any,
     key: string
   ) => {
     return (
-      <div key={key} className="bg-slate-950 border border-slate-800 rounded-lg p-2.5 flex items-center justify-between">
-        <div>
-          <div className="text-[11px] font-mono text-slate-400">{label}</div>
-          <div className="text-sm font-mono font-bold text-white">
+      <div
+        key={key}
+        className="bg-slate-950 border border-slate-800/90 hover:border-slate-700/80 rounded-xl p-3 flex items-center justify-between gap-3 min-w-0 transition-colors shadow-sm"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 text-[11px] font-mono text-slate-400 truncate">
+            <span className="font-bold text-slate-200">{label}</span>
+            <span className="text-[10px] text-slate-500">• {subLabel}</span>
+          </div>
+          <div className="text-sm sm:text-base font-mono font-bold text-white tabular-nums whitespace-nowrap mt-0.5">
             {data?.price != null ? (
-              data.price.toLocaleString('it-IT', { minimumFractionDigits: 2 })
+              data.price.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
             ) : (
-              <span className="text-slate-500 font-normal text-xs">dato non disponibile</span>
+              <span className="text-slate-500 font-normal text-xs">non disp.</span>
             )}
           </div>
         </div>
+
         {data?.changePercent != null ? (
           <div
-            className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-mono font-semibold ${
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono font-bold shrink-0 whitespace-nowrap border ${
               data.changePercent >= 0
-                ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/80'
-                : 'bg-rose-950/80 text-rose-400 border border-rose-800/80'
+                ? 'bg-emerald-950/80 text-emerald-400 border-emerald-800/80'
+                : 'bg-rose-950/80 text-rose-400 border-rose-800/80'
             }`}
           >
             {data.changePercent >= 0 ? (
@@ -82,23 +89,24 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
             </span>
           </div>
         ) : (
-          <span className="text-xs text-slate-500 font-mono">nd</span>
+          <span className="text-xs text-slate-500 font-mono shrink-0">nd</span>
         )}
       </div>
     );
   };
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl mb-6">
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
-        {/* Session Mode Selector */}
+    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 sm:p-5 shadow-xl mb-6 space-y-4">
+      {/* Top Controls Row: Session Mode Selector + Actions */}
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
+        {/* Left: Session Mode Selector */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[11px] font-medium uppercase tracking-wider text-slate-400 block">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block font-mono">
               Modalità Screening Sessione
             </span>
             {isAutoRefresh && (
-              <span className="flex items-center gap-1 text-[11px] font-mono text-emerald-400">
+              <span className="flex items-center gap-1 text-[11px] font-mono text-emerald-400 xl:hidden">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
                 Auto-scan: {autoRefreshCountdown}s
               </span>
@@ -110,7 +118,7 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
             <button
               onClick={() => onSelectSession('EU')}
               disabled={isScanning}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-md text-xs font-semibold transition-all ${
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-md text-xs font-semibold transition-all cursor-pointer ${
                 currentSession === 'EU'
                   ? 'bg-emerald-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-slate-200'
@@ -125,7 +133,7 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
             <button
               onClick={() => onSelectSession('US')}
               disabled={isScanning}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-md text-xs font-semibold transition-all ${
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-md text-xs font-semibold transition-all cursor-pointer ${
                 currentSession === 'US'
                   ? 'bg-sky-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-slate-200'
@@ -140,7 +148,7 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
             <button
               onClick={() => onSelectSession('GLOBAL')}
               disabled={isScanning}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-md text-xs font-semibold transition-all ${
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-md text-xs font-semibold transition-all cursor-pointer ${
                 currentSession === 'GLOBAL'
                   ? 'bg-indigo-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-slate-200'
@@ -155,58 +163,13 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
           </div>
         </div>
 
-        {/* Benchmark Index Futures Board */}
-        <div className="flex-1 max-w-2xl">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[11px] font-medium uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-              <Layers className="w-3.5 h-3.5 text-slate-500" />
-              Futures Indice di Riferimento{' '}
-              {currentSession === 'GLOBAL'
-                ? '(Europa & USA Simultanei)'
-                : currentSession === 'EU'
-                ? '(Europa)'
-                : '(USA)'}
-            </span>
-            <span className="text-[10px] text-slate-500 font-mono">Dati Live Reali da CME & Eurex</span>
-          </div>
-
-          <div
-            className={`grid gap-2.5 ${
-              currentSession === 'GLOBAL' ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-2'
-            }`}
-          >
-            {currentSession === 'EU' && (
-              <>
-                {renderFutureItem('FDAX (DAX 40)', euFutures?.dax, 'dax')}
-                {renderFutureItem('FESX (Euro Stoxx 50)', euFutures?.eurostoxx, 'eurostoxx')}
-              </>
-            )}
-
-            {currentSession === 'US' && (
-              <>
-                {renderFutureItem('ES (S&P 500)', usFutures?.sp500, 'sp500')}
-                {renderFutureItem('NQ (Nasdaq 100)', usFutures?.nasdaq, 'nasdaq')}
-              </>
-            )}
-
-            {currentSession === 'GLOBAL' && (
-              <>
-                {renderFutureItem('FDAX (DAX 40)', euFutures?.dax, 'dax')}
-                {renderFutureItem('FESX (Euro Stoxx)', euFutures?.eurostoxx, 'eurostoxx')}
-                {renderFutureItem('ES (S&P 500)', usFutures?.sp500, 'sp500')}
-                {renderFutureItem('NQ (Nasdaq 100)', usFutures?.nasdaq, 'nasdaq')}
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Actions & Auto-refresh */}
-        <div className="flex flex-col items-start lg:items-end justify-center gap-2">
+        {/* Right: Actions & Auto-refresh */}
+        <div className="flex flex-col items-start xl:items-end justify-center gap-2">
           <div className="flex flex-wrap items-center gap-2">
             {/* RSI Filter Toggle Button */}
             <button
               onClick={onToggleRsiFilter}
-              className={`flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
                 rsiFilterActive
                   ? 'bg-indigo-950/80 border-indigo-500 text-indigo-200 shadow-sm shadow-indigo-950/50 ring-1 ring-indigo-500/40'
                   : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
@@ -231,7 +194,7 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
             {/* Auto-Refresh Toggle Button */}
             <button
               onClick={onToggleAutoRefresh}
-              className={`flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
                 isAutoRefresh
                   ? 'bg-emerald-950/70 border-emerald-600 text-emerald-300 shadow-sm'
                   : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
@@ -246,7 +209,7 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
             <button
               onClick={onRunScan}
               disabled={isScanning || circuitBreakerActive}
-              className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs font-bold shadow-lg transition-all cursor-pointer ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold shadow-lg transition-all cursor-pointer ${
                 circuitBreakerActive
                   ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
                   : isScanning
@@ -279,6 +242,55 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
             )}
             {cachedAt && <span>• Ultimo: {new Date(cachedAt).toLocaleTimeString('it-IT')}</span>}
           </div>
+        </div>
+      </div>
+
+      {/* Bottom Section: Benchmark Index Futures Board (Full Width, Zero Overlap!) */}
+      <div>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 font-mono">
+            <Layers className="w-3.5 h-3.5 text-indigo-400" />
+            Futures Indice di Riferimento{' '}
+            {currentSession === 'GLOBAL'
+              ? '(Europa & USA Simultanei)'
+              : currentSession === 'EU'
+              ? '(Europa)'
+              : '(USA)'}
+          </span>
+          <span className="text-[10px] text-slate-500 font-mono">
+            Dati Live Reali da CME & Eurex • Quotazioni Ufficiali
+          </span>
+        </div>
+
+        <div
+          className={`grid gap-3 ${
+            currentSession === 'GLOBAL'
+              ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'
+              : 'grid-cols-1 sm:grid-cols-2'
+          }`}
+        >
+          {currentSession === 'EU' && (
+            <>
+              {renderFutureItem('FDAX 40', 'DAX Eurex Future', euFutures?.dax, 'dax')}
+              {renderFutureItem('FESX 50', 'Euro Stoxx Future', euFutures?.eurostoxx, 'eurostoxx')}
+            </>
+          )}
+
+          {currentSession === 'US' && (
+            <>
+              {renderFutureItem('ES (S&P 500)', 'CME E-mini Future', usFutures?.sp500, 'sp500')}
+              {renderFutureItem('NQ (Nasdaq 100)', 'CME E-mini Future', usFutures?.nasdaq, 'nasdaq')}
+            </>
+          )}
+
+          {currentSession === 'GLOBAL' && (
+            <>
+              {renderFutureItem('FDAX 40', 'DAX Eurex Future', euFutures?.dax, 'dax')}
+              {renderFutureItem('FESX 50', 'Euro Stoxx Future', euFutures?.eurostoxx, 'eurostoxx')}
+              {renderFutureItem('ES (S&P 500)', 'CME E-mini Future', usFutures?.sp500, 'sp500')}
+              {renderFutureItem('NQ (Nasdaq 100)', 'CME E-mini Future', usFutures?.nasdaq, 'nasdaq')}
+            </>
+          )}
         </div>
       </div>
     </div>

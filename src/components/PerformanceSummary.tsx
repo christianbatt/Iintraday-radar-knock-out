@@ -145,9 +145,11 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({
   const wins = entries.filter((e) => e.outcome === 'WIN');
   const losses = entries.filter((e) => e.outcome === 'LOSS');
   const breakevens = entries.filter((e) => e.outcome === 'BREAKEVEN');
+  const expired = entries.filter((e) => e.outcome === 'EXPIRED');
 
   const winRate = totalTrades > 0 ? +((wins.length / totalTrades) * 100).toFixed(1) : 0;
   const lossRate = totalTrades > 0 ? +((losses.length / totalTrades) * 100).toFixed(1) : 0;
+  const expiredRate = totalTrades > 0 ? +((expired.length / totalTrades) * 100).toFixed(1) : 0;
 
   const totalGainsEur = wins.reduce((acc, curr) => acc + curr.pnlEur, 0);
   const totalLossesEur = Math.abs(losses.reduce((acc, curr) => acc + curr.pnlEur, 0));
@@ -220,6 +222,8 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({
                   ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
                   : data.outcome === 'LOSS'
                   ? 'bg-rose-950 text-rose-400 border border-rose-800'
+                  : data.outcome === 'EXPIRED'
+                  ? 'bg-amber-950 text-amber-300 border border-amber-700'
                   : 'bg-slate-800 text-slate-300'
               }`}
             >
@@ -321,13 +325,13 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({
 
         <div className="bg-slate-900 p-3 rounded-lg border border-slate-800">
           <span className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
-            Rapporto Win/Loss
+            Rapporto Win/Loss & Scaduti
           </span>
           <div className="text-base font-bold text-sky-400">
             {losses.length > 0 ? (wins.length / losses.length).toFixed(2) : wins.length > 0 ? '∞' : '0.00'}
           </div>
-          <span className="text-[10px] text-slate-500">
-            {wins.length} Win • {losses.length} Loss • {breakevens.length} BE
+          <span className="text-[10px] text-slate-400">
+            {wins.length}W • {losses.length}L • {breakevens.length}BE • <strong className={expired.length > 0 ? 'text-amber-400' : 'text-slate-400'}>{expired.length} Exp ({expiredRate}%)</strong>
           </span>
         </div>
 

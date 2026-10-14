@@ -193,9 +193,68 @@ export interface TradeJournalEntry {
   target1: number;
   pnlEur: number;
   rMultiple: number;
-  outcome: 'WIN' | 'LOSS' | 'BREAKEVEN';
+  outcome: 'WIN' | 'LOSS' | 'BREAKEVEN' | 'EXPIRED';
+  status?: 'OPEN' | 'CLOSED';
   notes: string;
   isPaper: boolean;
+  closedAt?: string;
+  closeReason?: 'TARGET_HIT' | 'STOP_HIT' | 'BREAKEVEN' | 'CUTOFF_EXPIRED' | 'MANUAL';
+}
+
+export interface SystemParameters {
+  version: number;
+  lastUpdated: string;
+  minScore: number; // e.g. 55
+  minGapEurope: number; // e.g. 0.40 (%)
+  minGapUSA: number; // e.g. 0.70 (%)
+  minRvol: number; // e.g. 1.10
+  minAvgVolume: number; // e.g. 350000
+  normalRiskMultiplier: number; // e.g. 0.50 * ATR
+  target1Multiplier: number; // e.g. 1.60 * normalRisk
+  target2Multiplier: number; // e.g. 2.80 * normalRisk
+  suggestedKoBarrierMultiplier: number; // e.g. 2.65 * normalRisk
+  triggerOffsetPercent: number; // e.g. 0.20 (%)
+  rsiFilterActive: boolean; // default false
+}
+
+export interface ProposedParameterChange {
+  parameterKey: keyof SystemParameters;
+  label: string;
+  currentValue: number | boolean | string;
+  proposedValue: number | boolean | string;
+  unit?: string;
+  reason: string;
+  expectedBenefit: string;
+}
+
+export interface OptimizationMetrics {
+  totalSetups: number;
+  wins: number;
+  losses: number;
+  breakevens: number;
+  expired: number;
+  winRate: number; // %
+  expiredRate: number; // %
+  lossRate: number; // %
+  netPnlEur: number;
+  profitFactor: number;
+  avgR: number;
+}
+
+export interface OptimizationProposal {
+  id: string;
+  cycleNumber: number; // e.g. 1 for trades 1-20, 2 for 21-40
+  evaluatedTradesCount: number; // e.g. 20
+  date: string;
+  metrics: OptimizationMetrics;
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'NO_CHANGES_NEEDED';
+  performanceRating: 'EXCELLENT' | 'GOOD' | 'NEEDS_IMPROVEMENT' | 'CRITICAL';
+  summaryTitle: string;
+  summaryExplanation: string;
+  identifiedStrengths: string[];
+  identifiedWeaknesses: string[];
+  proposedChanges: ProposedParameterChange[];
+  appliedAt?: string;
 }
 
 export interface SessionInfo {
