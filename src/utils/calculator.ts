@@ -6,6 +6,10 @@ import {
   GeminiCatalystAnalysis,
   KnockOutCalculatorInput,
   KnockOutSafetyCheck,
+  PnLScenario,
+  DynamicBreakevenInfo,
+  DerivativeStressReport,
+  ImpliedVolatilityMetrics,
 } from '../types/radar';
 
 // Minimum criteria for candidacy qualification
@@ -144,6 +148,17 @@ export function calculateCandidateScore(
     details.push('Livelli High/Low ieri non disponibili: +2pt');
   }
 
+  // 6. RSI (14) MOMENTUM QUALITY
+  if (quote.rsi14 != null) {
+    if (quote.rsi14 >= 70) {
+      details.push(`RSI(14) in Ipercomprato (${quote.rsi14}): rischio pullback/esaurimento momentum.`);
+    } else if (quote.rsi14 <= 30) {
+      details.push(`RSI(14) in Ipervenduto (${quote.rsi14}): rischio rimbalzo contro-trend.`);
+    } else {
+      details.push(`RSI(14) in zona sana di espansione (${quote.rsi14}): momentum equilibrato.`);
+    }
+  }
+
   const total = gapScore + rvolScore + liquidityScore + futuresScore + levelScore;
 
   return {
@@ -157,12 +172,54 @@ export function calculateCandidateScore(
   };
 }
 
+export interface ScreeningFilterOptions {
+  rsiFilterActive?: boolean;
+}
+
+export function isRsiExtreme(rsi: number | null | undefined): boolean {
+  if (rsi == null) return false;
+  return rsi >= 70 || rsi <= 30;
+}
+
+export function calculateRsiFromPrices(closes: number[], period: number = 14): number | null {
+  if (!closes || closes.length < 6) return null;
+  const p = Math.min(period, closes.length - 1);
+  let gains = 0;
+  let losses = 0;
+  for (let i = 1; i <= p; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) gains += diff;
+    else losses += Math.abs(diff);
+  }
+  let avgGain = gains / p;
+  let avgLoss = losses / p;
+
+  for (let i = p + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    const gain = diff > 0 ? diff : 0;
+    const loss = diff < 0 ? Math.abs(diff) : 0;
+    avgGain = (avgGain * (p - 1) + gain) / p;
+    avgLoss = (avgLoss * (p - 1) + loss) / p;
+  }
+
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return +(100 - 100 / (1 + rs)).toFixed(1);
+}
+
 export function rankMarketCandidates(
   quotes: RawQuoteData[],
   market: 'EU' | 'US',
-  futuresChange: number | { EU: number; US: number }
+  futuresChange: number | { EU: number; US: number },
+  options?: ScreeningFilterOptions
 ): ScoredCandidate[] {
-  const marketQuotes = quotes.filter((q) => q.market === market);
+  let marketQuotes = quotes.filter((q) => q.market === market);
+
+  // If RSI filter is active, exclude overbought (RSI >= 70) and oversold (RSI <= 30)
+  if (options?.rsiFilterActive) {
+    marketQuotes = marketQuotes.filter((q) => !isRsiExtreme(q.rsi14));
+  }
+
   const change =
     typeof futuresChange === 'number'
       ? futuresChange
@@ -186,9 +243,15 @@ export function rankMarketCandidates(
 
 export function rankTopCandidates(
   quotes: RawQuoteData[],
-  futuresChange: number | { EU: number; US: number }
+  futuresChange: number | { EU: number; US: number },
+  options?: ScreeningFilterOptions
 ): ScoredCandidate[] {
-  const scored = quotes.map((quote) => {
+  let targetQuotes = quotes;
+  if (options?.rsiFilterActive) {
+    targetQuotes = targetQuotes.filter((q) => !isRsiExtreme(q.rsi14));
+  }
+
+  const scored = targetQuotes.map((quote) => {
     const change =
       typeof futuresChange === 'number'
         ? futuresChange
@@ -212,7 +275,8 @@ export function rankTopCandidates(
 
 export function getDualTopCandidates(
   quotes: RawQuoteData[],
-  futuresChange: number | { EU: number; US: number }
+  futuresChange: number | { EU: number; US: number },
+  options?: ScreeningFilterOptions
 ): {
   topEU: ScoredCandidate | null;
   topUS: ScoredCandidate | null;
@@ -220,9 +284,9 @@ export function getDualTopCandidates(
   rankedUS: ScoredCandidate[];
   allRanked: ScoredCandidate[];
 } {
-  const rankedEU = rankMarketCandidates(quotes, 'EU', futuresChange);
-  const rankedUS = rankMarketCandidates(quotes, 'US', futuresChange);
-  const allRanked = rankTopCandidates(quotes, futuresChange);
+  const rankedEU = rankMarketCandidates(quotes, 'EU', futuresChange, options);
+  const rankedUS = rankMarketCandidates(quotes, 'US', futuresChange, options);
+  const allRanked = rankTopCandidates(quotes, futuresChange, options);
 
   return {
     topEU: rankedEU.length > 0 ? rankedEU[0] : null,
@@ -264,6 +328,7 @@ export function buildExecutionSetup(
       invalidationConditions: ['Nessun titolo idoneo'],
       cutoffTime,
       catalystAnalysis: null,
+      dynamicBreakeven: null,
     };
   }
 
@@ -289,6 +354,7 @@ export function buildExecutionSetup(
       invalidationConditions: ['Prezzo mancante'],
       cutoffTime,
       catalystAnalysis: catalyst,
+      dynamicBreakeven: null,
     };
   }
 
@@ -309,6 +375,7 @@ export function buildExecutionSetup(
       invalidationConditions: ['ATR non disponibile'],
       cutoffTime,
       catalystAnalysis: catalyst,
+      dynamicBreakeven: null,
     };
   }
 
@@ -332,6 +399,7 @@ export function buildExecutionSetup(
       invalidationConditions: ['Filtri minimi di momentum e coerenza non raggiunti'],
       cutoffTime,
       catalystAnalysis: catalyst,
+      dynamicBreakeven: null,
     };
   }
 
@@ -353,6 +421,7 @@ export function buildExecutionSetup(
       invalidationConditions: catalyst.condizioni_invalidazione,
       cutoffTime,
       catalystAnalysis: catalyst,
+      dynamicBreakeven: null,
     };
   }
 
@@ -416,6 +485,30 @@ export function buildExecutionSetup(
     ...(catalyst?.condizioni_invalidazione || []),
   ];
 
+  // Baseline Trade Republic Knock-Out Dynamic Breakeven (1€ broker fee each way + 0.02€ spread)
+  const defaultLeverage = 10;
+  const defaultBarrierDist = Math.abs(triggerLevel - suggestedKoBarrier);
+  const defaultStopDist = Math.abs(triggerLevel - stopLossLevel);
+  const defaultCertPrice = Math.max(+(defaultBarrierDist / defaultLeverage).toFixed(2), 1.5);
+  const defaultRiskEur = 100;
+  const lossRatioOnCert = triggerLevel > 0 ? defaultStopDist / triggerLevel : 0.01;
+  const estimatedLossPerCert = defaultCertPrice * lossRatioOnCert * defaultLeverage;
+  const defaultLossPerCert = Math.max(estimatedLossPerCert, 0.2);
+  const defaultSuggestedCerts = Math.max(1, Math.floor(defaultRiskEur / defaultLossPerCert));
+  const defaultInvestedEur = +(defaultSuggestedCerts * defaultCertPrice).toFixed(2);
+
+  const dynamicBreakeven = calculateDynamicBreakeven(
+    triggerLevel,
+    direction === 'LONG',
+    defaultLeverage,
+    defaultCertPrice,
+    defaultSuggestedCerts,
+    defaultInvestedEur,
+    atr,
+    0.02,
+    1.00
+  );
+
   return {
     candidate: quote,
     decision: 'TRADE',
@@ -437,6 +530,257 @@ export function buildExecutionSetup(
     invalidationConditions,
     cutoffTime,
     catalystAnalysis: catalyst,
+    dynamicBreakeven,
+  };
+}
+
+export function calculateDynamicBreakeven(
+  entryPrice: number,
+  isLong: boolean,
+  leverage: number,
+  certPrice: number,
+  suggestedCertificates: number,
+  totalInvestedEur: number,
+  atr: number,
+  spreadEur: number = 0.02,
+  brokerFeeEur: number = 1.0
+): DynamicBreakevenInfo {
+  // Roundtrip broker fees (buy + sell, e.g. 1€ + 1€ in Trade Republic)
+  const brokerRoundtrip = brokerFeeEur * 2;
+  // Total spread cost on all certificates
+  const spreadCostEur = spreadEur * suggestedCertificates;
+  const totalFrictionEur = +(brokerRoundtrip + spreadCostEur).toFixed(2);
+
+  // Capital moving on the underlying = invested in cert * leverage
+  const effectiveCapitalInStock = totalInvestedEur * leverage;
+
+  // Points on underlying needed to offset total friction
+  const pointsToBreakeven =
+    effectiveCapitalInStock > 0 && entryPrice > 0
+      ? +((totalFrictionEur * entryPrice) / effectiveCapitalInStock).toFixed(2)
+      : 0;
+
+  const percentToBreakeven =
+    entryPrice > 0 ? +((pointsToBreakeven / entryPrice) * 100).toFixed(3) : 0;
+
+  const underlyingBreakevenPrice = isLong
+    ? +(entryPrice + pointsToBreakeven).toFixed(2)
+    : +(entryPrice - pointsToBreakeven).toFixed(2);
+
+  const frictionVsAtrPercent =
+    atr > 0 ? +((pointsToBreakeven / atr) * 100).toFixed(1) : 0;
+
+  let frictionStatus: 'LOW' | 'MODERATE' | 'HIGH' | 'CRITICAL' = 'LOW';
+  if (frictionVsAtrPercent > 35) {
+    frictionStatus = 'CRITICAL';
+  } else if (frictionVsAtrPercent > 20) {
+    frictionStatus = 'HIGH';
+  } else if (frictionVsAtrPercent > 10) {
+    frictionStatus = 'MODERATE';
+  }
+
+  return {
+    spreadEur,
+    brokerFeeEur,
+    totalFrictionEur,
+    underlyingBreakevenPrice,
+    pointsToBreakeven,
+    percentToBreakeven,
+    frictionVsAtrPercent,
+    frictionStatus,
+  };
+}
+
+export function generatePnLScenarios(
+  setup: ExecutionSetup,
+  input: KnockOutCalculatorInput,
+  certPrice: number,
+  suggestedCertificates: number,
+  totalInvestedEur: number,
+  frictionEur: number,
+  breakevenPoints: number,
+  stopDistance: number,
+  potentialLossEur: number
+): PnLScenario[] {
+  const entryPrice = setup.triggerLevel ?? setup.candidate.preMarketPrice ?? setup.candidate.currentPrice ?? 0;
+  const isLong = setup.direction === 'LONG';
+  const leverage = input.leverage || 1;
+  const capital = input.accountCapital || 10000;
+
+  const buildScenario = (
+    id: string,
+    label: string,
+    rMultiple: number,
+    targetPrice: number,
+    notes: string,
+    opts: { isBreakeven?: boolean; isStop?: boolean; isKnockOut?: boolean } = {}
+  ): PnLScenario => {
+    const rawDiff = isLong ? targetPrice - entryPrice : entryPrice - targetPrice;
+    const underlyingChangePercent = entryPrice > 0 ? +((rawDiff / entryPrice) * 100).toFixed(2) : 0;
+
+    let certEstimatedPrice: number;
+    let grossPnlEur: number;
+    let netPnlEur: number;
+
+    if (opts.isKnockOut) {
+      certEstimatedPrice = 0;
+      grossPnlEur = -totalInvestedEur;
+      netPnlEur = -totalInvestedEur;
+    } else if (opts.isBreakeven) {
+      certEstimatedPrice = +(certPrice + frictionEur / Math.max(1, suggestedCertificates)).toFixed(3);
+      grossPnlEur = +frictionEur.toFixed(2);
+      netPnlEur = 0;
+    } else if (opts.isStop) {
+      certEstimatedPrice = Math.max(0.01, +(certPrice * (1 + (underlyingChangePercent / 100) * leverage)).toFixed(3));
+      grossPnlEur = +(suggestedCertificates * (certEstimatedPrice - certPrice)).toFixed(2);
+      netPnlEur = -potentialLossEur;
+    } else {
+      certEstimatedPrice = Math.max(0.01, +(certPrice * (1 + (underlyingChangePercent / 100) * leverage)).toFixed(3));
+      grossPnlEur = +(suggestedCertificates * (certEstimatedPrice - certPrice)).toFixed(2);
+      netPnlEur = +(grossPnlEur - frictionEur).toFixed(2);
+    }
+
+    const capitalRoiPercent = +((netPnlEur / capital) * 100).toFixed(2);
+
+    return {
+      id,
+      label,
+      rMultiple,
+      underlyingPrice: +targetPrice.toFixed(2),
+      underlyingChangePercent,
+      certEstimatedPrice,
+      certChangePercent: +(underlyingChangePercent * leverage).toFixed(2),
+      grossPnlEur,
+      netPnlEur,
+      capitalRoiPercent,
+      notes,
+      ...opts,
+    };
+  };
+
+  const t2Price = setup.target2Level ?? (isLong ? entryPrice + stopDistance * 2.8 : entryPrice - stopDistance * 2.8);
+  const t1Price = setup.target1Level ?? (isLong ? entryPrice + stopDistance * 1.6 : entryPrice - stopDistance * 1.6);
+  const tHalfPrice = isLong ? entryPrice + stopDistance * 0.8 : entryPrice - stopDistance * 0.8;
+  const bePrice = isLong ? entryPrice + breakevenPoints : entryPrice - breakevenPoints;
+  const pullbackPrice = isLong ? entryPrice - stopDistance * 0.5 : entryPrice + stopDistance * 0.5;
+  const stopPrice = setup.stopLossLevel ?? (isLong ? entryPrice - stopDistance : entryPrice + stopDistance);
+  const koPrice = input.barrierStrike;
+
+  return [
+    buildScenario('t2', 'Target 2 (+2.8R - Trend Esteso)', 2.8, t2Price, 'Massimo target intraday con trailing vwap'),
+    buildScenario('t1', 'Target 1 (+1.6R - Presa 70% Profitto)', 1.6, t1Price, 'Target primario: chiusura parziale e stop a BE'),
+    buildScenario('half', 'Pullback Favorevole (+0.8R)', 0.8, tHalfPrice, 'Scalping intermedio o gestione protettiva'),
+    buildScenario('be', 'Breakeven Dinamico (0.0R Netto)', 0, bePrice, 'Sottostante necessario per assorbire spread e fee', { isBreakeven: true }),
+    buildScenario('pullback', 'Drawdown Transitorio (-0.5R)', -0.5, pullbackPrice, 'Rintraccio fisiologico pre-breakout'),
+    buildScenario('stop', 'Stop Loss Tecnico (-1.0R)', -1.0, stopPrice, 'Chiusura disciplinata al rischio predefinito 1%', { isStop: true }),
+    buildScenario('ko', 'Stress Test Knock-Out (-100% Wipeout)', -100, koPrice, 'Liquidazione totale del certificato per gap o spike', { isKnockOut: true }),
+  ];
+}
+
+export function calculateDerivativeStressReport(
+  entryPrice: number,
+  stopLoss: number,
+  barrierStrike: number,
+  stopDistance: number,
+  barrierDistance: number,
+  safetyRatio: number,
+  isLong: boolean,
+  atr: number,
+  frictionVsAtrPercent: number,
+  leverage: number,
+  atrPercent: number | null
+): DerivativeStressReport {
+  const criticalReasons: string[] = [];
+  const warningReasons: string[] = [];
+  const passReasons: string[] = [];
+
+  const barrierVsAtrRatio = atr > 0 ? +(barrierDistance / atr).toFixed(2) : 0;
+
+  // 1. Strike vs Stop Loss direct conflict
+  if (isLong && barrierStrike >= stopLoss) {
+    criticalReasons.push(
+      `Barriera strike (${barrierStrike}) superiore o uguale allo Stop Loss (${stopLoss}): il Knock-Out salta prima dello stop!`
+    );
+  } else if (!isLong && barrierStrike <= stopLoss) {
+    criticalReasons.push(
+      `Barriera strike (${barrierStrike}) inferiore o uguale allo Stop Loss (${stopLoss}): il Knock-Out salta prima dello stop!`
+    );
+  }
+
+  // 2. Safety Ratio (Barrier vs Stop Distance)
+  if (safetyRatio < 1.6) {
+    criticalReasons.push(
+      `Distanza barriera critica (${safetyRatio}x vs min 1.6x stop): margine insufficiente contro spike di apertura.`
+    );
+  } else if (safetyRatio < 2.2) {
+    warningReasons.push(
+      `Distanza barriera moderata (${safetyRatio}x stop): raccomandato > 2.2x per evitare flash-crash.`
+    );
+  } else {
+    passReasons.push(`Barriera KO distante ${safetyRatio}x lo stop loss (ottimo buffer protettivo).`);
+  }
+
+  // 3. Barrier vs ATR
+  if (barrierVsAtrRatio < 0.7) {
+    criticalReasons.push(
+      `Barriera troppo vicina rispetto all'ATR giornaliero (${barrierVsAtrRatio}x ATR vs min 0.7x): vulnerabile alla normale volatilità intraday.`
+    );
+  } else if (barrierVsAtrRatio < 1.1) {
+    warningReasons.push(
+      `Barriera entro il range medio giornaliero (${barrierVsAtrRatio}x ATR): monitorare espansione di volatilità.`
+    );
+  } else {
+    passReasons.push(`Barriera oltre 1.1x ATR (${barrierVsAtrRatio}x ATR): eccellente isolamento da rumore statistico.`);
+  }
+
+  // 4. Friction vs ATR
+  if (frictionVsAtrPercent > 35) {
+    criticalReasons.push(
+      `Attrito spread e commissioni eccessivo (${frictionVsAtrPercent}% dell'ATR): il trade parte con un handicap matematico proibitivo.`
+    );
+  } else if (frictionVsAtrPercent > 20) {
+    warningReasons.push(
+      `Attrito spread significativo (${frictionVsAtrPercent}% dell'ATR): raccomandato eseguire solo con spread compatto.`
+    );
+  } else {
+    passReasons.push(`Attrito ridotto (${frictionVsAtrPercent}% dell'ATR): breakeven rapido e favorevole.`);
+  }
+
+  // 5. Excessive Leverage with high ATR
+  if (leverage > 25 && (atrPercent ?? 0) > 2.5) {
+    warningReasons.push(
+      `Leva ${leverage}x elevata su titolo ad alta volatilità (ATR ${atrPercent}%): rischio oscillazione aggressiva.`
+    );
+  }
+
+  // Calculate stress score (0 to 100)
+  let score = 100;
+  if (criticalReasons.length > 0) score -= 50 * criticalReasons.length;
+  if (safetyRatio < 2.0) score -= 15;
+  if (barrierVsAtrRatio < 1.0) score -= 15;
+  if (frictionVsAtrPercent > 20) score -= 15;
+  if (leverage > 25) score -= 10;
+  const stressScore = Math.max(0, Math.min(100, score));
+
+  let filterStatus: 'PASS' | 'WARNING' | 'CRITICAL_BLOCKED' = 'PASS';
+  if (criticalReasons.length > 0 || stressScore < 45) {
+    filterStatus = 'CRITICAL_BLOCKED';
+  } else if (warningReasons.length > 0 || stressScore < 75) {
+    filterStatus = 'WARNING';
+  }
+
+  const canExecute = filterStatus !== 'CRITICAL_BLOCKED';
+
+  return {
+    stressScore,
+    filterStatus,
+    barrierVsAtrRatio,
+    barrierDistancePoints: +barrierDistance.toFixed(2),
+    barrierSafetyRatio: safetyRatio,
+    criticalReasons,
+    warningReasons,
+    passReasons,
+    canExecute,
   };
 }
 
@@ -448,8 +792,33 @@ export function calculateKnockOutSafety(
   const stopLoss = setup.stopLossLevel ?? 0;
   const barrierStrike = input.barrierStrike;
   const isLong = setup.direction === 'LONG';
+  const atr = setup.atrValue ?? setup.candidate.atr14 ?? (entryPrice * 0.02);
+  const spreadEur = input.spreadEur ?? 0.02;
+  const brokerFeeEur = input.brokerFeeEur ?? 1.0;
 
   if (entryPrice <= 0 || stopLoss <= 0 || barrierStrike <= 0) {
+    const emptyBreakeven: DynamicBreakevenInfo = {
+      spreadEur,
+      brokerFeeEur,
+      totalFrictionEur: 0,
+      underlyingBreakevenPrice: 0,
+      pointsToBreakeven: 0,
+      percentToBreakeven: 0,
+      frictionVsAtrPercent: 0,
+      frictionStatus: 'LOW',
+    };
+    const emptyStress: DerivativeStressReport = {
+      stressScore: 0,
+      filterStatus: 'CRITICAL_BLOCKED',
+      barrierVsAtrRatio: 0,
+      barrierDistancePoints: 0,
+      barrierSafetyRatio: 0,
+      criticalReasons: ['Livelli di ingresso, stop o barriera non disponibili.'],
+      warningReasons: [],
+      passReasons: [],
+      canExecute: false,
+    };
+
     return {
       entryPrice,
       stopLoss,
@@ -465,6 +834,9 @@ export function calculateKnockOutSafety(
       potentialLossEur: 0,
       potentialGainT1Eur: 0,
       potentialGainT2Eur: 0,
+      breakeven: emptyBreakeven,
+      scenarios: [],
+      stressReport: emptyStress,
     };
   }
 
@@ -473,23 +845,12 @@ export function calculateKnockOutSafety(
 
   // Safety ratio: Barrier distance vs Stop Loss distance
   const safetyRatio = stopDistance > 0 ? +(barrierDistance / stopDistance).toFixed(2) : 0;
-  const isSafe = safetyRatio >= 2.0 && (isLong ? barrierStrike < stopLoss : barrierStrike > stopLoss);
-
-  let warningMessage: string | undefined;
-  if (!isSafe) {
-    if (isLong && barrierStrike >= stopLoss) {
-      warningMessage = `ALLARME CRITICO: La barriera strike (${barrierStrike}) è superiore o uguale al tuo Stop Loss (${stopLoss})! Il certificato Knock-Out esploderà PRIMA che scatti lo stop.`;
-    } else if (!isLong && barrierStrike <= stopLoss) {
-      warningMessage = `ALLARME CRITICO: La barriera strike (${barrierStrike}) è inferiore o uguale al tuo Stop Loss (${stopLoss})! Il certificato Knock-Out esploderà PRIMA che scatti lo stop.`;
-    } else {
-      warningMessage = `PERICOLO KNOCK-OUT: La barriera dista solo ${safetyRatio}x lo stop loss (minimo richiesto: 2.0x). Rischio elevato di liquidazione improvvisa su spike di spread Trade Republic.`;
-    }
-  }
+  const isSafeBasic = safetyRatio >= 2.0 && (isLong ? barrierStrike < stopLoss : barrierStrike > stopLoss);
 
   // 1% Risk Position Sizing
   const maxRiskEur = +(input.accountCapital * (input.maxRiskPercent / 100)).toFixed(2);
 
-  // Estimate KO certificate price if not supplied (typical TR KO price = distance to strike / ratio, approx ~ distance)
+  // Estimate KO certificate price if not supplied
   const certPrice = input.certificatePrice && input.certificatePrice > 0
     ? input.certificatePrice
     : Math.max(+(barrierDistance / (input.leverage > 10 ? 10 : 1)).toFixed(2), 1.5);
@@ -507,6 +868,56 @@ export function calculateKnockOutSafety(
   const potentialGainT1Eur = +(potentialLossEur * rewardRatioT1).toFixed(2);
   const potentialGainT2Eur = +(potentialLossEur * 2.8).toFixed(2);
 
+  // Dynamic Breakeven calculation
+  const breakeven = calculateDynamicBreakeven(
+    entryPrice,
+    isLong,
+    input.leverage,
+    certPrice,
+    suggestedCertificates,
+    totalInvestedEur,
+    atr,
+    spreadEur,
+    brokerFeeEur
+  );
+
+  // Stress Report & Hybrid Filter
+  const stressReport = calculateDerivativeStressReport(
+    entryPrice,
+    stopLoss,
+    barrierStrike,
+    stopDistance,
+    barrierDistance,
+    safetyRatio,
+    isLong,
+    atr,
+    breakeven.frictionVsAtrPercent,
+    input.leverage,
+    setup.atrPercent ?? null
+  );
+
+  // Multi-scenario PnL simulation
+  const scenarios = generatePnLScenarios(
+    setup,
+    input,
+    certPrice,
+    suggestedCertificates,
+    totalInvestedEur,
+    breakeven.totalFrictionEur,
+    breakeven.pointsToBreakeven,
+    stopDistance,
+    potentialLossEur
+  );
+
+  let warningMessage: string | undefined;
+  if (!stressReport.canExecute) {
+    warningMessage = stressReport.criticalReasons.join(' | ');
+  } else if (stressReport.filterStatus === 'WARNING') {
+    warningMessage = stressReport.warningReasons.join(' | ');
+  }
+
+  const isSafe = stressReport.canExecute && isSafeBasic;
+
   return {
     entryPrice,
     stopLoss,
@@ -522,6 +933,53 @@ export function calculateKnockOutSafety(
     potentialLossEur,
     potentialGainT1Eur,
     potentialGainT2Eur,
+    breakeven,
+    scenarios,
+    stressReport,
+  };
+}
+
+export function createDefaultSafetyCheck(
+  accountCapital: number = 10000,
+  maxRiskPercent: number = 1.0
+): KnockOutSafetyCheck {
+  return {
+    entryPrice: 0,
+    stopLoss: 0,
+    barrierStrike: 0,
+    stopDistance: 0,
+    barrierDistance: 0,
+    safetyRatio: 0,
+    isSafe: false,
+    warningMessage: 'Livelli non disponibili.',
+    maxRiskEur: +(accountCapital * (maxRiskPercent / 100)).toFixed(2),
+    suggestedCertificates: 0,
+    totalInvestedEur: 0,
+    potentialLossEur: 0,
+    potentialGainT1Eur: 0,
+    potentialGainT2Eur: 0,
+    breakeven: {
+      spreadEur: 0.02,
+      brokerFeeEur: 1.0,
+      totalFrictionEur: 0,
+      underlyingBreakevenPrice: 0,
+      pointsToBreakeven: 0,
+      percentToBreakeven: 0,
+      frictionVsAtrPercent: 0,
+      frictionStatus: 'LOW',
+    },
+    scenarios: [],
+    stressReport: {
+      stressScore: 0,
+      filterStatus: 'CRITICAL_BLOCKED',
+      barrierVsAtrRatio: 0,
+      barrierDistancePoints: 0,
+      barrierSafetyRatio: 0,
+      criticalReasons: ['Setup non attivo'],
+      warningReasons: [],
+      passReasons: [],
+      canExecute: false,
+    },
   };
 }
 
@@ -529,4 +987,103 @@ function formatCompactNumber(num: number): string {
   if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
   if (num >= 1000) return (num / 1000).toFixed(0) + 'k';
   return num.toString();
+}
+
+export function calculateImpliedVolatilityMetrics(
+  quote: RawQuoteData | undefined | null
+): ImpliedVolatilityMetrics {
+  if (!quote) {
+    return {
+      impliedVol: 22.0,
+      avg30dVol: 22.0,
+      riskPremium: 0,
+      riskPremiumPercent: 0,
+      ivRank: 50,
+      regime: 'FAIR',
+      label: 'Neutro (Dati Iniziali)',
+      gaugePercent: 45,
+      implication: 'Dati di volatilità in caricamento dal feed di mercato.',
+    };
+  }
+
+  const p = quote.preMarketPrice ?? quote.currentPrice ?? quote.prevClose ?? 100;
+  const atr = quote.atr14 ?? (p > 0 ? p * 0.018 : 1.5);
+
+  // 1. Determine Historical 30d Average Volatility
+  let avg30d = quote.historicalVolatility30d ?? null;
+  if (avg30d == null || avg30d <= 0) {
+    // Statistically estimated 30d realized volatility from ATR(14)
+    avg30d = p > 0 ? +((atr / p) * Math.sqrt(252) * 100).toFixed(1) : 22.5;
+  }
+  avg30d = Math.max(8.0, Math.min(avg30d, 120.0));
+
+  // 2. Determine Implied Volatility (IV)
+  let iv = quote.impliedVolatility ?? null;
+  if (iv == null || iv <= 0) {
+    const rawGap = Math.abs(quote.gapPercent ?? 0);
+    const gapExp = rawGap * 1.35;
+    const rvolExp = (quote.rvol ?? 1) > 1.2 ? Math.min(((quote.rvol ?? 1) - 1) * 3.5, 12) : 0;
+    iv = +(avg30d * 1.05 + gapExp + rvolExp).toFixed(1);
+  }
+  iv = Math.max(9.0, Math.min(iv, 150.0));
+
+  // 3. Compute Risk Premium Spread & %
+  const riskPremium = +(iv - avg30d).toFixed(1);
+  const riskPremiumPercent = avg30d > 0 ? +((riskPremium / avg30d) * 100).toFixed(1) : 0;
+
+  // 4. Calculate IV Rank
+  let ivRank = quote.ivRank;
+  if (ivRank == null) {
+    const lowerBound = avg30d * 0.75;
+    const upperBound = Math.max(avg30d * 1.5, iv * 1.15);
+    ivRank = Math.min(
+      100,
+      Math.max(0, Math.round(((iv - lowerBound) / (upperBound - lowerBound)) * 100))
+    );
+  }
+
+  // 5. Gauge Position Percentage (0 to 100)
+  const normalizedGauge = Math.min(
+    100,
+    Math.max(0, Math.round(45 + riskPremiumPercent * 1.1))
+  );
+
+  // 6. Regime classification & tactical derivatives advice
+  let regime: 'COMPRESSED' | 'FAIR' | 'ELEVATED' | 'EXTREME' = 'FAIR';
+  let label = 'Premio Equo / Neutro';
+  let implication = '';
+
+  if (riskPremiumPercent < -5) {
+    regime = 'COMPRESSED';
+    label = 'Sconto Volatilità (IV < Media 30gg)';
+    implication =
+      'Volatilità implicita compressa rispetto alla media 30gg. Spread del market maker sui knock-out ridotto al minimo; favorevole a espansioni direzionali repentine.';
+  } else if (riskPremiumPercent <= 12) {
+    regime = 'FAIR';
+    label = 'Premio Equo / Bilanciato';
+    implication =
+      'Prezzatura in linea con la norma storica a 30 giorni. Spread equilibrato e attrito ordinario per il trading con certificati a leva intraday.';
+  } else if (riskPremiumPercent <= 32) {
+    regime = 'ELEVATED';
+    label = 'Premio al Rischio Elevato';
+    implication =
+      `Premio al rischio espanso (+${riskPremiumPercent}% rispetto alla media a 30 giorni). I market maker allargano lo spread bid-ask del knock-out: gestire l'uscita a target rigorosamente.`;
+  } else {
+    regime = 'EXTREME';
+    label = 'Rischio Estremo / Volatilità Espansa';
+    implication =
+      `Sovrapprezzo estremo (+${riskPremiumPercent}% vs media 30gg). Alto rischio di contrazione della volatilità (IV crush) e spread penalizzante; preferire barriere più conservative.`;
+  }
+
+  return {
+    impliedVol: iv,
+    avg30dVol: avg30d,
+    riskPremium,
+    riskPremiumPercent,
+    ivRank,
+    regime,
+    label,
+    gaugePercent: normalizedGauge,
+    implication,
+  };
 }

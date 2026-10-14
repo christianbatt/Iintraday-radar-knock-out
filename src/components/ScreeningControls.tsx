@@ -8,6 +8,8 @@ import {
   Database,
   Radio,
   Globe,
+  Sliders,
+  Filter,
 } from 'lucide-react';
 
 interface ScreeningControlsProps {
@@ -22,6 +24,8 @@ interface ScreeningControlsProps {
   isAutoRefresh: boolean;
   onToggleAutoRefresh: () => void;
   autoRefreshCountdown: number;
+  rsiFilterActive: boolean;
+  onToggleRsiFilter: () => void;
 }
 
 export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
@@ -36,6 +40,8 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
   isAutoRefresh,
   onToggleAutoRefresh,
   autoRefreshCountdown,
+  rsiFilterActive,
+  onToggleRsiFilter,
 }) => {
   const euFutures = futures?.europe;
   const usFutures = futures?.usa;
@@ -196,11 +202,36 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
 
         {/* Actions & Auto-refresh */}
         <div className="flex flex-col items-start lg:items-end justify-center gap-2">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* RSI Filter Toggle Button */}
+            <button
+              onClick={onToggleRsiFilter}
+              className={`flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                rsiFilterActive
+                  ? 'bg-indigo-950/80 border-indigo-500 text-indigo-200 shadow-sm shadow-indigo-950/50 ring-1 ring-indigo-500/40'
+                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+              }`}
+              title="Filtro RSI: esclude i titoli in ipercomprato (RSI ≥ 70) o ipervenduto (RSI ≤ 30) per evitare pullback ed esaurimento momentum"
+            >
+              <Filter className={`w-3.5 h-3.5 ${rsiFilterActive ? 'text-indigo-400' : 'text-slate-500'}`} />
+              <div className="flex items-center gap-1.5">
+                <span>Filtro RSI</span>
+                <span
+                  className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${
+                    rsiFilterActive
+                      ? 'bg-indigo-500/30 text-indigo-200 border border-indigo-400/40'
+                      : 'bg-slate-800 text-slate-500'
+                  }`}
+                >
+                  {rsiFilterActive ? 'ATTIVO (30–70)' : 'OFF'}
+                </span>
+              </div>
+            </button>
+
             {/* Auto-Refresh Toggle Button */}
             <button
               onClick={onToggleAutoRefresh}
-              className={`flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-xs font-semibold border transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
                 isAutoRefresh
                   ? 'bg-emerald-950/70 border-emerald-600 text-emerald-300 shadow-sm'
                   : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
@@ -215,7 +246,7 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
             <button
               onClick={onRunScan}
               disabled={isScanning || circuitBreakerActive}
-              className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs font-bold shadow-lg transition-all ${
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs font-bold shadow-lg transition-all cursor-pointer ${
                 circuitBreakerActive
                   ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
                   : isScanning
@@ -237,10 +268,15 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
             </button>
           </div>
 
-          <div className="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400 font-mono">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
             <Database className="w-3 h-3 text-emerald-400" />
             <span>Feed Live: Tick 15s • Bypass CDN</span>
+            {rsiFilterActive && (
+              <span className="text-indigo-400 font-semibold">
+                • Esclusione Ipercomprato/Ipervenduto Attiva
+              </span>
+            )}
             {cachedAt && <span>• Ultimo: {new Date(cachedAt).toLocaleTimeString('it-IT')}</span>}
           </div>
         </div>

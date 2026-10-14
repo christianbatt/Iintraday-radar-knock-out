@@ -5,7 +5,8 @@ import {
   KnockOutSafetyCheck,
   ScoredCandidate,
 } from '../types/radar';
-import { calculateKnockOutSafety } from '../utils/calculator';
+import { calculateKnockOutSafety, createDefaultSafetyCheck } from '../utils/calculator';
+import { ImpliedVolatilityGauge } from './ImpliedVolatilityGauge';
 import {
   ShieldAlert,
   ShieldCheck,
@@ -22,6 +23,12 @@ import {
   AlertTriangle,
   Globe,
   TrendingUp,
+  Scale,
+  Layers,
+  Lock,
+  ChevronDown,
+  ChevronUp,
+  Info,
 } from 'lucide-react';
 
 interface SingleMarketHeroCardProps {
@@ -74,8 +81,12 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
   const [leverage, setLeverage] = useState<number>(10);
   const [certPrice, setCertPrice] = useState<number>(2.5);
   const [maxRiskPercent, setMaxRiskPercent] = useState<number>(1.0);
+  const [spreadEur, setSpreadEur] = useState<number>(0.02);
+  const [brokerFeeEur, setBrokerFeeEur] = useState<number>(1.0);
   const [tradeSaved, setTradeSaved] = useState<boolean>(false);
   const [showKoCalculator, setShowKoCalculator] = useState<boolean>(false);
+  const [showScenarios, setShowScenarios] = useState<boolean>(false);
+  const [showFrictionExplainer, setShowFrictionExplainer] = useState<boolean>(false);
 
   // Sync default barrier when setup updates
   React.useEffect(() => {
@@ -96,28 +107,20 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
     certificatePrice: certPrice,
     accountCapital,
     maxRiskPercent,
+    spreadEur,
+    brokerFeeEur,
   };
 
   const koSafety: KnockOutSafetyCheck = setup
     ? calculateKnockOutSafety(setup, koInput)
-    : {
-        entryPrice: 0,
-        stopLoss: 0,
-        barrierStrike: 0,
-        stopDistance: 0,
-        barrierDistance: 0,
-        safetyRatio: 0,
-        isSafe: false,
-        maxRiskEur: 0,
-        suggestedCertificates: 0,
-        totalInvestedEur: 0,
-        potentialLossEur: 0,
-        potentialGainT1Eur: 0,
-        potentialGainT2Eur: 0,
-      };
+    : createDefaultSafetyCheck(accountCapital, maxRiskPercent);
+
+  const dynamicBreakeven = koSafety.breakeven || setup?.dynamicBreakeven;
+  const stressReport = koSafety.stressReport;
+  const isBlockedByStress = stressReport && stressReport.filterStatus === 'CRITICAL_BLOCKED';
 
   const handleLogTrade = () => {
-    if (circuitBreakerActive) {
+    if (circuitBreakerActive || isBlockedByStress) {
       return;
     }
     if (!setup || isNoTrade) return;
@@ -268,6 +271,13 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
                   `I titoli monitorati per ${marketLabel} non hanno raggiunto il punteggio minimo (score ≥ 55) o mancano di coerenza tra gap, RVOL e futures. Preservazione del capitale: nessun trade consentito.`}
               </p>
             </div>
+
+            {quote?.ticker && (
+              <div className="my-2">
+                <ImpliedVolatilityGauge quote={quote} compact />
+              </div>
+            )}
+
             <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500 font-mono">
               <span>Orario limite: {setup?.cutoffTime || '11:30 CET'}</span>
               <span>Rigorosa selezione zero-errore umano</span>
@@ -331,6 +341,105 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
               </div>
             </div>
 
+            {/* Dynamic Breakeven & Execution Friction Strip */}
+            {dynamicBreakeven && (
+              <div className="bg-slate-950/80 border border-slate-800/90 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 font-mono">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0">
+                    <Scale className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[11px] font-bold text-slate-200 uppercase tracking-wide">
+                        Breakeven Dinamico (Post-Attrito)
+                      </span>
+                      <span
+                        className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${
+                          dynamicBreakeven.frictionStatus === 'LOW'
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                            : dynamicBreakeven.frictionStatus === 'MODERATE'
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                        }`}
+                      >
+                        {dynamicBreakeven.frictionStatus === 'LOW'
+                          ? 'Attrito Basso'
+                          : dynamicBreakeven.frictionStatus === 'MODERATE'
+                          ? 'Attrito Medio'
+                          : 'Attrito Critico'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowFrictionExplainer(!showFrictionExplainer)}
+                        className="text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
+                        title="Spiegazione Attrito & Breakeven"
+                      >
+                        <Info className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <div className="text-xs text-slate-400 mt-0.5">
+                      Pareggio sottostante reale: <strong className="text-indigo-300 font-bold">{dynamicBreakeven.underlyingBreakevenPrice.toFixed(2)} {quote?.currency}</strong>
+                      <span className="text-slate-500 ml-1.5">
+                        ({setup.direction === 'LONG' ? '+' : '-'}{dynamicBreakeven.pointsToBreakeven.toFixed(2)} pt / {dynamicBreakeven.percentToBreakeven.toFixed(2)}%)
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4 text-xs shrink-0 self-end sm:self-center border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-800/80 w-full sm:w-auto justify-between sm:justify-end">
+                  <div>
+                    <span className="text-[10px] text-slate-500 block">Costo Totale A/R</span>
+                    <span className="font-bold text-slate-200 tabular-nums">{dynamicBreakeven.totalFrictionEur.toFixed(2)} €</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 block">Incidenza ATR(14)</span>
+                    <span
+                      className={`font-bold tabular-nums ${
+                        dynamicBreakeven.frictionVsAtrPercent > 20 ? 'text-amber-400' : 'text-emerald-400'
+                      }`}
+                    >
+                      {dynamicBreakeven.frictionVsAtrPercent}% ATR
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Explainer Drawer for Dynamic Breakeven */}
+            {showFrictionExplainer && dynamicBreakeven && (
+              <div className="bg-indigo-950/20 border border-indigo-800/40 rounded-xl p-3 text-xs font-mono text-slate-300 space-y-1.5 animate-fadeIn">
+                <div className="flex items-center justify-between text-indigo-300 font-bold text-[11px]">
+                  <span>Come Funziona il Breakeven Dinamico sui Derivati Knock-Out</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowFrictionExplainer(false)}
+                    className="text-slate-400 hover:text-white cursor-pointer text-sm"
+                  >
+                    ×
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Nei certificati a leva (es. Trade Republic/Société Générale), il punto di pareggio reale non coincide con il prezzo d'ingresso del sottostante, ma incorpora:
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[11px]">
+                  <div className="bg-slate-900/80 p-2 rounded border border-slate-800">
+                    <span className="text-slate-400 block">1. Commissioni Broker A/R:</span>
+                    <span className="text-white font-bold">{(dynamicBreakeven.brokerFeeEur * 2).toFixed(2)} €</span> (2 ordini: acquisto + vendita)
+                  </div>
+                  <div className="bg-slate-900/80 p-2 rounded border border-slate-800">
+                    <span className="text-slate-400 block">2. Spread Bid/Ask Emittente:</span>
+                    <span className="text-white font-bold">{(dynamicBreakeven.spreadEur * koSafety.suggestedCertificates).toFixed(2)} €</span> ({koSafety.suggestedCertificates} quote × {dynamicBreakeven.spreadEur} €)
+                  </div>
+                </div>
+                <p className="text-[10px] text-indigo-300/80 pt-1">
+                  Il sottostante deve raggiungere <strong>{dynamicBreakeven.underlyingBreakevenPrice.toFixed(2)} {quote?.currency}</strong> ({dynamicBreakeven.pointsToBreakeven.toFixed(2)} pt di movimento) solo per compensare {dynamicBreakeven.totalFrictionEur.toFixed(2)} € di attrito complessivo prima di iniziare ad accumulare utile netto.
+                </p>
+              </div>
+            )}
+
+            {/* Implied Volatility (IV) Gauge vs 30-Day Average */}
+            <ImpliedVolatilityGauge quote={quote} />
+
             {/* ATR Volatility & Recommended Trade Republic KO Barrier */}
             <div className="bg-slate-950/90 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
               <div className="flex items-center gap-2">
@@ -346,11 +455,30 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center gap-1.5 text-sky-400">
-                <ShieldCheck className="w-4 h-4 text-sky-400 shrink-0" />
-                <span>
-                  Barriera KO Sicura: <strong className="text-white">{setup.suggestedKoBarrier?.toFixed(2)}</strong> (&gt;2.5x stop)
-                </span>
+              <div className="flex items-center gap-3">
+                {quote?.rsi14 != null && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-400">RSI(14):</span>
+                    <span
+                      className={`font-bold px-1.5 py-0.5 rounded text-[11px] ${
+                        quote.rsi14 >= 70
+                          ? 'bg-rose-950 text-rose-300 border border-rose-800'
+                          : quote.rsi14 <= 30
+                          ? 'bg-indigo-950 text-indigo-300 border border-indigo-800'
+                          : 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                      }`}
+                    >
+                      {quote.rsi14} {quote.rsi14 >= 70 ? '(Ipercomprato)' : quote.rsi14 <= 30 ? '(Ipervenduto)' : '(Sano)'}
+                    </span>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-1.5 text-sky-400">
+                  <ShieldCheck className="w-4 h-4 text-sky-400 shrink-0" />
+                  <span>
+                    Barriera KO Sicura: <strong className="text-white">{setup.suggestedKoBarrier?.toFixed(2)}</strong> (&gt;2.5x stop)
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -371,7 +499,7 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
               >
                 <div className="flex items-center gap-2">
                   <Sliders className="w-3.5 h-3.5 text-sky-400" />
-                  <span>Calcolatore Rischio KO Trade Republic (1% Capitale)</span>
+                  <span>Calcolatore Rischio & Breakeven Derivato (1% Capitale)</span>
                 </div>
                 <span className="text-sky-400 text-[11px] font-semibold">
                   {showKoCalculator ? 'Nascondi ▲' : 'Configura & Quote ▼'}
@@ -380,7 +508,8 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
 
               {showKoCalculator && (
                 <div className="mt-3 p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3 font-mono text-xs">
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {/* Parameter Inputs Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
                     <div>
                       <label className="text-[10px] text-slate-400 block mb-1">
                         Strike Barriera KO
@@ -402,22 +531,48 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
                         onChange={(e) => setLeverage(parseInt(e.target.value, 10))}
                         className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white"
                       >
-                        <option value={5}>5x (Bassa leva)</option>
+                        <option value={5}>5x (Bassa)</option>
                         <option value={8}>8x</option>
                         <option value={10}>10x (Standard)</option>
                         <option value={15}>15x (Dinamica)</option>
-                        <option value={20}>20x (Alta leva)</option>
+                        <option value={20}>20x (Alta)</option>
                       </select>
                     </div>
-                    <div className="col-span-2 sm:col-span-1">
+                    <div>
                       <label className="text-[10px] text-slate-400 block mb-1">
-                        Prezzo Certificato (€)
+                        Prezzo Cert. (€)
                       </label>
                       <input
                         type="number"
                         step="0.1"
                         value={certPrice || ''}
                         onChange={(e) => setCertPrice(parseFloat(e.target.value) || 1)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-1">
+                        Spread (€/pz)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={spreadEur}
+                        onChange={(e) => setSpreadEur(parseFloat(e.target.value) || 0)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-1">
+                        Broker Fee (€/ord)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        value={brokerFeeEur}
+                        onChange={(e) => setBrokerFeeEur(parseFloat(e.target.value) || 0)}
                         className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white"
                       />
                     </div>
@@ -443,8 +598,225 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
                       </span>
                     </div>
                     <span className="font-bold">
-                      Quote: {koSafety.suggestedCertificates} pz
+                      Quote: {koSafety.suggestedCertificates} pz ({koSafety.totalInvestedEur} €)
                     </span>
+                  </div>
+
+                  {/* Dynamic Breakeven Breakdown Inside Calculator */}
+                  {dynamicBreakeven && (
+                    <div className="p-3 rounded-lg bg-slate-900/90 border border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between text-[11px] font-bold">
+                        <div className="flex items-center gap-1.5 text-indigo-300">
+                          <Scale className="w-3.5 h-3.5" />
+                          <span>Audit Attrito di Esecuzione & Pareggio Netto</span>
+                        </div>
+                        <span className="text-slate-400">
+                          Totale Attrito A/R: <strong className="text-white">{dynamicBreakeven.totalFrictionEur.toFixed(2)} €</strong>
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-[10px] pt-1">
+                        <div className="bg-slate-950 p-2 rounded border border-slate-800/80">
+                          <span className="text-slate-400 block">Commissioni Broker (A/R)</span>
+                          <span className="font-bold text-white text-xs">{((brokerFeeEur || 0) * 2).toFixed(2)} €</span>
+                        </div>
+                        <div className="bg-slate-950 p-2 rounded border border-slate-800/80">
+                          <span className="text-slate-400 block">Spread Totale Emittente</span>
+                          <span className="font-bold text-white text-xs">{((spreadEur || 0) * koSafety.suggestedCertificates).toFixed(2)} €</span>
+                        </div>
+                        <div className="bg-slate-950 p-2 rounded border border-slate-800/80">
+                          <span className="text-slate-400 block">Δ Sottostante a Zero</span>
+                          <span className="font-bold text-indigo-300 text-xs">+{dynamicBreakeven.pointsToBreakeven.toFixed(2)} pt</span>
+                        </div>
+                        <div className="bg-slate-950 p-2 rounded border border-slate-800/80">
+                          <span className="text-slate-400 block">Quota ATR Assorbita</span>
+                          <span
+                            className={`font-bold text-xs ${
+                              dynamicBreakeven.frictionVsAtrPercent > 20 ? 'text-amber-400' : 'text-emerald-400'
+                            }`}
+                          >
+                            {dynamicBreakeven.frictionVsAtrPercent}%
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Hybrid Stress Filter Banner */}
+                  {stressReport && (
+                    <div
+                      className={`p-3 rounded-lg border text-xs space-y-1.5 ${
+                        stressReport.filterStatus === 'CRITICAL_BLOCKED'
+                          ? 'bg-rose-950/40 border-rose-800 text-rose-200'
+                          : stressReport.filterStatus === 'WARNING'
+                          ? 'bg-amber-950/40 border-amber-800 text-amber-200'
+                          : 'bg-emerald-950/30 border-emerald-800/60 text-emerald-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between font-bold text-[11px]">
+                        <div className="flex items-center gap-1.5">
+                          {stressReport.filterStatus === 'CRITICAL_BLOCKED' ? (
+                            <Lock className="w-3.5 h-3.5 text-rose-400" />
+                          ) : stressReport.filterStatus === 'WARNING' ? (
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                          ) : (
+                            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                          )}
+                          <span>
+                            Stress Test Derivato: {stressReport.stressScore}/100 ({
+                              stressReport.filterStatus === 'CRITICAL_BLOCKED'
+                                ? 'SETUP BLOCCATO'
+                                : stressReport.filterStatus === 'WARNING'
+                                ? 'ATTENZIONE RISCHIO'
+                                : 'VERIFICATO & OTTIMALE'
+                            })
+                          </span>
+                        </div>
+                        <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-black/40">
+                          Buffer: {stressReport.barrierSafetyRatio}x stop · {stressReport.barrierVsAtrRatio}x ATR
+                        </span>
+                      </div>
+
+                      {stressReport.criticalReasons.map((r, i) => (
+                        <div key={i} className="text-[11px] text-rose-300 flex items-start gap-1.5">
+                          <span className="text-rose-400 font-bold shrink-0">✕</span>
+                          <span>{r}</span>
+                        </div>
+                      ))}
+
+                      {stressReport.warningReasons.map((r, i) => (
+                        <div key={i} className="text-[11px] text-amber-300 flex items-start gap-1.5">
+                          <span className="text-amber-400 font-bold shrink-0">⚠</span>
+                          <span>{r}</span>
+                        </div>
+                      ))}
+
+                      {stressReport.passReasons.length > 0 && stressReport.criticalReasons.length === 0 && (
+                        <div className="text-[10px] text-emerald-300 flex items-center gap-1.5">
+                          <span>✓ {stressReport.passReasons[0]}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Collapsible PnL Simulation Section */}
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowScenarios(!showScenarios)}
+                      className="w-full py-1.5 px-2.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 text-[11px] font-mono flex items-center justify-between transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <Layers className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Simulazione Scenari PnL con Leva ({koSafety.scenarios?.length || 5} Scenari)</span>
+                      </div>
+                      <span className="text-indigo-400 text-[10px] font-bold">
+                        {showScenarios ? 'Nascondi ▲' : 'Espandi Tabella ▼'}
+                      </span>
+                    </button>
+
+                    {showScenarios && koSafety.scenarios && koSafety.scenarios.length > 0 && (
+                      <div className="mt-2 overflow-x-auto rounded-lg border border-slate-800">
+                        <table className="w-full text-left text-[11px] font-mono">
+                          <thead className="bg-slate-900/90 text-slate-400 uppercase text-[9px] border-b border-slate-800">
+                            <tr>
+                              <th className="py-2 px-2.5">Scenario</th>
+                              <th className="py-2 px-2">Sottostante</th>
+                              <th className="py-2 px-2">Certificato</th>
+                              <th className="py-2 px-2 text-right">PnL Netto</th>
+                              <th className="py-2 px-2 text-right">R-Mult</th>
+                              <th className="py-2 px-2.5 text-right">ROI %</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800/60 bg-slate-950/60">
+                            {koSafety.scenarios.map((sc) => {
+                              const isPositive = sc.netPnlEur > 0;
+                              const isZero = sc.netPnlEur === 0;
+                              return (
+                                <tr
+                                  key={sc.id}
+                                  className={`hover:bg-slate-900/40 transition-colors ${
+                                    sc.isBreakeven
+                                      ? 'bg-indigo-950/20'
+                                      : sc.isStop
+                                      ? 'bg-rose-950/20'
+                                      : sc.isKnockOut
+                                      ? 'bg-rose-950/30'
+                                      : ''
+                                  }`}
+                                >
+                                  <td className="py-2 px-2.5 font-semibold text-slate-200">
+                                    <div className="flex items-center gap-1.5">
+                                      {sc.isKnockOut && <span className="text-rose-500 font-bold">💥</span>}
+                                      {sc.isStop && <span className="text-rose-400 font-bold">🛑</span>}
+                                      {sc.isBreakeven && <span className="text-indigo-400 font-bold">⚖️</span>}
+                                      {!sc.isKnockOut && !sc.isStop && !sc.isBreakeven && (
+                                        <span className="text-emerald-400 font-bold">🎯</span>
+                                      )}
+                                      <span>{sc.label}</span>
+                                    </div>
+                                    <div className="text-[9px] text-slate-400 font-normal">{sc.notes}</div>
+                                  </td>
+                                  <td className="py-2 px-2 whitespace-nowrap text-slate-300">
+                                    {sc.underlyingPrice.toFixed(2)} {quote?.currency}
+                                    <span
+                                      className={`text-[10px] ml-1 ${
+                                        sc.underlyingChangePercent > 0
+                                          ? 'text-emerald-400'
+                                          : sc.underlyingChangePercent < 0
+                                          ? 'text-rose-400'
+                                          : 'text-slate-400'
+                                      }`}
+                                    >
+                                      ({sc.underlyingChangePercent > 0 ? '+' : ''}{sc.underlyingChangePercent}%)
+                                    </span>
+                                  </td>
+                                  <td className="py-2 px-2 whitespace-nowrap text-slate-300">
+                                    {sc.certEstimatedPrice.toFixed(2)} €
+                                    <span
+                                      className={`text-[10px] ml-1 ${
+                                        sc.certChangePercent > 0
+                                          ? 'text-emerald-400'
+                                          : sc.certChangePercent < 0
+                                          ? 'text-rose-400'
+                                          : 'text-slate-400'
+                                      }`}
+                                    >
+                                      ({sc.certChangePercent > 0 ? '+' : ''}{sc.certChangePercent}%)
+                                    </span>
+                                  </td>
+                                  <td
+                                    className={`py-2 px-2 text-right font-bold whitespace-nowrap ${
+                                      isZero
+                                        ? 'text-indigo-300'
+                                        : isPositive
+                                        ? 'text-emerald-400'
+                                        : 'text-rose-400'
+                                    }`}
+                                  >
+                                    {isPositive ? '+' : ''}{sc.netPnlEur.toFixed(2)} €
+                                  </td>
+                                  <td className="py-2 px-2 text-right whitespace-nowrap text-slate-300">
+                                    {sc.rMultiple > 0 ? `+${sc.rMultiple}R` : `${sc.rMultiple}R`}
+                                  </td>
+                                  <td
+                                    className={`py-2 px-2.5 text-right font-bold whitespace-nowrap ${
+                                      isZero
+                                        ? 'text-indigo-300'
+                                        : isPositive
+                                        ? 'text-emerald-400'
+                                        : 'text-rose-400'
+                                    }`}
+                                  >
+                                    {isPositive ? '+' : ''}{sc.capitalRoiPercent}%
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
 
                   {/* Loss vs Gain overview */}
@@ -454,11 +826,11 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
                       <span className="text-rose-400 font-bold">-{koSafety.maxRiskEur} €</span>
                     </div>
                     <div>
-                      <span className="text-slate-400 block">Guadagno T1</span>
+                      <span className="text-slate-400 block">Guadagno T1 Netto</span>
                       <span className="text-emerald-400 font-bold">+{koSafety.potentialGainT1Eur} €</span>
                     </div>
                     <div>
-                      <span className="text-slate-400 block">Guadagno T2</span>
+                      <span className="text-slate-400 block">Guadagno T2 Netto</span>
                       <span className="text-emerald-300 font-bold">+{koSafety.potentialGainT2Eur} €</span>
                     </div>
                   </div>
@@ -485,14 +857,21 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
             <button
               type="button"
               onClick={handleLogTrade}
-              disabled={circuitBreakerActive}
+              disabled={circuitBreakerActive || isBlockedByStress}
               className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold font-mono flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer ${
-                tradeSaved
+                isBlockedByStress
+                  ? 'bg-rose-950/60 text-rose-300 border border-rose-800/80 cursor-not-allowed opacity-80'
+                  : tradeSaved
                   ? 'bg-emerald-500 text-slate-950'
                   : 'bg-emerald-600 hover:bg-emerald-500 text-white active:scale-95'
               }`}
             >
-              {tradeSaved ? (
+              {isBlockedByStress ? (
+                <>
+                  <Lock className="w-4 h-4 text-rose-400" />
+                  <span>Bloccato da Stress Test Derivati</span>
+                </>
+              ) : tradeSaved ? (
                 <>
                   <CheckCircle2 className="w-4 h-4" />
                   <span>Registrato a Giornale!</span>

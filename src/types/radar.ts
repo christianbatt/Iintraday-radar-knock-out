@@ -22,8 +22,24 @@ export interface RawQuoteData {
   atr14: number | null;
   gapPercent: number | null;
   rvol: number | null;
+  impliedVolatility?: number | null;
+  historicalVolatility30d?: number | null;
+  ivRank?: number | null;
+  rsi14?: number | null;
   timestamp: string;
   source: string;
+}
+
+export interface ImpliedVolatilityMetrics {
+  impliedVol: number; // e.g. 29.4 (%)
+  avg30dVol: number; // e.g. 22.1 (%)
+  riskPremium: number; // impliedVol - avg30dVol (e.g. +7.3%)
+  riskPremiumPercent: number; // (impliedVol - avg30dVol) / avg30dVol * 100
+  ivRank: number; // 0 - 100
+  regime: 'COMPRESSED' | 'FAIR' | 'ELEVATED' | 'EXTREME';
+  label: string;
+  gaugePercent: number; // 0 - 100 mapped for needle/arc
+  implication: string;
 }
 
 export interface ScoreBreakdown {
@@ -88,6 +104,49 @@ export interface ExecutionSetup {
   invalidationConditions: string[];
   cutoffTime: string;
   catalystAnalysis: GeminiCatalystAnalysis | null;
+  dynamicBreakeven?: DynamicBreakevenInfo | null;
+  stressReport?: DerivativeStressReport | null;
+  scenarios?: PnLScenario[] | null;
+}
+
+export interface PnLScenario {
+  id: string;
+  label: string;
+  rMultiple: number;
+  underlyingPrice: number;
+  underlyingChangePercent: number;
+  certEstimatedPrice: number;
+  certChangePercent: number;
+  grossPnlEur: number;
+  netPnlEur: number;
+  capitalRoiPercent: number;
+  isBreakeven?: boolean;
+  isStop?: boolean;
+  isKnockOut?: boolean;
+  notes: string;
+}
+
+export interface DynamicBreakevenInfo {
+  spreadEur: number;
+  brokerFeeEur: number;
+  totalFrictionEur: number;
+  underlyingBreakevenPrice: number;
+  pointsToBreakeven: number;
+  percentToBreakeven: number;
+  frictionVsAtrPercent: number; // friction points / ATR(14) * 100
+  frictionStatus: 'LOW' | 'MODERATE' | 'HIGH' | 'CRITICAL';
+}
+
+export interface DerivativeStressReport {
+  stressScore: number; // 0-100 (100 is optimal)
+  filterStatus: 'PASS' | 'WARNING' | 'CRITICAL_BLOCKED';
+  barrierVsAtrRatio: number;
+  barrierDistancePoints: number;
+  barrierSafetyRatio: number;
+  criticalReasons: string[];
+  warningReasons: string[];
+  passReasons: string[];
+  canExecute: boolean;
 }
 
 export interface KnockOutCalculatorInput {
@@ -96,6 +155,8 @@ export interface KnockOutCalculatorInput {
   certificatePrice?: number;
   accountCapital: number;
   maxRiskPercent: number; // default 1%
+  spreadEur?: number;
+  brokerFeeEur?: number;
 }
 
 export interface KnockOutSafetyCheck {
@@ -113,6 +174,9 @@ export interface KnockOutSafetyCheck {
   potentialLossEur: number;
   potentialGainT1Eur: number;
   potentialGainT2Eur: number;
+  breakeven: DynamicBreakevenInfo;
+  scenarios: PnLScenario[];
+  stressReport: DerivativeStressReport;
 }
 
 export interface TradeJournalEntry {

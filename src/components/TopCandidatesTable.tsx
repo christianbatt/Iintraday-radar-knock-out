@@ -32,7 +32,7 @@ interface TopCandidatesTableProps {
   topUS?: ScoredCandidate | null;
 }
 
-type RadarFilter = 'ALL' | 'EU' | 'US' | 'QUALIFIED' | 'HIGH_RVOL' | 'HIGH_VOL';
+type RadarFilter = 'ALL' | 'EU' | 'US' | 'QUALIFIED' | 'HIGH_RVOL' | 'HIGH_VOL' | 'RSI_HEALTHY';
 
 export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
   candidates,
@@ -68,6 +68,9 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
         const refPrice = q.preMarketPrice ?? q.currentPrice ?? 0;
         const atrPct = q.atr14 && refPrice > 0 ? (q.atr14 / refPrice) * 100 : 0;
         return atrPct >= 1.5;
+      }
+      if (activeFilter === 'RSI_HEALTHY') {
+        return q.rsi14 != null && q.rsi14 > 30 && q.rsi14 < 70;
       }
       return true;
     });
@@ -201,6 +204,20 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
         >
           <span>🔥 Alta Volatilità (ATR &gt;1.5%)</span>
         </button>
+
+        <button
+          onClick={() => setActiveFilter('RSI_HEALTHY')}
+          className={`px-3 py-1 rounded-lg text-xs font-mono font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
+            activeFilter === 'RSI_HEALTHY'
+              ? 'bg-indigo-600 text-white'
+              : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
+          }`}
+        >
+          <span>⚖️ RSI Sano (30–70)</span>
+          <span className="text-[10px] opacity-75">
+            ({candidates.filter((c) => c.quote.rsi14 != null && c.quote.rsi14 > 30 && c.quote.rsi14 < 70).length})
+          </span>
+        </button>
       </div>
 
       {/* 3. High-Fidelity Table */}
@@ -213,7 +230,7 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
               <th className="py-3 px-3 text-right">Prezzo Live</th>
               <th className="py-3 px-3 text-right">Chiusura Ieri</th>
               <th className="py-3 px-3 text-right">Gap %</th>
-              <th className="py-3 px-3 text-right">RVOL (20gg)</th>
+              <th className="py-3 px-3 text-right">RVOL / RSI(14)</th>
               {/* ATR & Volatility Column */}
               <th className="py-3 px-3 text-right bg-slate-900/60 border-x border-slate-800">
                 <div className="flex flex-col items-end">
@@ -345,23 +362,46 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
                       )}
                     </td>
 
-                    {/* RVOL */}
+                    {/* RVOL / RSI(14) */}
                     <td className="py-3 px-3 text-right">
-                      {q.rvol != null ? (
-                        <span
-                          className={`font-semibold tabular-nums ${
-                            q.rvol >= 1.5
-                              ? 'text-purple-400 font-bold'
-                              : q.rvol >= 1.1
-                              ? 'text-slate-200'
-                              : 'text-slate-500'
-                          }`}
-                        >
-                          {q.rvol.toFixed(2)}x
-                        </span>
-                      ) : (
-                        <span className="text-slate-600">nd</span>
-                      )}
+                      <div className="flex flex-col items-end gap-1">
+                        {q.rvol != null ? (
+                          <span
+                            className={`font-semibold tabular-nums ${
+                              q.rvol >= 1.5
+                                ? 'text-purple-400 font-bold'
+                                : q.rvol >= 1.1
+                                ? 'text-slate-200'
+                                : 'text-slate-500'
+                            }`}
+                          >
+                            {q.rvol.toFixed(2)}x
+                          </span>
+                        ) : (
+                          <span className="text-slate-600">nd</span>
+                        )}
+
+                        {q.rsi14 != null ? (
+                          <span
+                            className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold tracking-tight ${
+                              q.rsi14 >= 70
+                                ? 'bg-rose-950/90 text-rose-300 border border-rose-800'
+                                : q.rsi14 <= 30
+                                ? 'bg-indigo-950/90 text-indigo-300 border border-indigo-800'
+                                : 'bg-slate-800/90 text-slate-300 border border-slate-700/60'
+                            }`}
+                            title={`RSI(14): ${q.rsi14} ${
+                              q.rsi14 >= 70
+                                ? '(Ipercomprato ≥70: rischio esaurimento)'
+                                : q.rsi14 <= 30
+                                ? '(Ipervenduto ≤30: rischio rimbalzo)'
+                                : '(Neutro/Espansione 30-70)'
+                            }`}
+                          >
+                            RSI {q.rsi14}
+                          </span>
+                        ) : null}
+                      </div>
                     </td>
 
                     {/* ATR Column with calibration button */}

@@ -72,6 +72,7 @@ export default function App() {
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [cachedAt, setCachedAt] = useState<string | undefined>(undefined);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [rsiFilterActive, setRsiFilterActive] = useState<boolean>(false);
 
   // 4. News & Catalyst State
   const [newsCache, setNewsCache] = useState<Record<string, NewsItem[]>>({});
@@ -225,7 +226,7 @@ export default function App() {
       const futuresMapping = { EU: euChange, US: usChange };
 
       // 3. Dual-Market Ranking: Top 1 Europe, Top 1 USA, and All Ranked
-      const dual = getDualTopCandidates(rawQuotes, futuresMapping);
+      const dual = getDualTopCandidates(rawQuotes, futuresMapping, { rsiFilterActive });
 
       setTopCandidateEU(dual.topEU);
       setTopCandidateUS(dual.topUS);
@@ -251,7 +252,35 @@ export default function App() {
     } finally {
       setIsScanning(false);
     }
-  }, [underlyings, currentSession, futures]);
+  }, [underlyings, currentSession, futures, rsiFilterActive]);
+
+  // Re-rank instantly when RSI Filter is toggled
+  useEffect(() => {
+    if (quotes.length === 0) return;
+    const activeFut = futures;
+    const euChange = activeFut?.europe?.dax?.changePercent ?? (activeFut?.europe?.eurostoxx?.changePercent ?? 0);
+    const usChange = activeFut?.usa?.sp500?.changePercent ?? (activeFut?.usa?.nasdaq?.changePercent ?? 0);
+    const futuresMapping = { EU: euChange, US: usChange };
+
+    const dual = getDualTopCandidates(quotes, futuresMapping, { rsiFilterActive });
+    setTopCandidateEU(dual.topEU);
+    setTopCandidateUS(dual.topUS);
+    setTopCandidates(dual.allRanked);
+
+    if (currentSession === 'US') {
+      setSelectedCandidate(dual.topUS || dual.topEU);
+    } else {
+      setSelectedCandidate(dual.topEU || dual.topUS);
+    }
+
+    Promise.all([
+      resolveCandidateCatalyst(dual.topEU, activeFut?.europe),
+      resolveCandidateCatalyst(dual.topUS, activeFut?.usa),
+    ]).then(([catEU, catUS]) => {
+      setSetupEU(buildExecutionSetup(dual.topEU, catEU, 'EU'));
+      setSetupUS(buildExecutionSetup(dual.topUS, catUS, 'US'));
+    });
+  }, [rsiFilterActive]);
 
   // Auto-refresh interval (Real-time live monitoring)
   useEffect(() => {
@@ -463,6 +492,8 @@ export default function App() {
           isAutoRefresh={isAutoRefresh}
           onToggleAutoRefresh={() => setIsAutoRefresh(!isAutoRefresh)}
           autoRefreshCountdown={autoRefreshCountdown}
+          rsiFilterActive={rsiFilterActive}
+          onToggleRsiFilter={() => setRsiFilterActive((prev) => !prev)}
         />
 
         {/* 5. Dual Hero Execution Cards: Affiancate Top EU e Top USA */}

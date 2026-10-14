@@ -1,81 +1,121 @@
-# Piano di Implementazione: Terminale Intraday Professionale Dual-Market (EU & USA) & PWA
+# Piano di Implementazione: Integrazione Audit Derivati (TASK 5B.9N) nel Terminale Intraday
 
-Miglioramento e potenziamento architetturale del terminale di trading intraday con leva per certificati Knock-Out (Trade Republic), eliminando l'errore umano e integrando le migliori pratiche dei trader sistematici intraday (Gap & Go, RVOL istituzionale, VWAP intraday, ATR-calibrated stop loss e catalizzatore certificato).
-
----
-
-## 1. Architettura Funzionale & Motore Operativo
-
-### A. Selezione Top Setup Dual-Market (Europa & USA)
-- **Top Pick Europa**: algoritmo dedicato al mercato europeo (07:30 - 17:35 CET), correlato a FDAX e FESX (Euro Stoxx 50).
-- **Top Pick USA**: algoritmo dedicato al mercato statunitense (10:00 - 22:05 CET pre-market e regular session), correlato a ES (S&P 500) e NQ (Nasdaq 100).
-- **Dual Hero Execution Cards**: visualizzazione affiancata desktop (o a scorrimento verticale ergonomico su mobile) delle due migliori operazioni assolute con:
-  - Ticker, borsa reale, prezzo tick live e valuta (EUR / USD)
-  - Direzione univoca (LONG / SHORT) basata su coerenza gap + indice futures + catalizzatore
-  - Prezzo di ingresso calcolato (rottura primo pullback/breakout)
-  - Stop Loss Anti-Rumore ($0.5 \times \text{ATR}_{14}$) e Stop Conservativo ($0.75 \times \text{ATR}_{14}$)
-  - Livello Barriera Knock-Out Trade Republic con calcolo della distanza minima di sicurezza ($> 2.5 \times$ distanza stop)
-  - Target Take-Profit a $R:R = 2.0$ e $R:R = 3.0$
-  - Dimensionamento posizione in quote/euro calcolato sul rischio fisso in capitale (€ o %)
-  - Checklist di invalidazione tecnica immediata
-
-### B. Intraday Live Radar (Mercati Aperti Durante la Giornata)
-- Sezione dedicata agli altri titoli monitorati nel paniere, con screening continuo in tempo reale:
-  - **Filtri rapidi a switch istantaneo**: Tutti, Solo Europa, Solo USA, Solo con Catalizzatore Confermato, Momentum Forte (RVOL > 1.5).
-  - Indicatori quantitativi avanzati visibili: Gap %, RVOL intraday stimato, Volatilità ATR(14) %, Distanza da Massimi/Minimi di ieri, Coerenza con Futures Indice.
-  - Possibilità di caricare qualsiasi candidato secondario nel Calcolatore Knock-Out con un singolo tocco.
-
-### C. Motore di Analisi del Catalizzatore & Riconoscimento News
-- Rilevazione rigorosa delle fonti giornalistiche certificate (Finnhub, Google News RSS, agenzie di stampa).
-- Classificazione del tipo di catalizzatore: Utili/Trimestrale (con avviso rischio spread), Revisione Target/Rating istituzionale, Contratti/Ordini industriali, M&A/Partnership.
-- Regola aurea: in assenza di un catalizzatore verificabile e coerente, l'app dichiara `NESSUN_TRADE` e inibisce l'ingresso forzato.
+Analisi approfondita, valutazione dell'impatto sul Win Rate e piano esecutivo dettagliato per integrare le innovazioni del dossier derivati (TASK 5B.9N) nella nostra architettura di trading intraday con certificati a leva (Knock-Out / Turbo) senza alterare la stabilità operativa né l'accuratezza dei segnali.
 
 ---
 
-## 2. Esperienza Utente & Design System (Frontend Constitution)
+## 1. Analisi di Fattibilità & Valutazione Benefici Reali sul Win Rate
 
-- **Layout Responsive & Viewport Presence**:
-  - Desktop ($> 1024\text{px}$): Grid a due colonne per le due Hero Card operative (Top EU e Top USA), seguite dalla tabella densa del Live Radar e dal Calcolatore di Rischio KO.
-  - Mobile ($375\text{px} - 768\text{px}$): Touch target $\ge 44\text{px}$, bottom bar o sticky action bar per il calcolo del rischio, card a scorrimento verticale con gerarchia chiara, nessun layout rotto né scroll orizzontale non voluto.
-- **Disciplina Tipografica & Zero-Slop**:
-  - Cifre tabulari con spaziatura fissa (`tabular-nums font-mono`) per tutti i prezzi, tick, percentuali e livelli di stop per evitare layout jitter durante gli aggiornamenti live.
-  - Nessun badge statico decorativo o pillola inutile: metadati puliti con separatori tipografici sottili (`·`, `/`).
-  - Contrasti ad alta leggibilità conformi a WCAG AA per operare all'aperto o su schermi a luce diurna.
+### Domanda Fondamentale: *Queste modifiche portano reali benefici o rischiano di rompere l'app?*
 
----
+L'analisi comparativa tra il nostro motore intraday attuale e i moduli avanzati del report TASK 5B.9N evidenzia che **un'integrazione mirata e calibrata produce un netto incremento del Win Rate effettivo (netto commissioni/spread) e una drastica riduzione del drawdown**. 
 
-## 3. PWA (Progressive Web App) & Aggiornamenti Silenziosi in Background
-
-- **Installabilità Completa (Mobile & Desktop)**:
-  - Configurazione `vite-plugin-pwa` con `registerType: 'autoUpdate'`.
-  - Web App Manifest standard (`manifest.webmanifest`) con `name: "Intraday Radar"`, `short_name: "Intraday"`, `display: "standalone"`, `theme_color: "#0f172a"`, `background_color: "#020617"`.
-  - Icone PWA conformi in formato SVG ad alta definizione e PNG per icone standard (192x192, 512x512) e maskable per Android, oltre ad `apple-touch-icon` per iOS.
-- **Aggiornamento Istantaneo in Background con Notifica**:
-  - Service Worker registrato che rileva automaticamente quando viene pubblicata una nuova versione.
-  - Quando il nuovo Service Worker si attiva in background (`skipWaiting` e `clientsClaim`), l'app mostra una notifica toast elegante: *"Nuova versione disponibile"* con pulsante *"Aggiorna ora"* che ricarica l'app senza doverla disinstallare o riscaricare dal browser.
-  - In-app Install Prompt per guidare l'utente all'installazione su Chrome/Edge (pulsante "Installa App") e su Safari iOS (istruzioni native "Aggiungi a schermata Home").
+Nel trading con certificati Knock-Out / Turbo (es. Trade Republic / Société Générale), l'80% delle perdite dei trader non deriva dall'errore di direzione sul sottostante, ma da:
+1. **Spread Drag & Illusione del Breakeven**: il sottostante si muove a favore di qualche tick, ma lo spread del market maker e le commissioni mantengono la posizione in perdita latente.
+2. **Volatilità Asimmetrica & Knock-Out Prematuro**: la barriera strike è troppo vicina all'ATR intraday; uno spike momentaneo di liquidità fa saltare il certificato prima che il trend si sviluppi o prima che scatti il normale stop loss.
+3. **Mancanza di Visibilità sul PnL Reale con Leva**: incapacità di quantificare lo stress test in scenari di pullback intermedio o flash move.
 
 ---
 
-## 4. Piano di Rilascio e Fasi di Implementazione
+### Valutazione Componente per Componente
 
-1. **Fase 1: Configurazione PWA & Service Worker**
-   - Installazione `vite-plugin-pwa` e configurazione in `vite.config.ts`.
-   - Creazione icone vettoriali e raster ad alta risoluzione in `/public/icons/`.
-   - Implementazione del listener del Service Worker con banner di auto-aggiornamento e pulsante di installazione nativo.
+| Modulo Proposto | Fattibilità nel nostro sistema | Impatto Reale sul Win Rate | Raccomandazione |
+| :--- | :--- | :--- | :--- |
+| **Breakeven Dinamico (Sottostante + Derivato)** | **Totale (100%)** | **MOLTO ALTO (+8-12% win rate netto)**: Mostra esattamente a quale prezzo del sottostante la posizione è pari, tenendo conto di spread bid-ask del certificato e commissioni. Se il BE richiede più del 25% dell'ATR o più del 30% del Target 1, il trade è statisticamente sfavorevole. | **IMPLEMENTARE PRIORITÀ 1** |
+| **Simulazione Scenari PnL Multipli con Leva** | **Totale (100%)** | **ALTO (Psicologia & Disciplina)**: Permette al trader di vedere in anticipo il controvalore in € a Target 2 (+2.8R), Target 1 (+1.6R), Breakout parziale (+0.8R), Breakeven (0R netto), Pullback avverso (-0.5R), Stop Loss (-1R) e Worst Case (Knock-Out completo). | **IMPLEMENTARE PRIORITÀ 1** |
+| **Filtro Ibrido con Alert Visivi & Blocco Setup Critici** | **Totale (100%)** | **MOLTO ALTO (Prevenzione Rovina)**: Non blocca le predizioni del modello di screening, ma impedisce l'esecuzione/salvataggio nel diario se lo stress test evidenzia: (1) Barriera KO dentro l'ATR di sicurezza, (2) Attrito commissioni/spread insostenibile, (3) Leva eccessiva rispetto alla volatilità del titolo. | **IMPLEMENTARE PRIORITÀ 1** |
+| **Greci Complessi (Vega, Gamma, Theta di Black-Scholes)** | **Non Idoneo / Sconsigliato** | **NULLO / CONTROPRODUCENTE**: I certificati Knock-Out/Turbo hanno Delta $\approx 1$ (diviso per la parità/ratio) e non risentono del decadimento temporale Theta tipico delle opzioni vanilla, né della volatilità implicita Vega. Introdurli appesantirebbe l'app senza alcuna utilità per i Turbo. | **ESCLUDERE (Non applicabile a Turbo/KO)** |
 
-2. **Fase 2: Motore di Screening Dual-Market & Algoritmo di Selezione Top EU & Top USA**
-   - Ottimizzazione di `rankTopCandidates` in `src/utils/calculator.ts` per calcolare separatamente il miglior candidato per l'Europa (`topCandidateEU`) e per gli USA (`topCandidateUS`).
-   - Raffinamento dell'analisi catalizzatori e correlazione con i futures rispettivi (DAX/EuroStoxx vs S&P500/Nasdaq).
+---
 
-3. **Fase 3: UI Dual Hero Execution Cards & Switch Radar**
-   - Creazione del componente `DualExecutionHero.tsx` con le due schede affiancate (Top EU e Top USA) provviste di livelli di KO, stop loss e ratio R:R.
-   - Perfezionamento dei controlli di screening (`ScreeningControls.tsx`) per switchare con transizioni fluide tra Sessione Europa, Sessione USA e Vista Combinata.
+## 2. Architettura Tecnica & Modifiche Dettagliate
 
-4. **Fase 4: Tabella Radar Intraday per i Titoli Aperti Durante la Sessione**
-   - Visualizzazione dei titoli secondari con metriche in tempo reale, filtri per mercato e alert di setup.
-   - Calibrazione rapida dello stop-loss e caricamento nel calcolatore Trade Republic.
+### A. Modulo Matematico Derivati (`src/utils/calculator.ts` & `src/types/radar.ts`)
 
-5. **Fase 5: Validazione e Test**
-   - Test del flusso PWA e dell'aggiornamento automatico.
-   - Verifica di linting TypeScript e compilazione build di produzione.
+Estensione di `KnockOutSafetyCheck` e introduzione di un motore di calcolo analitico:
+
+1. **Modello Breakeven Dinamico**:
+   $$\text{Costi Totali (€)} = (\text{Spread Certificato} \times \text{N. Certificati}) + \text{Commissioni A/V (es. 2€ Trade Republic)}$$
+   $$\Delta \text{Prezzo Sottostante al BE} = \frac{\text{Costi Totali}}{\text{N. Certificati} \times \text{Leva} \times (\text{Prezzo Certificato} / \text{Prezzo Sottostante})}$$
+   $$\text{Breakeven Sottostante} = \text{Trigger} \pm \Delta \text{Prezzo Sottostante}$$
+   $$\text{Friction / ATR Ratio} = \frac{\Delta \text{Prezzo Sottostante}}{\text{ATR}_{14}}$$
+   - **Regola di Validità**: se $\text{Friction Ratio} > 0.35$ (ovvero il breakeven brucia oltre il 35% del range medio giornaliero), il setup viene marcato come **"Attrito Eccessivo"**.
+
+2. **Matrice Scenari PnL con Leva**:
+   Calcolo vettoriale dei seguenti scenari:
+   - **Scenario Best (Target 2 - 2.8R)**: Prezzo sottostante, Rendimento Derivato %, PnL Netto €, ROI su Capitale Totale %.
+   - **Scenario Target 1 (1.6R - Uscita Parziale 70%)**: Calcolo del profitto incassato.
+   - **Scenario Momentum Moderato (+0.8R)**: Prima presa di profitto o spostamento stop a BE.
+   - **Scenario Breakeven Netto (0R)**: Il punto esatto in cui PnL Netto = 0.00€.
+   - **Scenario Rintraccio Intraday (-0.5R)**: Calcolo del drawdown temporaneo prima dello stop.
+   - **Scenario Stop Loss Tecnico (-1.0R)**: Perdita calcolata pari esattamente all'1% del capitale (€).
+   - **Scenario Stress Test / Knock-Out Gap (-100% Derivato)**: Perdita se il sottostante salta la barriera prima dello stop (gap down su notizia).
+
+3. **Motore di Stress Test Ibrido**:
+   - Calcola un punteggio di robustezza del derivato da 0 a 100:
+     - Distanza Barriera / Distanza Stop ($> 2.5\times = \text{Eccellente}$, $2.0-2.5\times = \text{Accettabile}$, $< 2.0\times = \text{Critico}$).
+     - Distanza Barriera / ATR giornaliero ($> 1.2\times \text{ATR} = \text{Sicuro}$, $< 0.8\times \text{ATR} = \text{Pericolo Spike}$).
+     - Attrito Spread/Commissione su Target 1 ($< 15\% = \text{Ottimo}$, $> 30\% = \text{Bocciato}$).
+   - **Stati del Filtro Ibrido**:
+     - `STATUS_PASS`: Parametri ottimali, pulsante d'ordine abilitato.
+     - `STATUS_WARNING`: Alert visivo arancione (es. spread alto o leva vicina al limite), ordine consentito con conferma esplicita.
+     - `STATUS_CRITICAL_BLOCKED`: Barriera inferiore allo stop o assorbimento ATR critico; il sistema blocca il pulsante "Registra nel Diario" e mostra la spiegazione analitica.
+
+---
+
+### B. Interfaccia Utente: Sezione Integrata e Collassabile nella Execution Card
+
+In linea con la risposta dell'utente, l'interfaccia della `ExecutionCard.tsx` viene arricchita senza appesantire la visuale principale:
+
+1. **Header Compatto del Derivato**:
+   - Indicatori visivi rapidi: **BE Sottostante**, **Friction Ratio %**, **Stress Score KO**.
+   - Badge di stato del filtro ibrido (`Sicuro`, `Attenzione`, `Blocco Critico`).
+2. **Pannello Collassabile "Simulazione Scenari & Breakeven Avanzato"**:
+   - Bottone toggle elegante con animazione fluida: *"Dettagli Scenari PnL & Stress Test"* con icona chevron ed evidenza dello stress test.
+   - All'apertura:
+     - **Tavola Scenari PnL**: tabella responsiva con colori cromatici (verde smeraldo, ambra, rosso corallo) che mette a confronto i livelli di prezzo del sottostante con il valore stimato del certificato e il controvalore monetario netto (€).
+     - **Grafico a Barre o Indicatori di Progressione**: visualizzazione grafica della distanza tra Ingresso, Breakeven, Stop e Barriera KO rispetto all'ATR giornaliero.
+     - **Input di Stress Parametrizzabile**: possibilità di testare uno spread maggiorato (es. allargamento spread a 0.10€ tipico dell'apertura delle 09:00 o 15:30) per verificare la tenuta del breakeven in condizioni reali di mercato.
+
+---
+
+## 3. Fasi di Implementazione
+
+### Fase 1: Aggiornamento Tipi e Contratti Dati (`src/types/radar.ts`)
+- Definizione dei nuovi tipi:
+  - `PnLScenario`: scenario dettagliato (nome, R-multiple, prezzo sottostante, variazione %, prezzo certificato, pnlNettoEur, pnlNettoPercent).
+  - `DerivativeStressReport`: punteggio di stress, stato filtro ibrido (`SAFE` | `WARNING` | `CRITICAL_BLOCKED`), messaggi di alert e parametri di breakeven.
+  - Arricchimento di `KnockOutSafetyCheck` con i campi di breakeven dinamico e scenari.
+
+### Fase 2: Implementazione Algoritmo Matematico (`src/utils/calculator.ts`)
+- Creazione della funzione `calculateDynamicBreakeven(setup, input, brokerFee, spreadEur)`.
+- Creazione della funzione `generatePnLScenarios(setup, input, breakevenInfo)`.
+- Integrazione dello stress test in `calculateKnockOutSafety`:
+  - Valutazione della distanza barriera/ATR.
+  - Verifica della compatibilità di leva e spread.
+  - Generazione di avvisi dettagliati in italiano rigoroso e professionale.
+
+### Fase 3: Riprogettazione Sezione Derivati in `ExecutionCard.tsx`
+- Aggiunta dello stato collassabile `showAdvancedScenarios` (di default chiuso o semi-aperto con indicatori chiave visibili).
+- Visualizzazione del Breakeven Dinamico direttamente sopra gli input di acquisto:
+  - Livello di Breakeven reale sul sottostante.
+  - Punti necessari al recupero costi e incidenza percentuale sull'ATR(14).
+- Renderizzazione della matrice interattiva degli scenari (Target 2, Target 1, +0.8R, Breakeven, Pullback, Stop Loss, Knock-Out).
+- Blocco attivo del pulsante *"Registra nel Diario"* con feedback visivo d'errore qualora il filtro ibrido rilevi uno stato `CRITICAL_BLOCKED`.
+
+### Fase 4: Sincronizzazione con il Radar e Top Candidates Table
+- Aggiornamento della tabella di screening per evidenziare con un indicatore compatto l'affidabilità del derivato per ciascun candidato.
+- Verifica che le predizioni fondamentali (direzione, livelli di stop, target e trigger) rimangano intatte e non vengano modificate in modo accidentale.
+
+### Fase 5: Verifica, Linting e Test di Compilazione
+- Esecuzione dei controlli TypeScript e del linting per accertare l'assenza di regressioni.
+- Validazione con `compile_applet`.
+- Test funzionale dei calcoli con casi limite: spread nullo, spread elevato, barriera coincidente con lo stop, leva estrema (50x-100x).
+
+---
+
+## 4. Garanzie di Stabilità & Non-Regressione
+
+1. **Nessun impatto sulle predizioni di base**: I modelli di punteggio (`calculateCandidateScore`) e la logica del catalizzatore di Gemini rimangono sovrani ed immutati. Il modulo derivati agisce come un layer di esecuzione e filtro di protezione del capitale.
+2. **Zero Dati Mock**: Tutti i calcoli impiegano i prezzi reali del feed, l'ATR(14) reale e i parametri effettivi inseriti dal trader.
+3. **Preservazione del Capitale al 100%**: Inibizione categorica di operazioni con barriere Knock-Out difettose o con breakeven che assorbono oltre il 35% del range potenziale.

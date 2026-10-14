@@ -1,6 +1,6 @@
 {
-  "summary": "Piano di implementazione per il terminale di trading intraday professionale con architettura Dual-Market (Top Setup Europa + Top Setup USA affiancati), motore quantitativo Gap & Go con VWAP/RVOL/ATR, Radar di sessione continuo, e supporto PWA installabile su mobile e desktop con aggiornamenti istantanei in background.",
-  "updatedAt": "2026-10-13T21:36:16.847051124Z",
+  "summary": "Piano di implementazione dettagliato per l'integrazione dell'audit dei derivati (TASK 5B.9N) nel terminale intraday: calcolo del breakeven dinamico con attrito spread/commissioni, simulazione multi-scenario PnL con leva collassabile nella Execution Card, e motore di stress test ibrido con visual alert e blocco di sicurezza dei setup critici.",
+  "updatedAt": "2026-10-14T22:35:20.811991435Z",
   "requestFeedback": true,
   "userFacing": true
 }
