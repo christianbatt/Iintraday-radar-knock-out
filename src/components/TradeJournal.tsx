@@ -22,6 +22,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { PerformanceSummary } from './PerformanceSummary';
+import { HistoricalEquityDashboard } from './HistoricalEquityDashboard';
 
 interface TradeJournalProps {
   entries: TradeJournalEntry[];
@@ -51,7 +52,7 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
   const [showAddForm, setShowAddForm] = useState(false);
   const [filterMode, setFilterMode] = useState<'ALL' | 'PAPER' | 'REAL'>('ALL');
   const [outcomeFilter, setOutcomeFilter] = useState<'ALL' | 'WIN' | 'LOSS' | 'BREAKEVEN' | 'EXPIRED'>('ALL');
-  const [viewMode, setViewMode] = useState<'SUMMARY' | 'TABLE' | 'BOTH'>('SUMMARY');
+  const [viewMode, setViewMode] = useState<'EQUITY' | 'SUMMARY' | 'TABLE' | 'BOTH'>('BOTH');
 
   // New trade manual entry state
   const [ticker, setTicker] = useState('');
@@ -221,17 +222,23 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
     downloadAnchor.remove();
   };
 
+  // Identify any open positions in monitoring
+  const openTrades = entries.filter((e) => e.status === 'OPEN');
+
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl mb-8">
-      {/* Header */}
-      <div className="px-6 py-4 border-b border-slate-800 bg-slate-950 flex flex-wrap items-center justify-between gap-3">
+      {/* 1. Header Primary Row: Title, View Switcher, Add Trade & Quick Actions */}
+      <div className="px-5 py-3.5 border-b border-slate-800 bg-slate-950 flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+          <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
             <BookOpen className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-sm font-bold uppercase tracking-wider text-white">
-              Diario di Trading & Statistiche di Performance
+            <h2 className="text-sm font-bold uppercase tracking-wider text-white flex items-center gap-2">
+              <span>Diario di Trading & Statistiche di Performance</span>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-semibold">
+                {entries.length} Trade Registrati
+              </span>
             </h2>
             <p className="text-xs text-slate-400">
               Tracciamento rigoroso esecuzioni • Regola stop giornaliero -2% e monitoraggio setup Scaduti (Expired)
@@ -239,24 +246,36 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {/* View Mode Switcher: Performance Summary / Table / Both */}
+        <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
+          {/* View Mode Switcher: Curva di Equità / Statistiche & R / Table / Both */}
           <div className="flex rounded-lg bg-slate-900 p-0.5 border border-slate-800 text-xs font-mono">
             <button
+              onClick={() => setViewMode('EQUITY')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                viewMode === 'EQUITY'
+                  ? 'bg-emerald-600 text-white font-bold shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="Visualizza Curva di Equità storica (Equity Curve Line Chart) nel tempo"
+            >
+              <TrendingUp className="w-3.5 h-3.5" />
+              <span>Curva di Equità</span>
+            </button>
+            <button
               onClick={() => setViewMode('SUMMARY')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
                 viewMode === 'SUMMARY'
                   ? 'bg-indigo-600 text-white font-bold shadow'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
-              title="Visualizza grafici interattivi Recharts e distribuzioni statistiche"
+              title="Visualizza metriche aggregate e distribuzioni R-multiple"
             >
               <BarChart2 className="w-3.5 h-3.5" />
-              <span>Performance Summary</span>
+              <span>Statistiche & R</span>
             </button>
             <button
               onClick={() => setViewMode('TABLE')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
                 viewMode === 'TABLE'
                   ? 'bg-slate-800 text-white font-bold'
                   : 'text-slate-400 hover:text-slate-200'
@@ -264,115 +283,28 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
               title="Visualizza registro esecuzioni tabellare"
             >
               <List className="w-3.5 h-3.5" />
-              <span>Registro Esecuzioni</span>
+              <span>Registro Tabellare</span>
             </button>
             <button
               onClick={() => setViewMode('BOTH')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
                 viewMode === 'BOTH'
-                  ? 'bg-slate-800 text-white font-bold'
+                  ? 'bg-sky-600 text-white font-bold'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
-              title="Vista completa con grafici e tabella affiancati"
+              title="Vista completa con Curva di Equità, statistiche e tabella affiancati"
             >
               <LayoutGrid className="w-3.5 h-3.5" />
-              <span>Completa</span>
+              <span>Vista Completa</span>
             </button>
           </div>
-
-          {/* Paper / Real Filter */}
-          <div className="flex rounded-lg bg-slate-900 p-0.5 border border-slate-800 text-xs font-mono">
-            <button
-              onClick={() => setFilterMode('ALL')}
-              className={`px-2 py-1 rounded-md transition-colors ${
-                filterMode === 'ALL' ? 'bg-slate-800 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Tutti ({entries.length})
-            </button>
-            <button
-              onClick={() => setFilterMode('PAPER')}
-              className={`px-2 py-1 rounded-md transition-colors ${
-                filterMode === 'PAPER' ? 'bg-indigo-950 text-indigo-300 font-bold border border-indigo-700' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Paper
-            </button>
-            <button
-              onClick={() => setFilterMode('REAL')}
-              className={`px-2 py-1 rounded-md transition-colors ${
-                filterMode === 'REAL' ? 'bg-amber-950 text-amber-300 font-bold border border-amber-700' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Reale
-            </button>
-          </div>
-
-          {/* Outcome Filter */}
-          <div className="hidden sm:flex rounded-lg bg-slate-900 p-0.5 border border-slate-800 text-xs font-mono">
-            <button
-              onClick={() => setOutcomeFilter('ALL')}
-              className={`px-1.5 py-1 rounded-md transition-colors ${
-                outcomeFilter === 'ALL' ? 'bg-slate-800 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Tutti
-            </button>
-            <button
-              onClick={() => setOutcomeFilter('WIN')}
-              className={`px-1.5 py-1 rounded-md transition-colors ${
-                outcomeFilter === 'WIN' ? 'bg-emerald-950 text-emerald-300 font-bold border border-emerald-800' : 'text-slate-400 hover:text-emerald-300'
-              }`}
-            >
-              Win ({entries.filter(e => e.outcome === 'WIN').length})
-            </button>
-            <button
-              onClick={() => setOutcomeFilter('LOSS')}
-              className={`px-1.5 py-1 rounded-md transition-colors ${
-                outcomeFilter === 'LOSS' ? 'bg-rose-950 text-rose-300 font-bold border border-rose-800' : 'text-slate-400 hover:text-rose-300'
-              }`}
-            >
-              Loss ({entries.filter(e => e.outcome === 'LOSS').length})
-            </button>
-            <button
-              onClick={() => setOutcomeFilter('EXPIRED')}
-              className={`px-1.5 py-1 rounded-md transition-colors ${
-                outcomeFilter === 'EXPIRED' ? 'bg-amber-950 text-amber-300 font-bold border border-amber-800' : 'text-slate-400 hover:text-amber-300'
-              }`}
-            >
-              Expired ({entries.filter(e => e.outcome === 'EXPIRED').length})
-            </button>
-          </div>
-
-          {/* Open Optimizer Modal Button */}
-          {onOpenOptimizerModal && (
-            <button
-              onClick={onOpenOptimizerModal}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 text-xs font-mono transition-colors cursor-pointer"
-              title="Apri pannello di audit ogni 20 setup e gestione parametri"
-            >
-              <Sliders className="w-3.5 h-3.5 text-amber-400" />
-              <span>Ciclo Automiglioramento ({entries.length % 20}/20)</span>
-            </button>
-          )}
-
-          {onLoadSampleTrades && (
-            <button
-              onClick={onLoadSampleTrades}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-950/70 hover:bg-indigo-900/90 text-indigo-300 border border-indigo-700/60 text-xs font-mono transition-colors"
-              title="Carica 20 operazioni storiche dimostrative per testare il ciclo di automiglioramento e gli expired"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Demo 20 Setup</span>
-            </button>
-          )}
 
           <button
             onClick={() => {
               setShowAddForm(!showAddForm);
               if (!showAddForm && viewMode === 'SUMMARY') setViewMode('BOTH');
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors cursor-pointer shadow-sm"
           >
             <Plus className="w-4 h-4" />
             <span>Aggiungi Trade</span>
@@ -380,7 +312,7 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
 
           <button
             onClick={handleExportJson}
-            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors cursor-pointer"
             title="Esporta diario in JSON"
           >
             <Download className="w-4 h-4" />
@@ -391,7 +323,7 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
               onClick={() => {
                 if (window.confirm('Cancellare tutti i trade registrati dal diario?')) onClearAll();
               }}
-              className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/60 text-slate-400 hover:text-rose-400 border border-slate-700 transition-colors"
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/60 text-slate-400 hover:text-rose-400 border border-slate-700 transition-colors cursor-pointer"
               title="Azzera diario"
             >
               <Trash2 className="w-4 h-4" />
@@ -400,29 +332,186 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
         </div>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 p-5 bg-slate-950/60 border-b border-slate-800 text-xs font-mono">
+      {/* 2. Sub-Toolbar: Filters & 20-Setup Cycle Badge (Zero Overlap!) */}
+      <div className="px-5 py-2.5 bg-slate-950/80 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5 text-xs font-mono">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Paper / Real Filter */}
+          <div className="flex rounded-lg bg-slate-900 p-0.5 border border-slate-800">
+            <button
+              onClick={() => setFilterMode('ALL')}
+              className={`px-2 py-1 rounded-md transition-colors cursor-pointer ${
+                filterMode === 'ALL' ? 'bg-slate-800 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Tutti ({entries.length})
+            </button>
+            <button
+              onClick={() => setFilterMode('PAPER')}
+              className={`px-2 py-1 rounded-md transition-colors cursor-pointer ${
+                filterMode === 'PAPER' ? 'bg-indigo-950 text-indigo-300 font-bold border border-indigo-700' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Paper ({entries.filter(e => e.isPaper).length})
+            </button>
+            <button
+              onClick={() => setFilterMode('REAL')}
+              className={`px-2 py-1 rounded-md transition-colors cursor-pointer ${
+                filterMode === 'REAL' ? 'bg-amber-950 text-amber-300 font-bold border border-amber-700' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Reale ({entries.filter(e => !e.isPaper).length})
+            </button>
+          </div>
+
+          {/* Outcome Filter */}
+          <div className="flex flex-wrap rounded-lg bg-slate-900 p-0.5 border border-slate-800">
+            <button
+              onClick={() => setOutcomeFilter('ALL')}
+              className={`px-2 py-1 rounded-md transition-colors cursor-pointer ${
+                outcomeFilter === 'ALL' ? 'bg-slate-800 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Tutti
+            </button>
+            <button
+              onClick={() => setOutcomeFilter('WIN')}
+              className={`px-2 py-1 rounded-md transition-colors cursor-pointer ${
+                outcomeFilter === 'WIN' ? 'bg-emerald-950 text-emerald-300 font-bold border border-emerald-800' : 'text-slate-400 hover:text-emerald-300'
+              }`}
+            >
+              Win ({entries.filter(e => e.outcome === 'WIN').length})
+            </button>
+            <button
+              onClick={() => setOutcomeFilter('LOSS')}
+              className={`px-2 py-1 rounded-md transition-colors cursor-pointer ${
+                outcomeFilter === 'LOSS' ? 'bg-rose-950 text-rose-300 font-bold border border-rose-800' : 'text-slate-400 hover:text-rose-300'
+              }`}
+            >
+              Loss ({entries.filter(e => e.outcome === 'LOSS').length})
+            </button>
+            <button
+              onClick={() => setOutcomeFilter('EXPIRED')}
+              className={`px-2 py-1 rounded-md transition-colors cursor-pointer ${
+                outcomeFilter === 'EXPIRED' ? 'bg-amber-950 text-amber-300 font-bold border border-amber-800' : 'text-slate-400 hover:text-amber-300'
+              }`}
+            >
+              Expired ({entries.filter(e => e.outcome === 'EXPIRED').length})
+            </button>
+          </div>
+        </div>
+
+        {/* Right side: Cycle and Demo actions */}
+        <div className="flex flex-wrap items-center gap-2">
+          {onOpenOptimizerModal && (
+            <button
+              onClick={onOpenOptimizerModal}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 text-xs font-mono transition-colors cursor-pointer"
+              title="Apri pannello di audit ogni 20 setup e gestione parametri"
+            >
+              <Sliders className="w-3.5 h-3.5 text-amber-400" />
+              <span>Ciclo Automiglioramento ({entries.filter(e => e.status !== 'OPEN').length % 20}/20)</span>
+            </button>
+          )}
+
+          {onLoadSampleTrades && (
+            <button
+              onClick={onLoadSampleTrades}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-950/70 hover:bg-indigo-900/90 text-indigo-300 border border-indigo-700/60 text-xs font-mono transition-colors cursor-pointer"
+              title="Carica o ripristina i 20 setup storici completi nel diario"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Ricarica Demo 20 Setup</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* 3. Open Positions Alert Strip (If Any Trade is in Monitoring) */}
+      {openTrades.length > 0 && (
+        <div className="p-3 bg-amber-950/30 border-b border-amber-500/40 text-xs font-mono space-y-2">
+          <div className="flex items-center justify-between text-amber-300 font-bold text-[11px]">
+            <span className="flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+              <span>{openTrades.length} OPERAZIONE IN MONITORAGGIO ATTIVO: Chiudi per calcolare le statistiche</span>
+            </span>
+            <span className="text-slate-400 text-[10px]">1-Click Risoluzione Istantanea</span>
+          </div>
+
+          <div className="space-y-1.5">
+            {openTrades.map((t) => (
+              <div
+                key={t.id}
+                className="flex flex-wrap items-center justify-between gap-2 p-2 rounded-lg bg-slate-950 border border-slate-800"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-white text-xs">{t.ticker}</span>
+                  <span
+                    className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
+                      t.direction === 'LONG' ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'
+                    }`}
+                  >
+                    {t.direction}
+                  </span>
+                  <span className="text-slate-400 text-[11px]">
+                    Ingresso: <strong>{t.entryPrice.toFixed(2)}</strong> | Stop: {t.stopLoss.toFixed(2)} | Target: {t.target1.toFixed(2)}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => handleQuickSetOutcome(t, 'WIN')}
+                    className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] transition-colors cursor-pointer"
+                  >
+                    🎯 Target 1 (+1.6R / WIN)
+                  </button>
+                  <button
+                    onClick={() => handleQuickSetOutcome(t, 'LOSS')}
+                    className="px-2 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-[10px] transition-colors cursor-pointer"
+                  >
+                    🛑 Stop Loss (-1.0R / LOSS)
+                  </button>
+                  <button
+                    onClick={() => handleQuickSetOutcome(t, 'BREAKEVEN')}
+                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[10px] transition-colors cursor-pointer"
+                  >
+                    ⚖️ Pareggio (BE)
+                  </button>
+                  <button
+                    onClick={() => handleQuickSetOutcome(t, 'EXPIRED')}
+                    className="px-2 py-1 rounded bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-[10px] transition-colors cursor-pointer"
+                  >
+                    ⏰ Scaduto (EXPIRED)
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 4. KPI Cards (Responsive grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 with zero overlap!) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 p-4 bg-slate-950/60 border-b border-slate-800 text-xs font-mono">
         {/* Win Rate */}
-        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800">
-          <span className="text-[10px] text-slate-400 block mb-1">Win Rate %</span>
+        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 min-w-0 flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 block mb-1 truncate">Win Rate %</span>
           <div className="text-base font-bold text-white flex items-center gap-1.5">
-            <Award className="w-4 h-4 text-amber-400" />
+            <Award className="w-4 h-4 text-amber-400 shrink-0" />
             <span>{winRate}%</span>
           </div>
-          <span className="text-[10px] text-slate-500">
+          <span className="text-[10px] text-slate-500 truncate block mt-1">
             {wins.length}W / {losses.length}L / {breakevens.length}BE
           </span>
         </div>
 
         {/* Expired Rate (Crucial!) */}
         <div
-          className={`p-3 rounded-lg border ${
+          className={`p-3 rounded-lg border min-w-0 flex flex-col justify-between ${
             expiredRate >= 20 ? 'bg-rose-950/40 border-rose-600/60' : 'bg-slate-900 border-slate-800'
           }`}
         >
           <span className="text-[10px] text-slate-400 block mb-1 flex items-center justify-between">
-            <span>Tasso Scaduti (Expired)</span>
-            <Clock className="w-3.5 h-3.5 text-amber-400" />
+            <span className="truncate">Tasso Scaduti</span>
+            <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
           </span>
           <div
             className={`text-base font-bold ${
@@ -431,57 +520,66 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
           >
             {expiredRate}%
           </div>
-          <span className="text-[10px] text-slate-400">
+          <span className="text-[10px] text-slate-400 truncate block mt-1">
             {expired.length} su {totalTrades} non chiusi
           </span>
         </div>
 
         {/* Profit Factor */}
-        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800">
-          <span className="text-[10px] text-slate-400 block mb-1">Profit Factor</span>
+        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 min-w-0 flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 block mb-1 truncate">Profit Factor</span>
           <div className="text-base font-bold text-emerald-400">
             {profitFactor > 0 ? profitFactor.toFixed(2) : '0.00'}
           </div>
-          <span className="text-[10px] text-slate-500">
-            Lorda +{totalGainsEur.toFixed(0)}€ / -{totalLossesEur.toFixed(0)}€
+          <span className="text-[10px] text-slate-500 truncate block mt-1">
+            +{totalGainsEur.toFixed(0)}€ / -{totalLossesEur.toFixed(0)}€
           </span>
         </div>
 
         {/* Rapporto Medio R */}
-        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800">
-          <span className="text-[10px] text-slate-400 block mb-1">R:R Medio Effettivo</span>
+        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 min-w-0 flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 block mb-1 truncate">R:R Medio Effettivo</span>
           <div className="text-base font-bold text-sky-400">
             {avgR > 0 ? `+${avgR.toFixed(2)}R` : `${avgR.toFixed(2)}R`}
           </div>
-          <span className="text-[10px] text-slate-500">Target minimo 1.6R</span>
+          <span className="text-[10px] text-slate-500 truncate block mt-1">Target min 1.6R</span>
         </div>
 
         {/* Net PnL € */}
-        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800">
-          <span className="text-[10px] text-slate-400 block mb-1">P&L Netto Totale</span>
+        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 min-w-0 flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 block mb-1 truncate">P&L Netto Totale</span>
           <div
-            className={`text-base font-bold ${
+            className={`text-base font-bold truncate ${
               netPnlEur > 0 ? 'text-emerald-400' : netPnlEur < 0 ? 'text-rose-400' : 'text-white'
             }`}
           >
             {netPnlEur > 0 ? `+${netPnlEur.toFixed(2)}` : netPnlEur.toFixed(2)} €
           </div>
-          <span className="text-[10px] text-slate-400">
+          <span className="text-[10px] text-slate-400 truncate block mt-1">
             {netPnlPercent > 0 ? `+${netPnlPercent.toFixed(2)}%` : `${netPnlPercent.toFixed(2)}%`}
           </span>
         </div>
 
         {/* Max Drawdown */}
-        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800">
-          <span className="text-[10px] text-slate-400 block mb-1">Max Drawdown</span>
+        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 min-w-0 flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 block mb-1 truncate">Max Drawdown</span>
           <div className="text-base font-bold text-rose-400">
             -{maxDdEur.toFixed(0)} €
           </div>
-          <span className="text-[10px] text-rose-300">-{maxDdPercent}% capitale</span>
+          <span className="text-[10px] text-rose-300 truncate block mt-1">-{maxDdPercent}% capitale</span>
         </div>
       </div>
 
-      {/* Performance Summary View (Recharts Visualizations & Distributions) */}
+      {/* 1. Historical Equity Dashboard View (Equity Curve Line Chart, HWM & Underwater Drawdown) */}
+      {(viewMode === 'EQUITY' || viewMode === 'BOTH') && (
+        <HistoricalEquityDashboard
+          entries={filteredEntries}
+          accountCapital={accountCapital}
+          onLoadSampleTrades={onLoadSampleTrades}
+        />
+      )}
+
+      {/* 2. Performance Summary View (Recharts Statistical Breakdown & R Distributions) */}
       {(viewMode === 'SUMMARY' || viewMode === 'BOTH') && (
         <PerformanceSummary
           entries={filteredEntries}

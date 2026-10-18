@@ -1,0 +1,56 @@
+{
+  "entities": {
+    "UserSettings": {
+      "title": "UserSettings",
+      "description": "User risk management, account capital, active system parameters and cycle proposals",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "accountCapital": { "type": "number" },
+        "isPaperMode": { "type": "boolean" },
+        "parameters": { "type": "object" },
+        "pendingProposal": { "type": "object" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId"]
+    },
+    "JournalTrade": {
+      "title": "JournalTrade",
+      "description": "Single recorded intraday trade execution and performance outcome",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "date": { "type": "string" },
+        "session": { "type": "string" },
+        "ticker": { "type": "string" },
+        "direction": { "type": "string" },
+        "strategy": { "type": "string" },
+        "entryPrice": { "type": "number" },
+        "exitPrice": { "type": "number" },
+        "stopLoss": { "type": "number" },
+        "target1": { "type": "number" },
+        "pnlEur": { "type": "number" },
+        "rMultiple": { "type": "number" },
+        "outcome": { "type": "string" },
+        "status": { "type": "string" },
+        "closedAt": { "type": "string" },
+        "notes": { "type": "string" },
+        "isPaper": { "type": "boolean" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "ticker", "direction", "status", "outcome"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/settings/system": {
+      "schema": "UserSettings",
+      "description": "System parameters and account settings for a specific user"
+    },
+    "/users/{userId}/trades/{tradeId}": {
+      "schema": "JournalTrade",
+      "description": "Collection of recorded trades for a specific user"
+    }
+  }
+}

@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   ResponsiveContainer,
   AreaChart,
   Area,
+  LineChart,
+  Line,
   BarChart,
   Bar,
   XAxis,
@@ -63,6 +65,8 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({
     );
   }
 
+  const [chartType, setChartType] = useState<'EQUITY_LINE' | 'PNL_AREA'>('EQUITY_LINE');
+
   // Chronological order for cumulative PnL progression
   const sortedEntries = [...entries].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
@@ -78,6 +82,7 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({
       direction: '',
       pnl: 0,
       cumPnl: 0,
+      equity: accountCapital,
       cumPnlPercent: 0,
       rMultiple: 0,
       outcome: 'START',
@@ -86,6 +91,7 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({
     ...sortedEntries.map((trade, i) => {
       runningCumPnl += trade.pnlEur;
       const cumPnl = +runningCumPnl.toFixed(2);
+      const equity = +(accountCapital + cumPnl).toFixed(2);
       const cumPnlPercent =
         accountCapital > 0 ? +((cumPnl / accountCapital) * 100).toFixed(2) : 0;
       return {
@@ -97,6 +103,7 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({
         strategy: trade.strategy,
         pnl: trade.pnlEur,
         cumPnl,
+        equity,
         cumPnlPercent,
         rMultiple: trade.rMultiple,
         outcome: trade.outcome,
@@ -253,6 +260,14 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({
               {data.cumPnl >= 0 ? `+${data.cumPnl.toFixed(2)}` : data.cumPnl.toFixed(2)} € ({data.cumPnlPercent >= 0 ? `+${data.cumPnlPercent}` : data.cumPnlPercent}%)
             </span>
           </div>
+          {data.equity !== undefined && (
+            <div className="flex justify-between items-center text-xs font-mono">
+              <span className="text-slate-400">Equity Conto:</span>
+              <span className="font-bold text-white">
+                {data.equity.toLocaleString('it-IT')} €
+              </span>
+            </div>
+          )}
         </div>
       );
     }
@@ -287,74 +302,74 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({
   return (
     <div className="p-5 space-y-6 bg-slate-950/70 border-b border-slate-800 animate-in fade-in duration-200">
       {/* Top Statistical Summary Banner */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 text-xs font-mono">
-        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800">
-          <span className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
-            Aspettativa Statistica (EV)
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 text-xs font-mono">
+        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 min-w-0 flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1 truncate">
+            Aspettativa (EV)
           </span>
           <div
             className={`text-base font-bold flex items-center gap-1 ${
               expectancyR >= 0 ? 'text-emerald-400' : 'text-rose-400'
             }`}
           >
-            <Target className="w-4 h-4 text-emerald-400" />
+            <Target className="w-4 h-4 text-emerald-400 shrink-0" />
             <span>{expectancyR >= 0 ? `+${expectancyR.toFixed(2)}R` : `${expectancyR.toFixed(2)}R`}</span>
           </div>
-          <span className="text-[10px] text-slate-500">per ogni trade preso</span>
+          <span className="text-[10px] text-slate-500 truncate block mt-1">per ogni trade preso</span>
         </div>
 
-        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800">
-          <span className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
-            Media Guadagno (Win)
+        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 min-w-0 flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1 truncate">
+            Media Vincita (Win)
           </span>
-          <div className="text-base font-bold text-emerald-400">
+          <div className="text-base font-bold text-emerald-400 truncate">
             +{avgWinEur.toFixed(2)} €
           </div>
-          <span className="text-[10px] text-emerald-400/80">+{avgWinR.toFixed(2)}R medio</span>
+          <span className="text-[10px] text-emerald-400/80 truncate block mt-1">+{avgWinR.toFixed(2)}R medio</span>
         </div>
 
-        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800">
-          <span className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
+        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 min-w-0 flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1 truncate">
             Media Perdita (Loss)
           </span>
-          <div className="text-base font-bold text-rose-400">
+          <div className="text-base font-bold text-rose-400 truncate">
             -{avgLossEur.toFixed(2)} €
           </div>
-          <span className="text-[10px] text-rose-400/80">-{avgLossR.toFixed(2)}R medio</span>
+          <span className="text-[10px] text-rose-400/80 truncate block mt-1">-{avgLossR.toFixed(2)}R medio</span>
         </div>
 
-        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800">
-          <span className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
-            Rapporto Win/Loss & Scaduti
+        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 min-w-0 flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1 truncate">
+            Win/Loss & Scaduti
           </span>
-          <div className="text-base font-bold text-sky-400">
+          <div className="text-base font-bold text-sky-400 truncate">
             {losses.length > 0 ? (wins.length / losses.length).toFixed(2) : wins.length > 0 ? '∞' : '0.00'}
           </div>
-          <span className="text-[10px] text-slate-400">
-            {wins.length}W • {losses.length}L • {breakevens.length}BE • <strong className={expired.length > 0 ? 'text-amber-400' : 'text-slate-400'}>{expired.length} Exp ({expiredRate}%)</strong>
+          <span className="text-[10px] text-slate-400 truncate block mt-1">
+            {wins.length}W · {losses.length}L · <strong className={expired.length > 0 ? 'text-amber-400' : 'text-slate-400'}>{expired.length} Exp ({expiredRate}%)</strong>
           </span>
         </div>
 
-        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800">
-          <span className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
+        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 min-w-0 flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1 truncate">
             Miglior Trade
           </span>
           <div className="text-base font-bold text-emerald-400 truncate">
             {bestTrade ? `+${bestTrade.pnlEur.toFixed(0)}€` : '—'}
           </div>
-          <span className="text-[10px] text-slate-400 truncate block">
+          <span className="text-[10px] text-slate-400 truncate block mt-1">
             {bestTrade ? `${bestTrade.ticker} (+${bestTrade.rMultiple}R)` : 'Nessuno'}
           </span>
         </div>
 
-        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800">
-          <span className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
+        <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 min-w-0 flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1 truncate">
             Peggior Trade
           </span>
           <div className="text-base font-bold text-rose-400 truncate">
             {worstTrade ? `${worstTrade.pnlEur.toFixed(0)}€` : '—'}
           </div>
-          <span className="text-[10px] text-slate-400 truncate block">
+          <span className="text-[10px] text-slate-400 truncate block mt-1">
             {worstTrade ? `${worstTrade.ticker} (${worstTrade.rMultiple}R)` : 'Nessuno'}
           </span>
         </div>
@@ -378,60 +393,131 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({
                 </p>
               </div>
             </div>
-            <div className="text-right font-mono">
-              <span
-                className={`text-sm font-bold block ${
-                  netPnlEur >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                }`}
-              >
-                {netPnlEur >= 0 ? `+${netPnlEur.toFixed(2)}` : netPnlEur.toFixed(2)} €
-              </span>
-              <span className="text-[10px] text-slate-400">
-                {netPnlPercent >= 0 ? `+${netPnlPercent.toFixed(2)}%` : `${netPnlPercent.toFixed(2)}%`}
-              </span>
+            <div className="flex items-center gap-3">
+              <div className="flex rounded-md bg-slate-950 p-0.5 border border-slate-800 text-[10px]">
+                <button
+                  onClick={() => setChartType('EQUITY_LINE')}
+                  className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                    chartType === 'EQUITY_LINE'
+                      ? 'bg-emerald-600 text-white font-bold'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="Mostra Curva di Equità (Line Chart)"
+                >
+                  Curva Equità
+                </button>
+                <button
+                  onClick={() => setChartType('PNL_AREA')}
+                  className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                    chartType === 'PNL_AREA'
+                      ? 'bg-indigo-600 text-white font-bold'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="Mostra P&L Cumulato (Area Chart)"
+                >
+                  P&L Cumulato
+                </button>
+              </div>
+
+              <div className="text-right font-mono">
+                <span
+                  className={`text-sm font-bold block ${
+                    netPnlEur >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                  }`}
+                >
+                  {chartType === 'EQUITY_LINE'
+                    ? `${(accountCapital + netPnlEur).toLocaleString('it-IT')} €`
+                    : `${netPnlEur >= 0 ? `+${netPnlEur.toFixed(2)}` : netPnlEur.toFixed(2)} €`}
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  {netPnlPercent >= 0 ? `+${netPnlPercent.toFixed(2)}%` : `${netPnlPercent.toFixed(2)}%`}
+                </span>
+              </div>
             </div>
           </div>
 
           <div className="w-full h-64 pt-2">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={pnlTrendData} margin={{ top: 10, right: 15, left: -10, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="pnlSplitGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset={gradientOffset} stopColor="#10b981" stopOpacity={0.35} />
-                    <stop offset={gradientOffset} stopColor="#f43f5e" stopOpacity={0.35} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                <XAxis
-                  dataKey="label"
-                  stroke="#64748b"
-                  tick={{ fontSize: 10 }}
-                  tickLine={false}
-                  interval="preserveStartEnd"
-                />
-                <YAxis
-                  stroke="#64748b"
-                  tick={{ fontSize: 10 }}
-                  tickLine={false}
-                  tickFormatter={(val) => `${val}€`}
-                />
-                <ReferenceLine y={0} stroke="#475569" strokeDasharray="4 4" strokeWidth={1} />
-                <Tooltip content={<CustomPnlTooltip />} />
-                <Area
-                  type="monotone"
-                  dataKey="cumPnl"
-                  stroke={netPnlEur >= 0 ? '#10b981' : '#f43f5e'}
-                  strokeWidth={2.5}
-                  fill="url(#pnlSplitGradient)"
-                  dot={{ r: 3, fill: '#0f172a', stroke: '#10b981', strokeWidth: 1.5 }}
-                  activeDot={{ r: 5, fill: '#10b981', stroke: '#ffffff', strokeWidth: 2 }}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+            {chartType === 'EQUITY_LINE' ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={pnlTrendData} margin={{ top: 10, right: 15, left: -5, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                  <XAxis
+                    dataKey="label"
+                    stroke="#64748b"
+                    tick={{ fontSize: 10 }}
+                    tickLine={false}
+                    interval="preserveStartEnd"
+                  />
+                  <YAxis
+                    stroke="#64748b"
+                    tick={{ fontSize: 10 }}
+                    tickLine={false}
+                    domain={['auto', 'auto']}
+                    tickFormatter={(val) => `${val}€`}
+                  />
+                  <ReferenceLine
+                    y={accountCapital}
+                    stroke="#475569"
+                    strokeDasharray="4 4"
+                    label={{
+                      value: `Base ${accountCapital}€`,
+                      fill: '#64748b',
+                      fontSize: 10,
+                      position: 'insideBottomRight',
+                    }}
+                  />
+                  <Tooltip content={<CustomPnlTooltip />} />
+                  <Line
+                    type="monotone"
+                    dataKey="equity"
+                    stroke={netPnlEur >= 0 ? '#10b981' : '#f43f5e'}
+                    strokeWidth={2.5}
+                    dot={{ r: 3, fill: '#0f172a', stroke: '#10b981', strokeWidth: 1.5 }}
+                    activeDot={{ r: 5, fill: '#10b981', stroke: '#ffffff', strokeWidth: 2 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={pnlTrendData} margin={{ top: 10, right: 15, left: -10, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="pnlSplitGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset={gradientOffset} stopColor="#10b981" stopOpacity={0.35} />
+                      <stop offset={gradientOffset} stopColor="#f43f5e" stopOpacity={0.35} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                  <XAxis
+                    dataKey="label"
+                    stroke="#64748b"
+                    tick={{ fontSize: 10 }}
+                    tickLine={false}
+                    interval="preserveStartEnd"
+                  />
+                  <YAxis
+                    stroke="#64748b"
+                    tick={{ fontSize: 10 }}
+                    tickLine={false}
+                    tickFormatter={(val) => `${val}€`}
+                  />
+                  <ReferenceLine y={0} stroke="#475569" strokeDasharray="4 4" strokeWidth={1} />
+                  <Tooltip content={<CustomPnlTooltip />} />
+                  <Area
+                    type="monotone"
+                    dataKey="cumPnl"
+                    stroke={netPnlEur >= 0 ? '#10b981' : '#f43f5e'}
+                    strokeWidth={2.5}
+                    fill="url(#pnlSplitGradient)"
+                    dot={{ r: 3, fill: '#0f172a', stroke: '#10b981', strokeWidth: 1.5 }}
+                    activeDot={{ r: 5, fill: '#10b981', stroke: '#ffffff', strokeWidth: 2 }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
           </div>
 
           <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400 font-mono">
-            <span>Baseline iniziale: 0.00 €</span>
+            <span>Capitale iniziale: {accountCapital.toLocaleString('it-IT')} €</span>
             <span className="text-emerald-400 font-semibold">
               Picco massimo: +{maxCumPnl.toFixed(2)} €
             </span>

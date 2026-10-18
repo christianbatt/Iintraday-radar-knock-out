@@ -7,7 +7,13 @@ import {
   RotateCcw,
   Zap,
   Sparkles,
+  Cloud,
+  Check,
+  RefreshCw,
+  LogOut,
+  User as UserIcon,
 } from 'lucide-react';
+import { User } from 'firebase/auth';
 import { SessionInfo } from '../types/radar';
 
 interface HeaderProps {
@@ -24,6 +30,10 @@ interface HeaderProps {
   isInstallable?: boolean;
   onInstallApp?: () => void;
   onOpenContactModal?: () => void;
+  currentUser?: User | null;
+  cloudSyncStatus?: 'LOCAL_ONLY' | 'SYNCED' | 'SYNCING';
+  onSignInGoogle?: () => void;
+  onSignOut?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -40,6 +50,10 @@ export const Header: React.FC<HeaderProps> = ({
   isInstallable,
   onInstallApp,
   onOpenContactModal,
+  currentUser,
+  cloudSyncStatus = 'LOCAL_ONLY',
+  onSignInGoogle,
+  onSignOut,
 }) => {
   const [liveCetTime, setLiveCetTime] = useState<string>('00:00:00 CET');
 
@@ -180,6 +194,39 @@ export const Header: React.FC<HeaderProps> = ({
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
               <span>Sottostanti ({underlyingsCount})</span>
             </button>
+
+            {/* Cloud Sync Multi-Device Button (PC, Mobile, Tablet) */}
+            {currentUser ? (
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-emerald-950/60 border border-emerald-600/70 text-emerald-300 font-mono text-xs">
+                <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="truncate max-w-[110px] sm:max-w-[140px]" title={currentUser.email || 'Cloud Sincronizzato'}>
+                  {currentUser.displayName || currentUser.email?.split('@')[0] || 'Sync Attivo'}
+                </span>
+                {cloudSyncStatus === 'SYNCING' ? (
+                  <RefreshCw className="w-3 h-3 text-emerald-400 animate-spin" />
+                ) : (
+                  <Check className="w-3 h-3 text-emerald-400" />
+                )}
+                {onSignOut && (
+                  <button
+                    onClick={onSignOut}
+                    className="ml-1 p-0.5 hover:text-rose-400 text-slate-400 transition-colors cursor-pointer"
+                    title="Disconnetti account Cloud"
+                  >
+                    <LogOut className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            ) : (
+              <button
+                onClick={onSignInGoogle}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-sky-950/70 hover:bg-sky-900/80 border border-sky-600/70 text-sky-300 hover:text-white font-mono text-xs transition-colors cursor-pointer"
+                title="Accedi per sincronizzare diario e parametri V1/V2/V3 su PC, Mobile e Tablet"
+              >
+                <Cloud className="w-3.5 h-3.5 text-sky-400" />
+                <span>Sync Cloud</span>
+              </button>
+            )}
 
             {/* PWA Install Button */}
             {isInstallable && onInstallApp && (

@@ -27,6 +27,18 @@ import {
   analyzeCatalystWithGemini,
   clearServerCache,
 } from './services/api';
+import {
+  auth,
+  signInWithGoogle,
+  logoutUser,
+  syncSystemSettingsToCloud,
+  syncTradeToCloud,
+  deleteTradeFromCloud,
+  clearAllTradesFromCloud,
+  batchUploadTradesToCloud,
+  subscribeToUserCloudData,
+} from './services/firebaseSync';
+import { User, onAuthStateChanged } from 'firebase/auth';
 
 import { RiskBanner } from './components/RiskBanner';
 import { Header } from './components/Header';
@@ -104,12 +116,12 @@ export default function App() {
       const saved = localStorage.getItem('intraday_radar_journal');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
     } catch {
       // fallback
     }
-    return [];
+    return SAMPLE_JOURNAL_ENTRIES;
   });
 
   // PWA Install State
@@ -153,11 +165,19 @@ export default function App() {
     } catch {
       // fallback
     }
+    // Calculate initial proposal on default sample trades if present
+    if (SAMPLE_JOURNAL_ENTRIES.length >= 20) {
+      return evaluateSystemOptimization(SAMPLE_JOURNAL_ENTRIES, DEFAULT_SYSTEM_PARAMETERS, 1);
+    }
     return null;
   });
 
   const [isOptimizerModalOpen, setIsOptimizerModalOpen] = useState<boolean>(false);
   const [optimizationNotification, setOptimizationNotification] = useState<string | null>(null);
+
+  // 6b. Firebase Cloud Sync & Cross-Device Authentication State
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'LOCAL_ONLY' | 'SYNCED' | 'SYNCING'>('LOCAL_ONLY');
 
   // Sync parameters & proposal to localStorage
   useEffect(() => {
@@ -171,6 +191,56 @@ export default function App() {
       localStorage.removeItem('intraday_radar_pending_proposal');
     }
   }, [pendingProposal]);
+
+  // Real-time Cloud Sync with Firebase across PC, Mobile, and Tablet
+  useEffect(() => {
+    const unsubAuth = onAuthStateChanged(auth, async (user) => {
+      setCurrentUser(user);
+      if (user) {
+        setCloudSyncStatus('SYNCING');
+        const unsubData = subscribeToUserCloudData(
+          user.uid,
+          (cloudSettings) => {
+            if (cloudSettings.parameters) {
+              setParameters(cloudSettings.parameters);
+            }
+            if (cloudSettings.pendingProposal !== undefined) {
+              setPendingProposal(cloudSettings.pendingProposal);
+            }
+            if (cloudSettings.accountCapital !== undefined) {
+              setAccountCapital(cloudSettings.accountCapital);
+            }
+            if (cloudSettings.isPaperMode !== undefined) {
+              setIsPaperMode(cloudSettings.isPaperMode);
+            }
+            setCloudSyncStatus('SYNCED');
+          },
+          (cloudTrades) => {
+            if (cloudTrades.length > 0) {
+              setJournalEntries(cloudTrades);
+            } else {
+              // If cloud is newly initialized, migrate existing local trades
+              if (journalEntries.length > 0) {
+                batchUploadTradesToCloud(user.uid, journalEntries);
+                syncSystemSettingsToCloud(user.uid, {
+                  parameters,
+                  pendingProposal,
+                  accountCapital,
+                  isPaperMode,
+                });
+              }
+            }
+            setCloudSyncStatus('SYNCED');
+          }
+        );
+        return () => unsubData();
+      } else {
+        setCloudSyncStatus('LOCAL_ONLY');
+      }
+    });
+
+    return () => unsubAuth();
+  }, []);
 
   // Compute Daily Risk Tracker & Circuit Breaker
   const todayStr = new Date().toLocaleDateString('it-IT');
@@ -421,6 +491,30 @@ export default function App() {
 
   // Journal Actions
   const handleAddJournalTrade = (tradeData: any) => {
+    const initialOutcome = tradeData.outcome || 'OPEN';
+    let pnlEur = tradeData.pnlEur != null ? tradeData.pnlEur : 0;
+    let rMultiple = tradeData.rMultiple != null ? tradeData.rMultiple : 0;
+    let exitPrice = tradeData.exitPrice || tradeData.target1 || 102;
+    let status: 'OPEN' | 'CLOSED' = initialOutcome === 'OPEN' ? 'OPEN' : 'CLOSED';
+
+    if (initialOutcome === 'WIN') {
+      exitPrice = tradeData.target1 || tradeData.entryPrice * 1.02;
+      rMultiple = +(parameters.target1Multiplier || 1.6).toFixed(2);
+      pnlEur = tradeData.potentialGainT1Eur != null ? tradeData.potentialGainT1Eur : +(100 * rMultiple).toFixed(2);
+    } else if (initialOutcome === 'LOSS') {
+      exitPrice = tradeData.stopLoss || tradeData.entryPrice * 0.98;
+      rMultiple = -1.0;
+      pnlEur = -(tradeData.maxRiskEur != null ? tradeData.maxRiskEur : 100);
+    } else if (initialOutcome === 'EXPIRED') {
+      exitPrice = tradeData.entryPrice || 100;
+      rMultiple = 0;
+      pnlEur = -2.0; // fee friction
+    } else if (initialOutcome === 'BREAKEVEN') {
+      exitPrice = tradeData.entryPrice || 100;
+      rMultiple = 0;
+      pnlEur = -2.0;
+    }
+
     const entry: TradeJournalEntry = {
       id: `trade-${Date.now()}`,
       timestamp: new Date().toISOString(),
@@ -430,32 +524,116 @@ export default function App() {
       direction: tradeData.direction,
       strategy: tradeData.strategy,
       entryPrice: tradeData.entryPrice || 100,
-      exitPrice: tradeData.target1 || 102,
+      exitPrice,
       stopLoss: tradeData.stopLoss || 98,
       target1: tradeData.target1 || 103,
-      pnlEur: 0,
-      rMultiple: 0,
-      outcome: 'BREAKEVEN',
-      status: 'OPEN',
-      notes: `KO Strike ${tradeData.barrierStrike} | Leva ${tradeData.leverage}x | ${tradeData.suggestedCertificates} contratti. In monitoraggio.`,
+      pnlEur,
+      rMultiple,
+      outcome: initialOutcome === 'OPEN' ? 'BREAKEVEN' : initialOutcome,
+      status,
+      closedAt: status === 'CLOSED' ? new Date().toISOString() : undefined,
+      notes:
+        tradeData.notes ||
+        (initialOutcome === 'OPEN'
+          ? `KO Strike ${tradeData.barrierStrike} | Leva ${tradeData.leverage}x | ${tradeData.suggestedCertificates} quote. In monitoraggio attivo.`
+          : initialOutcome === 'WIN'
+          ? `Target 1 (+${rMultiple}R) raggiunto con successo. Guadagno netto +${pnlEur} €.`
+          : initialOutcome === 'LOSS'
+          ? `Stop loss eseguito a protezione del capitale. Perdita controllata ${pnlEur} €.`
+          : initialOutcome === 'EXPIRED'
+          ? `Setup scaduto al cutoff orario senza rottura trigger né stop.`
+          : `Chiuso a pareggio.`),
       isPaper: tradeData.isPaper,
     };
-    setJournalEntries((prev) => [entry, ...prev]);
+
+    setJournalEntries((prev) => {
+      const updated = [entry, ...prev];
+      const completedCount = updated.filter((t) => t.status !== 'OPEN').length;
+      if (completedCount > 0 && completedCount % 20 === 0) {
+        const cycleNum = Math.floor(completedCount / 20);
+        const prop = evaluateSystemOptimization(updated, parameters, cycleNum);
+        setPendingProposal(prop);
+        setOptimizationNotification(
+          `Ciclo #${cycleNum} concluso (${completedCount} setup completati)! Nuova proposta di automiglioramento parametri pronta.`
+        );
+      }
+      return updated;
+    });
+
+    // Sync trade to Firebase Cloud in real time
+    if (currentUser) {
+      syncTradeToCloud(currentUser.uid, entry);
+    }
   };
 
   const handleUpdateJournalTrade = (updated: TradeJournalEntry) => {
-    setJournalEntries((prev) =>
-      prev.map((t) => (t.id === updated.id ? updated : t))
-    );
+    setJournalEntries((prev) => {
+      const newList = prev.map((t) => (t.id === updated.id ? updated : t));
+      const completedCount = newList.filter((t) => t.status !== 'OPEN').length;
+      if (completedCount > 0 && completedCount % 20 === 0) {
+        const cycleNum = Math.floor(completedCount / 20);
+        const prop = evaluateSystemOptimization(newList, parameters, cycleNum);
+        setPendingProposal(prop);
+        setOptimizationNotification(
+          `Ciclo #${cycleNum} concluso (${completedCount} setup completati)! Nuova proposta di automiglioramento parametri pronta.`
+        );
+      }
+      return newList;
+    });
+
+    // Sync updated trade to Firebase Cloud
+    if (currentUser) {
+      syncTradeToCloud(currentUser.uid, updated);
+    }
   };
 
   const handleDeleteJournalTrade = (id: string) => {
     setJournalEntries((prev) => prev.filter((item) => item.id !== id));
+    if (currentUser) {
+      deleteTradeFromCloud(currentUser.uid, id);
+    }
   };
 
   const handleClearJournal = () => {
     setJournalEntries([]);
     setPendingProposal(null);
+    if (currentUser) {
+      clearAllTradesFromCloud(currentUser.uid);
+      syncSystemSettingsToCloud(currentUser.uid, {
+        parameters,
+        pendingProposal: null,
+        accountCapital,
+        isPaperMode,
+      });
+    }
+  };
+
+  // Google Sign In & Sign Out for Multi-Device synchronization
+  const handleSignInGoogle = async () => {
+    try {
+      setCloudSyncStatus('SYNCING');
+      const user = await signInWithGoogle();
+      setCurrentUser(user);
+      setOptimizationNotification(
+        `Cloud Connesso: ${user.displayName || user.email}! Parametri V${parameters.version} e diario sincronizzati in tempo reale tra tutti i dispositivi.`
+      );
+      setTimeout(() => setOptimizationNotification(null), 6000);
+    } catch (err: any) {
+      console.error('Google Sign In error:', err);
+      setCloudSyncStatus('LOCAL_ONLY');
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await logoutUser();
+      setCurrentUser(null);
+      setCloudSyncStatus('LOCAL_ONLY');
+      setOptimizationNotification('Account disconnesso. La piattaforma continua in modalità offline locale.');
+      setTimeout(() => setOptimizationNotification(null), 4000);
+    } catch (err: any) {
+      console.error('Sign Out error:', err);
+    }
   };
 
   // 7. System Optimization Proposal Execution (Accept / Reject / Audit)
@@ -502,6 +680,16 @@ export default function App() {
     setOptimizationNotification(`Parametri aggiornati alla Versione V${newParams.version}! Nuovi calcoli attivi.`);
     setTimeout(() => setOptimizationNotification(null), 6000);
 
+    // Sync accepted parameters & proposal to Cloud
+    if (currentUser) {
+      syncSystemSettingsToCloud(currentUser.uid, {
+        parameters: newParams,
+        pendingProposal: acceptedProposal,
+        accountCapital,
+        isPaperMode,
+      });
+    }
+
     // Refresh setups immediately
     if (topCandidateEU) {
       setSetupEU(buildExecutionSetup(topCandidateEU, catalystCache[topCandidateEU.quote.ticker] || null, 'EU', newParams));
@@ -520,6 +708,16 @@ export default function App() {
     setPendingProposal(rejectedProposal);
     setOptimizationNotification(`Proposta di ottimizzazione rifiutata. Parametri V${parameters.version} mantenuti invariati.`);
     setTimeout(() => setOptimizationNotification(null), 5000);
+
+    // Sync rejected status to Cloud
+    if (currentUser) {
+      syncSystemSettingsToCloud(currentUser.uid, {
+        parameters,
+        pendingProposal: rejectedProposal,
+        accountCapital,
+        isPaperMode,
+      });
+    }
   };
 
   const handleRunAuditOnDemand = () => {
@@ -560,7 +758,7 @@ export default function App() {
       {/* 1. Permanent Risk Disclaimer */}
       <RiskBanner />
 
-      {/* 2. Platform Header with PWA install button */}
+      {/* 2. Platform Header with PWA install button and Real-time Cloud Sync */}
       <Header
         sessionInfo={sessionInfo}
         onOpenCsvManager={() => setIsCsvModalOpen(true)}
@@ -575,6 +773,10 @@ export default function App() {
         isInstallable={installPrompt.ready}
         onInstallApp={installPrompt.trigger}
         onOpenContactModal={() => setIsContactModalOpen(true)}
+        currentUser={currentUser}
+        cloudSyncStatus={cloudSyncStatus}
+        onSignInGoogle={handleSignInGoogle}
+        onSignOut={handleSignOut}
       />
 
       {/* Main Trading Terminal Body */}

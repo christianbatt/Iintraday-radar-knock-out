@@ -84,6 +84,8 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
   const [spreadEur, setSpreadEur] = useState<number>(0.02);
   const [brokerFeeEur, setBrokerFeeEur] = useState<number>(1.0);
   const [tradeSaved, setTradeSaved] = useState<boolean>(false);
+  const [tradeSavedLabel, setTradeSavedLabel] = useState<string>('Registrato a Giornale!');
+  const [showLogMenu, setShowLogMenu] = useState<boolean>(false);
   const [showKoCalculator, setShowKoCalculator] = useState<boolean>(false);
   const [showScenarios, setShowScenarios] = useState<boolean>(false);
   const [showFrictionExplainer, setShowFrictionExplainer] = useState<boolean>(false);
@@ -119,7 +121,7 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
   const stressReport = koSafety.stressReport;
   const isBlockedByStress = stressReport && stressReport.filterStatus === 'CRITICAL_BLOCKED';
 
-  const handleLogTrade = () => {
+  const handleLogTrade = (chosenOutcome: 'OPEN' | 'WIN' | 'LOSS' | 'BREAKEVEN' | 'EXPIRED' = 'OPEN') => {
     if (circuitBreakerActive || isBlockedByStress) {
       return;
     }
@@ -138,10 +140,26 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
       leverage,
       suggestedCertificates: koSafety.suggestedCertificates,
       maxRiskEur: koSafety.maxRiskEur,
+      potentialGainT1Eur: koSafety.potentialGainT1Eur,
       investedEur: koSafety.totalInvestedEur,
       isPaper: isPaperMode,
+      outcome: chosenOutcome,
     });
+
+    const label =
+      chosenOutcome === 'WIN'
+        ? 'Registrato come WIN (+Target 1)!'
+        : chosenOutcome === 'LOSS'
+        ? 'Registrato come LOSS (-Stop Loss)!'
+        : chosenOutcome === 'EXPIRED'
+        ? 'Registrato come EXPIRED!'
+        : chosenOutcome === 'BREAKEVEN'
+        ? 'Registrato come Pareggio!'
+        : 'Registrato a Giornale (In Corso)!';
+
+    setTradeSavedLabel(label);
     setTradeSaved(true);
+    setShowLogMenu(false);
     setTimeout(() => setTradeSaved(false), 4000);
   };
 
@@ -440,27 +458,24 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
             {/* Implied Volatility (IV) Gauge vs 30-Day Average */}
             <ImpliedVolatilityGauge quote={quote} />
 
-            {/* ATR Volatility & Recommended Trade Republic KO Barrier */}
-            <div className="bg-slate-950/90 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
-              <div className="flex items-center gap-2">
+            {/* ATR Volatility, RSI & Recommended Trade Republic KO Barrier (Dedicated 3-column grid with zero overlap) */}
+            <div className="bg-slate-950/90 border border-slate-800 rounded-xl p-2.5 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-mono">
+              <div className="flex items-center gap-2 min-w-0">
                 <Activity className="w-4 h-4 text-amber-400 shrink-0" />
-                <div>
-                  <span className="text-slate-400">ATR(14): </span>
-                  <span className="font-bold text-amber-300">
+                <div className="min-w-0">
+                  <span className="text-[10px] text-slate-400 uppercase block truncate">ATR(14) Volatilità</span>
+                  <div className="font-bold text-amber-300 truncate">
                     {atrVal?.toFixed(2)} {quote?.currency} {atrPct && `(${atrPct}%)`}
-                  </span>
-                  <span className="text-slate-500 text-[11px] ml-1.5">
-                    · Stop Conservativo: {setup.stopLossConservative?.toFixed(2)}
-                  </span>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
-                {quote?.rsi14 != null && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-slate-400">RSI(14):</span>
+              <div className="flex items-center gap-2 min-w-0 sm:border-x sm:border-slate-800 sm:px-2">
+                <div className="min-w-0 w-full">
+                  <span className="text-[10px] text-slate-400 uppercase block truncate">RSI(14) Momentum</span>
+                  {quote?.rsi14 != null ? (
                     <span
-                      className={`font-bold px-1.5 py-0.5 rounded text-[11px] ${
+                      className={`font-bold px-1.5 py-0.2 rounded text-[10px] inline-block truncate ${
                         quote.rsi14 >= 70
                           ? 'bg-rose-950 text-rose-300 border border-rose-800'
                           : quote.rsi14 <= 30
@@ -470,14 +485,19 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
                     >
                       {quote.rsi14} {quote.rsi14 >= 70 ? '(Ipercomprato)' : quote.rsi14 <= 30 ? '(Ipervenduto)' : '(Sano)'}
                     </span>
-                  </div>
-                )}
+                  ) : (
+                    <span className="text-slate-500 text-[11px]">nd</span>
+                  )}
+                </div>
+              </div>
 
-                <div className="flex items-center gap-1.5 text-sky-400">
-                  <ShieldCheck className="w-4 h-4 text-sky-400 shrink-0" />
-                  <span>
-                    Barriera KO Sicura: <strong className="text-white">{setup.suggestedKoBarrier?.toFixed(2)}</strong> (&gt;2.5x stop)
-                  </span>
+              <div className="flex items-center gap-2 min-w-0">
+                <ShieldCheck className="w-4 h-4 text-sky-400 shrink-0" />
+                <div className="min-w-0">
+                  <span className="text-[10px] text-slate-400 uppercase block truncate">Barriera KO Sicura</span>
+                  <div className="font-bold text-sky-300 truncate">
+                    {setup.suggestedKoBarrier?.toFixed(2)} {quote?.currency}
+                  </div>
                 </div>
               </div>
             </div>
@@ -841,7 +861,7 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
         )}
 
         {/* Action Buttons */}
-        <div className="pt-2 flex items-center gap-2.5">
+        <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 relative">
           {candidate && (
             <button
               type="button"
@@ -854,35 +874,109 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
           )}
 
           {!isNoTrade && (
-            <button
-              type="button"
-              onClick={handleLogTrade}
-              disabled={circuitBreakerActive || isBlockedByStress}
-              className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold font-mono flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer ${
-                isBlockedByStress
-                  ? 'bg-rose-950/60 text-rose-300 border border-rose-800/80 cursor-not-allowed opacity-80'
-                  : tradeSaved
-                  ? 'bg-emerald-500 text-slate-950'
-                  : 'bg-emerald-600 hover:bg-emerald-500 text-white active:scale-95'
-              }`}
-            >
-              {isBlockedByStress ? (
-                <>
-                  <Lock className="w-4 h-4 text-rose-400" />
-                  <span>Bloccato da Stress Test Derivati</span>
-                </>
-              ) : tradeSaved ? (
-                <>
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Registrato a Giornale!</span>
-                </>
-              ) : (
-                <>
-                  <Target className="w-4 h-4" />
-                  <span>Registra a Giornale</span>
-                </>
+            <div className="flex-1 relative flex items-center">
+              <button
+                type="button"
+                onClick={() => handleLogTrade('OPEN')}
+                disabled={circuitBreakerActive || isBlockedByStress}
+                className={`flex-1 py-2.5 px-3 rounded-l-xl text-xs font-bold font-mono flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer ${
+                  isBlockedByStress
+                    ? 'bg-rose-950/60 text-rose-300 border border-rose-800/80 cursor-not-allowed opacity-80'
+                    : tradeSaved
+                    ? 'bg-emerald-500 text-slate-950'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white active:scale-95'
+                }`}
+              >
+                {isBlockedByStress ? (
+                  <>
+                    <Lock className="w-4 h-4 text-rose-400" />
+                    <span className="truncate">Bloccato da Stress Test</span>
+                  </>
+                ) : tradeSaved ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span className="truncate">{tradeSavedLabel}</span>
+                  </>
+                ) : (
+                  <>
+                    <Target className="w-4 h-4" />
+                    <span>Registra a Giornale</span>
+                  </>
+                )}
+              </button>
+
+              {/* Outcome dropdown toggle */}
+              <button
+                type="button"
+                disabled={circuitBreakerActive || isBlockedByStress}
+                onClick={() => setShowLogMenu(!showLogMenu)}
+                className="py-2.5 px-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-r-xl border-l border-emerald-800 transition-colors text-xs font-bold cursor-pointer"
+                title="Scegli esito rapido (Target 1, Stop, Scaduto)"
+              >
+                ▼
+              </button>
+
+              {/* Outcome Dropdown Menu */}
+              {showLogMenu && (
+                <div className="absolute right-0 bottom-full mb-2 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 z-50 text-xs font-mono space-y-1 animate-fadeIn">
+                  <div className="text-[10px] text-slate-400 uppercase font-semibold px-2 py-1 border-b border-slate-800">
+                    Scegli Esito da Registrare a Giornale:
+                  </div>
+
+                  <button
+                    onClick={() => handleLogTrade('OPEN')}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200 flex items-center justify-between transition-colors cursor-pointer"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-sky-400" />
+                      <span>In Monitoraggio (Aperto)</span>
+                    </span>
+                    <span className="text-[10px] text-slate-400">Risolvi dopo</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleLogTrade('WIN')}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-emerald-950/60 text-emerald-300 flex items-center justify-between transition-colors cursor-pointer"
+                  >
+                    <span className="flex items-center gap-1.5 font-bold">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Target 1 (+1.6R WIN)</span>
+                    </span>
+                    <span className="text-emerald-400 font-bold">+{koSafety.potentialGainT1Eur} €</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleLogTrade('LOSS')}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-950/60 text-rose-300 flex items-center justify-between transition-colors cursor-pointer"
+                  >
+                    <span className="flex items-center gap-1.5 font-bold">
+                      <Lock className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Stop Loss (-1.0R LOSS)</span>
+                    </span>
+                    <span className="text-rose-400 font-bold">-{koSafety.maxRiskEur} €</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleLogTrade('EXPIRED')}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-amber-950/60 text-amber-300 flex items-center justify-between transition-colors cursor-pointer"
+                  >
+                    <span className="flex items-center gap-1.5 font-bold">
+                      <Clock className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Scaduto al Cutoff (EXPIRED)</span>
+                    </span>
+                    <span className="text-amber-400 font-bold">-2.00 €</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleLogTrade('BREAKEVEN')}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-300 flex items-center justify-between transition-colors cursor-pointer"
+                  >
+                    <span>⚖️ Pareggio / Breakeven</span>
+                    <span className="text-slate-400">-2.00 €</span>
+                  </button>
+                </div>
               )}
-            </button>
+            </div>
           )}
         </div>
       </div>
