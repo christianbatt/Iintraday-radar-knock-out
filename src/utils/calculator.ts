@@ -53,6 +53,7 @@ export function calculateCandidateScore(
   let liquidityScore = 0;
   let futuresScore = 0;
   let levelScore = 0;
+  let rsiScore = 5;
 
   // If essential price data is missing from exchange, candidate receives 0 score
   const price = quote.preMarketPrice ?? quote.currentPrice;
@@ -63,6 +64,7 @@ export function calculateCandidateScore(
       liquidityScore: 0,
       futuresScore: 0,
       levelScore: 0,
+      rsiScore: 0,
       total: 0,
       details: ['Prezzo di mercato non disponibile dal feed: candidato non qualificabile.'],
     };
@@ -70,19 +72,19 @@ export function calculateCandidateScore(
 
   const isEurope = quote.market === 'EU';
 
-  // 1. GAP SCORE (max 30) - Only from real calculated gap
+  // 1. GAP SCORE (max 25) - Only from real calculated gap
   if (quote.gapPercent != null) {
     const absGap = Math.abs(quote.gapPercent);
     const gapThreshold = isEurope ? 0.8 : 1.4;
     if (absGap >= gapThreshold * 1.5) {
-      gapScore = 30;
-      details.push(`Gap elevato (${absGap.toFixed(2)}% vs soglia ${gapThreshold}%): +30pt`);
+      gapScore = 25;
+      details.push(`Gap elevato (${absGap.toFixed(2)}% vs soglia ${gapThreshold}%): +25pt`);
     } else if (absGap >= gapThreshold) {
-      gapScore = 24;
-      details.push(`Gap significativo (${absGap.toFixed(2)}%): +24pt`);
+      gapScore = 20;
+      details.push(`Gap significativo (${absGap.toFixed(2)}%): +20pt`);
     } else if (absGap >= (isEurope ? 0.4 : 0.7)) {
-      gapScore = 15;
-      details.push(`Gap moderato (${absGap.toFixed(2)}%): +15pt`);
+      gapScore = 12;
+      details.push(`Gap moderato (${absGap.toFixed(2)}%): +12pt`);
     } else {
       gapScore = 4;
       details.push(`Gap debole o piatto (${absGap.toFixed(2)}%): +4pt`);
@@ -108,23 +110,32 @@ export function calculateCandidateScore(
       rvolScore = 5;
       details.push(`Relative Volume debole (RVOL ${rvol.toFixed(2)}x): +5pt`);
     }
+    if (quote.rvol20m != null) {
+      if (quote.rvol20m >= 1.5) {
+        details.push(`🔥 Spike Volumi ultimi 20m (${quote.rvol20m.toFixed(2)}x vs media mobile 20m): forte afflusso istituzionale in corso.`);
+      } else if (quote.rvol20m >= 1.1) {
+        details.push(`⚡ Flusso Volumi 20m solido (${quote.rvol20m.toFixed(2)}x vs media mobile 20m).`);
+      } else if (quote.rvol20m < 0.7) {
+        details.push(`⚠️ Volumi ultimi 20m in contrazione (${quote.rvol20m.toFixed(2)}x vs media mobile 20m): possibile fase di pausa/consolidamento.`);
+      }
+    }
   } else {
     rvolScore = 0;
     details.push('RVOL non disponibile (volume pre-market non scambiato o non comunicato): 0pt');
   }
 
-  // 3. LIQUIDITY SCORE (max 15) - From real 20d average volume
+  // 3. LIQUIDITY SCORE (max 10) - From real 20d average volume
   const avgVol = quote.avgVolume20d;
   if (avgVol != null && avgVol > 0) {
     if (avgVol >= 5000000) {
-      liquidityScore = 15;
-      details.push(`Alta liquidità giornaliera (vol medio ${formatCompactNumber(avgVol)}): +15pt`);
+      liquidityScore = 10;
+      details.push(`Alta liquidità giornaliera (vol medio ${formatCompactNumber(avgVol)}): +10pt`);
     } else if (avgVol >= 1500000) {
-      liquidityScore = 12;
-      details.push(`Buona liquidità (vol medio ${formatCompactNumber(avgVol)}): +12pt`);
-    } else if (avgVol >= 500000) {
       liquidityScore = 8;
-      details.push(`Liquidità discreta (vol medio ${formatCompactNumber(avgVol)}): +8pt`);
+      details.push(`Buona liquidità (vol medio ${formatCompactNumber(avgVol)}): +8pt`);
+    } else if (avgVol >= 500000) {
+      liquidityScore = 5;
+      details.push(`Liquidità discreta (vol medio ${formatCompactNumber(avgVol)}): +5pt`);
     } else {
       liquidityScore = 2;
       details.push(`Liquidità ridotta (vol medio ${formatCompactNumber(avgVol)}): +2pt`);
@@ -170,18 +181,63 @@ export function calculateCandidateScore(
     details.push('Livelli High/Low ieri non disponibili: +2pt');
   }
 
-  // 6. RSI (14) MOMENTUM QUALITY
-  if (quote.rsi14 != null) {
-    if (quote.rsi14 >= 70) {
-      details.push(`RSI(14) in Ipercomprato (${quote.rsi14}): rischio pullback/esaurimento momentum.`);
-    } else if (quote.rsi14 <= 30) {
-      details.push(`RSI(14) in Ipervenduto (${quote.rsi14}): rischio rimbalzo contro-trend.`);
+  // 6. RSI MOMENTUM & TURBO KO QUALITY (max 10)
+  // Prioritizes 5m Intraday RSI (ideal tactical timeframe for intraday Turbo trading) and checks 1D confluence
+  const activeRsi = quote.rsi5m ?? quote.rsi14;
+  const rsiTimeframe = quote.rsi5m != null ? '5m Intraday' : '1D Daily';
+
+  if (activeRsi != null) {
+    if (isGapLong) {
+      if (activeRsi >= 46 && activeRsi <= 66) {
+        rsiScore = 10;
+        details.push(`RSI ${rsiTimeframe} (${activeRsi}) ottimale per Turbo Long: espansione sana senza saturazione (+10pt)`);
+      } else if (activeRsi > 66 && activeRsi <= 72) {
+        rsiScore = 6;
+        details.push(`RSI ${rsiTimeframe} (${activeRsi}) in accelerazione: forte momentum ma prossimo a ipercomprato (+6pt)`);
+      } else if (activeRsi >= 40 && activeRsi < 46) {
+        rsiScore = 5;
+        details.push(`RSI ${rsiTimeframe} (${activeRsi}) neutrale: momentum rialzista in costruzione (+5pt)`);
+      } else if (activeRsi > 72) {
+        rsiScore = 0;
+        details.push(`Allerta RSI ${rsiTimeframe} in Ipercomprato (${activeRsi}): rischio elevato di pullback/KO su Turbo Long (0pt)`);
+      } else {
+        rsiScore = 2;
+        details.push(`RSI ${rsiTimeframe} debole (${activeRsi}): spinta intraday insufficiente per Turbo Long (+2pt)`);
+      }
     } else {
-      details.push(`RSI(14) in zona sana di espansione (${quote.rsi14}): momentum equilibrato.`);
+      // Short setup
+      if (activeRsi >= 34 && activeRsi <= 54) {
+        rsiScore = 10;
+        details.push(`RSI ${rsiTimeframe} (${activeRsi}) ottimale per Turbo Short: pressione ribassista solida (+10pt)`);
+      } else if (activeRsi >= 28 && activeRsi < 34) {
+        rsiScore = 6;
+        details.push(`RSI ${rsiTimeframe} (${activeRsi}) marcatamente ribassista: prossimo a ipervenduto (+6pt)`);
+      } else if (activeRsi > 54 && activeRsi <= 60) {
+        rsiScore = 5;
+        details.push(`RSI ${rsiTimeframe} (${activeRsi}) neutrale: consolidamento pre-rottura (+5pt)`);
+      } else if (activeRsi < 28) {
+        rsiScore = 0;
+        details.push(`Allerta RSI ${rsiTimeframe} in Ipervenduto (${activeRsi}): rischio elevato di short-squeeze/rimbalzo contro Turbo Short (0pt)`);
+      } else {
+        rsiScore = 2;
+        details.push(`RSI ${rsiTimeframe} rialzista (${activeRsi}): contrasto con setup short (+2pt)`);
+      }
     }
+
+    // Dual-Timeframe Confluence bonus note
+    if (quote.rsi5m != null && quote.rsi14 != null) {
+      if (isGapLong && quote.rsi5m <= 68 && quote.rsi14 <= 70) {
+        details.push(`Conferma Multi-Timeframe (5m: ${quote.rsi5m} | 1D: ${quote.rsi14}): allineamento coerente tra respiro intraday e trend macro.`);
+      } else if (!isGapLong && quote.rsi5m >= 32 && quote.rsi14 >= 30) {
+        details.push(`Conferma Multi-Timeframe (5m: ${quote.rsi5m} | 1D: ${quote.rsi14}): allineamento coerente ribassista tra 5m e 1D.`);
+      }
+    }
+  } else {
+    rsiScore = 5;
+    details.push('RSI non disponibile dal feed: punteggio neutro (+5pt)');
   }
 
-  const total = gapScore + rvolScore + liquidityScore + futuresScore + levelScore;
+  const total = gapScore + rvolScore + liquidityScore + futuresScore + levelScore + rsiScore;
 
   return {
     gapScore,
@@ -189,6 +245,7 @@ export function calculateCandidateScore(
     liquidityScore,
     futuresScore,
     levelScore,
+    rsiScore,
     total,
     details,
   };
@@ -241,7 +298,7 @@ export function rankMarketCandidates(
   // If RSI filter is active (from options or parameters), exclude overbought (RSI >= 70) and oversold (RSI <= 30)
   const isRsiActive = options?.rsiFilterActive ?? options?.parameters?.rsiFilterActive ?? false;
   if (isRsiActive) {
-    marketQuotes = marketQuotes.filter((q) => !isRsiExtreme(q.rsi14));
+    marketQuotes = marketQuotes.filter((q) => !isRsiExtreme(q.rsi5m ?? q.rsi14));
   }
 
   const change =
@@ -273,7 +330,7 @@ export function rankTopCandidates(
   let targetQuotes = quotes;
   const isRsiActive = options?.rsiFilterActive ?? options?.parameters?.rsiFilterActive ?? false;
   if (isRsiActive) {
-    targetQuotes = targetQuotes.filter((q) => !isRsiExtreme(q.rsi14));
+    targetQuotes = targetQuotes.filter((q) => !isRsiExtreme(q.rsi5m ?? q.rsi14));
   }
 
   const scored = targetQuotes.map((quote) => {

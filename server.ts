@@ -148,6 +148,8 @@ export interface RawQuoteData {
   historicalVolatility30d?: number | null;
   ivRank?: number | null;
   rsi14?: number | null;
+  rsi5m?: number | null;
+  rvol20m?: number | null;
   timestamp: string;
   source: string;
 }
@@ -159,6 +161,83 @@ export interface NewsItem {
   source: string;
   url: string;
   publishedAt: string;
+}
+
+// Calculate Wilder's 14-period RSI on series of prices
+function calculateWilderRsi(closes: number[], period: number = 14): number | null {
+  if (!closes || closes.length < period + 1) return null;
+  let gains = 0;
+  let losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) gains += diff;
+    else losses += Math.abs(diff);
+  }
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    const gain = diff > 0 ? diff : 0;
+    const loss = diff < 0 ? Math.abs(diff) : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+  }
+
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return +(100 - 100 / (1 + rs)).toFixed(1);
+}
+
+// Fetch real 5-minute Intraday RSI (Wilder 14-period) & 20-minute Relative Volume (RVOL 20m)
+async function getIntraday5mMetrics(ticker: string): Promise<{ rsi5m: number | null; rvol20m: number | null }> {
+  const cacheKey = `metrics5m:${ticker}`;
+  const cached = cache.get<{ rsi5m: number | null; rvol20m: number | null }>(cacheKey);
+  if (cached) return cached.data;
+
+  try {
+    const ySymbol = ticker.includes('.') ? ticker : `${ticker}`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}?interval=5m&range=2d&includePrePost=true&_=${Date.now()}`;
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!resp.ok) return { rsi5m: null, rvol20m: null };
+    const json = await resp.json();
+    const rawQuotes = json?.chart?.result?.[0]?.indicators?.quote?.[0];
+    const closes: number[] = rawQuotes?.close?.filter(
+      (c: any) => typeof c === 'number' && c > 0
+    ) || [];
+
+    const rsi5m = calculateWilderRsi(closes, 14);
+
+    // Calculate real-time 20-minute Relative Volume (last 4 bars of 5m vs preceding moving average)
+    let rvol20m: number | null = null;
+    const vols: number[] = (rawQuotes?.volume || [])
+      .map((v: any, i: number) => ({ v: typeof v === 'number' ? v : 0, c: rawQuotes?.close?.[i] }))
+      .filter((x: any) => typeof x.c === 'number' && x.v > 0)
+      .map((x: any) => x.v);
+
+    if (vols.length >= 8) {
+      // Last 4 bars (4 * 5m = 20 minutes)
+      const last4 = vols.slice(-4);
+      // Preceding moving average window of up to 16 bars (80 min)
+      const prevBars = vols.slice(Math.max(0, vols.length - 20), vols.length - 4);
+      if (prevBars.length >= 4) {
+        const last4Avg = last4.reduce((a, b) => a + b, 0) / last4.length;
+        const prevAvg = prevBars.reduce((a, b) => a + b, 0) / prevBars.length;
+        if (prevAvg > 0) {
+          rvol20m = +(last4Avg / prevAvg).toFixed(2);
+        }
+      }
+    }
+
+    const result = { rsi5m, rvol20m };
+    cache.set(cacheKey, result, 25);
+    return result;
+  } catch {
+    return { rsi5m: null, rvol20m: null };
+  }
 }
 
 // Fetch real market quote & historical bars from real exchange feed
@@ -176,6 +255,9 @@ async function fetchQuoteForTicker(
       return cached.data;
     }
   }
+
+  // Launch 5m intraday metrics fetch (RSI 5m + RVOL 20m) in parallel for zero added latency
+  const intraday5mPromise = getIntraday5mMetrics(ticker);
 
   let quoteData: Partial<RawQuoteData> = {};
   let source = 'Exchange Feed (Real-Time)';
@@ -425,6 +507,8 @@ async function fetchQuoteForTicker(
           }
         }
 
+        const { rsi5m: calcRsi5m, rvol20m: calcRvol20m } = await intraday5mPromise;
+
         quoteData = {
           currentPrice: currentP ? +currentP.toFixed(2) : quoteData.currentPrice ?? null,
           prevClose: prevC ? +prevC.toFixed(2) : quoteData.prevClose ?? null,
@@ -437,10 +521,12 @@ async function fetchQuoteForTicker(
           preMarketVolume: pmVol ?? regVol ?? null,
           atr14: calcAtr,
           rvol: calcRvol,
+          rvol20m: calcRvol20m,
           impliedVolatility: calcIv,
           historicalVolatility30d: calcHv30,
           ivRank: calcIvRank,
           rsi14: calcRsi,
+          rsi5m: calcRsi5m,
         };
         source = `${meta.fullExchangeName || meta.exchangeName || 'Mercato Ufficiale'} (${meta.currency || currency})`;
       }
@@ -477,10 +563,12 @@ async function fetchQuoteForTicker(
     atr14: quoteData.atr14 ?? null,
     gapPercent,
     rvol: quoteData.rvol ?? null,
+    rvol20m: quoteData.rvol20m ?? (await intraday5mPromise).rvol20m,
     impliedVolatility: quoteData.impliedVolatility ?? null,
     historicalVolatility30d: quoteData.historicalVolatility30d ?? null,
     ivRank: quoteData.ivRank ?? null,
     rsi14: quoteData.rsi14 ?? null,
+    rsi5m: quoteData.rsi5m ?? (await intraday5mPromise).rsi5m,
     timestamp: new Date().toISOString(),
     source: quoteData.currentPrice ? source : 'Dati di mercato non disponibili',
   };
@@ -896,33 +984,46 @@ fonti: array di oggetti { title, url, source, time }`;
       const topSummary = realNews[0]?.summary || '';
       const allText = `${topTitle} ${topSummary}`.toLowerCase();
 
-      const isUpgrade = allText.includes('target') || allText.includes('rating') || allText.includes('buy');
-      const isOrders = allText.includes('ordini') || allText.includes('contratto') || allText.includes('partnership');
-      const isEarnings = allText.includes('utili') || allText.includes('trimestrale') || allText.includes('conti');
+      const isUpgrade = allText.includes('target') || allText.includes('rating') || allText.includes('buy') || allText.includes('outperform');
+      const isOrders = allText.includes('ordini') || allText.includes('contratto') || allText.includes('partnership') || allText.includes('commessa');
+      const isEarnings = allText.includes('utili') || allText.includes('trimestrale') || allText.includes('conti') || allText.includes('risultati');
 
-      let catalizzatoreDesc = `Notizia da fonte ${realNews[0]?.source}: "${topTitle}".`;
-      let puntiAFavore: string[] = [`Fonte di mercato accreditata: ${realNews[0]?.source}`];
+      let catalizzatoreDesc = '';
+      let puntiAFavore: string[] = [];
       let rischi: string[] = [];
-      let decisione: 'TRADE' | 'NESSUN_TRADE' = 'TRADE';
-      let direzione: 'LONG' | 'SHORT' | 'NESSUNA' = isPositive ? 'LONG' : 'SHORT';
+      let decisione: 'TRADE' | 'NESSUN_TRADE' = 'NESSUN_TRADE';
+      let direzione: 'LONG' | 'SHORT' | 'NESSUNA' = 'NESSUNA';
 
       if (isEarnings) {
-        catalizzatoreDesc += ' Rilascio risultati societari o trimestrale.';
-        rischi.push('Giorno di utili: rischio di spread allargato e volatilità estrema sul derivato Knock-Out.');
-      }
-      if (isUpgrade) {
-        catalizzatoreDesc += ' Revisione raccomandazioni analisti.';
-        puntiAFavore.push('Revisione target da parte di analisti istituzionali');
-      }
-      if (isOrders) {
-        catalizzatoreDesc += ' Espansione contratti o partnership commerciale.';
-        puntiAFavore.push('Nuovi contratti con visibilità su backlog ordini');
+        rischi.push('Giorno di rilascio utili/trimestrale: rischio elevatissimo di spread allargato, volatilità estrema e knock-out anticipato.');
       }
 
-      if (Math.abs(gap) < 0.4) {
+      // Strict Rule: Prefer NOT to trade unless there is explicit verified fundamental catalyst with significant gap
+      if (!isEarnings && (isUpgrade || isOrders) && Math.abs(gap) >= 0.7) {
+        decisione = 'TRADE';
+        direzione = isPositive ? 'LONG' : 'SHORT';
+        if (isUpgrade) {
+          catalizzatoreDesc = `Revisione raccomandazioni analisti da fonte ${realNews[0]?.source}: "${topTitle}".`;
+          puntiAFavore.push(`Fonte finanziaria accreditata: ${realNews[0]?.source}`);
+          puntiAFavore.push('Revisione target price/rating istituzionale con espansione pre-market');
+        } else {
+          catalizzatoreDesc = `Nuovo contratto/partnership confermata da fonte ${realNews[0]?.source}: "${topTitle}".`;
+          puntiAFavore.push(`Fonte accreditata: ${realNews[0]?.source}`);
+          puntiAFavore.push('Nuove commesse con visibilità diretta sul portafoglio ordini');
+        }
+      } else {
+        // Insufficient, contradictory, or routine news: strict NESSUN_TRADE
         decisione = 'NESSUN_TRADE';
         direzione = 'NESSUNA';
-        rischi.push(`Gap % (${gap}%) insufficiente per confermare il catalizzatore.`);
+        if (isEarnings) {
+          catalizzatoreDesc = `Sessione condizionata da rilascio utili/trimestrale per ${candidate.ticker} (${realNews[0]?.source}: "${topTitle}"). Rischio spread e spike bid/ask non compatibile con Knock-Out a leva.`;
+        } else if (Math.abs(gap) < 0.7) {
+          catalizzatoreDesc = `Notizie di mercato ordinarie da ${realNews[0]?.source} ("${topTitle}"). Gap % (${gap}%) insufficiente per convalidare una rottura direzionale asimmetrica.`;
+          rischi.push(`Gap % (${gap}%) troppo contenuto: rischio lateralità o falso breakout.`);
+        } else {
+          catalizzatoreDesc = `Notizia da ${realNews[0]?.source} ("${topTitle}") priva di catalizzatore fondamentale prioritario (target revision o commessa straordinaria).`;
+          rischi.push('Assenza di catalizzatore primario ad alto impatto volumetrico.');
+        }
       }
 
       parsed = {
@@ -934,9 +1035,15 @@ fonti: array di oggetti { title, url, source, time }`;
         condizioni_invalidazione: [
           'Rottura del VWAP intraday nella prima ora',
           'Riassorbimento completo del range di apertura',
+          'Inversione improvvisa dei futures di riferimento',
         ],
         fonti: sources,
       };
+    } else if (parsed) {
+      // Normalize decisione if Gemini outputs "NESSUN TRADE" instead of "NESSUN_TRADE"
+      if (parsed.decisione === 'NESSUN TRADE') {
+        parsed.decisione = 'NESSUN_TRADE';
+      }
     }
 
     res.json(parsed);

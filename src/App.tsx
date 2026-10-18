@@ -12,7 +12,6 @@ import {
   OptimizationProposal,
 } from './types/radar';
 import { DEFAULT_TRADE_REPUBLIC_UNDERLYINGS } from './data/defaultUnderlyings';
-import { SAMPLE_JOURNAL_ENTRIES } from './data/sampleTrades';
 import {
   getDualTopCandidates,
   buildExecutionSetup,
@@ -47,6 +46,7 @@ import { DailyCircuitBreakerBanner } from './components/DailyCircuitBreakerBanne
 import { SystemOptimizationBanner } from './components/SystemOptimizationBanner';
 import { DualExecutionHero } from './components/DualExecutionHero';
 import { TopCandidatesTable } from './components/TopCandidatesTable';
+import { BenchmarkCorrelationHeatmap } from './components/BenchmarkCorrelationHeatmap';
 import { TradeJournal } from './components/TradeJournal';
 import { CsvManagerModal } from './components/CsvManagerModal';
 import { CatalystModal } from './components/CatalystModal';
@@ -59,7 +59,19 @@ export default function App() {
   const [underlyings, setUnderlyings] = useState<UnderlyingItem[]>(() => {
     try {
       const saved = localStorage.getItem('intraday_radar_underlyings');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const existingTickers = new Set(parsed.map((p: UnderlyingItem) => p.ticker));
+          const missingDefaults = DEFAULT_TRADE_REPUBLIC_UNDERLYINGS.filter(
+            (d) => !existingTickers.has(d.ticker)
+          );
+          if (missingDefaults.length > 0) {
+            return [...parsed, ...missingDefaults];
+          }
+          return parsed;
+        }
+      }
     } catch {
       // fallback
     }
@@ -116,12 +128,15 @@ export default function App() {
       const saved = localStorage.getItem('intraday_radar_journal');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) {
+          // Strictly purge any legacy mock sample trades
+          return parsed.filter((e: TradeJournalEntry) => !e.id?.startsWith('sample-'));
+        }
       }
     } catch {
       // fallback
     }
-    return SAMPLE_JOURNAL_ENTRIES;
+    return [];
   });
 
   // PWA Install State
@@ -164,10 +179,6 @@ export default function App() {
       if (saved) return JSON.parse(saved);
     } catch {
       // fallback
-    }
-    // Calculate initial proposal on default sample trades if present
-    if (SAMPLE_JOURNAL_ENTRIES.length >= 20) {
-      return evaluateSystemOptimization(SAMPLE_JOURNAL_ENTRIES, DEFAULT_SYSTEM_PARAMETERS, 1);
     }
     return null;
   });
@@ -721,20 +732,16 @@ export default function App() {
   };
 
   const handleRunAuditOnDemand = () => {
-    const listToAudit = journalEntries.length > 0 ? journalEntries : SAMPLE_JOURNAL_ENTRIES;
-    const cycleNum = Math.max(1, Math.floor(listToAudit.length / 20));
-    const prop = evaluateSystemOptimization(listToAudit, parameters, cycleNum);
+    if (journalEntries.length === 0) {
+      setOptimizationNotification('Nessun trade reale registrato nel diario. Registra almeno un trade per calcolare l\'audit.');
+      setTimeout(() => setOptimizationNotification(null), 5000);
+      return;
+    }
+    const cycleNum = Math.max(1, Math.floor(journalEntries.length / 20));
+    const prop = evaluateSystemOptimization(journalEntries, parameters, cycleNum);
     setPendingProposal(prop);
-    setOptimizationNotification(`Audit calcolato sui ${Math.min(20, listToAudit.length)} setup del ciclo.`);
+    setOptimizationNotification(`Audit calcolato sui ${Math.min(20, journalEntries.length)} setup reali del ciclo.`);
     setTimeout(() => setOptimizationNotification(null), 5000);
-  };
-
-  const handleLoadSampleTrades = () => {
-    setJournalEntries(SAMPLE_JOURNAL_ENTRIES);
-    const prop = evaluateSystemOptimization(SAMPLE_JOURNAL_ENTRIES, parameters, 1);
-    setPendingProposal(prop);
-    setOptimizationNotification('Caricati 20 setup storici completi nel diario (inclusi 4 Expired). Audit del ciclo pronto!');
-    setTimeout(() => setOptimizationNotification(null), 6000);
   };
 
   // Reset Server Cache
@@ -850,6 +857,8 @@ export default function App() {
             setTimeout(() => handleRunScreening(), 50);
           }}
           futures={futures}
+          quotes={quotes}
+          activeSetup={currentSession === 'US' ? setupUS : setupEU}
           isScanning={isScanning}
           onRunScan={handleRunScreening}
           cachedAt={cachedAt}
@@ -888,6 +897,14 @@ export default function App() {
           topUS={topCandidateUS}
         />
 
+        {/* 6.5. Benchmark Correlation & Relative Strength Heatmap (DAX, EuroStoxx, S&P 500, Nasdaq) */}
+        <BenchmarkCorrelationHeatmap
+          candidates={topCandidates}
+          futures={futures}
+          onSelectCandidate={handleSelectCandidate}
+          onViewCatalyst={handleOpenCatalystModal}
+        />
+
         {/* 7. Trade Journal with Risk Management, Expired Tracking & Self-Optimization */}
         <TradeJournal
           entries={journalEntries}
@@ -897,7 +914,6 @@ export default function App() {
           onClearAll={handleClearJournal}
           accountCapital={accountCapital}
           isPaperMode={isPaperMode}
-          onLoadSampleTrades={handleLoadSampleTrades}
           onOpenOptimizerModal={() => setIsOptimizerModalOpen(true)}
           optimizationProposal={pendingProposal}
         />

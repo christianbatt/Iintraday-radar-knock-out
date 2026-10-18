@@ -32,7 +32,6 @@ interface TradeJournalProps {
   onClearAll: () => void;
   accountCapital: number;
   isPaperMode: boolean;
-  onLoadSampleTrades?: () => void;
   onOpenOptimizerModal?: () => void;
   optimizationProposal?: OptimizationProposal | null;
 }
@@ -45,7 +44,6 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
   onClearAll,
   accountCapital,
   isPaperMode,
-  onLoadSampleTrades,
   onOpenOptimizerModal,
   optimizationProposal,
 }) => {
@@ -412,17 +410,6 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
               <span>Ciclo Automiglioramento ({entries.filter(e => e.status !== 'OPEN').length % 20}/20)</span>
             </button>
           )}
-
-          {onLoadSampleTrades && (
-            <button
-              onClick={onLoadSampleTrades}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-950/70 hover:bg-indigo-900/90 text-indigo-300 border border-indigo-700/60 text-xs font-mono transition-colors cursor-pointer"
-              title="Carica o ripristina i 20 setup storici completi nel diario"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Ricarica Demo 20 Setup</span>
-            </button>
-          )}
         </div>
       </div>
 
@@ -575,7 +562,6 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
         <HistoricalEquityDashboard
           entries={filteredEntries}
           accountCapital={accountCapital}
-          onLoadSampleTrades={onLoadSampleTrades}
         />
       )}
 
@@ -584,7 +570,6 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
         <PerformanceSummary
           entries={filteredEntries}
           accountCapital={accountCapital}
-          onLoadSampleTrades={onLoadSampleTrades}
         />
       )}
 

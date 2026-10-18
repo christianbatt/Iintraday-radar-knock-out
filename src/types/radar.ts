@@ -26,6 +26,8 @@ export interface RawQuoteData {
   historicalVolatility30d?: number | null;
   ivRank?: number | null;
   rsi14?: number | null;
+  rsi5m?: number | null;
+  rvol20m?: number | null;
   timestamp: string;
   source: string;
 }
@@ -48,6 +50,7 @@ export interface ScoreBreakdown {
   liquidityScore: number;
   futuresScore: number;
   levelScore: number;
+  rsiScore?: number; // Intraday 5m Momentum & Multi-timeframe RSI quality (max 10)
   total: number;
   details: string[];
 }

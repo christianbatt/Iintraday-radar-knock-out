@@ -30,7 +30,6 @@ import {
 interface HistoricalEquityDashboardProps {
   entries: TradeJournalEntry[];
   accountCapital: number;
-  onLoadSampleTrades?: () => void;
 }
 
 type CurveMetricMode = 'EQUITY' | 'CUM_PNL' | 'R_CURVE';
@@ -39,7 +38,6 @@ type TimeRangeFilter = 'ALL' | 'CYCLE_20' | 'LAST_40';
 export const HistoricalEquityDashboard: React.FC<HistoricalEquityDashboardProps> = ({
   entries,
   accountCapital,
-  onLoadSampleTrades,
 }) => {
   const [metricMode, setMetricMode] = useState<CurveMetricMode>('EQUITY');
   const [rangeFilter, setRangeFilter] = useState<TimeRangeFilter>('ALL');
@@ -219,18 +217,9 @@ export const HistoricalEquityDashboard: React.FC<HistoricalEquityDashboardProps>
         <h3 className="text-sm font-bold text-white mb-1">
           Nessuna operazione registrata per tracciare la Curva di Equità
         </h3>
-        <p className="text-xs text-slate-400 max-w-md mx-auto mb-4 font-sans">
-          Registra i tuoi primi trade o carica i 20 setup storici di collaudo per visualizzare la progressione dell'equity, la curva di drawdown e gli indicatori di robustezza del conto.
+        <p className="text-xs text-slate-400 max-w-md mx-auto mb-2 font-sans">
+          Registra i tuoi trade reali dal pannello operativo o inseriscili manualmente nel diario per tracciare la progressione dell'equity reale, la curva di drawdown e gli indicatori quantitativi di robustezza del conto (zero dati simulati).
         </p>
-        {onLoadSampleTrades && (
-          <button
-            onClick={onLoadSampleTrades}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-900/40 transition-all cursor-pointer"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            Carica 20 Setup Dimostrativi con Expired
-          </button>
-        )}
       </div>
     );
   }

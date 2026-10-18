@@ -88,7 +88,9 @@ export const CatalystModal: React.FC<CatalystModalProps> = ({
             </div>
             <div>
               <span className="text-slate-500 block text-[10px]">Relative Volume:</span>
-              <span className="font-bold text-amber-300">{q.rvol ?? 1.0}x</span>
+              <span className="font-bold text-amber-300">
+                {q.rvol != null ? `${q.rvol}x` : 'nd'}
+              </span>
             </div>
             <div>
               <span className="text-slate-500 block text-[10px]">ATR(14):</span>

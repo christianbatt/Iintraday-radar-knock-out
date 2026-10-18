@@ -10,11 +10,15 @@ import {
   Globe,
   Filter,
 } from 'lucide-react';
+import { MarketSentimentIndicator } from './MarketSentimentIndicator';
+import { RawQuoteData, ExecutionSetup } from '../types/radar';
 
 interface ScreeningControlsProps {
   currentSession: 'EU' | 'US' | 'GLOBAL';
   onSelectSession: (session: 'EU' | 'US' | 'GLOBAL') => void;
   futures: any;
+  quotes?: RawQuoteData[];
+  activeSetup?: ExecutionSetup | null;
   isScanning: boolean;
   onRunScan: () => void;
   cachedAt?: string;
@@ -31,6 +35,8 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
   currentSession,
   onSelectSession,
   futures,
+  quotes,
+  activeSetup,
   isScanning,
   onRunScan,
   cachedAt,
@@ -174,7 +180,7 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
                   ? 'bg-indigo-950/80 border-indigo-500 text-indigo-200 shadow-sm shadow-indigo-950/50 ring-1 ring-indigo-500/40'
                   : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
               }`}
-              title="Filtro RSI: esclude i titoli in ipercomprato (RSI ≥ 70) o ipervenduto (RSI ≤ 30) per evitare pullback ed esaurimento momentum"
+              title="Filtro RSI Multi-Timeframe (5m Intraday prioritario + 1D): esclude i titoli in ipercomprato (≥70) o ipervenduto (≤30) per proteggere i certificati Turbo Knock-Out da ritracciamenti ed esaurimento momentum"
             >
               <Filter className={`w-3.5 h-3.5 ${rsiFilterActive ? 'text-indigo-400' : 'text-slate-500'}`} />
               <div className="flex items-center gap-1.5">
@@ -186,7 +192,7 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
                       : 'bg-slate-800 text-slate-500'
                   }`}
                 >
-                  {rsiFilterActive ? 'ATTIVO (30–70)' : 'OFF'}
+                  {rsiFilterActive ? 'ATTIVO (5m SANO)' : 'OFF'}
                 </span>
               </div>
             </button>
@@ -244,6 +250,14 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Real-Time Market Sentiment Indicator (1-10 Scale Bearish/Bullish) */}
+      <MarketSentimentIndicator
+        currentSession={currentSession}
+        futures={futures}
+        quotes={quotes}
+        activeSetup={activeSetup}
+      />
 
       {/* Bottom Section: Benchmark Index Futures Board (Full Width, Zero Overlap!) */}
       <div>

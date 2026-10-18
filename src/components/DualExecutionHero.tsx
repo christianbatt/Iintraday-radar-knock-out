@@ -266,6 +266,20 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
                       · RVOL {quote.rvol.toFixed(1)}x
                     </span>
                   )}
+                  {quote.rvol20m != null && (
+                    <span
+                      className={`ml-1 px-1.5 py-0.2 rounded text-[10px] font-bold inline-flex items-center gap-0.5 ${
+                        quote.rvol20m >= 1.5
+                          ? 'bg-amber-950 text-amber-300 border border-amber-700/80 animate-pulse'
+                          : quote.rvol20m >= 1.1
+                          ? 'bg-sky-950 text-sky-300 border border-sky-800/60'
+                          : 'bg-slate-900 text-slate-400 border border-slate-800'
+                      }`}
+                      title={`Volume Relativo ultimi 20 minuti: ${quote.rvol20m.toFixed(2)}x rispetto alla media mobile 20m`}
+                    >
+                      {quote.rvol20m >= 1.5 ? '🔥' : '⚡'} 20m: {quote.rvol20m.toFixed(1)}x
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -472,22 +486,64 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
 
               <div className="flex items-center gap-2 min-w-0 sm:border-x sm:border-slate-800 sm:px-2">
                 <div className="min-w-0 w-full">
-                  <span className="text-[10px] text-slate-400 uppercase block truncate">RSI(14) Momentum</span>
-                  {quote?.rsi14 != null ? (
-                    <span
-                      className={`font-bold px-1.5 py-0.2 rounded text-[10px] inline-block truncate ${
-                        quote.rsi14 >= 70
-                          ? 'bg-rose-950 text-rose-300 border border-rose-800'
-                          : quote.rsi14 <= 30
-                          ? 'bg-indigo-950 text-indigo-300 border border-indigo-800'
-                          : 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                      }`}
-                    >
-                      {quote.rsi14} {quote.rsi14 >= 70 ? '(Ipercomprato)' : quote.rsi14 <= 30 ? '(Ipervenduto)' : '(Sano)'}
-                    </span>
-                  ) : (
-                    <span className="text-slate-500 text-[11px]">nd</span>
-                  )}
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-[10px] text-slate-400 uppercase block truncate">RSI Momentum</span>
+                    <span className="text-[9px] px-1 py-0.2 rounded bg-indigo-950/80 text-indigo-300 font-semibold border border-indigo-800/60">5m Intraday + 1D</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                    {/* Primary 5m Intraday RSI */}
+                    {quote?.rsi5m != null ? (
+                      <span
+                        className={`font-bold px-1.5 py-0.5 rounded text-[10px] inline-flex items-center gap-1 truncate ${
+                          (setup.direction === 'LONG' && quote.rsi5m > 72) || (setup.direction === 'SHORT' && quote.rsi5m < 28)
+                            ? 'bg-rose-950 text-rose-300 border border-rose-800'
+                            : (setup.direction === 'LONG' && quote.rsi5m >= 46 && quote.rsi5m <= 66) || (setup.direction === 'SHORT' && quote.rsi5m >= 34 && quote.rsi5m <= 54)
+                            ? 'bg-emerald-950 text-emerald-300 border border-emerald-800 ring-1 ring-emerald-500/40'
+                            : 'bg-indigo-950 text-indigo-300 border border-indigo-800'
+                        }`}
+                        title="RSI a 5 Minuti: orizzonte temporale ottimale per il timing dei certificati Turbo Knock-Out intraday"
+                      >
+                        <span className="text-[9px] text-slate-400 font-normal">5m:</span>
+                        <span>{quote.rsi5m}</span>
+                        <span className="text-[9px] font-normal opacity-90">
+                          {setup.direction === 'LONG' && quote.rsi5m > 72
+                            ? '(Ipercomprato KO)'
+                            : setup.direction === 'LONG' && quote.rsi5m >= 46 && quote.rsi5m <= 66
+                            ? '(Ottimale Long)'
+                            : setup.direction === 'SHORT' && quote.rsi5m < 28
+                            ? '(Ipervenduto KO)'
+                            : setup.direction === 'SHORT' && quote.rsi5m >= 34 && quote.rsi5m <= 54
+                            ? '(Ottimale Short)'
+                            : '(Sano)'}
+                        </span>
+                      </span>
+                    ) : quote?.rsi14 != null ? (
+                      <span
+                        className={`font-bold px-1.5 py-0.5 rounded text-[10px] inline-flex items-center gap-1 truncate ${
+                          quote.rsi14 >= 70
+                            ? 'bg-rose-950 text-rose-300 border border-rose-800'
+                            : quote.rsi14 <= 30
+                            ? 'bg-indigo-950 text-indigo-300 border border-indigo-800'
+                            : 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                        }`}
+                      >
+                        <span className="text-[9px] text-slate-400 font-normal">1D:</span>
+                        <span>{quote.rsi14}</span>
+                      </span>
+                    ) : (
+                      <span className="text-slate-500 text-[11px]">nd</span>
+                    )}
+
+                    {/* Secondary 1D Daily RSI */}
+                    {quote?.rsi5m != null && quote?.rsi14 != null && (
+                      <span
+                        className="text-[9px] text-slate-400 font-mono px-1 py-0.2 rounded bg-slate-900 border border-slate-800 truncate"
+                        title="RSI 14 Giornaliero: trend macro di fondo"
+                      >
+                        1D: {quote.rsi14}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
 

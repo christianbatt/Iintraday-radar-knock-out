@@ -31,13 +31,11 @@ import {
 interface PerformanceSummaryProps {
   entries: TradeJournalEntry[];
   accountCapital: number;
-  onLoadSampleTrades?: () => void;
 }
 
 export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({
   entries,
   accountCapital,
-  onLoadSampleTrades,
 }) => {
   // If no trades, display empty state with prompt
   if (entries.length === 0) {
@@ -49,18 +47,9 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({
         <h3 className="text-sm font-bold text-white mb-1">
           Nessuna esecuzione registrata per il calcolo delle statistiche
         </h3>
-        <p className="text-xs text-slate-400 max-w-md mx-auto mb-4">
-          Aggiungi un'operazione manualmente tramite il pulsante <strong>"Aggiungi Trade"</strong> oppure salva un'esecuzione consigliata dal pannello operativo per generare i grafici di P&L cumulato e la distribuzione R.
+        <p className="text-xs text-slate-400 max-w-md mx-auto mb-2">
+          Aggiungi un'operazione reale manualmente tramite il pulsante <strong>"Aggiungi Trade"</strong> oppure salva un'esecuzione consigliata dal pannello operativo per generare i grafici di P&L cumulato e la distribuzione R (zero dati simulati).
         </p>
-        {onLoadSampleTrades && (
-          <button
-            onClick={onLoadSampleTrades}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-900/30 transition-all cursor-pointer"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            Carica 8 Trade Storici Dimostrativi
-          </button>
-        )}
       </div>
     );
   }

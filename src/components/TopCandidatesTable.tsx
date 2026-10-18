@@ -32,7 +32,7 @@ interface TopCandidatesTableProps {
   topUS?: ScoredCandidate | null;
 }
 
-type RadarFilter = 'ALL' | 'EU' | 'US' | 'QUALIFIED' | 'HIGH_RVOL' | 'HIGH_VOL' | 'RSI_HEALTHY';
+type RadarFilter = 'ALL' | 'EU' | 'US' | 'QUALIFIED' | 'HIGH_RVOL' | 'RVOL_20M' | 'HIGH_VOL' | 'RSI_HEALTHY';
 
 export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
   candidates,
@@ -64,13 +64,15 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
       if (activeFilter === 'US') return q.market === 'US';
       if (activeFilter === 'QUALIFIED') return item.score.total >= 55;
       if (activeFilter === 'HIGH_RVOL') return (q.rvol ?? 0) >= 1.3;
+      if (activeFilter === 'RVOL_20M') return (q.rvol20m ?? 0) >= 1.25;
       if (activeFilter === 'HIGH_VOL') {
         const refPrice = q.preMarketPrice ?? q.currentPrice ?? 0;
         const atrPct = q.atr14 && refPrice > 0 ? (q.atr14 / refPrice) * 100 : 0;
         return atrPct >= 1.5;
       }
       if (activeFilter === 'RSI_HEALTHY') {
-        return q.rsi14 != null && q.rsi14 > 30 && q.rsi14 < 70;
+        const rsi = q.rsi5m ?? q.rsi14;
+        return rsi != null && rsi > 30 && rsi < 70;
       }
       return true;
     });
@@ -195,6 +197,21 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
         </button>
 
         <button
+          onClick={() => setActiveFilter('RVOL_20M')}
+          className={`px-3 py-1 rounded-lg text-xs font-mono font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
+            activeFilter === 'RVOL_20M'
+              ? 'bg-amber-600 text-white shadow-sm ring-1 ring-amber-400/50'
+              : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
+          }`}
+          title="Filtra i titoli con accelerazione di volume negli ultimi 20 minuti rispetto alla media mobile (RVOL 20m ≥ 1.25x)"
+        >
+          <span>⚡ Spike Vol 20m (≥1.25x)</span>
+          <span className="text-[10px] opacity-75">
+            ({candidates.filter((c) => (c.quote.rvol20m ?? 0) >= 1.25).length})
+          </span>
+        </button>
+
+        <button
           onClick={() => setActiveFilter('HIGH_VOL')}
           className={`px-3 py-1 rounded-lg text-xs font-mono font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
             activeFilter === 'HIGH_VOL'
@@ -215,7 +232,10 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
         >
           <span>⚖️ RSI Sano (30–70)</span>
           <span className="text-[10px] opacity-75">
-            ({candidates.filter((c) => c.quote.rsi14 != null && c.quote.rsi14 > 30 && c.quote.rsi14 < 70).length})
+            ({candidates.filter((c) => {
+              const r = c.quote.rsi5m ?? c.quote.rsi14;
+              return r != null && r > 30 && r < 70;
+            }).length})
           </span>
         </button>
       </div>
@@ -230,7 +250,7 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
               <th className="py-3 px-3 text-right">Prezzo Live</th>
               <th className="py-3 px-3 text-right">Chiusura Ieri</th>
               <th className="py-3 px-3 text-right">Gap %</th>
-              <th className="py-3 px-3 text-right">RVOL / RSI(14)</th>
+              <th className="py-3 px-3 text-right">RVOL (Tot / 20m) & RSI</th>
               {/* ATR & Volatility Column */}
               <th className="py-3 px-3 text-right bg-slate-900/60 border-x border-slate-800">
                 <div className="flex flex-col items-end">
@@ -365,23 +385,56 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
                     {/* RVOL / RSI(14) */}
                     <td className="py-3 px-3 text-right">
                       <div className="flex flex-col items-end gap-1">
-                        {q.rvol != null ? (
-                          <span
-                            className={`font-semibold tabular-nums ${
-                              q.rvol >= 1.5
-                                ? 'text-purple-400 font-bold'
-                                : q.rvol >= 1.1
-                                ? 'text-slate-200'
-                                : 'text-slate-500'
-                            }`}
-                          >
-                            {q.rvol.toFixed(2)}x
-                          </span>
-                        ) : (
-                          <span className="text-slate-600">nd</span>
-                        )}
+                        <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                          {q.rvol != null ? (
+                            <span
+                              className={`font-semibold tabular-nums ${
+                                q.rvol >= 1.5
+                                  ? 'text-purple-400 font-bold'
+                                  : q.rvol >= 1.1
+                                  ? 'text-slate-200'
+                                  : 'text-slate-500'
+                              }`}
+                              title={`RVOL Cumulativo di Sessione: ${q.rvol.toFixed(2)}x`}
+                            >
+                              {q.rvol.toFixed(2)}x
+                            </span>
+                          ) : (
+                            <span className="text-slate-600">nd</span>
+                          )}
 
-                        {q.rsi14 != null ? (
+                          {q.rvol20m != null && (
+                            <span
+                              className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold tracking-tight inline-flex items-center gap-0.5 ${
+                                q.rvol20m >= 1.5
+                                  ? 'bg-amber-950/90 text-amber-300 border border-amber-700/80 animate-pulse'
+                                  : q.rvol20m >= 1.1
+                                  ? 'bg-sky-950/80 text-sky-300 border border-sky-800/60'
+                                  : 'bg-slate-900 text-slate-500 border border-slate-800'
+                              }`}
+                              title={`Relative Volume ultimi 20 minuti: ${q.rvol20m.toFixed(2)}x rispetto alla media mobile 20m`}
+                            >
+                              <span>{q.rvol20m >= 1.5 ? '🔥' : '⚡'} 20m:</span>
+                              <span>{q.rvol20m.toFixed(1)}x</span>
+                            </span>
+                          )}
+                        </div>
+
+                        {q.rsi5m != null ? (
+                          <span
+                            className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold tracking-tight inline-flex items-center gap-0.5 ${
+                              q.rsi5m >= 70
+                                ? 'bg-rose-950/90 text-rose-300 border border-rose-800'
+                                : q.rsi5m <= 30
+                                ? 'bg-indigo-950/90 text-indigo-300 border border-indigo-800'
+                                : 'bg-emerald-950/90 text-emerald-300 border border-emerald-800/80'
+                            }`}
+                            title={`RSI 5m Intraday: ${q.rsi5m} (Timing ottimale per Turbo Knock-Out)${q.rsi14 != null ? ` | RSI 1D Daily: ${q.rsi14}` : ''}`}
+                          >
+                            <span className="text-[9px] text-slate-400 font-normal">5m:</span>
+                            <span>{q.rsi5m}</span>
+                          </span>
+                        ) : q.rsi14 != null ? (
                           <span
                             className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold tracking-tight ${
                               q.rsi14 >= 70
@@ -390,17 +443,20 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
                                 ? 'bg-indigo-950/90 text-indigo-300 border border-indigo-800'
                                 : 'bg-slate-800/90 text-slate-300 border border-slate-700/60'
                             }`}
-                            title={`RSI(14): ${q.rsi14} ${
-                              q.rsi14 >= 70
-                                ? '(Ipercomprato ≥70: rischio esaurimento)'
-                                : q.rsi14 <= 30
-                                ? '(Ipervenduto ≤30: rischio rimbalzo)'
-                                : '(Neutro/Espansione 30-70)'
-                            }`}
+                            title={`RSI(14) Giornaliero: ${q.rsi14}`}
                           >
                             RSI {q.rsi14}
                           </span>
                         ) : null}
+
+                        {q.rsi5m != null && q.rsi14 != null && (
+                          <span
+                            className="text-[9px] px-1 py-0.2 rounded font-mono text-slate-400 bg-slate-900 border border-slate-800 hidden sm:inline-block"
+                            title={`RSI 1D Daily di fondo: ${q.rsi14}`}
+                          >
+                            1D:{q.rsi14}
+                          </span>
+                        )}
                       </div>
                     </td>
 
