@@ -9,9 +9,10 @@ import {
   Radio,
   Globe,
   Filter,
+  Sparkles,
 } from 'lucide-react';
 import { MarketSentimentIndicator } from './MarketSentimentIndicator';
-import { RawQuoteData, ExecutionSetup } from '../types/radar';
+import { RawQuoteData, ExecutionSetup, FilteringAuditReport } from '../types/radar';
 
 interface ScreeningControlsProps {
   currentSession: 'EU' | 'US' | 'GLOBAL';
@@ -29,6 +30,10 @@ interface ScreeningControlsProps {
   autoRefreshCountdown: number;
   rsiFilterActive: boolean;
   onToggleRsiFilter: () => void;
+  auditReport?: FilteringAuditReport | null;
+  onOpenAuditModal?: () => void;
+  onOpenExcludedAnalyzer?: () => void;
+  excludedProfitCount?: number;
 }
 
 export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
@@ -47,6 +52,10 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
   autoRefreshCountdown,
   rsiFilterActive,
   onToggleRsiFilter,
+  auditReport,
+  onOpenAuditModal,
+  onOpenExcludedAnalyzer,
+  excludedProfitCount = 0,
 }) => {
   const euFutures = futures?.europe;
   const usFutures = futures?.usa;
@@ -196,6 +205,37 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
                 </span>
               </div>
             </button>
+
+            {/* Visual Audit Filtri Modal Trigger */}
+            {onOpenAuditModal && auditReport && (
+              <button
+                type="button"
+                onClick={onOpenAuditModal}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-amber-950/50 hover:bg-amber-900/60 text-amber-300 border border-amber-600/60 shadow-sm transition-all cursor-pointer"
+                title="Visualizza audit di esclusione: quanti titoli sono stati scartati e perché"
+              >
+                <Filter className="w-3.5 h-3.5 text-amber-400" />
+                <span>Audit Filtri ({auditReport.excludedCount} Esclusi)</span>
+              </button>
+            )}
+
+            {/* Autoanalisi Setup Esclusi & Counterfactual Tracking Trigger */}
+            {onOpenExcludedAnalyzer && (
+              <button
+                type="button"
+                onClick={onOpenExcludedAnalyzer}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-purple-950/60 hover:bg-purple-900/70 text-purple-200 border border-purple-500/60 shadow-sm transition-all cursor-pointer"
+                title="Autoanalisi setup esclusi: verifica quanti sono andati a target e calibra i filtri per non scartarli nella prossima sessione"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                <span>Autoanalisi Esclusi</span>
+                {excludedProfitCount > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-emerald-500 text-slate-950">
+                    {excludedProfitCount} a Target 🎯
+                  </span>
+                )}
+              </button>
+            )}
 
             {/* Auto-Refresh Toggle Button */}
             <button

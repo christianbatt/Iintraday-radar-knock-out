@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   TradeJournalEntry,
   OptimizationProposal,
+  RawQuoteData,
 } from '../types/radar';
 import {
   BookOpen,
@@ -20,12 +21,15 @@ import {
   Clock,
   Sliders,
   AlertTriangle,
+  Zap,
+  Target,
 } from 'lucide-react';
 import { PerformanceSummary } from './PerformanceSummary';
 import { HistoricalEquityDashboard } from './HistoricalEquityDashboard';
 
 interface TradeJournalProps {
   entries: TradeJournalEntry[];
+  quotes?: RawQuoteData[];
   onAddEntry: (entry: TradeJournalEntry) => void;
   onUpdateEntry?: (entry: TradeJournalEntry) => void;
   onDeleteEntry: (id: string) => void;
@@ -38,6 +42,7 @@ interface TradeJournalProps {
 
 export const TradeJournal: React.FC<TradeJournalProps> = ({
   entries,
+  quotes = [],
   onAddEntry,
   onUpdateEntry,
   onDeleteEntry,
@@ -413,65 +418,120 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
         </div>
       </div>
 
-      {/* 3. Open Positions Alert Strip (If Any Trade is in Monitoring) */}
+      {/* 3. Open Positions Alert Strip (Live Autonomous Monitoring) */}
       {openTrades.length > 0 && (
-        <div className="p-3 bg-amber-950/30 border-b border-amber-500/40 text-xs font-mono space-y-2">
-          <div className="flex items-center justify-between text-amber-300 font-bold text-[11px]">
+        <div className="p-3.5 bg-amber-950/40 border-b border-amber-500/50 text-xs font-mono space-y-2.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-amber-300 font-bold text-[11px]">
             <span className="flex items-center gap-1.5">
-              <Clock className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-              <span>{openTrades.length} OPERAZIONE IN MONITORAGGIO ATTIVO: Chiudi per calcolare le statistiche</span>
+              <Zap className="w-4 h-4 text-amber-400 animate-pulse shrink-0" />
+              <span>
+                {openTrades.length} POSIZIONE IN MONITORAGGIO AUTONOMO ATTIVO (Target / Stop / Cutoff)
+              </span>
             </span>
-            <span className="text-slate-400 text-[10px]">1-Click Risoluzione Istantanea</span>
+            <div className="flex items-center gap-2 text-[10px] text-slate-400">
+              <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+              <span>Verifica automatica continua ad ogni tick del feed</span>
+            </div>
           </div>
 
-          <div className="space-y-1.5">
-            {openTrades.map((t) => (
-              <div
-                key={t.id}
-                className="flex flex-wrap items-center justify-between gap-2 p-2 rounded-lg bg-slate-950 border border-slate-800"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-white text-xs">{t.ticker}</span>
-                  <span
-                    className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
-                      t.direction === 'LONG' ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'
-                    }`}
-                  >
-                    {t.direction}
-                  </span>
-                  <span className="text-slate-400 text-[11px]">
-                    Ingresso: <strong>{t.entryPrice.toFixed(2)}</strong> | Stop: {t.stopLoss.toFixed(2)} | Target: {t.target1.toFixed(2)}
-                  </span>
-                </div>
+          <div className="space-y-2">
+            {openTrades.map((t) => {
+              const liveQ = quotes.find((q) => q.ticker === t.ticker);
+              const livePrice = liveQ?.currentPrice ?? liveQ?.preMarketPrice;
+              const isLong = t.direction === 'LONG';
+              const riskDist = Math.abs(t.entryPrice - t.stopLoss);
 
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => handleQuickSetOutcome(t, 'WIN')}
-                    className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] transition-colors cursor-pointer"
-                  >
-                    🎯 Target 1 (+1.6R / WIN)
-                  </button>
-                  <button
-                    onClick={() => handleQuickSetOutcome(t, 'LOSS')}
-                    className="px-2 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-[10px] transition-colors cursor-pointer"
-                  >
-                    🛑 Stop Loss (-1.0R / LOSS)
-                  </button>
-                  <button
-                    onClick={() => handleQuickSetOutcome(t, 'BREAKEVEN')}
-                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[10px] transition-colors cursor-pointer"
-                  >
-                    ⚖️ Pareggio (BE)
-                  </button>
-                  <button
-                    onClick={() => handleQuickSetOutcome(t, 'EXPIRED')}
-                    className="px-2 py-1 rounded bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-[10px] transition-colors cursor-pointer"
-                  >
-                    ⏰ Scaduto (EXPIRED)
-                  </button>
+              let floatingPnlEur = 0;
+              let floatingR = 0;
+              let distToTarget = 0;
+              let distToStop = 0;
+
+              if (livePrice && riskDist > 0) {
+                const diff = isLong ? livePrice - t.entryPrice : t.entryPrice - livePrice;
+                floatingR = +(diff / riskDist).toFixed(2);
+                floatingPnlEur = +(floatingR * (accountCapital * 0.01)).toFixed(2);
+                distToTarget = +(Math.abs(t.target1 - livePrice)).toFixed(2);
+                distToStop = +(Math.abs(livePrice - t.stopLoss)).toFixed(2);
+              }
+
+              return (
+                <div
+                  key={t.id}
+                  className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800 shadow-lg"
+                >
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <span className="font-bold text-white text-sm">{t.ticker}</span>
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        t.direction === 'LONG'
+                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                          : 'bg-rose-950 text-rose-300 border border-rose-800'
+                      }`}
+                    >
+                      {t.direction}
+                    </span>
+
+                    <span className="text-slate-400 text-[11px]">
+                      Entry: <strong className="text-white">{t.entryPrice.toFixed(2)}</strong> | Stop: <strong className="text-rose-400">{t.stopLoss.toFixed(2)}</strong> | Target: <strong className="text-emerald-400">{t.target1.toFixed(2)}</strong>
+                    </span>
+
+                    {livePrice != null ? (
+                      <div className="flex items-center gap-2 bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-700/80">
+                        <span className="text-[10px] text-slate-400">Prezzo Live:</span>
+                        <span className="font-bold text-white text-xs">{livePrice.toFixed(2)}</span>
+                        <span
+                          className={`font-bold text-xs ${
+                            floatingPnlEur > 0 ? 'text-emerald-400' : floatingPnlEur < 0 ? 'text-rose-400' : 'text-slate-300'
+                          }`}
+                        >
+                          {floatingPnlEur > 0 ? `+${floatingPnlEur}` : floatingPnlEur} € ({floatingR > 0 ? `+${floatingR}` : floatingR}R)
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-[10px] text-slate-500 italic">Prezzo tick in attesa...</span>
+                    )}
+
+                    {livePrice != null && (
+                      <span className="text-[10px] text-slate-400 font-sans">
+                        (Mancano <strong>{distToTarget}</strong> pt al Target / <strong>{distToStop}</strong> pt allo Stop)
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1.5 flex-wrap self-end lg:self-center shrink-0">
+                    <span className="text-[10px] text-slate-500 mr-1 hidden sm:inline">Risoluzione manuale anticipata:</span>
+                    <button
+                      onClick={() => handleQuickSetOutcome(t, 'WIN')}
+                      className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] transition-colors cursor-pointer"
+                      title="Forza chiusura immediata su Target 1"
+                    >
+                      🎯 Target (WIN)
+                    </button>
+                    <button
+                      onClick={() => handleQuickSetOutcome(t, 'LOSS')}
+                      className="px-2 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-[10px] transition-colors cursor-pointer"
+                      title="Forza chiusura immediata su Stop Loss"
+                    >
+                      🛑 Stop (LOSS)
+                    </button>
+                    <button
+                      onClick={() => handleQuickSetOutcome(t, 'BREAKEVEN')}
+                      className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[10px] transition-colors cursor-pointer"
+                      title="Chiudi a pareggio"
+                    >
+                      ⚖️ BE
+                    </button>
+                    <button
+                      onClick={() => handleQuickSetOutcome(t, 'EXPIRED')}
+                      className="px-2 py-1 rounded bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-[10px] transition-colors cursor-pointer"
+                      title="Chiudi come scaduto al cutoff"
+                    >
+                      ⏰ Expired
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

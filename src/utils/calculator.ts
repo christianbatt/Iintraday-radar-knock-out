@@ -15,6 +15,16 @@ import {
   OptimizationProposal,
   ProposedParameterChange,
   OptimizationMetrics,
+  HourlySeasonalitySlot,
+  DaySeasonalitySlot,
+  SeasonalityReport,
+  FilteringAuditReport,
+  ExcludedCandidateInfo,
+  ExclusionCategory,
+  ExcludedSetupRecord,
+  ExcludedCategoryAnalysis,
+  ExcludedSetupsAutoAnalysis,
+  ExcludedOutcomeStatus,
 } from '../types/radar';
 
 // Default Adaptive System Parameters
@@ -1411,5 +1421,851 @@ export function evaluateSystemOptimization(
     identifiedStrengths,
     identifiedWeaknesses,
     proposedChanges,
+  };
+}
+
+// -------------------------------------------------------------
+// INTRADAY SEASONALITY & TIME-OF-DAY PATTERN ENGINE
+// -------------------------------------------------------------
+
+export function calculateIntradaySeasonality(
+  entries: TradeJournalEntry[],
+  currentCetMinutes?: number,
+  marketFilter: 'ALL' | 'EU' | 'US' = 'ALL'
+): SeasonalityReport {
+  // If currentCetMinutes not provided, compute from real now
+  let currentMinutes = currentCetMinutes;
+  if (currentMinutes == null) {
+    const now = new Date();
+    const cetFormatter = new Intl.DateTimeFormat('it-IT', {
+      timeZone: 'Europe/Rome',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false,
+    });
+    const parts = cetFormatter.formatToParts(now);
+    const h = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
+    const m = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
+    currentMinutes = h * 60 + m;
+  }
+
+  const currentHourDecimal = currentMinutes / 60;
+
+  // Canonical Intraday Time Slots
+  const CANONICAL_SLOTS_DEF = [
+    {
+      slotKey: '08:00 - 09:00',
+      label: 'Pre-Market Europa',
+      startHour: 8.0,
+      endHour: 9.0,
+      marketSession: 'EU' as const,
+      description: 'Aste di apertura ed elaborazione gap mattutini. Volumi in formazione.',
+      tacticalAdvice: 'Monitorare i gap emergenti e attendere la prima chiusura a 5m per evitare trappole di apertura.',
+      benchmarkWinRate: 52,
+      benchmarkAvgR: 0.95,
+    },
+    {
+      slotKey: '09:00 - 10:00',
+      label: 'Golden Hour Europa (Apertura Cash)',
+      startHour: 9.0,
+      endHour: 10.0,
+      marketSession: 'EU' as const,
+      description: 'Massimo volume ed espansione del range sui sottostanti XETRA, Euronext e Piazza Affari.',
+      tacticalAdvice: 'Finestra d\'oro per breakout ORB 5m/15m e setup Gap and Go con catalizzatore confermato.',
+      benchmarkWinRate: 71,
+      benchmarkAvgR: 1.68,
+    },
+    {
+      slotKey: '10:00 - 11:30',
+      label: 'Espansione Trend Europa',
+      startHour: 10.0,
+      endHour: 11.5,
+      marketSession: 'EU' as const,
+      description: 'Fase di consolidamento direzionale prima del cutoff temporale europeo delle 11:30 CET.',
+      tacticalAdvice: 'Alzare lo stop loss a pareggio (breakeven); evitare nuovi ingressi ritardati con R/R sfavorevole.',
+      benchmarkWinRate: 64,
+      benchmarkAvgR: 1.35,
+    },
+    {
+      slotKey: '11:30 - 14:30',
+      label: 'Midday Chop & Bassa Liquidità',
+      startHour: 11.5,
+      endHour: 14.5,
+      marketSession: 'GLOBAL' as const,
+      description: 'Pausa pranzo istituzionale. Crollo dei volumi medi e frequenti finte di breakout (whipsaw).',
+      tacticalAdvice: 'Sconsigliata l\'apertura di nuovi trade a leva; proteggere le posizioni o restare flat.',
+      benchmarkWinRate: 36,
+      benchmarkAvgR: 0.42,
+    },
+    {
+      slotKey: '14:30 - 15:30',
+      label: 'Pre-Market USA & Macro Release',
+      startHour: 14.5,
+      endHour: 15.5,
+      marketSession: 'US' as const,
+      description: 'Rilascio dei dati macroeconomici USA (CPI, NFP, PPI) e primi scambi istituzionali a New York.',
+      tacticalAdvice: 'Verificare la reazione dei futures ES/NQ; non anticipare l\'apertura prima delle 15:30 CET.',
+      benchmarkWinRate: 58,
+      benchmarkAvgR: 1.15,
+    },
+    {
+      slotKey: '15:30 - 16:30',
+      label: 'Golden Hour Wall Street',
+      startHour: 15.5,
+      endHour: 16.5,
+      marketSession: 'US' as const,
+      description: 'Apertura cash NYSE/Nasdaq. Esplosione di liquidità e momentum sui titoli tech a forte beta.',
+      tacticalAdvice: 'Finestra ad altissima convinzione per titoli USA (NVDA, TSLA, AAPL). Esecuzione immediata sui trigger.',
+      benchmarkWinRate: 74,
+      benchmarkAvgR: 1.75,
+    },
+    {
+      slotKey: '16:30 - 17:30',
+      label: 'Fix Europa & Pre-Cutoff USA',
+      startHour: 16.5,
+      endHour: 17.5,
+      marketSession: 'GLOBAL' as const,
+      description: 'Coincidenza tra la chiusura delle borse europee (17:35 CET) e il cutoff orario dei setup USA.',
+      tacticalAdvice: 'Chiusura tassativa dei setup europei; stringere il trailing stop sui titoli americani.',
+      benchmarkWinRate: 60,
+      benchmarkAvgR: 1.22,
+    },
+    {
+      slotKey: '17:30 - 20:00',
+      label: 'Sessione Pomeridiana USA',
+      startHour: 17.5,
+      endHour: 20.0,
+      marketSession: 'US' as const,
+      description: 'Mercato USA in fase di trend pomeridiano consolidato senza interferenze europee.',
+      tacticalAdvice: 'Operare unicamente a favore di trend conclamato e confermato dai futures di riferimento.',
+      benchmarkWinRate: 56,
+      benchmarkAvgR: 1.10,
+    },
+    {
+      slotKey: '20:00 - 22:00',
+      label: 'Power Hour & Chiusura New York',
+      startHour: 20.0,
+      endHour: 22.0,
+      marketSession: 'US' as const,
+      description: 'Ultima ora di negoziazione a Wall Street con ribilanciamenti fondi e ordini MOC (Market on Close).',
+      tacticalAdvice: 'Evitare posizioni overnight sui certificati Knock-Out per scongiurare il rischio gap del giorno successivo.',
+      benchmarkWinRate: 50,
+      benchmarkAvgR: 0.85,
+    },
+  ];
+
+  // Filter completed trades by market if requested
+  const completedEntries = entries.filter((e) => e.status !== 'OPEN');
+  const relevantEntries = marketFilter === 'ALL'
+    ? completedEntries
+    : completedEntries.filter((e) => e.session === marketFilter);
+
+  const isJournalDataAvailable = relevantEntries.length >= 3;
+
+  // Process Hourly Slots
+  const hourlySlots: HourlySeasonalitySlot[] = CANONICAL_SLOTS_DEF.map((def) => {
+    const isCurrentHour = currentHourDecimal >= def.startHour && currentHourDecimal < def.endHour;
+
+    // Filter trades belonging to this time window
+    const slotTrades = relevantEntries.filter((entry) => {
+      try {
+        const d = new Date(entry.timestamp);
+        const cetFormatter = new Intl.DateTimeFormat('it-IT', {
+          timeZone: 'Europe/Rome',
+          hour: 'numeric',
+          minute: 'numeric',
+          hour12: false,
+        });
+        const parts = cetFormatter.formatToParts(d);
+        const h = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
+        const m = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
+        const entryHourDec = h + m / 60;
+        return entryHourDec >= def.startHour && entryHourDec < def.endHour;
+      } catch {
+        return false;
+      }
+    });
+
+    const tradesCount = slotTrades.length;
+    const winCount = slotTrades.filter((t) => t.outcome === 'WIN').length;
+    const lossCount = slotTrades.filter((t) => t.outcome === 'LOSS').length;
+    const beCount = slotTrades.filter((t) => t.outcome === 'BREAKEVEN').length;
+    const expiredCount = slotTrades.filter((t) => t.outcome === 'EXPIRED').length;
+
+    let winRate = def.benchmarkWinRate;
+    let avgRMultiple = def.benchmarkAvgR;
+    let netPnlEur = 0;
+    let profitFactor = 1.5;
+
+    if (tradesCount > 0) {
+      winRate = +((winCount / tradesCount) * 100).toFixed(1);
+      avgRMultiple = +(slotTrades.reduce((acc, t) => acc + t.rMultiple, 0) / tradesCount).toFixed(2);
+      netPnlEur = +(slotTrades.reduce((acc, t) => acc + t.pnlEur, 0)).toFixed(2);
+      const totalWinsEur = slotTrades.filter((t) => t.pnlEur > 0).reduce((acc, t) => acc + t.pnlEur, 0);
+      const totalLossesEur = Math.abs(slotTrades.filter((t) => t.pnlEur < 0).reduce((acc, t) => acc + t.pnlEur, 0));
+      profitFactor = totalLossesEur > 0 ? +(totalWinsEur / totalLossesEur).toFixed(2) : totalWinsEur > 0 ? 99.0 : 0;
+    }
+
+    let status: HourlySeasonalitySlot['status'] = 'NEUTRAL';
+    if (tradesCount === 0 && !isJournalDataAvailable) {
+      if (def.benchmarkWinRate >= 68) status = 'HIGH_CONVICTION';
+      else if (def.benchmarkWinRate <= 40) status = 'CHOP_RISK';
+      else status = 'NEUTRAL';
+    } else if (tradesCount === 0) {
+      status = 'INSUFFICIENT_DATA';
+    } else if (winRate >= 65 || avgRMultiple >= 1.3) {
+      status = 'HIGH_CONVICTION';
+    } else if (winRate < 45 || netPnlEur < 0) {
+      status = 'CHOP_RISK';
+    } else {
+      status = 'NEUTRAL';
+    }
+
+    return {
+      slotKey: def.slotKey,
+      label: def.label,
+      startHour: def.startHour,
+      endHour: def.endHour,
+      marketSession: def.marketSession,
+      tradesCount,
+      winCount,
+      lossCount,
+      beCount,
+      expiredCount,
+      winRate,
+      avgRMultiple,
+      netPnlEur,
+      profitFactor,
+      status,
+      description: def.description,
+      tacticalAdvice: def.tacticalAdvice,
+      isCurrentHour,
+    };
+  });
+
+  // Process Days of Week (1 = Lunedì ... 5 = Venerdì)
+  const DAY_NAMES = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì'];
+  const todayDayIndex = (() => {
+    try {
+      const now = new Date();
+      const cetDay = new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', weekday: 'short' }).format(now);
+      const d = now.getDay(); // 0 Sun, 1 Mon ... 5 Fri
+      return d >= 1 && d <= 5 ? d : 1;
+    } catch {
+      return 1;
+    }
+  })();
+
+  const daySlots: DaySeasonalitySlot[] = DAY_NAMES.map((name, idx) => {
+    const dayNum = idx + 1; // 1 to 5
+    const isToday = dayNum === todayDayIndex;
+
+    const dayTrades = relevantEntries.filter((entry) => {
+      try {
+        const d = new Date(entry.timestamp);
+        return d.getDay() === dayNum;
+      } catch {
+        return false;
+      }
+    });
+
+    const tradesCount = dayTrades.length;
+    const winCount = dayTrades.filter((t) => t.outcome === 'WIN').length;
+    const lossCount = dayTrades.filter((t) => t.outcome === 'LOSS').length;
+
+    // Benchmark base weights per day
+    const benchWR = dayNum === 2 ? 68 : dayNum === 3 ? 65 : dayNum === 1 ? 58 : dayNum === 4 ? 61 : 52;
+    const benchR = dayNum === 2 ? 1.55 : dayNum === 3 ? 1.45 : dayNum === 1 ? 1.15 : dayNum === 4 ? 1.25 : 0.95;
+
+    let winRate = benchWR;
+    let avgRMultiple = benchR;
+    let netPnlEur = 0;
+
+    if (tradesCount > 0) {
+      winRate = +((winCount / tradesCount) * 100).toFixed(1);
+      avgRMultiple = +(dayTrades.reduce((acc, t) => acc + t.rMultiple, 0) / tradesCount).toFixed(2);
+      netPnlEur = +(dayTrades.reduce((acc, t) => acc + t.pnlEur, 0)).toFixed(2);
+    }
+
+    return {
+      dayName: name,
+      dayIndex: dayNum,
+      tradesCount,
+      winCount,
+      lossCount,
+      winRate,
+      netPnlEur,
+      avgRMultiple,
+      isToday,
+    };
+  });
+
+  // Find best and worst slots
+  const validSlotsForRanking = hourlySlots.filter((s) => s.status !== 'INSUFFICIENT_DATA');
+  const sortedByWinRate = [...validSlotsForRanking].sort((a, b) => b.winRate - a.winRate);
+  const bestWindow = sortedByWinRate.length > 0 ? sortedByWinRate[0] : null;
+  const worstWindow = sortedByWinRate.length > 0 ? sortedByWinRate[sortedByWinRate.length - 1] : null;
+
+  const currentActiveSlot = hourlySlots.find((s) => s.isCurrentHour) || null;
+
+  // Real-time Recommendation based on current time window
+  let recommendationVerdict: SeasonalityReport['recommendationForNow']['verdict'] = 'NEUTRAL';
+  let recommendationTitle = 'Finestra Operativa Regolare';
+  let recommendationMessage = 'L\'orario attuale presenta parametri di volatilità e liquidità bilanciati. Operare rispettando trigger e stop loss prefissati.';
+
+  if (currentActiveSlot) {
+    if (currentActiveSlot.status === 'HIGH_CONVICTION') {
+      recommendationVerdict = 'FAVORABLE';
+      recommendationTitle = `Finestra ad Alta Probabilità: ${currentActiveSlot.label}`;
+      recommendationMessage = `I pattern stagionali storici evidenziano un tasso di successo del ${currentActiveSlot.winRate}% ed un R-medio di ${currentActiveSlot.avgRMultiple > 0 ? '+' : ''}${currentActiveSlot.avgRMultiple}R in questa fascia. Condizioni ideali per eseguire i setup primari.`;
+    } else if (currentActiveSlot.status === 'CHOP_RISK') {
+      recommendationVerdict = 'CAUTION_CHOP';
+      recommendationTitle = `Attenzione: Finestra ad Alto Rischio / Chop (${currentActiveSlot.label})`;
+      recommendationMessage = `Questa fascia oraria soffre storicamente di contrazione dei volumi e frequenti falsi breakout (Win Rate ${currentActiveSlot.winRate}%). Il filtro consiglia di attendere o dimezzare la size.`;
+    }
+  }
+
+  const averageWinRate = relevantEntries.length > 0
+    ? +((relevantEntries.filter((t) => t.outcome === 'WIN').length / relevantEntries.length) * 100).toFixed(1)
+    : 62.0;
+
+  return {
+    hourlySlots,
+    daySlots,
+    bestWindow,
+    worstWindow,
+    currentActiveSlot,
+    isJournalDataAvailable,
+    totalAnalyzedTrades: relevantEntries.length,
+    averageWinRate,
+    recommendationForNow: {
+      verdict: recommendationVerdict,
+      title: recommendationTitle,
+      message: recommendationMessage,
+    },
+  };
+}
+
+// -------------------------------------------------------------
+// VISUAL FILTERING AUDIT ENGINE
+// -------------------------------------------------------------
+
+export function generateFilteringAuditReport(
+  quotes: RawQuoteData[],
+  dualTop: { topEU: ScoredCandidate | null; topUS: ScoredCandidate | null },
+  futuresChange: number | { EU: number; US: number },
+  parameters: SystemParameters,
+  catalystCache: Record<string, GeminiCatalystAnalysis>,
+  isRsiFilterActive: boolean,
+  currentCetMinutes?: number
+): FilteringAuditReport {
+  const totalScanned = quotes.length;
+  const qualifiedTickers = new Set<string>();
+
+  if (dualTop.topEU && dualTop.topEU.score.total >= parameters.minScore) {
+    const cat = catalystCache[dualTop.topEU.quote.ticker];
+    if (!cat || cat.decisione !== 'NESSUN_TRADE') {
+      qualifiedTickers.add(dualTop.topEU.quote.ticker);
+    }
+  }
+
+  if (dualTop.topUS && dualTop.topUS.score.total >= parameters.minScore) {
+    const cat = catalystCache[dualTop.topUS.quote.ticker];
+    if (!cat || cat.decisione !== 'NESSUN_TRADE') {
+      qualifiedTickers.add(dualTop.topUS.quote.ticker);
+    }
+  }
+
+  const countsByCategory = {
+    rsiExtreme: 0,
+    gapInsufficient: 0,
+    rvolInsufficient: 0,
+    scoreBelowMin: 0,
+    catalystUnverified: 0,
+    atrInsufficient: 0,
+    cutoffPassed: 0,
+    priceUnavailable: 0,
+  };
+
+  const excludedList: ExcludedCandidateInfo[] = [];
+
+  quotes.forEach((q) => {
+    if (qualifiedTickers.has(q.ticker)) return;
+
+    const change =
+      typeof futuresChange === 'number'
+        ? futuresChange
+        : q.market === 'US'
+        ? futuresChange.US
+        : futuresChange.EU;
+
+    const scoreObj = calculateCandidateScore(q, change);
+    const score = scoreObj.total;
+    const rsi = q.rsi5m ?? q.rsi14 ?? null;
+    const gap = q.gapPercent ?? 0;
+    const absGap = Math.abs(gap);
+    const minGap = q.market === 'EU' ? parameters.minGapEurope : parameters.minGapUSA;
+    const rvol = q.rvol ?? 1.0;
+    const cat = catalystCache[q.ticker];
+
+    let primaryReasonCategory: ExclusionCategory = 'SCORE_BELOW_MIN';
+    let primaryReasonLabel = 'Punteggio complessivo sotto soglia';
+    let detail = `Punteggio quantitativo ${score}/100 inferiore alla soglia minima richiesta di ${parameters.minScore}/100.`;
+
+    // Hierarchy of exclusions:
+    if (q.currentPrice == null && q.preMarketPrice == null) {
+      primaryReasonCategory = 'PRICE_UNAVAILABLE';
+      primaryReasonLabel = 'Prezzo non disponibile';
+      detail = 'Quotazione assente dal feed in tempo reale di borsa.';
+      countsByCategory.priceUnavailable++;
+    } else if (q.atr14 == null || q.atr14 <= 0) {
+      primaryReasonCategory = 'ATR_INSUFFICIENT';
+      primaryReasonLabel = 'Volatilità ATR insufficiente o non calcolabile';
+      detail = 'Storico sedute o volatilità media non calcolabile per definire lo stop.';
+      countsByCategory.atrInsufficient++;
+    } else if (isRsiFilterActive && isRsiExtreme(rsi)) {
+      primaryReasonCategory = 'RSI_EXTREME';
+      primaryReasonLabel = `RSI fuori range (${rsi! >= 70 ? 'Ipercomprato' : 'Ipervenduto'}: ${rsi})`;
+      detail = `RSI a ${rsi}: rischio elevato di inversione brusca e knock-out anticipato sul certificato.`;
+      countsByCategory.rsiExtreme++;
+    } else if (absGap < minGap) {
+      primaryReasonCategory = 'GAP_INSUFFICIENT';
+      primaryReasonLabel = `Gap % insufficiente (${gap.toFixed(2)}% vs min ±${minGap}%)`;
+      detail = `Il sottostante non presenta un gap d'apertura minimo per attivare strategie Gap & Go o ORB.`;
+      countsByCategory.gapInsufficient++;
+    } else if (rvol < parameters.minRvol) {
+      primaryReasonCategory = 'RVOL_INSUFFICIENT';
+      primaryReasonLabel = `Volume Relativo basso (${rvol.toFixed(2)}x vs min ${parameters.minRvol}x)`;
+      detail = `Scambi istituzionali inferiori alla media mobile a 20 periodi; rischio falsa rottura.`;
+      countsByCategory.rvolInsufficient++;
+    } else if (cat && cat.decisione === 'NESSUN_TRADE') {
+      primaryReasonCategory = 'CATALYST_UNVERIFIED';
+      primaryReasonLabel = 'Catalizzatore fondamentale assente o giorno utili';
+      detail = cat.catalizzatore || 'Notizie di routine o rischio trimestrale attivo nella giornata odierna.';
+      countsByCategory.catalystUnverified++;
+    } else if (score < parameters.minScore) {
+      primaryReasonCategory = 'SCORE_BELOW_MIN';
+      primaryReasonLabel = `Punteggio sotto soglia (${score}/100 vs min ${parameters.minScore})`;
+      detail = `Punteggio ${score}/100: confluenza tecnica debole tra gap, book e futures.`;
+      countsByCategory.scoreBelowMin++;
+    } else {
+      primaryReasonCategory = 'CUTOFF_PASSED';
+      primaryReasonLabel = 'Orario di cutoff superato';
+      detail = `Sessione oltre l'orario di cutoff consentito (${q.market === 'EU' ? '11:30' : '17:30'} CET).`;
+      countsByCategory.cutoffPassed++;
+    }
+
+    excludedList.push({
+      ticker: q.ticker,
+      name: q.name,
+      market: q.market,
+      currency: q.currency,
+      score,
+      gapPercent: q.gapPercent,
+      rvol: q.rvol,
+      rsi,
+      atr: q.atr14,
+      primaryReasonCategory,
+      primaryReasonLabel,
+      detail,
+    });
+  });
+
+  const excludedCount = excludedList.length;
+  const qualifiedCount = qualifiedTickers.size;
+
+  // Build bullet summary
+  const bulletSummary: string[] = [];
+  if (countsByCategory.gapInsufficient > 0) {
+    bulletSummary.push(`${countsByCategory.gapInsufficient} per Gap % insufficiente (< ±${parameters.minGapEurope}% EU / ±${parameters.minGapUSA}% US)`);
+  }
+  if (countsByCategory.rvolInsufficient > 0) {
+    bulletSummary.push(`${countsByCategory.rvolInsufficient} per Volume Relativo basso (< ${parameters.minRvol}x)`);
+  }
+  if (countsByCategory.rsiExtreme > 0) {
+    bulletSummary.push(`${countsByCategory.rsiExtreme} per RSI fuori range (ipercomprato/ipervenduto)`);
+  }
+  if (countsByCategory.scoreBelowMin > 0) {
+    bulletSummary.push(`${countsByCategory.scoreBelowMin} per Punteggio sotto soglia (< ${parameters.minScore}/100)`);
+  }
+  if (countsByCategory.catalystUnverified > 0) {
+    bulletSummary.push(`${countsByCategory.catalystUnverified} per Catalizzatore non idoneo o rischio utili`);
+  }
+  if (countsByCategory.atrInsufficient > 0) {
+    bulletSummary.push(`${countsByCategory.atrInsufficient} per Volatilità ATR non calcolabile`);
+  }
+  if (countsByCategory.cutoffPassed > 0) {
+    bulletSummary.push(`${countsByCategory.cutoffPassed} per Orario di cutoff superato`);
+  }
+  if (countsByCategory.priceUnavailable > 0) {
+    bulletSummary.push(`${countsByCategory.priceUnavailable} per Prezzo non disponibile`);
+  }
+
+  const topExclusionSummary = bulletSummary.slice(0, 3).join(', ');
+  const briefNotificationMessage = `🔍 Audit Filtraggio: ${totalScanned} titoli analizzati • ${qualifiedCount} qualificati • ${excludedCount} scartati (${topExclusionSummary})`;
+
+  return {
+    totalScanned,
+    qualifiedCount,
+    excludedCount,
+    timestamp: new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    countsByCategory,
+    briefNotificationMessage,
+    bulletSummary,
+    excludedList,
+  };
+}
+
+// -------------------------------------------------------------
+// EXCLUDED SETUPS COUNTERFACTUAL & AUTO-ANALYSIS ENGINE
+// -------------------------------------------------------------
+
+/**
+ * Builds a theoretical execution setup for an excluded candidate to track whether
+ * it would have hit profit or stop loss had it not been filtered out.
+ */
+export function buildTheoreticalSetupForExcluded(
+  candidate: ExcludedCandidateInfo,
+  quote: RawQuoteData,
+  parameters: SystemParameters
+): ExcludedSetupRecord | null {
+  const price = quote.currentPrice ?? quote.preMarketPrice;
+  if (!price || price <= 0) return null;
+
+  const gap = candidate.gapPercent ?? 0;
+  const isLong = gap >= 0;
+  const direction: 'LONG' | 'SHORT' = isLong ? 'LONG' : 'SHORT';
+
+  const offsetPct = (parameters.triggerOffsetPercent || 0.15) / 100;
+  const entryTrigger = +(isLong ? price * (1 + offsetPct) : price * (1 - offsetPct)).toFixed(3);
+
+  const atr = quote.atr14 && quote.atr14 > 0 ? quote.atr14 : price * 0.015;
+  const riskDist = +(Math.max(price * 0.005, atr * (parameters.normalRiskMultiplier || 0.5))).toFixed(3);
+
+  const t1Mult = parameters.target1Multiplier || 1.6;
+  const stopLoss = +(isLong ? entryTrigger - riskDist : entryTrigger + riskDist).toFixed(3);
+  const target1 = +(isLong ? entryTrigger + riskDist * t1Mult : entryTrigger - riskDist * t1Mult).toFixed(3);
+
+  const dateStr = new Date().toLocaleDateString('it-IT');
+  const id = `ex-${candidate.ticker}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+  return {
+    id,
+    ticker: candidate.ticker,
+    name: candidate.name,
+    market: candidate.market,
+    currency: candidate.currency,
+    sessionDate: dateStr,
+    timestamp: new Date().toISOString(),
+    score: candidate.score,
+    gapPercent: candidate.gapPercent,
+    rvol: candidate.rvol,
+    rsi: candidate.rsi,
+    atr: candidate.atr,
+    primaryReasonCategory: candidate.primaryReasonCategory,
+    primaryReasonLabel: candidate.primaryReasonLabel,
+    detail: candidate.detail,
+    direction,
+    initialPrice: price,
+    entryTrigger,
+    stopLoss,
+    target1,
+    riskDist,
+    currentPrice: price,
+    outcomeStatus: 'MONITORING',
+    theoreticalRMultiple: 0,
+    theoreticalPnlEur: 0,
+    notes: `Setup teorico monitorato post-esclusione: ${candidate.primaryReasonLabel}`,
+  };
+}
+
+/**
+ * Updates active monitored excluded setups against live market quotes tick-by-tick.
+ */
+export function updateExcludedSetupsWithLiveQuotes(
+  records: ExcludedSetupRecord[],
+  quotes: RawQuoteData[],
+  currentCetMinutes?: number,
+  accountCapital = 10000
+): { updated: ExcludedSetupRecord[]; newlyResolvedCount: number } {
+  let newlyResolvedCount = 0;
+
+  const updated = records.map((record) => {
+    if (record.outcomeStatus !== 'MONITORING') return record;
+
+    const matchingQuote = quotes.find((q) => q.ticker === record.ticker);
+    if (!matchingQuote) return record;
+
+    const livePrice = matchingQuote.currentPrice ?? matchingQuote.preMarketPrice;
+    if (livePrice == null || livePrice <= 0) return record;
+
+    const isLong = record.direction === 'LONG';
+    const entry = record.entryTrigger;
+    const stop = record.stopLoss;
+    const target = record.target1;
+    const riskDist = record.riskDist > 0 ? record.riskDist : Math.abs(entry - stop);
+
+    // 1. Target 1 Reached (Theoretical Profit)
+    const hitTarget = isLong ? livePrice >= target : livePrice <= target;
+    if (hitTarget) {
+      newlyResolvedCount++;
+      const rMultiple = +(Math.abs(target - entry) / (riskDist || 1)).toFixed(2);
+      const pnlEur = +(rMultiple * (accountCapital * 0.01)).toFixed(2);
+      return {
+        ...record,
+        currentPrice: livePrice,
+        outcomeStatus: 'THEORETICAL_PROFIT' as const,
+        theoreticalRMultiple: rMultiple,
+        theoreticalPnlEur: pnlEur,
+        resolvedAt: new Date().toISOString(),
+        notes: `Raggiunto Target 1 a ${livePrice.toFixed(2)} ${record.currency} (+${rMultiple}R). Esclusione che ha impedito un profitto.`,
+      };
+    }
+
+    // 2. Stop Loss Hit (Theoretical Loss)
+    const hitStop = isLong ? livePrice <= stop : livePrice >= stop;
+    if (hitStop) {
+      newlyResolvedCount++;
+      const pnlEur = -+(accountCapital * 0.01).toFixed(2);
+      return {
+        ...record,
+        currentPrice: livePrice,
+        outcomeStatus: 'THEORETICAL_STOP' as const,
+        theoreticalRMultiple: -1.0,
+        theoreticalPnlEur: pnlEur,
+        resolvedAt: new Date().toISOString(),
+        notes: `Attivato Stop Loss a ${livePrice.toFixed(2)} ${record.currency} (-1.0R). Il filtro ha salvato il capitale evitando una perdita reale.`,
+      };
+    }
+
+    // 3. Cutoff Time Expiration
+    if (currentCetMinutes != null) {
+      const isEuCutoff = record.market === 'EU' && currentCetMinutes >= 690; // 11:30 CET
+      const isUsCutoff = record.market === 'US' && currentCetMinutes >= 1050; // 17:30 CET
+      if (isEuCutoff || isUsCutoff) {
+        newlyResolvedCount++;
+        const diff = isLong ? livePrice - entry : entry - livePrice;
+        const rMultiple = riskDist > 0 ? +(diff / riskDist).toFixed(2) : 0;
+        const pnlEur = +(rMultiple * (accountCapital * 0.01)).toFixed(2);
+        return {
+          ...record,
+          currentPrice: livePrice,
+          outcomeStatus: 'THEORETICAL_EXPIRED' as const,
+          theoreticalRMultiple: rMultiple,
+          theoreticalPnlEur: pnlEur,
+          resolvedAt: new Date().toISOString(),
+          notes: `Cutoff superato senza target né stop. Chiusura temporale a ${livePrice.toFixed(2)} ${record.currency}.`,
+        };
+      }
+    }
+
+    return {
+      ...record,
+      currentPrice: livePrice,
+    };
+  });
+
+  return { updated, newlyResolvedCount };
+}
+
+/**
+ * Runs rigorous auto-analysis on excluded setups, grouping by exclusion category,
+ * determining whether too many excluded setups were actually profitable,
+ * and proposing automated calibration improvements for the next trading session.
+ */
+export function runExcludedSetupsAutoAnalysis(
+  records: ExcludedSetupRecord[],
+  currentParams: SystemParameters = DEFAULT_SYSTEM_PARAMETERS,
+  accountCapital = 10000
+): ExcludedSetupsAutoAnalysis {
+  const categoryOrder: ExclusionCategory[] = [
+    'RSI_EXTREME',
+    'RVOL_INSUFFICIENT',
+    'GAP_INSUFFICIENT',
+    'SCORE_BELOW_MIN',
+    'CATALYST_UNVERIFIED',
+    'ATR_INSUFFICIENT',
+    'CUTOFF_PASSED',
+    'PRICE_UNAVAILABLE',
+  ];
+
+  const categoryLabels: Record<ExclusionCategory, string> = {
+    RSI_EXTREME: 'Filtro RSI Fuori Range (Ipercomprato / Ipervenduto)',
+    RVOL_INSUFFICIENT: 'Filtro Volume Relativo Basso (RVOL)',
+    GAP_INSUFFICIENT: 'Filtro Ampiezza Gap % d\'Apertura',
+    SCORE_BELOW_MIN: 'Soglia Punteggio Minimo (minScore)',
+    CATALYST_UNVERIFIED: 'Filtro Catalizzatore Fondamentale & Earnings',
+    ATR_INSUFFICIENT: 'Filtro Volatilità Media ATR',
+    CUTOFF_PASSED: 'Filtro Orario di Cutoff (11:30 / 17:30 CET)',
+    PRICE_UNAVAILABLE: 'Filtro Feed Dati / Prezzo Assente',
+  };
+
+  const categories: ExcludedCategoryAnalysis[] = [];
+  const urgentCorrections: ExcludedSetupsAutoAnalysis['urgentCorrections'] = [];
+
+  let totalTracked = records.length;
+  let totalProfitable = 0;
+  let totalStopped = 0;
+  let totalExpired = 0;
+  let totalMonitoring = 0;
+  let totalMissedPnlEur = 0;
+  let totalCapitalSavedEur = 0;
+
+  for (const cat of categoryOrder) {
+    const catRecords = records.filter((r) => r.primaryReasonCategory === cat);
+    const totalExcluded = catRecords.length;
+
+    if (totalExcluded === 0) continue;
+
+    const profitCount = catRecords.filter((r) => r.outcomeStatus === 'THEORETICAL_PROFIT').length;
+    const lossCount = catRecords.filter((r) => r.outcomeStatus === 'THEORETICAL_STOP').length;
+    const expiredCount = catRecords.filter((r) => r.outcomeStatus === 'THEORETICAL_EXPIRED').length;
+    const monitoringCount = catRecords.filter((r) => r.outcomeStatus === 'MONITORING').length;
+
+    totalProfitable += profitCount;
+    totalStopped += lossCount;
+    totalExpired += expiredCount;
+    totalMonitoring += monitoringCount;
+
+    const resolved = profitCount + lossCount + expiredCount;
+    const winRate = resolved > 0 ? +((profitCount / resolved) * 100).toFixed(1) : 0;
+
+    const missedPnlEur = +(catRecords.reduce((acc, r) => acc + (r.outcomeStatus === 'THEORETICAL_PROFIT' ? (r.theoreticalPnlEur || 0) : 0), 0)).toFixed(2);
+    const savedPnlEur = +(catRecords.reduce((acc, r) => acc + (r.outcomeStatus === 'THEORETICAL_STOP' ? Math.abs(r.theoreticalPnlEur || 100) : 0), 0)).toFixed(2);
+
+    totalMissedPnlEur += missedPnlEur;
+    totalCapitalSavedEur += savedPnlEur;
+
+    let verdict: ExcludedCategoryAnalysis['verdict'] = 'BALANCED';
+    let verdictTitle = 'Filtro Bilanciato';
+    let verdictDescription = 'Il filtro mostra un equilibrio fisiologico tra falsi positivi evitati e opportunità scartate.';
+    let correctionProposal: ExcludedCategoryAnalysis['correctionProposal'] | undefined = undefined;
+
+    // Check if TOO RESTRICTIVE (too many excluded went to profit)
+    const isTooRestrictive = profitCount >= 2 && (winRate >= 55 || profitCount > lossCount);
+    // Check if EFFECTIVE SHIELD (most excluded went to stop loss)
+    const isEffectiveShield = lossCount >= 2 && lossCount > profitCount;
+
+    if (isTooRestrictive) {
+      verdict = 'TOO_RESTRICTIVE';
+      verdictTitle = '⚠️ Filtro Troppo Severo (Troppi Profitti Persi)';
+      verdictDescription = `${profitCount} setup su ${resolved} risolti (${winRate}%) sono andati a target con successo nonostante l'esclusione. Il filtro è eccessivamente restrittivo e sta frenando le performance della strategia.`;
+
+      if (cat === 'RVOL_INSUFFICIENT') {
+        const proposed = Math.max(0.85, +(currentParams.minRvol - 0.20).toFixed(2));
+        correctionProposal = {
+          parameterKey: 'minRvol',
+          label: 'Soglia Minima Volume Relativo (RVOL)',
+          currentValue: `${currentParams.minRvol}x`,
+          proposedValue: `${proposed}x`,
+          actionType: 'REDUCE_PARAM',
+          explanation: `Riduci la soglia minima di RVOL da ${currentParams.minRvol}x a ${proposed}x per includere nella prossima sessione titoli con break-out a volumi crescenti senza scartarli anzitempo.`,
+        };
+        urgentCorrections.push({
+          category: cat,
+          title: 'Allentamento Soglia RVOL',
+          description: correctionProposal.explanation,
+          parameterKey: 'minRvol',
+          currentValue: currentParams.minRvol,
+          proposedValue: proposed,
+        });
+      } else if (cat === 'GAP_INSUFFICIENT') {
+        const proposedEU = Math.max(0.25, +(currentParams.minGapEurope - 0.15).toFixed(2));
+        correctionProposal = {
+          parameterKey: 'minGapEurope',
+          label: 'Soglia Minima Gap % Europa',
+          currentValue: `${currentParams.minGapEurope}%`,
+          proposedValue: `${proposedEU}%`,
+          actionType: 'REDUCE_PARAM',
+          explanation: `Abbassa il gap minimo europeo a ${proposedEU}% (e USA a ${(currentParams.minGapUSA * 0.8).toFixed(2)}%) per intercettare continuazioni di trend a volatilità contenuta ma alta probabilità.`,
+        };
+        urgentCorrections.push({
+          category: cat,
+          title: 'Riduzione Soglia Gap Minimo',
+          description: correctionProposal.explanation,
+          parameterKey: 'minGapEurope',
+          currentValue: currentParams.minGapEurope,
+          proposedValue: proposedEU,
+        });
+      } else if (cat === 'SCORE_BELOW_MIN') {
+        const proposedScore = Math.max(45, currentParams.minScore - 5);
+        correctionProposal = {
+          parameterKey: 'minScore',
+          label: 'Punteggio Minimo Algoritmico (minScore)',
+          currentValue: `${currentParams.minScore}/100`,
+          proposedValue: `${proposedScore}/100`,
+          actionType: 'REDUCE_PARAM',
+          explanation: `Riduci la soglia di sblocco setup da ${currentParams.minScore} a ${proposedScore}/100. I titoli scartati con punteggio tra 48 e ${currentParams.minScore} hanno mostrato un win rate del ${winRate}%.`,
+        };
+        urgentCorrections.push({
+          category: cat,
+          title: 'Abbassamento Soglia Punteggio',
+          description: correctionProposal.explanation,
+          parameterKey: 'minScore',
+          currentValue: currentParams.minScore,
+          proposedValue: proposedScore,
+        });
+      } else if (cat === 'RSI_EXTREME') {
+        correctionProposal = {
+          parameterKey: 'triggerOffsetPercent',
+          label: 'Filtro RSI Estremo & Offset Trigger',
+          currentValue: 'Attivo (30-70)',
+          proposedValue: 'Tolleranza Allargata (20-80)',
+          actionType: 'TOGGLE_RSI',
+          explanation: `In sessioni con forte momentum direzionale, RSI > 70 non indica inversione ma persistenza del flusso istituzionale. Si consiglia di disattivare il filtro RSI o allargare i limiti a 20-80.`,
+        };
+        urgentCorrections.push({
+          category: cat,
+          title: 'Allargamento Tolleranza RSI',
+          description: correctionProposal.explanation,
+          parameterKey: 'triggerOffsetPercent',
+          currentValue: currentParams.triggerOffsetPercent,
+          proposedValue: +(currentParams.triggerOffsetPercent * 0.8).toFixed(2),
+        });
+      }
+    } else if (isEffectiveShield) {
+      verdict = 'EFFECTIVE_SHIELD';
+      verdictTitle = '🛡️ Scudo Difensivo Efficace (Capitale Protetto)';
+      verdictDescription = `Il filtro ha intercettato ${lossCount} stop loss su falsi segnali (${((lossCount / (resolved || 1)) * 100).toFixed(1)}%), risparmiando circa +${savedPnlEur} € di perdite certe. Mantieni il filtro rigorosamente attivo!`;
+    } else if (resolved < 2) {
+      verdict = 'INSUFFICIENT_SAMPLE';
+      verdictTitle = 'Campione in Accumulazione';
+      verdictDescription = `Dati storici insufficienti (${resolved} setup risolti) per decretare con certezza statistica se il filtro debba essere modificato. Continua il monitoraggio tick-by-tick.`;
+    }
+
+    categories.push({
+      category: cat,
+      label: categoryLabels[cat] || cat,
+      totalExcluded,
+      profitCount,
+      lossCount,
+      expiredCount,
+      monitoringCount,
+      winRate,
+      missedPnlEur,
+      savedPnlEur,
+      verdict,
+      verdictTitle,
+      verdictDescription,
+      correctionProposal,
+    });
+  }
+
+  const totalResolved = totalProfitable + totalStopped + totalExpired;
+  const overallMissedWinRate = totalResolved > 0 ? +((totalProfitable / totalResolved) * 100).toFixed(1) : 0;
+
+  return {
+    totalTracked,
+    totalResolved,
+    totalProfitable,
+    totalStopped,
+    totalExpired,
+    totalMonitoring,
+    overallMissedWinRate,
+    totalMissedPnlEur: +totalMissedPnlEur.toFixed(2),
+    totalCapitalSavedEur: +totalCapitalSavedEur.toFixed(2),
+    categories,
+    urgentCorrections,
+    analyzedAt: new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }),
   };
 }

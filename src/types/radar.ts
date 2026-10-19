@@ -277,3 +277,184 @@ export interface SessionInfo {
   };
   recommendedSession: 'EU' | 'US' | 'GLOBAL';
 }
+
+export interface HourlySeasonalitySlot {
+  slotKey: string; // e.g. "09:00 - 10:00"
+  label: string; // e.g. "Golden Hour Europa"
+  startHour: number;
+  endHour: number;
+  marketSession: 'EU' | 'US' | 'GLOBAL';
+  tradesCount: number;
+  winCount: number;
+  lossCount: number;
+  beCount: number;
+  expiredCount: number;
+  winRate: number; // 0-100%
+  avgRMultiple: number;
+  netPnlEur: number;
+  profitFactor: number;
+  status: 'HIGH_CONVICTION' | 'NEUTRAL' | 'CHOP_RISK' | 'INSUFFICIENT_DATA';
+  description: string;
+  tacticalAdvice: string;
+  isCurrentHour?: boolean;
+}
+
+export interface DaySeasonalitySlot {
+  dayName: string; // "Lunedì", "Martedì", etc.
+  dayIndex: number; // 1 to 5
+  tradesCount: number;
+  winCount: number;
+  lossCount: number;
+  winRate: number;
+  netPnlEur: number;
+  avgRMultiple: number;
+  isToday?: boolean;
+}
+
+export interface SeasonalityReport {
+  hourlySlots: HourlySeasonalitySlot[];
+  daySlots: DaySeasonalitySlot[];
+  bestWindow: HourlySeasonalitySlot | null;
+  worstWindow: HourlySeasonalitySlot | null;
+  currentActiveSlot: HourlySeasonalitySlot | null;
+  isJournalDataAvailable: boolean;
+  totalAnalyzedTrades: number;
+  averageWinRate: number;
+  recommendationForNow: {
+    verdict: 'FAVORABLE' | 'NEUTRAL' | 'CAUTION_CHOP';
+    title: string;
+    message: string;
+  };
+}
+
+export type ExclusionCategory =
+  | 'RSI_EXTREME'
+  | 'GAP_INSUFFICIENT'
+  | 'RVOL_INSUFFICIENT'
+  | 'SCORE_BELOW_MIN'
+  | 'CATALYST_UNVERIFIED'
+  | 'ATR_INSUFFICIENT'
+  | 'CUTOFF_PASSED'
+  | 'PRICE_UNAVAILABLE';
+
+export interface ExcludedCandidateInfo {
+  ticker: string;
+  name: string;
+  market: 'EU' | 'US';
+  currency: string;
+  score: number;
+  gapPercent: number | null;
+  rvol: number | null;
+  rsi: number | null;
+  atr: number | null;
+  primaryReasonCategory: ExclusionCategory;
+  primaryReasonLabel: string;
+  detail: string;
+}
+
+export interface FilteringAuditReport {
+  totalScanned: number;
+  qualifiedCount: number;
+  excludedCount: number;
+  timestamp: string;
+  countsByCategory: {
+    rsiExtreme: number;
+    gapInsufficient: number;
+    rvolInsufficient: number;
+    scoreBelowMin: number;
+    catalystUnverified: number;
+    atrInsufficient: number;
+    cutoffPassed: number;
+    priceUnavailable: number;
+  };
+  briefNotificationMessage: string;
+  bulletSummary: string[];
+  excludedList: ExcludedCandidateInfo[];
+}
+
+export type ExcludedOutcomeStatus =
+  | 'MONITORING'
+  | 'THEORETICAL_PROFIT'
+  | 'THEORETICAL_STOP'
+  | 'THEORETICAL_EXPIRED'
+  | 'INSUFFICIENT_DATA';
+
+export interface ExcludedSetupRecord {
+  id: string;
+  ticker: string;
+  name: string;
+  market: 'EU' | 'US';
+  currency: string;
+  sessionDate: string;
+  timestamp: string;
+  score: number;
+  gapPercent: number | null;
+  rvol: number | null;
+  rsi: number | null;
+  atr: number | null;
+  primaryReasonCategory: ExclusionCategory;
+  primaryReasonLabel: string;
+  detail: string;
+
+  // Theoretical setup geometry
+  direction: 'LONG' | 'SHORT';
+  initialPrice: number;
+  entryTrigger: number;
+  stopLoss: number;
+  target1: number;
+  riskDist: number;
+
+  // Live monitoring
+  currentPrice?: number;
+  outcomeStatus: ExcludedOutcomeStatus;
+  theoreticalRMultiple?: number;
+  theoreticalPnlEur?: number;
+  resolvedAt?: string;
+  notes?: string;
+}
+
+export interface ExcludedCategoryAnalysis {
+  category: ExclusionCategory;
+  label: string;
+  totalExcluded: number;
+  profitCount: number;
+  lossCount: number;
+  expiredCount: number;
+  monitoringCount: number;
+  winRate: number; // 0-100%
+  missedPnlEur: number;
+  savedPnlEur: number;
+  verdict: 'TOO_RESTRICTIVE' | 'EFFECTIVE_SHIELD' | 'BALANCED' | 'INSUFFICIENT_SAMPLE';
+  verdictTitle: string;
+  verdictDescription: string;
+  correctionProposal?: {
+    parameterKey: keyof SystemParameters;
+    label: string;
+    currentValue: string | number;
+    proposedValue: string | number;
+    explanation: string;
+    actionType: 'REDUCE_PARAM' | 'EXPAND_PARAM' | 'TOGGLE_RSI' | 'CUSTOM';
+  };
+}
+
+export interface ExcludedSetupsAutoAnalysis {
+  totalTracked: number;
+  totalResolved: number;
+  totalProfitable: number;
+  totalStopped: number;
+  totalExpired: number;
+  totalMonitoring: number;
+  overallMissedWinRate: number;
+  totalMissedPnlEur: number;
+  totalCapitalSavedEur: number;
+  categories: ExcludedCategoryAnalysis[];
+  urgentCorrections: Array<{
+    category: ExclusionCategory;
+    title: string;
+    description: string;
+    parameterKey: keyof SystemParameters;
+    currentValue: any;
+    proposedValue: any;
+  }>;
+  analyzedAt: string;
+}

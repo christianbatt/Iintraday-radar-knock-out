@@ -10,6 +10,9 @@ import {
   TradeJournalEntry,
   SystemParameters,
   OptimizationProposal,
+  FilteringAuditReport,
+  ExcludedSetupRecord,
+  ExcludedSetupsAutoAnalysis,
 } from './types/radar';
 import { DEFAULT_TRADE_REPUBLIC_UNDERLYINGS } from './data/defaultUnderlyings';
 import {
@@ -17,6 +20,10 @@ import {
   buildExecutionSetup,
   DEFAULT_SYSTEM_PARAMETERS,
   evaluateSystemOptimization,
+  generateFilteringAuditReport,
+  buildTheoreticalSetupForExcluded,
+  updateExcludedSetupsWithLiveQuotes,
+  runExcludedSetupsAutoAnalysis,
 } from './utils/calculator';
 import {
   fetchSessionInfo,
@@ -47,12 +54,16 @@ import { SystemOptimizationBanner } from './components/SystemOptimizationBanner'
 import { DualExecutionHero } from './components/DualExecutionHero';
 import { TopCandidatesTable } from './components/TopCandidatesTable';
 import { BenchmarkCorrelationHeatmap } from './components/BenchmarkCorrelationHeatmap';
+import { IntradaySeasonalityAnalysis } from './components/IntradaySeasonalityAnalysis';
 import { TradeJournal } from './components/TradeJournal';
 import { CsvManagerModal } from './components/CsvManagerModal';
 import { CatalystModal } from './components/CatalystModal';
 import { CreatorContactModal } from './components/CreatorContactModal';
 import { PwaUpdatePrompt } from './components/PwaUpdatePrompt';
 import { SystemOptimizerModal } from './components/SystemOptimizerModal';
+import { FilteringAuditBanner } from './components/FilteringAuditBanner';
+import { FilteringAuditModal } from './components/FilteringAuditModal';
+import { ExcludedSetupsAnalyzerModal } from './components/ExcludedSetupsAnalyzerModal';
 
 export default function App() {
   // 1. Underlyings State (strictly Trade Republic KO list)
@@ -111,6 +122,30 @@ export default function App() {
   const [isCatalystModalOpen, setIsCatalystModalOpen] = useState<boolean>(false);
   const [isLoadingCatalyst, setIsLoadingCatalyst] = useState<boolean>(false);
   const [loadingNewsTicker, setLoadingNewsTicker] = useState<string | null>(null);
+
+  // 4.5. Visual Filtering Audit State
+  const [auditReport, setAuditReport] = useState<FilteringAuditReport | null>(null);
+  const [isAuditModalOpen, setIsAuditModalOpen] = useState<boolean>(false);
+  const [showAuditBanner, setShowAuditBanner] = useState<boolean>(false);
+
+  // 4.6. Excluded Setups Counterfactual & Auto-Analysis State
+  const [excludedRecords, setExcludedRecords] = useState<ExcludedSetupRecord[]>(() => {
+    try {
+      const saved = localStorage.getItem('intraday_radar_excluded_setups_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // fallback
+    }
+    return [];
+  });
+  const [isExcludedAnalyzerOpen, setIsExcludedAnalyzerOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    localStorage.setItem('intraday_radar_excluded_setups_v1', JSON.stringify(excludedRecords));
+  }, [excludedRecords]);
 
   // 5. Account & Risk Management
   const [accountCapital, setAccountCapital] = useState<number>(() => {
@@ -172,6 +207,11 @@ export default function App() {
     }
     return DEFAULT_SYSTEM_PARAMETERS;
   });
+
+  // 6a. Excluded Setups Auto-Analysis & Optimization Calculation
+  const excludedAutoAnalysis = React.useMemo(() => {
+    return runExcludedSetupsAutoAnalysis(excludedRecords, parameters, accountCapital);
+  }, [excludedRecords, parameters, accountCapital]);
 
   const [pendingProposal, setPendingProposal] = useState<OptimizationProposal | null>(() => {
     try {
@@ -371,6 +411,49 @@ export default function App() {
 
       setSetupEU(buildExecutionSetup(dual.topEU, catEU, 'EU', parameters));
       setSetupUS(buildExecutionSetup(dual.topUS, catUS, 'US', parameters));
+
+      // 4.5. Visual Filtering Audit Generation (triggers 3-5s notification banner)
+      const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCache };
+      if (dual.topEU && catEU) currentCache[dual.topEU.quote.ticker] = catEU;
+      if (dual.topUS && catUS) currentCache[dual.topUS.quote.ticker] = catUS;
+
+      const audit = generateFilteringAuditReport(
+        rawQuotes,
+        dual,
+        futuresMapping,
+        parameters,
+        currentCache,
+        rsiFilterActive,
+        sessionInfo?.cet?.currentMinutes
+      );
+      setAuditReport(audit);
+      setShowAuditBanner(true);
+
+      // Auto-register excluded candidates into Counterfactual Analyzer
+      if (audit.excludedList.length > 0) {
+        setExcludedRecords((prev) => {
+          const today = new Date().toLocaleDateString('it-IT');
+          const existingKeys = new Set(prev.map((r) => `${r.ticker}-${r.sessionDate}`));
+          const newEntries: ExcludedSetupRecord[] = [];
+
+          audit.excludedList.forEach((cand) => {
+            const key = `${cand.ticker}-${today}`;
+            if (!existingKeys.has(key)) {
+              const matchingQuote = rawQuotes.find((q) => q.ticker === cand.ticker);
+              if (matchingQuote) {
+                const setup = buildTheoreticalSetupForExcluded(cand, matchingQuote, parameters);
+                if (setup) {
+                  newEntries.push(setup);
+                  existingKeys.add(key);
+                }
+              }
+            }
+          });
+
+          if (newEntries.length === 0) return prev;
+          return [...newEntries, ...prev].slice(0, 150);
+        });
+      }
     } catch (err: any) {
       setScanError(`Errore durante il recupero dei dati di mercato: ${err.message || 'Controlla la connessione'}`);
     } finally {
@@ -403,6 +486,21 @@ export default function App() {
     ]).then(([catEU, catUS]) => {
       setSetupEU(buildExecutionSetup(dual.topEU, catEU, 'EU', parameters));
       setSetupUS(buildExecutionSetup(dual.topUS, catUS, 'US', parameters));
+
+      const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCache };
+      if (dual.topEU && catEU) currentCache[dual.topEU.quote.ticker] = catEU;
+      if (dual.topUS && catUS) currentCache[dual.topUS.quote.ticker] = catUS;
+
+      const audit = generateFilteringAuditReport(
+        quotes,
+        dual,
+        futuresMapping,
+        parameters,
+        currentCache,
+        rsiFilterActive,
+        sessionInfo?.cet?.currentMinutes
+      );
+      setAuditReport(audit);
     });
   }, [rsiFilterActive, parameters]);
 
@@ -499,6 +597,142 @@ export default function App() {
       setSetupUS(newSetup);
     }
   };
+
+  // 6c. Autonomous Live Trade Monitor
+  // Evaluates every active OPEN position against live tick prices and market hours
+  useEffect(() => {
+    if (quotes.length === 0 || journalEntries.length === 0) return;
+
+    const openTrades = journalEntries.filter((t) => t.status === 'OPEN');
+    if (openTrades.length === 0) return;
+
+    let hasResolved = false;
+    let resolvedNotification = '';
+
+    const updatedList = journalEntries.map((trade) => {
+      if (trade.status !== 'OPEN') return trade;
+
+      const matchingQuote = quotes.find((q) => q.ticker === trade.ticker);
+      if (!matchingQuote) return trade;
+
+      const livePrice = matchingQuote.currentPrice ?? matchingQuote.preMarketPrice;
+      if (livePrice == null || livePrice <= 0) return trade;
+
+      const isLong = trade.direction === 'LONG';
+      const entry = trade.entryPrice;
+      const stop = trade.stopLoss;
+      const target1 = trade.target1;
+      const riskDist = Math.abs(entry - stop);
+      const targetDist = Math.abs(target1 - entry);
+
+      // Check 1: Target 1 Hit (WIN)
+      const isTargetHit = isLong ? livePrice >= target1 : livePrice <= target1;
+      if (isTargetHit && riskDist > 0) {
+        hasResolved = true;
+        const rMultiple = +(targetDist / riskDist).toFixed(2);
+        const pnlEur = +(rMultiple * (accountCapital * 0.01)).toFixed(2);
+        resolvedNotification = `🎯 Risoluzione Autonoma: ${trade.ticker} ha raggiunto Target 1 a ${livePrice.toFixed(2)} ${matchingQuote.currency} (+${rMultiple}R / +${pnlEur} €)!`;
+
+        return {
+          ...trade,
+          status: 'CLOSED' as const,
+          outcome: 'WIN' as const,
+          exitPrice: livePrice,
+          pnlEur,
+          rMultiple,
+          closedAt: new Date().toISOString(),
+          closeReason: 'TARGET_HIT' as const,
+          notes: `${trade.notes} | Risolto autonomamente dal monitoraggio live: Target 1 toccato a ${livePrice.toFixed(2)} ${matchingQuote.currency}.`.trim(),
+        };
+      }
+
+      // Check 2: Stop Loss Hit (LOSS)
+      const isStopHit = isLong ? livePrice <= stop : livePrice >= stop;
+      if (isStopHit) {
+        hasResolved = true;
+        const rMultiple = -1.0;
+        const pnlEur = -+(accountCapital * 0.01).toFixed(2);
+        resolvedNotification = `🛑 Risoluzione Autonoma: ${trade.ticker} ha attivato Stop Loss a ${livePrice.toFixed(2)} ${matchingQuote.currency} (-1.0R)!`;
+
+        return {
+          ...trade,
+          status: 'CLOSED' as const,
+          outcome: 'LOSS' as const,
+          exitPrice: livePrice,
+          pnlEur,
+          rMultiple,
+          closedAt: new Date().toISOString(),
+          closeReason: 'STOP_HIT' as const,
+          notes: `${trade.notes} | Risolto autonomamente: Stop Loss attivato a ${livePrice.toFixed(2)} ${matchingQuote.currency}.`.trim(),
+        };
+      }
+
+      // Check 3: Cutoff Time Expiration (11:30 CET for EU, 17:30 CET for US)
+      const currentMinutes = sessionInfo?.cet?.currentMinutes ?? 0;
+      const isEuCutoff = trade.session === 'EU' && currentMinutes >= 690; // 11:30 CET
+      const isUsCutoff = trade.session === 'US' && currentMinutes >= 1050; // 17:30 CET
+      if (isEuCutoff || isUsCutoff) {
+        hasResolved = true;
+        const priceDiff = isLong ? livePrice - entry : entry - livePrice;
+        const rMultiple = riskDist > 0 ? +(priceDiff / riskDist).toFixed(2) : 0;
+        const pnlEur = +(rMultiple * (accountCapital * 0.01)).toFixed(2);
+        const outcome = Math.abs(rMultiple) < 0.2 ? ('BREAKEVEN' as const) : ('EXPIRED' as const);
+        resolvedNotification = `⏰ Risoluzione Autonoma: ${trade.ticker} ha superato l'orario di cutoff senza rottura trigger né stop (${outcome}).`;
+
+        return {
+          ...trade,
+          status: 'CLOSED' as const,
+          outcome,
+          exitPrice: livePrice,
+          pnlEur,
+          rMultiple,
+          closedAt: new Date().toISOString(),
+          closeReason: 'CUTOFF_EXPIRED' as const,
+          notes: `${trade.notes} | Risolto autonomamente: cutoff orario superato a ${livePrice.toFixed(2)} ${matchingQuote.currency}.`.trim(),
+        };
+      }
+
+      return trade;
+    });
+
+    if (hasResolved) {
+      setJournalEntries(updatedList);
+      setOptimizationNotification(resolvedNotification);
+      setTimeout(() => setOptimizationNotification(null), 6000);
+
+      // Cloud sync updated list if logged in
+      if (currentUser) {
+        updatedList.forEach((t) => {
+          if (t.status === 'CLOSED' && t.closeReason) {
+            syncTradeToCloud(currentUser.uid, t);
+          }
+        });
+      }
+    }
+  }, [quotes, sessionInfo]);
+
+  // 6d. Autonomous Excluded Setups Live Monitor (Counterfactual Tick-by-Tick Evaluation)
+  useEffect(() => {
+    if (quotes.length === 0) return;
+
+    setExcludedRecords((prev) => {
+      if (prev.length === 0) return prev;
+      const hasMonitoring = prev.some((r) => r.outcomeStatus === 'MONITORING');
+      if (!hasMonitoring) return prev;
+
+      const { updated, newlyResolvedCount } = updateExcludedSetupsWithLiveQuotes(
+        prev,
+        quotes,
+        sessionInfo?.cet?.currentMinutes,
+        accountCapital
+      );
+
+      if (newlyResolvedCount > 0) {
+        return updated;
+      }
+      return prev;
+    });
+  }, [quotes, sessionInfo?.cet?.currentMinutes, accountCapital]);
 
   // Journal Actions
   const handleAddJournalTrade = (tradeData: any) => {
@@ -744,6 +978,79 @@ export default function App() {
     setTimeout(() => setOptimizationNotification(null), 5000);
   };
 
+  // 7b. Excluded Setups Calibration Handlers (Next Session Improvement)
+  const handleApplyExcludedCorrection = (
+    paramKey: keyof SystemParameters,
+    proposedValue: any,
+    explanation: string
+  ) => {
+    let parsedVal = proposedValue;
+    if (typeof proposedValue === 'string') {
+      if (proposedValue.includes('x')) parsedVal = parseFloat(proposedValue.replace('x', ''));
+      else if (proposedValue.includes('%')) parsedVal = parseFloat(proposedValue.replace('%', ''));
+      else if (proposedValue.includes('/100')) parsedVal = parseFloat(proposedValue.replace('/100', ''));
+      else if (!isNaN(Number(proposedValue))) parsedVal = Number(proposedValue);
+    }
+
+    setParameters((prev) => {
+      const updated = {
+        ...prev,
+        [paramKey]: parsedVal,
+        lastUpdated: new Date().toISOString(),
+        version: prev.version + 1,
+      };
+      if (currentUser) {
+        syncSystemSettingsToCloud(currentUser.uid, updated);
+      }
+      return updated;
+    });
+
+    setOptimizationNotification(
+      `⚙️ Calibrazione Filtri Applicata: ${String(paramKey)} aggiornato per la prossima sessione! Meno falsi negativi attesi.`
+    );
+    setTimeout(() => setOptimizationNotification(null), 6000);
+  };
+
+  const handleApplyAllUrgentCorrections = () => {
+    if (excludedAutoAnalysis.urgentCorrections.length === 0) return;
+
+    setParameters((prev) => {
+      let updated = { ...prev };
+      excludedAutoAnalysis.urgentCorrections.forEach((corr) => {
+        let val = corr.proposedValue;
+        if (typeof val === 'string') {
+          if (val.includes('x')) val = parseFloat(val.replace('x', ''));
+          else if (val.includes('%')) val = parseFloat(val.replace('%', ''));
+          else if (val.includes('/100')) val = parseFloat(val.replace('/100', ''));
+          else if (!isNaN(Number(val))) val = Number(val);
+        }
+        updated = {
+          ...updated,
+          [corr.parameterKey]: val,
+        };
+      });
+      updated.lastUpdated = new Date().toISOString();
+      updated.version = prev.version + 1;
+
+      if (currentUser) {
+        syncSystemSettingsToCloud(currentUser.uid, updated);
+      }
+      return updated;
+    });
+
+    setOptimizationNotification(
+      `🚀 Applicate ${excludedAutoAnalysis.urgentCorrections.length} calibrazioni di filtro per la prossima sessione! Minori esclusioni su setup vincenti.`
+    );
+    setTimeout(() => setOptimizationNotification(null), 7000);
+  };
+
+  const handleClearExcludedRecords = () => {
+    setExcludedRecords([]);
+    localStorage.removeItem('intraday_radar_excluded_setups_v1');
+    setOptimizationNotification('Registro setup esclusi azzerato.');
+    setTimeout(() => setOptimizationNotification(null), 3000);
+  };
+
   // Reset Server Cache
   const [cacheNotification, setCacheNotification] = useState<string | null>(null);
 
@@ -832,6 +1139,16 @@ export default function App() {
           </div>
         )}
 
+        {/* 2.5. Visual Filtering Audit Banner (3-5s transient notification explaining candidate exclusions) */}
+        {showAuditBanner && (
+          <FilteringAuditBanner
+            report={auditReport}
+            durationMs={4500}
+            onOpenDetailsModal={() => setIsAuditModalOpen(true)}
+            onDismiss={() => setShowAuditBanner(false)}
+          />
+        )}
+
         {/* 3. Daily Circuit Breaker Alert (Blocking Rule) */}
         <DailyCircuitBreakerBanner
           isTriggered={circuitBreakerActive}
@@ -869,6 +1186,8 @@ export default function App() {
           autoRefreshCountdown={autoRefreshCountdown}
           rsiFilterActive={rsiFilterActive}
           onToggleRsiFilter={() => setRsiFilterActive((prev) => !prev)}
+          auditReport={auditReport}
+          onOpenAuditModal={() => setIsAuditModalOpen(true)}
         />
 
         {/* 5. Dual Hero Execution Cards: Affiancate Top EU e Top USA */}
@@ -905,9 +1224,17 @@ export default function App() {
           onViewCatalyst={handleOpenCatalystModal}
         />
 
+        {/* 6.8. Analisi Stagionalità Intraday • Pattern Temporali & Finestre Orarie d'Oro */}
+        <IntradaySeasonalityAnalysis
+          entries={journalEntries}
+          currentCetMinutes={sessionInfo?.cet?.currentMinutes}
+          currentSession={currentSession}
+        />
+
         {/* 7. Trade Journal with Risk Management, Expired Tracking & Self-Optimization */}
         <TradeJournal
           entries={journalEntries}
+          quotes={quotes}
           onAddEntry={(entry) => setJournalEntries((prev) => [entry, ...prev])}
           onUpdateEntry={handleUpdateJournalTrade}
           onDeleteEntry={handleDeleteJournalTrade}
@@ -929,6 +1256,12 @@ export default function App() {
         onRejectProposal={handleRejectProposal}
         onRunAuditOnDemand={handleRunAuditOnDemand}
         trades={journalEntries}
+      />
+      <FilteringAuditModal
+        isOpen={isAuditModalOpen}
+        onClose={() => setIsAuditModalOpen(false)}
+        report={auditReport}
+        onOpenOptimizerModal={() => setIsOptimizerModalOpen(true)}
       />
       <CsvManagerModal
         isOpen={isCsvModalOpen}
