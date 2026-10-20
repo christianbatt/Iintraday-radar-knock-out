@@ -518,7 +518,7 @@ export const BenchmarkCorrelationHeatmap: React.FC<BenchmarkCorrelationHeatmapPr
               />
               <ReferenceLine x={0} stroke="#475569" strokeWidth={1.5} />
               <Tooltip content={<CustomHeatmapTooltip />} />
-              <Bar dataKey="alphaPrimary" radius={[0, 4, 4, 0]}>
+              <Bar dataKey="alphaPrimary" radius={[0, 4, 4, 0]} isAnimationActive={false}>
                 {filteredData.slice(0, 18).map((entry, index) => (
                   <Cell
                     key={`cell-${entry.ticker}-${index}`}

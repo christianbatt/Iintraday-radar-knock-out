@@ -51,6 +51,7 @@ export interface ScoreBreakdown {
   futuresScore: number;
   levelScore: number;
   rsiScore?: number; // Intraday 5m Momentum & Multi-timeframe RSI quality (max 10)
+  newsScore?: number; // Bonus news & catalyst quality (+0 to +15pt)
   total: number;
   details: string[];
 }
@@ -83,6 +84,7 @@ export interface GeminiCatalystAnalysis {
     source: string;
     time?: string;
   }[];
+  newsBonusScore?: number;
 }
 
 export interface ExecutionSetup {

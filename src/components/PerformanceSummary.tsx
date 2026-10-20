@@ -461,6 +461,7 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({
                     dataKey="equity"
                     stroke={netPnlEur >= 0 ? '#10b981' : '#f43f5e'}
                     strokeWidth={2.5}
+                    isAnimationActive={false}
                     dot={{ r: 3, fill: '#0f172a', stroke: '#10b981', strokeWidth: 1.5 }}
                     activeDot={{ r: 5, fill: '#10b981', stroke: '#ffffff', strokeWidth: 2 }}
                   />
@@ -496,6 +497,7 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({
                     dataKey="cumPnl"
                     stroke={netPnlEur >= 0 ? '#10b981' : '#f43f5e'}
                     strokeWidth={2.5}
+                    isAnimationActive={false}
                     fill="url(#pnlSplitGradient)"
                     dot={{ r: 3, fill: '#0f172a', stroke: '#10b981', strokeWidth: 1.5 }}
                     activeDot={{ r: 5, fill: '#10b981', stroke: '#ffffff', strokeWidth: 2 }}
@@ -556,7 +558,7 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({
                   allowDecimals={false}
                 />
                 <Tooltip content={<CustomRTooltip />} />
-                <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="count" radius={[4, 4, 0, 0]} isAnimationActive={false}>
                   {rDistributionData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}

@@ -833,17 +833,29 @@ app.post('/api/analyze-catalyst', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Candidato mancante per analisi' });
     }
 
-    // Strict rule: If no real news is found, return NESSUN_TRADE
+    // Rule: Absence of news is NOT an exclusion reason. If realNews is empty, return a valid technical setup with 0 news bonus points
     const realNews: NewsItem[] = Array.isArray(news) ? news : [];
     if (realNews.length === 0) {
+      const isPositive = (candidate.gapPercent ?? 0) >= 0;
       return res.json({
-        decisione: 'NESSUN_TRADE',
-        direzione: 'NESSUNA',
-        catalizzatore: 'Nessuna notizia o catalizzatore recente reperibile nelle ultime 24 ore per questo titolo.',
-        punti_a_favore: [],
-        rischi: ['Mancanza di notizie e catalizzatore fondamentale verificato da fonti di mercato'],
-        condizioni_invalidazione: ['Assenza di catalizzatore primario'],
+        decisione: 'TRADE',
+        direzione: isPositive ? 'LONG' : 'SHORT',
+        catalizzatore: 'Setup Tecnico Momentum: Nessuna notizia straordinaria reperibile nelle ultime 24 ore. L\'opportunità è convalidata dalla dinamica di prezzo, ampiezza del gap e volume relativo.',
+        punti_a_favore: [
+          'Setup tecnico puro guidato da apertura in gap e volume relativo senza rumore informativo',
+          'Assenza di interferenze o rischi da annunci imprevisti',
+          'Livelli chiave e VWAP intatti e operabili'
+        ],
+        rischi: [
+          'Assenza di catalizzatore fondamentale ad alto impatto: monitorare rigorosamente la persistenza dei volumi e la tenuta del VWAP'
+        ],
+        condizioni_invalidazione: [
+          'Rottura del VWAP intraday nella prima ora',
+          'Riassorbimento totale del gap in apertura',
+          'Inversione improvvisa dei futures dell\'indice di riferimento'
+        ],
         fonti: [],
+        newsBonusScore: 0,
       });
     }
 
@@ -851,9 +863,10 @@ app.post('/api/analyze-catalyst', async (req: Request, res: Response) => {
 REGOLE TASSATIVE:
 - Usa esclusivamente i dati forniti. Non inventare prezzi, notizie, livelli o statistiche.
 - Non fornire prezzi obiettivo, target o numeri non presenti nei dati.
-- Se i dati sono insufficienti o contraddittori, rispondi "NESSUN_TRADE" e spiega perché.
-- Valuta solo il catalizzatore: tipo, direzione probabile, freschezza, affidabilità della fonte, rischi (utili imminenti nello stesso giorno, notizie già scontate, mercato/futures opposti al titolo).
-- Preferisci non operare piuttosto che forzare un segnale. Indica sempre cosa invalida la tesi operativa.
+- REGOLE SULLE NOTIZIE: L'assenza di notizie o la presenza di notizie generali NON è motivo di esclusione. La notizia positiva/catalizzatore attribuisce punti di forza e bonus di score (+10/+15pt).
+- Rispondi "NESSUN_TRADE" ESCLUSIVAMENTE se ci sono fattori ostativi critici e verificati (es. giorno di pubblicazione utili/trimestrale durante la seduta, bilanci contestati, rischi giudiziari o notizie fortemente avverse). In assenza di tali blocchi, la decisione è "TRADE" allineata alla direzione del gap e dei parametri tecnici.
+- Valuta il catalizzatore: tipo, direzione probabile, freschezza, affidabilità della fonte, rischi (es. utili imminenti nello stesso giorno, notizie già scontate, futures opposti).
+- Indica sempre cosa invalida la tesi operativa.
 - Non promettere mai rendimenti.
 - Rispondi in italiano, rispettando esattamente la struttura JSON specificata.`;
 
@@ -878,13 +891,14 @@ ${realNews
   .join('\n\n')}
 
 Istruzione: Valuta il catalizzatore qualitativo e rispondi in JSON:
-decisione: "TRADE" oppure "NESSUN_TRADE"
+decisione: "TRADE" oppure "NESSUN_TRADE" (usa NESSUN_TRADE solo per fattori ostativi gravi come utili imminenti o rischi fatali)
 direzione: "LONG" oppure "SHORT" oppure "NESSUNA"
-catalizzatore: tipo e descrizione del catalizzatore basato unicamente sui titoli e testi forniti
+catalizzatore: tipo e descrizione del catalizzatore basato sui titoli forniti
 punti_a_favore: array di stringhe
-rischi: array di stringhe (es. gap eccessivo, assenza catalizzatore fresco, futures opposti)
+rischi: array di stringhe (es. volatilità da news, futures opposti)
 condizioni_invalidazione: array di stringhe (es. rottura VWAP, riassorbimento del gap)
-fonti: array di oggetti { title, url, source, time }`;
+fonti: array di oggetti { title, url, source, time }
+newsBonusScore: numero intero da 0 a 15 (punti bonus aggiuntivi per forza del catalizzatore: 15 per upgrade/contratti/catalizzatori forti, 8-10 per news ordinarie, 0 per news assenti/neutre)`;
 
     let parsed: any = null;
     const isQuotaCoolingDown = Date.now() < geminiQuotaExhaustedUntil;
@@ -940,6 +954,10 @@ fonti: array di oggetti { title, url, source, time }`;
                     required: ['title', 'source'],
                   },
                 },
+                newsBonusScore: {
+                  type: Type.INTEGER,
+                  description: 'Punti bonus da 0 a 15 assegnati per il catalizzatore/notizia',
+                },
               },
               required: [
                 'decisione',
@@ -972,7 +990,7 @@ fonti: array di oggetti { title, url, source, time }`;
     // Deterministic catalyst evaluation strictly based on real news items when AI is offline/throttled
     if (!parsed || !parsed.decisione) {
       const gap = candidate.gapPercent ?? 0;
-      const isPositive = gap > 0;
+      const isPositive = gap >= 0;
       const sources = realNews.map((n) => ({
         title: n.title,
         url: n.url,
@@ -991,39 +1009,41 @@ fonti: array di oggetti { title, url, source, time }`;
       let catalizzatoreDesc = '';
       let puntiAFavore: string[] = [];
       let rischi: string[] = [];
-      let decisione: 'TRADE' | 'NESSUN_TRADE' = 'NESSUN_TRADE';
-      let direzione: 'LONG' | 'SHORT' | 'NESSUNA' = 'NESSUNA';
+      let decisione: 'TRADE' | 'NESSUN_TRADE' = 'TRADE';
+      let direzione: 'LONG' | 'SHORT' | 'NESSUNA' = isPositive ? 'LONG' : 'SHORT';
+      let newsBonusScore = 0;
 
       if (isEarnings) {
-        rischi.push('Giorno di rilascio utili/trimestrale: rischio elevatissimo di spread allargato, volatilità estrema e knock-out anticipato.');
-      }
-
-      // Strict Rule: Prefer NOT to trade unless there is explicit verified fundamental catalyst with significant gap
-      if (!isEarnings && (isUpgrade || isOrders) && Math.abs(gap) >= 0.7) {
+        decisione = 'NESSUN_TRADE';
+        direzione = 'NESSUNA';
+        catalizzatoreDesc = `Giorno di rilascio utili/trimestrale per ${candidate.ticker} (${realNews[0]?.source}: "${topTitle}"). Rischio spread e spike bid/ask su leva Knock-Out.`;
+        rischi.push('Giorno di rilascio utili: rischio elevato di spike opposto e knock-out anticipato.');
+      } else if (isUpgrade || isOrders) {
         decisione = 'TRADE';
         direzione = isPositive ? 'LONG' : 'SHORT';
+        newsBonusScore = 15;
         if (isUpgrade) {
           catalizzatoreDesc = `Revisione raccomandazioni analisti da fonte ${realNews[0]?.source}: "${topTitle}".`;
           puntiAFavore.push(`Fonte finanziaria accreditata: ${realNews[0]?.source}`);
-          puntiAFavore.push('Revisione target price/rating istituzionale con espansione pre-market');
+          puntiAFavore.push('Revisione target price/rating con espansione volumetrica (+15pt bonus)');
         } else {
           catalizzatoreDesc = `Nuovo contratto/partnership confermata da fonte ${realNews[0]?.source}: "${topTitle}".`;
           puntiAFavore.push(`Fonte accreditata: ${realNews[0]?.source}`);
-          puntiAFavore.push('Nuove commesse con visibilità diretta sul portafoglio ordini');
+          puntiAFavore.push('Nuove commesse e visibilità aziendale (+15pt bonus)');
         }
+      } else if (realNews.length > 0) {
+        decisione = 'TRADE';
+        direzione = isPositive ? 'LONG' : 'SHORT';
+        newsBonusScore = 8;
+        catalizzatoreDesc = `Notizie di mercato ordinarie da ${realNews[0]?.source}: "${topTitle}". Dinamica convalidata dai parametri tecnici.`;
+        puntiAFavore.push(`Notizie coerenti con il sottostante da ${realNews[0]?.source} (+8pt bonus)`);
+        rischi.push('Flusso informativo ordinario: mantenere rigore sulla tenuta del VWAP');
       } else {
-        // Insufficient, contradictory, or routine news: strict NESSUN_TRADE
-        decisione = 'NESSUN_TRADE';
-        direzione = 'NESSUNA';
-        if (isEarnings) {
-          catalizzatoreDesc = `Sessione condizionata da rilascio utili/trimestrale per ${candidate.ticker} (${realNews[0]?.source}: "${topTitle}"). Rischio spread e spike bid/ask non compatibile con Knock-Out a leva.`;
-        } else if (Math.abs(gap) < 0.7) {
-          catalizzatoreDesc = `Notizie di mercato ordinarie da ${realNews[0]?.source} ("${topTitle}"). Gap % (${gap}%) insufficiente per convalidare una rottura direzionale asimmetrica.`;
-          rischi.push(`Gap % (${gap}%) troppo contenuto: rischio lateralità o falso breakout.`);
-        } else {
-          catalizzatoreDesc = `Notizia da ${realNews[0]?.source} ("${topTitle}") priva di catalizzatore fondamentale prioritario (target revision o commessa straordinaria).`;
-          rischi.push('Assenza di catalizzatore primario ad alto impatto volumetrico.');
-        }
+        decisione = 'TRADE';
+        direzione = isPositive ? 'LONG' : 'SHORT';
+        newsBonusScore = 0;
+        catalizzatoreDesc = 'Setup Tecnico Momentum: Nessuna notizia specifica reperibile. Operatività convalidata da gap e volume.';
+        puntiAFavore.push('Setup puramente quantitativo e privo di rumore di mercato');
       }
 
       parsed = {
@@ -1038,6 +1058,7 @@ fonti: array di oggetti { title, url, source, time }`;
           'Inversione improvvisa dei futures di riferimento',
         ],
         fonti: sources,
+        newsBonusScore,
       };
     } else if (parsed) {
       // Normalize decisione if Gemini outputs "NESSUN TRADE" instead of "NESSUN_TRADE"

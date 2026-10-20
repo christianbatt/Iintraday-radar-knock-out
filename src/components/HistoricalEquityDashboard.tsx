@@ -607,6 +607,7 @@ export const HistoricalEquityDashboard: React.FC<HistoricalEquityDashboardProps>
                   strokeDasharray="5 5"
                   dot={false}
                   activeDot={false}
+                  isAnimationActive={false}
                   name="High-Water Mark"
                 />
               )}
@@ -619,6 +620,7 @@ export const HistoricalEquityDashboard: React.FC<HistoricalEquityDashboardProps>
                 strokeWidth={2.5}
                 dot={renderCustomDot}
                 activeDot={{ r: 6, fill: '#10b981', stroke: '#ffffff', strokeWidth: 2 }}
+                isAnimationActive={false}
                 name="Equity"
               />
             </LineChart>
@@ -679,6 +681,7 @@ export const HistoricalEquityDashboard: React.FC<HistoricalEquityDashboardProps>
                   dataKey="drawdownPercent"
                   stroke="#f43f5e"
                   strokeWidth={1.8}
+                  isAnimationActive={false}
                   fill="url(#drawdownGradient)"
                 />
               </AreaChart>

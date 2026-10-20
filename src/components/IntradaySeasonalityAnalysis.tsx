@@ -356,6 +356,7 @@ export const IntradaySeasonalityAnalysis: React.FC<IntradaySeasonalityAnalysisPr
                   <Bar
                     dataKey="value"
                     radius={[4, 4, 0, 0]}
+                    isAnimationActive={false}
                     onClick={(entry: any) => setSelectedSlotKey(entry?.slotKey || null)}
                     className="cursor-pointer"
                   >

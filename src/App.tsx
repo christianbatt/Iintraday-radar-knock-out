@@ -24,6 +24,7 @@ import {
   buildTheoreticalSetupForExcluded,
   updateExcludedSetupsWithLiveQuotes,
   runExcludedSetupsAutoAnalysis,
+  isCandidateCompliantWithParameters,
 } from './utils/calculator';
 import {
   fetchSessionInfo,
@@ -404,22 +405,57 @@ export default function App() {
       }
 
       // 4. Concurrently analyze catalysts & build execution setups for both Top picks
+      let finalTopEU = dual.topEU;
+      let finalTopUS = dual.topUS;
+
       const [catEU, catUS] = await Promise.all([
         resolveCandidateCatalyst(dual.topEU, activeFut?.europe),
         resolveCandidateCatalyst(dual.topUS, activeFut?.usa),
       ]);
 
-      setSetupEU(buildExecutionSetup(dual.topEU, catEU, 'EU', parameters));
-      setSetupUS(buildExecutionSetup(dual.topUS, catUS, 'US', parameters));
+      let finalCatEU = catEU;
+      let finalCatUS = catUS;
+
+      // If top candidate is disqualified by negative catalyst, check if a qualified runner-up has a valid catalyst
+      if (catEU?.decisione === 'NESSUN_TRADE' && dual.rankedEU.length > 1) {
+        const runnerUp = dual.rankedEU.find(
+          (c) => c.quote.ticker !== dual.topEU?.quote.ticker && isCandidateCompliantWithParameters(c.quote, c.score.total, parameters, rsiFilterActive).compliant
+        );
+        if (runnerUp) {
+          const runnerCat = await resolveCandidateCatalyst(runnerUp, activeFut?.europe);
+          if (runnerCat?.decisione !== 'NESSUN_TRADE') {
+            finalTopEU = runnerUp;
+            finalCatEU = runnerCat;
+          }
+        }
+      }
+
+      if (catUS?.decisione === 'NESSUN_TRADE' && dual.rankedUS.length > 1) {
+        const runnerUp = dual.rankedUS.find(
+          (c) => c.quote.ticker !== dual.topUS?.quote.ticker && isCandidateCompliantWithParameters(c.quote, c.score.total, parameters, rsiFilterActive).compliant
+        );
+        if (runnerUp) {
+          const runnerCat = await resolveCandidateCatalyst(runnerUp, activeFut?.usa);
+          if (runnerCat?.decisione !== 'NESSUN_TRADE') {
+            finalTopUS = runnerUp;
+            finalCatUS = runnerCat;
+          }
+        }
+      }
+
+      setTopCandidateEU(finalTopEU);
+      setTopCandidateUS(finalTopUS);
+      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters));
+      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters));
 
       // 4.5. Visual Filtering Audit Generation (triggers 3-5s notification banner)
       const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCache };
-      if (dual.topEU && catEU) currentCache[dual.topEU.quote.ticker] = catEU;
-      if (dual.topUS && catUS) currentCache[dual.topUS.quote.ticker] = catUS;
+      if (finalTopEU && finalCatEU) currentCache[finalTopEU.quote.ticker] = finalCatEU;
+      if (finalTopUS && finalCatUS) currentCache[finalTopUS.quote.ticker] = finalCatUS;
 
       const audit = generateFilteringAuditReport(
         rawQuotes,
-        dual,
+        { topEU: finalTopEU, topUS: finalTopUS },
         futuresMapping,
         parameters,
         currentCache,
@@ -483,17 +519,51 @@ export default function App() {
     Promise.all([
       resolveCandidateCatalyst(dual.topEU, activeFut?.europe),
       resolveCandidateCatalyst(dual.topUS, activeFut?.usa),
-    ]).then(([catEU, catUS]) => {
-      setSetupEU(buildExecutionSetup(dual.topEU, catEU, 'EU', parameters));
-      setSetupUS(buildExecutionSetup(dual.topUS, catUS, 'US', parameters));
+    ]).then(async ([catEU, catUS]) => {
+      let finalTopEU = dual.topEU;
+      let finalTopUS = dual.topUS;
+      let finalCatEU = catEU;
+      let finalCatUS = catUS;
+
+      // If top candidate is disqualified by negative catalyst, check runner-up qualified candidate
+      if (catEU?.decisione === 'NESSUN_TRADE' && dual.rankedEU.length > 1) {
+        const runnerUp = dual.rankedEU.find(
+          (c) => c.quote.ticker !== dual.topEU?.quote.ticker && isCandidateCompliantWithParameters(c.quote, c.score.total, parameters, rsiFilterActive).compliant
+        );
+        if (runnerUp) {
+          const runnerCat = await resolveCandidateCatalyst(runnerUp, activeFut?.europe);
+          if (runnerCat?.decisione !== 'NESSUN_TRADE') {
+            finalTopEU = runnerUp;
+            finalCatEU = runnerCat;
+          }
+        }
+      }
+
+      if (catUS?.decisione === 'NESSUN_TRADE' && dual.rankedUS.length > 1) {
+        const runnerUp = dual.rankedUS.find(
+          (c) => c.quote.ticker !== dual.topUS?.quote.ticker && isCandidateCompliantWithParameters(c.quote, c.score.total, parameters, rsiFilterActive).compliant
+        );
+        if (runnerUp) {
+          const runnerCat = await resolveCandidateCatalyst(runnerUp, activeFut?.usa);
+          if (runnerCat?.decisione !== 'NESSUN_TRADE') {
+            finalTopUS = runnerUp;
+            finalCatUS = runnerCat;
+          }
+        }
+      }
+
+      setTopCandidateEU(finalTopEU);
+      setTopCandidateUS(finalTopUS);
+      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters));
+      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters));
 
       const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCache };
-      if (dual.topEU && catEU) currentCache[dual.topEU.quote.ticker] = catEU;
-      if (dual.topUS && catUS) currentCache[dual.topUS.quote.ticker] = catUS;
+      if (finalTopEU && finalCatEU) currentCache[finalTopEU.quote.ticker] = finalCatEU;
+      if (finalTopUS && finalCatUS) currentCache[finalTopUS.quote.ticker] = finalCatUS;
 
       const audit = generateFilteringAuditReport(
         quotes,
-        dual,
+        { topEU: finalTopEU, topUS: finalTopUS },
         futuresMapping,
         parameters,
         currentCache,
@@ -505,13 +575,18 @@ export default function App() {
   }, [rsiFilterActive, parameters]);
 
   // Auto-refresh interval (Real-time live monitoring)
+  const handleRunScreeningRef = React.useRef(handleRunScreening);
+  useEffect(() => {
+    handleRunScreeningRef.current = handleRunScreening;
+  });
+
   useEffect(() => {
     if (!isAutoRefresh || circuitBreakerActive) return;
 
     const timer = setInterval(() => {
       setAutoRefreshCountdown((prev) => {
         if (prev <= 1) {
-          handleRunScreening();
+          handleRunScreeningRef.current();
           return 20;
         }
         return prev - 1;
@@ -519,12 +594,14 @@ export default function App() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [isAutoRefresh, circuitBreakerActive, handleRunScreening]);
+  }, [isAutoRefresh, circuitBreakerActive]);
 
   // Run initial scan once futures are available
+  const initialScanDoneRef = React.useRef(false);
   useEffect(() => {
-    if (futures && topCandidates.length === 0) {
-      handleRunScreening();
+    if (futures && !initialScanDoneRef.current) {
+      initialScanDoneRef.current = true;
+      handleRunScreeningRef.current();
     }
   }, [futures]);
 
@@ -585,8 +662,14 @@ export default function App() {
   // Select alternative candidate from Live Radar and promote to setup
   const handleSelectCandidate = async (cand: ScoredCandidate) => {
     setSelectedCandidate(cand);
-    const existingCat = catalystCache[cand.quote.ticker] || null;
+    let existingCat: GeminiCatalystAnalysis | null = catalystCache[cand.quote.ticker] || null;
     const market = cand.quote.market;
+
+    if (!existingCat) {
+      const activeFut = market === 'EU' ? futures?.europe : futures?.usa;
+      existingCat = await resolveCandidateCatalyst(cand, activeFut);
+    }
+
     const newSetup = buildExecutionSetup(cand, existingCat, market, parameters);
 
     if (market === 'EU') {
@@ -921,7 +1004,9 @@ export default function App() {
     };
 
     setParameters(newParams);
+    localStorage.setItem('intraday_radar_parameters', JSON.stringify(newParams));
     setPendingProposal(acceptedProposal);
+    setIsOptimizerModalOpen(false);
     setOptimizationNotification(`Parametri aggiornati alla Versione V${newParams.version}! Nuovi calcoli attivi.`);
     setTimeout(() => setOptimizationNotification(null), 6000);
 
@@ -936,11 +1021,38 @@ export default function App() {
     }
 
     // Refresh setups immediately
-    if (topCandidateEU) {
-      setSetupEU(buildExecutionSetup(topCandidateEU, catalystCache[topCandidateEU.quote.ticker] || null, 'EU', newParams));
-    }
-    if (topCandidateUS) {
-      setSetupUS(buildExecutionSetup(topCandidateUS, catalystCache[topCandidateUS.quote.ticker] || null, 'US', newParams));
+    if (quotes.length > 0) {
+      const activeFut = futures;
+      const euChange = activeFut?.europe?.dax?.changePercent ?? (activeFut?.europe?.eurostoxx?.changePercent ?? 0);
+      const usChange = activeFut?.usa?.sp500?.changePercent ?? (activeFut?.usa?.nasdaq?.changePercent ?? 0);
+      const futuresMapping = { EU: euChange, US: usChange };
+      const dual = getDualTopCandidates(quotes, futuresMapping, { rsiFilterActive, parameters: newParams, catalystCache });
+      setTopCandidateEU(dual.topEU);
+      setTopCandidateUS(dual.topUS);
+      setTopCandidates(dual.allRanked);
+      if (dual.topEU) {
+        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', newParams));
+      }
+      if (dual.topUS) {
+        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', newParams));
+      }
+      const audit = generateFilteringAuditReport(
+        quotes,
+        { topEU: dual.topEU, topUS: dual.topUS },
+        futuresMapping,
+        newParams,
+        catalystCache,
+        rsiFilterActive,
+        sessionInfo?.cet?.currentMinutes
+      );
+      setAuditReport(audit);
+    } else {
+      if (topCandidateEU) {
+        setSetupEU(buildExecutionSetup(topCandidateEU, catalystCache[topCandidateEU.quote.ticker] || null, 'EU', newParams));
+      }
+      if (topCandidateUS) {
+        setSetupUS(buildExecutionSetup(topCandidateUS, catalystCache[topCandidateUS.quote.ticker] || null, 'US', newParams));
+      }
     }
   };
 
@@ -951,6 +1063,7 @@ export default function App() {
       status: 'REJECTED',
     };
     setPendingProposal(rejectedProposal);
+    setIsOptimizerModalOpen(false);
     setOptimizationNotification(`Proposta di ottimizzazione rifiutata. Parametri V${parameters.version} mantenuti invariati.`);
     setTimeout(() => setOptimizationNotification(null), 5000);
 
@@ -985,28 +1098,84 @@ export default function App() {
     explanation: string
   ) => {
     let parsedVal = proposedValue;
-    if (typeof proposedValue === 'string') {
+    let newRsiActive = rsiFilterActive;
+    if (paramKey === 'rsiFilterActive') {
+      parsedVal = proposedValue === true || proposedValue === 'true' || proposedValue === 'Attivo';
+      newRsiActive = parsedVal;
+      setRsiFilterActive(parsedVal);
+    } else if (typeof proposedValue === 'string') {
       if (proposedValue.includes('x')) parsedVal = parseFloat(proposedValue.replace('x', ''));
       else if (proposedValue.includes('%')) parsedVal = parseFloat(proposedValue.replace('%', ''));
       else if (proposedValue.includes('/100')) parsedVal = parseFloat(proposedValue.replace('/100', ''));
       else if (!isNaN(Number(proposedValue))) parsedVal = Number(proposedValue);
     }
 
-    setParameters((prev) => {
-      const updated = {
-        ...prev,
-        [paramKey]: parsedVal,
-        lastUpdated: new Date().toISOString(),
-        version: prev.version + 1,
-      };
-      if (currentUser) {
-        syncSystemSettingsToCloud(currentUser.uid, updated);
+    const updated: SystemParameters = {
+      ...parameters,
+      [paramKey]: parsedVal,
+      lastUpdated: new Date().toISOString(),
+      version: parameters.version + 1,
+    };
+
+    // 1. Immediately close the modal as requested
+    setIsExcludedAnalyzerOpen(false);
+
+    // 2. Persist immediately to state and localStorage
+    setParameters(updated);
+    localStorage.setItem('intraday_radar_parameters', JSON.stringify(updated));
+
+    if (currentUser) {
+      syncSystemSettingsToCloud(currentUser.uid, {
+        parameters: updated,
+        pendingProposal,
+        accountCapital,
+        isPaperMode,
+      });
+    }
+
+    // 3. Immediately re-evaluate setups, candidates and audit with newly applied filters
+    const activeFut = futures;
+    const euChange = activeFut?.europe?.dax?.changePercent ?? (activeFut?.europe?.eurostoxx?.changePercent ?? 0);
+    const usChange = activeFut?.usa?.sp500?.changePercent ?? (activeFut?.usa?.nasdaq?.changePercent ?? 0);
+    const futuresMapping = { EU: euChange, US: usChange };
+
+    if (quotes.length > 0) {
+      const dual = getDualTopCandidates(quotes, futuresMapping, {
+        rsiFilterActive: newRsiActive,
+        parameters: updated,
+        catalystCache,
+      });
+      setTopCandidateEU(dual.topEU);
+      setTopCandidateUS(dual.topUS);
+      setTopCandidates(dual.allRanked);
+
+      if (currentSession === 'US') {
+        setSelectedCandidate(dual.topUS || dual.topEU);
+      } else {
+        setSelectedCandidate(dual.topEU || dual.topUS);
       }
-      return updated;
-    });
+
+      if (dual.topEU) {
+        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', updated));
+      }
+      if (dual.topUS) {
+        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', updated));
+      }
+
+      const audit = generateFilteringAuditReport(
+        quotes,
+        { topEU: dual.topEU, topUS: dual.topUS },
+        futuresMapping,
+        updated,
+        catalystCache,
+        newRsiActive,
+        sessionInfo?.cet?.currentMinutes
+      );
+      setAuditReport(audit);
+    }
 
     setOptimizationNotification(
-      `⚙️ Calibrazione Filtri Applicata: ${String(paramKey)} aggiornato per la prossima sessione! Meno falsi negativi attesi.`
+      `⚙️ Calibrazione Applicata: ${String(paramKey)} impostato a ${parsedVal}! I filtri sono stati ricalcolati in tempo reale.`
     );
     setTimeout(() => setOptimizationNotification(null), 6000);
   };
@@ -1014,32 +1183,88 @@ export default function App() {
   const handleApplyAllUrgentCorrections = () => {
     if (excludedAutoAnalysis.urgentCorrections.length === 0) return;
 
-    setParameters((prev) => {
-      let updated = { ...prev };
-      excludedAutoAnalysis.urgentCorrections.forEach((corr) => {
-        let val = corr.proposedValue;
-        if (typeof val === 'string') {
-          if (val.includes('x')) val = parseFloat(val.replace('x', ''));
-          else if (val.includes('%')) val = parseFloat(val.replace('%', ''));
-          else if (val.includes('/100')) val = parseFloat(val.replace('/100', ''));
-          else if (!isNaN(Number(val))) val = Number(val);
-        }
-        updated = {
-          ...updated,
-          [corr.parameterKey]: val,
-        };
-      });
-      updated.lastUpdated = new Date().toISOString();
-      updated.version = prev.version + 1;
+    let updated = { ...parameters };
+    let newRsiActive = rsiFilterActive;
 
-      if (currentUser) {
-        syncSystemSettingsToCloud(currentUser.uid, updated);
+    excludedAutoAnalysis.urgentCorrections.forEach((corr) => {
+      let val = corr.proposedValue;
+      if (corr.parameterKey === 'rsiFilterActive') {
+        val = val === true || val === 'true' || val === 'Attivo';
+        newRsiActive = val;
+        setRsiFilterActive(val);
+      } else if (typeof val === 'string') {
+        if (val.includes('x')) val = parseFloat(val.replace('x', ''));
+        else if (val.includes('%')) val = parseFloat(val.replace('%', ''));
+        else if (val.includes('/100')) val = parseFloat(val.replace('/100', ''));
+        else if (!isNaN(Number(val))) val = Number(val);
       }
-      return updated;
+      updated = {
+        ...updated,
+        [corr.parameterKey]: val,
+      };
     });
+    updated.lastUpdated = new Date().toISOString();
+    updated.version = parameters.version + 1;
+
+    // 1. Immediately close the modal
+    setIsExcludedAnalyzerOpen(false);
+
+    // 2. Persist immediately to state and localStorage
+    setParameters(updated);
+    localStorage.setItem('intraday_radar_parameters', JSON.stringify(updated));
+
+    if (currentUser) {
+      syncSystemSettingsToCloud(currentUser.uid, {
+        parameters: updated,
+        pendingProposal,
+        accountCapital,
+        isPaperMode,
+      });
+    }
+
+    // 3. Immediately re-evaluate setups, candidates and audit with newly applied filters
+    const activeFut = futures;
+    const euChange = activeFut?.europe?.dax?.changePercent ?? (activeFut?.europe?.eurostoxx?.changePercent ?? 0);
+    const usChange = activeFut?.usa?.sp500?.changePercent ?? (activeFut?.usa?.nasdaq?.changePercent ?? 0);
+    const futuresMapping = { EU: euChange, US: usChange };
+
+    if (quotes.length > 0) {
+      const dual = getDualTopCandidates(quotes, futuresMapping, {
+        rsiFilterActive: newRsiActive,
+        parameters: updated,
+        catalystCache,
+      });
+      setTopCandidateEU(dual.topEU);
+      setTopCandidateUS(dual.topUS);
+      setTopCandidates(dual.allRanked);
+
+      if (currentSession === 'US') {
+        setSelectedCandidate(dual.topUS || dual.topEU);
+      } else {
+        setSelectedCandidate(dual.topEU || dual.topUS);
+      }
+
+      if (dual.topEU) {
+        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', updated));
+      }
+      if (dual.topUS) {
+        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', updated));
+      }
+
+      const audit = generateFilteringAuditReport(
+        quotes,
+        { topEU: dual.topEU, topUS: dual.topUS },
+        futuresMapping,
+        updated,
+        catalystCache,
+        newRsiActive,
+        sessionInfo?.cet?.currentMinutes
+      );
+      setAuditReport(audit);
+    }
 
     setOptimizationNotification(
-      `🚀 Applicate ${excludedAutoAnalysis.urgentCorrections.length} calibrazioni di filtro per la prossima sessione! Minori esclusioni su setup vincenti.`
+      `🚀 Applicate ${excludedAutoAnalysis.urgentCorrections.length} calibrazioni di filtro in tempo reale! Setup ricalcolati.`
     );
     setTimeout(() => setOptimizationNotification(null), 7000);
   };
@@ -1145,6 +1370,7 @@ export default function App() {
             report={auditReport}
             durationMs={4500}
             onOpenDetailsModal={() => setIsAuditModalOpen(true)}
+            onOpenExcludedAnalyzer={() => setIsExcludedAnalyzerOpen(true)}
             onDismiss={() => setShowAuditBanner(false)}
           />
         )}
@@ -1188,6 +1414,8 @@ export default function App() {
           onToggleRsiFilter={() => setRsiFilterActive((prev) => !prev)}
           auditReport={auditReport}
           onOpenAuditModal={() => setIsAuditModalOpen(true)}
+          onOpenExcludedAnalyzer={() => setIsExcludedAnalyzerOpen(true)}
+          excludedProfitCount={excludedAutoAnalysis.totalProfitable}
         />
 
         {/* 5. Dual Hero Execution Cards: Affiancate Top EU e Top USA */}
@@ -1262,6 +1490,18 @@ export default function App() {
         onClose={() => setIsAuditModalOpen(false)}
         report={auditReport}
         onOpenOptimizerModal={() => setIsOptimizerModalOpen(true)}
+        onOpenExcludedAnalyzer={() => setIsExcludedAnalyzerOpen(true)}
+      />
+      <ExcludedSetupsAnalyzerModal
+        isOpen={isExcludedAnalyzerOpen}
+        onClose={() => setIsExcludedAnalyzerOpen(false)}
+        analysis={excludedAutoAnalysis}
+        records={excludedRecords}
+        currentParameters={parameters}
+        onApplyCorrection={handleApplyExcludedCorrection}
+        onApplyAllUrgentCorrections={handleApplyAllUrgentCorrections}
+        onClearRecords={handleClearExcludedRecords}
+        accountCapital={accountCapital}
       />
       <CsvManagerModal
         isOpen={isCsvModalOpen}

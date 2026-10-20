@@ -55,7 +55,8 @@ export const MIN_QUALIFICATION_THRESHOLDS = {
 
 export function calculateCandidateScore(
   quote: RawQuoteData,
-  benchmarkFuturesChangePercent: number
+  benchmarkFuturesChangePercent: number,
+  newsOrCatalyst?: GeminiCatalystAnalysis | NewsItem[] | number | null
 ): ScoreBreakdown {
   const details: string[] = [];
   let gapScore = 0;
@@ -75,6 +76,7 @@ export function calculateCandidateScore(
       futuresScore: 0,
       levelScore: 0,
       rsiScore: 0,
+      newsScore: 0,
       total: 0,
       details: ['Prezzo di mercato non disponibile dal feed: candidato non qualificabile.'],
     };
@@ -247,7 +249,40 @@ export function calculateCandidateScore(
     details.push('RSI non disponibile dal feed: punteggio neutro (+5pt)');
   }
 
-  const total = gapScore + rvolScore + liquidityScore + futuresScore + levelScore + rsiScore;
+  // 7. NEWS & CATALYST BONUS SCORE (+0 to +15pt)
+  // Regola fondamentale: l'assenza di notizie non è motivo di esclusione (+0pt bonus).
+  // La presenza di buone notizie o catalizzatore dà punti bonus in più allo score del ticket.
+  let newsScore = 0;
+  if (typeof newsOrCatalyst === 'number') {
+    newsScore = Math.max(0, Math.min(15, newsOrCatalyst));
+  } else if (newsOrCatalyst && typeof newsOrCatalyst === 'object') {
+    if ('newsBonusScore' in newsOrCatalyst && typeof (newsOrCatalyst as any).newsBonusScore === 'number') {
+      newsScore = (newsOrCatalyst as any).newsBonusScore;
+    } else if ('catalizzatore' in newsOrCatalyst) {
+      const cat = newsOrCatalyst as GeminiCatalystAnalysis;
+      const text = `${cat.catalizzatore || ''} ${(cat.punti_a_favore || []).join(' ')}`.toLowerCase();
+      if (text.includes('upgrade') || text.includes('target') || text.includes('contratto') || text.includes('ordini') || text.includes('utili') || text.includes('partnership')) {
+        newsScore = 15;
+      } else if (cat.fonti && cat.fonti.length > 0) {
+        newsScore = 10;
+      } else if (!text.includes('nessuna notizia') && !text.includes('setup tecnico')) {
+        newsScore = 8;
+      } else {
+        newsScore = 0;
+      }
+    } else if (Array.isArray(newsOrCatalyst) && newsOrCatalyst.length > 0) {
+      newsScore = 8;
+    }
+  }
+
+  if (newsScore > 0) {
+    details.push(`🔥 Bonus Notizie/Catalizzatore Attivo: +${newsScore}pt sullo score del titolo`);
+  } else {
+    details.push('Setup puramente Tecnico / Momentum (Assenza notizie straordinarie: 0pt bonus)');
+  }
+
+  const rawTotal = gapScore + rvolScore + liquidityScore + futuresScore + levelScore + rsiScore + newsScore;
+  const total = Math.min(100, rawTotal);
 
   return {
     gapScore,
@@ -256,6 +291,7 @@ export function calculateCandidateScore(
     futuresScore,
     levelScore,
     rsiScore,
+    newsScore,
     total,
     details,
   };
@@ -264,6 +300,8 @@ export function calculateCandidateScore(
 export interface ScreeningFilterOptions {
   rsiFilterActive?: boolean;
   parameters?: SystemParameters;
+  catalystCache?: Record<string, GeminiCatalystAnalysis>;
+  newsCache?: Record<string, NewsItem[]>;
 }
 
 export function isRsiExtreme(rsi: number | null | undefined): boolean {
@@ -276,11 +314,13 @@ export function calculateRsiFromPrices(closes: number[], period: number = 14): n
   const p = Math.min(period, closes.length - 1);
   let gains = 0;
   let losses = 0;
+
   for (let i = 1; i <= p; i++) {
     const diff = closes[i] - closes[i - 1];
     if (diff >= 0) gains += diff;
     else losses += Math.abs(diff);
   }
+
   let avgGain = gains / p;
   let avgLoss = losses / p;
 
@@ -295,6 +335,37 @@ export function calculateRsiFromPrices(closes: number[], period: number = 14): n
   if (avgLoss === 0) return 100;
   const rs = avgGain / avgLoss;
   return +(100 - 100 / (1 + rs)).toFixed(1);
+}
+
+export function isCandidateCompliantWithParameters(
+  quote: RawQuoteData,
+  score: number,
+  params: SystemParameters,
+  isRsiFilterActive: boolean
+): { compliant: boolean; reasons: string[] } {
+  const reasons: string[] = [];
+  const price = quote.preMarketPrice ?? quote.currentPrice;
+  if (price == null || price <= 0) reasons.push('Prezzo non disponibile');
+  if (quote.atr14 == null || quote.atr14 <= 0) reasons.push('ATR(14) non calcolabile');
+
+  if (score < params.minScore) {
+    reasons.push(`Score ${score}/100 < ${params.minScore}/100`);
+  }
+  const rvol = quote.rvol ?? 1.0;
+  if (rvol < params.minRvol) {
+    reasons.push(`RVOL ${rvol.toFixed(2)}x < ${params.minRvol}x`);
+  }
+  const minGap = quote.market === 'EU' ? params.minGapEurope : params.minGapUSA;
+  const absGap = Math.abs(quote.gapPercent ?? 0);
+  if (absGap < minGap) {
+    reasons.push(`Gap ${(quote.gapPercent ?? 0).toFixed(2)}% < ±${minGap}%`);
+  }
+  const rsi = quote.rsi5m ?? quote.rsi14;
+  if (isRsiFilterActive && isRsiExtreme(rsi)) {
+    reasons.push(`RSI estremo (${rsi})`);
+  }
+
+  return { compliant: reasons.length === 0, reasons };
 }
 
 export function rankMarketCandidates(
@@ -318,11 +389,14 @@ export function rankMarketCandidates(
       ? futuresChange.US
       : futuresChange.EU;
 
-  const scored = marketQuotes.map((quote) => ({
-    quote,
-    score: calculateCandidateScore(quote, change),
-    rank: 0,
-  }));
+  const scored = marketQuotes.map((quote) => {
+    const catalystOrNews = options?.catalystCache?.[quote.ticker] || options?.newsCache?.[quote.ticker];
+    return {
+      quote,
+      score: calculateCandidateScore(quote, change, catalystOrNews),
+      rank: 0,
+    };
+  });
 
   scored.sort((a, b) => b.score.total - a.score.total);
 
@@ -350,9 +424,10 @@ export function rankTopCandidates(
         : quote.market === 'US'
         ? futuresChange.US
         : futuresChange.EU;
+    const catalystOrNews = options?.catalystCache?.[quote.ticker] || options?.newsCache?.[quote.ticker];
     return {
       quote,
-      score: calculateCandidateScore(quote, change),
+      score: calculateCandidateScore(quote, change, catalystOrNews),
       rank: 0,
     };
   });
@@ -380,9 +455,37 @@ export function getDualTopCandidates(
   const rankedUS = rankMarketCandidates(quotes, 'US', futuresChange, options);
   const allRanked = rankTopCandidates(quotes, futuresChange, options);
 
+  const params = options?.parameters;
+  const isRsiActive = options?.rsiFilterActive ?? options?.parameters?.rsiFilterActive ?? false;
+
+  // Select top candidates that fully comply with active parameters (qualified)
+  let topEU: ScoredCandidate | null = null;
+  if (params && rankedEU.length > 0) {
+    topEU = rankedEU.find((cand) => {
+      const check = isCandidateCompliantWithParameters(cand.quote, cand.score.total, params, isRsiActive);
+      return check.compliant;
+    }) || null;
+  }
+  // Fallback to highest scored EU candidate if none passes all filters
+  if (!topEU && rankedEU.length > 0) {
+    topEU = rankedEU[0];
+  }
+
+  let topUS: ScoredCandidate | null = null;
+  if (params && rankedUS.length > 0) {
+    topUS = rankedUS.find((cand) => {
+      const check = isCandidateCompliantWithParameters(cand.quote, cand.score.total, params, isRsiActive);
+      return check.compliant;
+    }) || null;
+  }
+  // Fallback to highest scored US candidate if none passes all filters
+  if (!topUS && rankedUS.length > 0) {
+    topUS = rankedUS[0];
+  }
+
   return {
-    topEU: rankedEU.length > 0 ? rankedEU[0] : null,
-    topUS: rankedUS.length > 0 ? rankedUS[0] : null,
+    topEU,
+    topUS,
     rankedEU,
     rankedUS,
     allRanked,
@@ -481,7 +584,7 @@ export function buildExecutionSetup(
     return {
       candidate: quote,
       decision: 'NESSUN_TRADE',
-      reasonNoTrade: `Punteggio di candidatura (${score}/100) inferiore alla soglia minima di rigore (${activeParams.minScore}/100). Preservazione del capitale: nessun trade forzato con score insufficiente.`,
+      reasonNoTrade: `Punteggio di candidatura (${score}/100) inferiore alla soglia minima attiva (${activeParams.minScore}/100). Preservazione del capitale: nessun trade con score sotto soglia.`,
       direction: 'NESSUNA',
       strategy: 'Nessun setup',
       triggerLevel: null,
@@ -491,19 +594,20 @@ export function buildExecutionSetup(
       target1Level: null,
       target2Level: null,
       riskRewardRatio: null,
-      invalidationConditions: ['Filtri minimi di momentum e coerenza non raggiunti'],
+      invalidationConditions: ['Punteggio algoritmico inferiore alla soglia minima di rigore'],
       cutoffTime,
       catalystAnalysis: catalyst,
       dynamicBreakeven: null,
     };
   }
 
-  // Filter 2: Gemini catalyst check
-  if (catalyst && catalyst.decisione === 'NESSUN_TRADE') {
+  // Filter 1b: Minimum Relative Volume (RVOL) requirement
+  const rvol = quote.rvol ?? 1.0;
+  if (rvol < activeParams.minRvol) {
     return {
       candidate: quote,
       decision: 'NESSUN_TRADE',
-      reasonNoTrade: `Analisi catalizzatore negativa o assente: ${catalyst.catalizzatore}. Rischi: ${catalyst.rischi.join(', ')}.`,
+      reasonNoTrade: `Volume Relativo (${rvol.toFixed(2)}x) inferiore alla soglia minima attiva (${activeParams.minRvol}x). Protezione da trappole di liquidità e falsi breakout.`,
       direction: 'NESSUNA',
       strategy: 'Nessun setup',
       triggerLevel: null,
@@ -513,11 +617,95 @@ export function buildExecutionSetup(
       target1Level: null,
       target2Level: null,
       riskRewardRatio: null,
-      invalidationConditions: catalyst.condizioni_invalidazione,
+      invalidationConditions: ['Volume Relativo (RVOL) insufficiente per garantire continuazione'],
       cutoffTime,
       catalystAnalysis: catalyst,
       dynamicBreakeven: null,
     };
+  }
+
+  // Filter 1c: Minimum Opening Gap % requirement
+  const marketType = quote.market || (session === 'US' ? 'US' : 'EU');
+  const minGap = marketType === 'EU' ? activeParams.minGapEurope : activeParams.minGapUSA;
+  const absGap = Math.abs(quote.gapPercent ?? 0);
+  if (absGap < minGap) {
+    return {
+      candidate: quote,
+      decision: 'NESSUN_TRADE',
+      reasonNoTrade: `Ampiezza Gap (${(quote.gapPercent ?? 0).toFixed(2)}%) inferiore alla soglia minima attiva (±${minGap}%). Impulso direzionale d'apertura insufficiente per breakout orario.`,
+      direction: 'NESSUNA',
+      strategy: 'Nessun setup',
+      triggerLevel: null,
+      vwapCondition: 'N/A',
+      volumeCondition: 'N/A',
+      stopLossLevel: null,
+      target1Level: null,
+      target2Level: null,
+      riskRewardRatio: null,
+      invalidationConditions: ['Gap percentuale d\'apertura inferiore alla soglia minima richiesta'],
+      cutoffTime,
+      catalystAnalysis: catalyst,
+      dynamicBreakeven: null,
+    };
+  }
+
+  // Filter 1d: RSI Extremes if RSI filter active
+  const isRsiActive = activeParams.rsiFilterActive ?? false;
+  const rsi = quote.rsi5m ?? quote.rsi14;
+  if (isRsiActive && isRsiExtreme(rsi)) {
+    return {
+      candidate: quote,
+      decision: 'NESSUN_TRADE',
+      reasonNoTrade: `RSI a ${rsi}: territorio estremo (${rsi! >= 70 ? 'Ipercomprato' : 'Ipervenduto'}). Rischio elevato di ritracciamento violento e knock-out anticipato sul certificato.`,
+      direction: 'NESSUNA',
+      strategy: 'Nessun setup',
+      triggerLevel: null,
+      vwapCondition: 'N/A',
+      volumeCondition: 'N/A',
+      stopLossLevel: null,
+      target1Level: null,
+      target2Level: null,
+      riskRewardRatio: null,
+      invalidationConditions: ['RSI in territorio estremo (ipercomprato/ipervenduto)'],
+      cutoffTime,
+      catalystAnalysis: catalyst,
+      dynamicBreakeven: null,
+    };
+  }
+
+  // Filter 2: Fundamental / Catalyst disqualification check
+  // Regola fondamentale: l'assenza di notizie non deve essere un motivo di esclusione.
+  // La notizia dà punti in più di score; solo fattori ostativi gravi (utili imminenti durante la seduta, sospensioni) escludono.
+  if (catalyst && catalyst.decisione === 'NESSUN_TRADE') {
+    const isAbsenceOfNewsOnly =
+      catalyst.catalizzatore?.toLowerCase().includes('nessuna notizia') ||
+      catalyst.catalizzatore?.toLowerCase().includes('assenza di catalizzatore') ||
+      catalyst.catalizzatore?.toLowerCase().includes('assenza di notizie') ||
+      (catalyst.rischi?.length === 1 &&
+        (catalyst.rischi[0]?.toLowerCase().includes('mancanza di notizie') ||
+         catalyst.rischi[0]?.toLowerCase().includes('assenza di catalizzatore') ||
+         catalyst.rischi[0]?.toLowerCase().includes('assenza di notizie')));
+
+    if (!isAbsenceOfNewsOnly) {
+      return {
+        candidate: quote,
+        decision: 'NESSUN_TRADE',
+        reasonNoTrade: `Analisi fondamentale avversa: ${catalyst.catalizzatore}. Rischi: ${catalyst.rischi.join(', ')}.`,
+        direction: 'NESSUNA',
+        strategy: 'Nessun setup',
+        triggerLevel: null,
+        vwapCondition: 'N/A',
+        volumeCondition: 'N/A',
+        stopLossLevel: null,
+        target1Level: null,
+        target2Level: null,
+        riskRewardRatio: null,
+        invalidationConditions: catalyst.condizioni_invalidazione,
+        cutoffTime,
+        catalystAnalysis: catalyst,
+        dynamicBreakeven: null,
+      };
+    }
   }
 
   const direction: 'LONG' | 'SHORT' = catalyst?.direzione === 'SHORT' ? 'SHORT' : isGapLong ? 'LONG' : 'SHORT';
@@ -1764,14 +1952,24 @@ export function generateFilteringAuditReport(
 
   if (dualTop.topEU && dualTop.topEU.score.total >= parameters.minScore) {
     const cat = catalystCache[dualTop.topEU.quote.ticker];
-    if (!cat || cat.decisione !== 'NESSUN_TRADE') {
+    const isAbsenceOfNewsOnly = cat && (
+      cat.catalizzatore?.toLowerCase().includes('nessuna notizia') ||
+      cat.catalizzatore?.toLowerCase().includes('assenza di catalizzatore') ||
+      cat.catalizzatore?.toLowerCase().includes('assenza di notizie')
+    );
+    if (!cat || cat.decisione !== 'NESSUN_TRADE' || isAbsenceOfNewsOnly) {
       qualifiedTickers.add(dualTop.topEU.quote.ticker);
     }
   }
 
   if (dualTop.topUS && dualTop.topUS.score.total >= parameters.minScore) {
     const cat = catalystCache[dualTop.topUS.quote.ticker];
-    if (!cat || cat.decisione !== 'NESSUN_TRADE') {
+    const isAbsenceOfNewsOnly = cat && (
+      cat.catalizzatore?.toLowerCase().includes('nessuna notizia') ||
+      cat.catalizzatore?.toLowerCase().includes('assenza di catalizzatore') ||
+      cat.catalizzatore?.toLowerCase().includes('assenza di notizie')
+    );
+    if (!cat || cat.decisione !== 'NESSUN_TRADE' || isAbsenceOfNewsOnly) {
       qualifiedTickers.add(dualTop.topUS.quote.ticker);
     }
   }
@@ -1799,14 +1997,14 @@ export function generateFilteringAuditReport(
         ? futuresChange.US
         : futuresChange.EU;
 
-    const scoreObj = calculateCandidateScore(q, change);
+    const cat = catalystCache[q.ticker];
+    const scoreObj = calculateCandidateScore(q, change, cat);
     const score = scoreObj.total;
     const rsi = q.rsi5m ?? q.rsi14 ?? null;
     const gap = q.gapPercent ?? 0;
     const absGap = Math.abs(gap);
     const minGap = q.market === 'EU' ? parameters.minGapEurope : parameters.minGapUSA;
     const rvol = q.rvol ?? 1.0;
-    const cat = catalystCache[q.ticker];
 
     let primaryReasonCategory: ExclusionCategory = 'SCORE_BELOW_MIN';
     let primaryReasonLabel = 'Punteggio complessivo sotto soglia';
@@ -1839,10 +2037,31 @@ export function generateFilteringAuditReport(
       detail = `Scambi istituzionali inferiori alla media mobile a 20 periodi; rischio falsa rottura.`;
       countsByCategory.rvolInsufficient++;
     } else if (cat && cat.decisione === 'NESSUN_TRADE') {
-      primaryReasonCategory = 'CATALYST_UNVERIFIED';
-      primaryReasonLabel = 'Catalizzatore fondamentale assente o giorno utili';
-      detail = cat.catalizzatore || 'Notizie di routine o rischio trimestrale attivo nella giornata odierna.';
-      countsByCategory.catalystUnverified++;
+      const isAbsenceOfNewsOnly =
+        cat.catalizzatore?.toLowerCase().includes('nessuna notizia') ||
+        cat.catalizzatore?.toLowerCase().includes('assenza di catalizzatore') ||
+        cat.catalizzatore?.toLowerCase().includes('assenza di notizie') ||
+        (cat.rischi?.length === 1 &&
+          (cat.rischi[0]?.toLowerCase().includes('mancanza di notizie') ||
+           cat.rischi[0]?.toLowerCase().includes('assenza di catalizzatore') ||
+           cat.rischi[0]?.toLowerCase().includes('assenza di notizie')));
+
+      if (!isAbsenceOfNewsOnly) {
+        primaryReasonCategory = 'CATALYST_UNVERIFIED';
+        primaryReasonLabel = 'Rischio fondamentale avverso o trimestrale';
+        detail = cat.catalizzatore || 'Rischio trimestrale o evento societario critico attivo nella giornata odierna.';
+        countsByCategory.catalystUnverified++;
+      } else if (score < parameters.minScore) {
+        primaryReasonCategory = 'SCORE_BELOW_MIN';
+        primaryReasonLabel = `Punteggio sotto soglia (${score}/100 vs min ${parameters.minScore})`;
+        detail = `Punteggio ${score}/100: confluenza tecnica debole tra gap, book e futures.`;
+        countsByCategory.scoreBelowMin++;
+      } else {
+        primaryReasonCategory = 'CUTOFF_PASSED';
+        primaryReasonLabel = 'Orario di cutoff superato';
+        detail = `Sessione oltre l'orario di cutoff consentito (${q.market === 'EU' ? '11:30' : '17:30'} CET).`;
+        countsByCategory.cutoffPassed++;
+      }
     } else if (score < parameters.minScore) {
       primaryReasonCategory = 'SCORE_BELOW_MIN';
       primaryReasonLabel = `Punteggio sotto soglia (${score}/100 vs min ${parameters.minScore})`;
@@ -2152,14 +2371,18 @@ export function runExcludedSetupsAutoAnalysis(
       verdictDescription = `${profitCount} setup su ${resolved} risolti (${winRate}%) sono andati a target con successo nonostante l'esclusione. Il filtro è eccessivamente restrittivo e sta frenando le performance della strategia.`;
 
       if (cat === 'RVOL_INSUFFICIENT') {
-        const proposed = Math.max(0.85, +(currentParams.minRvol - 0.20).toFixed(2));
+        const profitableRvols = catRecords
+          .filter((r) => r.outcomeStatus === 'THEORETICAL_PROFIT' && typeof r.rvol === 'number' && r.rvol > 0)
+          .map((r) => r.rvol as number);
+        const minProfitableRvol = profitableRvols.length > 0 ? Math.min(...profitableRvols) : currentParams.minRvol - 0.20;
+        const proposed = Math.max(0.65, +Math.min(currentParams.minRvol - 0.15, minProfitableRvol).toFixed(2));
         correctionProposal = {
           parameterKey: 'minRvol',
           label: 'Soglia Minima Volume Relativo (RVOL)',
           currentValue: `${currentParams.minRvol}x`,
           proposedValue: `${proposed}x`,
           actionType: 'REDUCE_PARAM',
-          explanation: `Riduci la soglia minima di RVOL da ${currentParams.minRvol}x a ${proposed}x per includere nella prossima sessione titoli con break-out a volumi crescenti senza scartarli anzitempo.`,
+          explanation: `Riduci la soglia minima di RVOL da ${currentParams.minRvol}x a ${proposed}x per includere nella prossima sessione titoli con volume relativo a partire da ${proposed}x che sono andati a target con successo.`,
         };
         urgentCorrections.push({
           category: cat,
@@ -2170,14 +2393,18 @@ export function runExcludedSetupsAutoAnalysis(
           proposedValue: proposed,
         });
       } else if (cat === 'GAP_INSUFFICIENT') {
-        const proposedEU = Math.max(0.25, +(currentParams.minGapEurope - 0.15).toFixed(2));
+        const profitableGaps = catRecords
+          .filter((r) => r.outcomeStatus === 'THEORETICAL_PROFIT' && typeof r.gapPercent === 'number')
+          .map((r) => Math.abs(r.gapPercent as number));
+        const minProfitableGap = profitableGaps.length > 0 ? Math.min(...profitableGaps) : currentParams.minGapEurope - 0.15;
+        const proposedEU = Math.max(0.15, +Math.min(currentParams.minGapEurope - 0.10, minProfitableGap).toFixed(2));
         correctionProposal = {
           parameterKey: 'minGapEurope',
           label: 'Soglia Minima Gap % Europa',
           currentValue: `${currentParams.minGapEurope}%`,
           proposedValue: `${proposedEU}%`,
           actionType: 'REDUCE_PARAM',
-          explanation: `Abbassa il gap minimo europeo a ${proposedEU}% (e USA a ${(currentParams.minGapUSA * 0.8).toFixed(2)}%) per intercettare continuazioni di trend a volatilità contenuta ma alta probabilità.`,
+          explanation: `Abbassa il gap minimo europeo a ${proposedEU}% (e USA a ${(currentParams.minGapUSA * 0.8).toFixed(2)}%) per intercettare continuazioni di trend con gap a partire da ±${proposedEU}%.`,
         };
         urgentCorrections.push({
           category: cat,
@@ -2188,14 +2415,18 @@ export function runExcludedSetupsAutoAnalysis(
           proposedValue: proposedEU,
         });
       } else if (cat === 'SCORE_BELOW_MIN') {
-        const proposedScore = Math.max(45, currentParams.minScore - 5);
+        const profitableScores = catRecords
+          .filter((r) => r.outcomeStatus === 'THEORETICAL_PROFIT' && typeof r.score === 'number')
+          .map((r) => r.score);
+        const minProfitableScore = profitableScores.length > 0 ? Math.min(...profitableScores) : currentParams.minScore - 5;
+        const proposedScore = Math.max(40, Math.min(currentParams.minScore - 5, minProfitableScore));
         correctionProposal = {
           parameterKey: 'minScore',
           label: 'Punteggio Minimo Algoritmico (minScore)',
           currentValue: `${currentParams.minScore}/100`,
           proposedValue: `${proposedScore}/100`,
           actionType: 'REDUCE_PARAM',
-          explanation: `Riduci la soglia di sblocco setup da ${currentParams.minScore} a ${proposedScore}/100. I titoli scartati con punteggio tra 48 e ${currentParams.minScore} hanno mostrato un win rate del ${winRate}%.`,
+          explanation: `Riduci la soglia di sblocco setup da ${currentParams.minScore} a ${proposedScore}/100 per ammettere i setup con punteggio da ${proposedScore} in su che hanno dimostrato win rate del ${winRate}%.`,
         };
         urgentCorrections.push({
           category: cat,
@@ -2207,20 +2438,20 @@ export function runExcludedSetupsAutoAnalysis(
         });
       } else if (cat === 'RSI_EXTREME') {
         correctionProposal = {
-          parameterKey: 'triggerOffsetPercent',
-          label: 'Filtro RSI Estremo & Offset Trigger',
-          currentValue: 'Attivo (30-70)',
-          proposedValue: 'Tolleranza Allargata (20-80)',
+          parameterKey: 'rsiFilterActive',
+          label: 'Filtro Ipercomprato/Ipervenduto RSI (30/70)',
+          currentValue: currentParams.rsiFilterActive ? 'Attivo' : 'Disattivo',
+          proposedValue: 'Disattivo',
           actionType: 'TOGGLE_RSI',
-          explanation: `In sessioni con forte momentum direzionale, RSI > 70 non indica inversione ma persistenza del flusso istituzionale. Si consiglia di disattivare il filtro RSI o allargare i limiti a 20-80.`,
+          explanation: `In sessioni con forte spinta istituzionale, l'RSI estremo ha prodotto un win rate del ${winRate}% a profitto. Disattivando il blocco rigido RSI, i setup ad alto momentum non vengono scartati.`,
         };
         urgentCorrections.push({
           category: cat,
-          title: 'Allargamento Tolleranza RSI',
+          title: 'Disattivazione Filtro RSI per Momentum',
           description: correctionProposal.explanation,
-          parameterKey: 'triggerOffsetPercent',
-          currentValue: currentParams.triggerOffsetPercent,
-          proposedValue: +(currentParams.triggerOffsetPercent * 0.8).toFixed(2),
+          parameterKey: 'rsiFilterActive',
+          currentValue: currentParams.rsiFilterActive,
+          proposedValue: false,
         });
       }
     } else if (isEffectiveShield) {
