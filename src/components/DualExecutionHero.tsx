@@ -318,13 +318,43 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
         ) : (
           /* TRADE SETUP ACTIVE */
           <div className="space-y-4">
-            {/* Strategy Title */}
-            <div className="flex items-center justify-between text-xs font-mono">
-              <span className="text-slate-400">Strategia Primaria:</span>
-              <span className="font-semibold text-emerald-300 bg-emerald-950/50 px-2 py-0.5 rounded border border-emerald-800/50">
-                {setup.strategy}
-              </span>
+            {/* Strategy Title & ORB Phase */}
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400">Strategia:</span>
+                <span className="font-semibold text-emerald-300 bg-emerald-950/50 px-2 py-0.5 rounded border border-emerald-800/50">
+                  {setup.strategy}
+                </span>
+              </div>
+              {setup.orbPhase && (
+                <div
+                  className={`px-2 py-0.5 rounded border text-[11px] font-semibold flex items-center gap-1.5 ${
+                    setup.orbPhase.phase === 'ACTIVE_BREAKOUT'
+                      ? 'bg-emerald-950/70 border-emerald-600/70 text-emerald-300'
+                      : setup.orbPhase.phase === 'ORB_15M_FORMATION'
+                      ? 'bg-amber-950/70 border-amber-600/70 text-amber-300 animate-pulse'
+                      : 'bg-slate-900 border-slate-700 text-slate-300'
+                  }`}
+                  title={setup.orbPhase.description}
+                >
+                  <Clock className="w-3 h-3 shrink-0" />
+                  <span>{setup.orbPhase.label}</span>
+                </div>
+              )}
             </div>
+
+            {/* Macro Trend Alignment Bar if available */}
+            {setup.macroTrendAlignment && (
+              <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl px-3 py-1.5 flex items-center justify-between text-[11px] font-mono">
+                <div className="flex items-center gap-1.5 text-slate-400">
+                  <TrendingUp className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                  <span>Confluenza Trend Daily EMA(20):</span>
+                </div>
+                <span className={`font-semibold ${setup.macroTrendAlignment.isAligned ? 'text-sky-300' : 'text-amber-400'}`}>
+                  {setup.macroTrendAlignment.label}
+                </span>
+              </div>
+            )}
 
             {/* Execution Levels Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center font-mono">
@@ -339,15 +369,28 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
                 <div className="text-[10px] text-emerald-400">Breakout + VWAP</div>
               </div>
 
-              {/* Stop Loss Tight */}
+              {/* Stop Loss Tight / Structural */}
               <div className="bg-slate-950/80 border border-rose-950/40 rounded-xl p-2.5">
                 <div className="text-[10px] text-rose-300 uppercase font-semibold">
-                  Stop Loss (0.5x ATR)
+                  {setup.structuralLevels?.stopType === 'STRUCTURAL_OPEN_LOW'
+                    ? 'Stop Minimo Sessione'
+                    : setup.structuralLevels?.stopType === 'STRUCTURAL_OPEN_HIGH'
+                    ? 'Stop Massimo Sessione'
+                    : setup.structuralLevels?.stopType === 'STRUCTURAL_VWAP'
+                    ? 'Stop Strutturale VWAP'
+                    : 'Stop Loss (0.5x ATR)'}
                 </div>
                 <div className="text-sm font-bold text-rose-400 tabular-nums mt-0.5">
                   {setup.stopLossLevel?.toFixed(2)}
                 </div>
-                <div className="text-[10px] text-slate-400">Anti-Rumore</div>
+                <div
+                  className="text-[10px] text-slate-400 truncate"
+                  title={setup.structuralLevels?.explanation || 'Stop protettivo anti-caccia'}
+                >
+                  {setup.structuralLevels?.stopType && setup.structuralLevels.stopType.startsWith('STRUCTURAL')
+                    ? 'Strutturale'
+                    : 'Anti-Rumore'}
+                </div>
               </div>
 
               {/* Target 1 */}

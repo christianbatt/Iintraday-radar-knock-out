@@ -139,6 +139,11 @@ export interface RawQuoteData {
   prevLow: number | null;
   preMarketHigh: number | null;
   preMarketLow: number | null;
+  todayOpen?: number | null;
+  todayHigh?: number | null;
+  todayLow?: number | null;
+  vwap?: number | null;
+  ema20Daily?: number | null;
   avgVolume20d: number | null;
   preMarketVolume: number | null;
   atr14: number | null;
@@ -512,6 +517,30 @@ async function fetchQuoteForTicker(
 
         const { rsi5m: calcRsi5m, rvol20m: calcRvol20m } = await intraday5mPromise;
 
+        // Real 20-day Exponential Moving Average (EMA20 Daily) from official historical closes
+        let calcEma20: number | null = null;
+        if (validBars.length >= 8) {
+          const closes = validBars.map((b) => b.close).filter((c) => typeof c === 'number' && c > 0);
+          if (closes.length >= 8) {
+            const period = Math.min(20, closes.length);
+            const k = 2 / (period + 1);
+            let ema = closes[0];
+            for (let i = 1; i < closes.length; i++) {
+              ema = closes[i] * k + ema * (1 - k);
+            }
+            calcEma20 = +ema.toFixed(2);
+          }
+        }
+
+        // Real Today Open, Day High, Day Low, and Intraday VWAP estimate from official feed
+        const tOpen: number | null = meta.regularMarketOpen ?? (isTodayBar && lastBar ? lastBar.close : null);
+        const tHigh: number | null = meta.regularMarketDayHigh ?? (isTodayBar && lastBar ? lastBar.high : null);
+        const tLow: number | null = meta.regularMarketDayLow ?? (isTodayBar && lastBar ? lastBar.low : null);
+        let calcVwap: number | null = null;
+        if (tHigh && tLow && currentP) {
+          calcVwap = +((tHigh + tLow + currentP) / 3).toFixed(2);
+        }
+
         quoteData = {
           currentPrice: currentP ? +currentP.toFixed(2) : quoteData.currentPrice ?? null,
           prevClose: prevC ? +prevC.toFixed(2) : quoteData.prevClose ?? null,
@@ -520,6 +549,11 @@ async function fetchQuoteForTicker(
           preMarketPrice: preMarketP ? +preMarketP.toFixed(2) : quoteData.preMarketPrice ?? null,
           preMarketHigh: meta.preMarketDayHigh ?? null,
           preMarketLow: meta.preMarketDayLow ?? null,
+          todayOpen: tOpen ? +tOpen.toFixed(2) : null,
+          todayHigh: tHigh ? +tHigh.toFixed(2) : null,
+          todayLow: tLow ? +tLow.toFixed(2) : null,
+          vwap: calcVwap,
+          ema20Daily: calcEma20,
           avgVolume20d: avgVol,
           preMarketVolume: pmVol ?? regVol ?? null,
           atr14: calcAtr,

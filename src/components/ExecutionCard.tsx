@@ -202,9 +202,26 @@ export const ExecutionCard: React.FC<ExecutionCardProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 font-mono text-xs bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800 text-slate-300">
-          <Clock className="w-3.5 h-3.5 text-amber-400" />
-          <span>Cutoff Uscita: <strong className="text-amber-300">{setup.cutoffTime}</strong></span>
+        <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
+          {setup.orbPhase && (
+            <div
+              className={`px-2.5 py-1 rounded-lg border flex items-center gap-1.5 font-semibold ${
+                setup.orbPhase.phase === 'ACTIVE_BREAKOUT'
+                  ? 'bg-emerald-950/70 border-emerald-600/70 text-emerald-300'
+                  : setup.orbPhase.phase === 'ORB_15M_FORMATION'
+                  ? 'bg-amber-950/70 border-amber-600/70 text-amber-300 animate-pulse'
+                  : 'bg-slate-900 border-slate-700 text-slate-300'
+              }`}
+              title={setup.orbPhase.description}
+            >
+              <Clock className="w-3.5 h-3.5 shrink-0" />
+              <span>{setup.orbPhase.label}</span>
+            </div>
+          )}
+          <div className="flex items-center gap-1.5 bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800 text-slate-300">
+            <Clock className="w-3.5 h-3.5 text-amber-400" />
+            <span>Cutoff Uscita: <strong className="text-amber-300">{setup.cutoffTime}</strong></span>
+          </div>
         </div>
       </div>
 
@@ -227,13 +244,24 @@ export const ExecutionCard: React.FC<ExecutionCardProps> = ({
             {/* Stop Loss Underlying */}
             <div className="bg-slate-950 p-3 rounded-lg border border-rose-900/50">
               <span className="text-[10px] font-mono uppercase text-rose-400 block mb-1">
-                Stop Loss Sottostante
+                {setup.structuralLevels?.stopType === 'STRUCTURAL_OPEN_LOW'
+                  ? 'Stop Minimo Sessione'
+                  : setup.structuralLevels?.stopType === 'STRUCTURAL_OPEN_HIGH'
+                  ? 'Stop Massimo Sessione'
+                  : setup.structuralLevels?.stopType === 'STRUCTURAL_VWAP'
+                  ? 'Stop Strutturale VWAP'
+                  : 'Stop Loss Sottostante'}
               </span>
               <div className="text-base font-bold font-mono text-rose-400">
                 {setup.stopLossLevel} {setup.candidate.currency}
               </div>
-              <span className="text-[10px] text-slate-400 font-mono">
-                Rischio: {Math.abs((setup.triggerLevel || 0) - (setup.stopLossLevel || 0)).toFixed(2)} pts
+              <span
+                className="text-[10px] text-slate-400 font-mono truncate block"
+                title={setup.structuralLevels?.explanation}
+              >
+                {setup.structuralLevels?.stopType && setup.structuralLevels.stopType.startsWith('STRUCTURAL')
+                  ? 'Strutturale'
+                  : `Rischio: ${Math.abs((setup.triggerLevel || 0) - (setup.stopLossLevel || 0)).toFixed(2)} pts`}
               </span>
             </div>
 

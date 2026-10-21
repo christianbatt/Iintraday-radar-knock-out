@@ -17,6 +17,11 @@ export interface RawQuoteData {
   prevLow: number | null;
   preMarketHigh: number | null;
   preMarketLow: number | null;
+  todayOpen?: number | null;
+  todayHigh?: number | null;
+  todayLow?: number | null;
+  vwap?: number | null;
+  ema20Daily?: number | null;
   avgVolume20d: number | null;
   preMarketVolume: number | null;
   atr14: number | null;
@@ -52,6 +57,7 @@ export interface ScoreBreakdown {
   levelScore: number;
   rsiScore?: number; // Intraday 5m Momentum & Multi-timeframe RSI quality (max 10)
   newsScore?: number; // Bonus news & catalyst quality (+0 to +15pt)
+  trendScore?: number; // Bonus Confluenza Trend Macro Daily EMA 20 (+0 to +8pt)
   total: number;
   details: string[];
 }
@@ -112,6 +118,22 @@ export interface ExecutionSetup {
   dynamicBreakeven?: DynamicBreakevenInfo | null;
   stressReport?: DerivativeStressReport | null;
   scenarios?: PnLScenario[] | null;
+  orbPhase?: {
+    phase: 'PRE_MARKET_MONITORING' | 'ORB_15M_FORMATION' | 'ACTIVE_BREAKOUT' | 'CUTOFF_PASSED';
+    label: string;
+    description: string;
+    isEntryAllowed: boolean;
+  };
+  structuralLevels?: {
+    stopType: 'STRUCTURAL_OPEN_LOW' | 'STRUCTURAL_OPEN_HIGH' | 'STRUCTURAL_VWAP' | 'VOLATILITY_ATR';
+    referencePrice: number;
+    explanation: string;
+  };
+  macroTrendAlignment?: {
+    ema20Daily?: number | null;
+    isAligned: boolean;
+    label: string;
+  };
 }
 
 export interface PnLScenario {

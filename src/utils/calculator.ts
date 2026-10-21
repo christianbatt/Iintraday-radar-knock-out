@@ -82,6 +82,7 @@ export function calculateCandidateScore(
       levelScore: 0,
       rsiScore: 0,
       newsScore: 0,
+      trendScore: 0,
       total: 0,
       details: ['Prezzo di mercato non disponibile dal feed: candidato non qualificabile.'],
     };
@@ -266,27 +267,77 @@ export function calculateCandidateScore(
     } else if ('catalizzatore' in newsOrCatalyst) {
       const cat = newsOrCatalyst as GeminiCatalystAnalysis;
       const text = `${cat.catalizzatore || ''} ${(cat.punti_a_favore || []).join(' ')}`.toLowerCase();
-      if (text.includes('upgrade') || text.includes('target') || text.includes('contratto') || text.includes('ordini') || text.includes('utili') || text.includes('partnership')) {
+      const hasMajorEvent =
+        text.includes('upgrade') ||
+        text.includes('target') ||
+        text.includes('contratto') ||
+        text.includes('ordini') ||
+        text.includes('utili') ||
+        text.includes('partnership') ||
+        text.includes('earnings') ||
+        text.includes('guidance');
+      if (hasMajorEvent) {
         newsScore = 15;
       } else if (cat.fonti && cat.fonti.length > 0) {
-        newsScore = 10;
+        newsScore = 12;
       } else if (!text.includes('nessuna notizia') && !text.includes('setup tecnico')) {
         newsScore = 8;
       } else {
         newsScore = 0;
       }
     } else if (Array.isArray(newsOrCatalyst) && newsOrCatalyst.length > 0) {
-      newsScore = 8;
+      let freshestHours = 999;
+      for (const item of newsOrCatalyst) {
+        if (item.publishedAt) {
+          const t = new Date(item.publishedAt).getTime();
+          if (!isNaN(t)) {
+            const ageH = (Date.now() - t) / (1000 * 60 * 60);
+            if (ageH < freshestHours) freshestHours = ageH;
+          }
+        }
+      }
+      if (freshestHours <= 4) {
+        newsScore = 15;
+        details.push(`🔥 Notizia Fresca (<4h): forte catalizzatore immediato (+15pt)`);
+      } else if (freshestHours <= 12) {
+        newsScore = 10;
+        details.push(`📰 Notizia Recente (<12h): catalizzatore di sessione attivo (+10pt)`);
+      } else {
+        newsScore = 6;
+        details.push(`📰 Notizia nota (>12h): catalizzatore parzialmente assorbito (+6pt)`);
+      }
     }
   }
 
-  if (newsScore > 0) {
+  if (newsScore > 0 && !details.some((d) => d.includes('Notizia'))) {
     details.push(`🔥 Bonus Notizie/Catalizzatore Attivo: +${newsScore}pt sullo score del titolo`);
-  } else {
+  } else if (newsScore === 0) {
     details.push('Setup puramente Tecnico / Momentum (Assenza notizie straordinarie: 0pt bonus)');
   }
 
-  const rawTotal = gapScore + rvolScore + liquidityScore + futuresScore + levelScore + rsiScore + newsScore;
+  // 8. CONFLUENZA TREND MACRO DAILY EMA(20) (+0 to +8pt)
+  let trendScore = 0;
+  if (quote.ema20Daily != null && quote.ema20Daily > 0) {
+    const isAboveEma = price >= quote.ema20Daily;
+    if (isGapLong && isAboveEma) {
+      trendScore = 8;
+      details.push(`Confluenza Trend Rialzista Macro: Prezzo (${price.toFixed(2)}) sopra EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +8pt`);
+    } else if (!isGapLong && !isAboveEma) {
+      trendScore = 8;
+      details.push(`Confluenza Trend Ribassista Macro: Prezzo (${price.toFixed(2)}) sotto EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +8pt`);
+    } else if (isGapLong && !isAboveEma) {
+      trendScore = 2;
+      details.push(`Controtendenza Macro: Gap Long con Prezzo sotto EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +2pt (cautela)`);
+    } else {
+      trendScore = 2;
+      details.push(`Controtendenza Macro: Gap Short con Prezzo sopra EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +2pt (cautela)`);
+    }
+  } else {
+    trendScore = 4;
+    details.push('Trend Macro EMA(20) daily non disponibile: +4pt (neutro)');
+  }
+
+  const rawTotal = gapScore + rvolScore + liquidityScore + futuresScore + levelScore + rsiScore + newsScore + trendScore;
   const total = Math.min(100, rawTotal);
 
   return {
@@ -297,6 +348,7 @@ export function calculateCandidateScore(
     levelScore,
     rsiScore,
     newsScore,
+    trendScore,
     total,
     details,
   };
@@ -501,6 +553,96 @@ export function getDualTopCandidates(
   };
 }
 
+export function getOrbPhaseInfo(market: 'EU' | 'US'): {
+  phase: 'PRE_MARKET_MONITORING' | 'ORB_15M_FORMATION' | 'ACTIVE_BREAKOUT' | 'CUTOFF_PASSED';
+  label: string;
+  description: string;
+  isEntryAllowed: boolean;
+} {
+  const now = new Date();
+  const cetFormatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Rome',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = cetFormatter.formatToParts(now);
+  const hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
+  const minute = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
+  const currentMinutes = hour * 60 + minute;
+
+  if (market === 'EU') {
+    const openMinutes = 9 * 60; // 09:00 CET
+    const orbEndMinutes = 9 * 60 + 15; // 09:15 CET
+    const cutoffMinutes = 11 * 60 + 30; // 11:30 CET
+
+    if (currentMinutes < openMinutes) {
+      return {
+        phase: 'PRE_MARKET_MONITORING',
+        label: 'Fase 0: Pre-Market Monitoring',
+        description: 'Monitoraggio book e volumi pre-apertura europea. Attendere apertura 09:00 CET.',
+        isEntryAllowed: false,
+      };
+    } else if (currentMinutes < orbEndMinutes) {
+      return {
+        phase: 'ORB_15M_FORMATION',
+        label: 'Fase 1: Formazione Range 15m (09:00-09:15)',
+        description: 'Prime 3 candele 5m in formazione. Non anticipare: attendere range consolidato alle 09:15 CET.',
+        isEntryAllowed: false,
+      };
+    } else if (currentMinutes < cutoffMinutes) {
+      return {
+        phase: 'ACTIVE_BREAKOUT',
+        label: 'Fase 2: Finestra Operativa Attiva',
+        description: 'Range 15m consolidato. Esecuzione autorizzata alla rottura confermata del trigger con volumi.',
+        isEntryAllowed: true,
+      };
+    } else {
+      return {
+        phase: 'CUTOFF_PASSED',
+        label: 'Cutoff Raggiunto (11:30 CET)',
+        description: 'Finestra primaria europea conclusa. Rischio di contrazione volumi pomeridiana.',
+        isEntryAllowed: false,
+      };
+    }
+  } else {
+    // US Market
+    const openMinutes = 15 * 60 + 30; // 15:30 CET
+    const orbEndMinutes = 15 * 60 + 45; // 15:45 CET
+    const cutoffMinutes = 17 * 60 + 30; // 17:30 CET
+
+    if (currentMinutes < openMinutes) {
+      return {
+        phase: 'PRE_MARKET_MONITORING',
+        label: 'Fase 0: Pre-Market USA',
+        description: 'Monitoraggio futures e pre-market USA. Apertura Wall Street ore 15:30 CET.',
+        isEntryAllowed: false,
+      };
+    } else if (currentMinutes < orbEndMinutes) {
+      return {
+        phase: 'ORB_15M_FORMATION',
+        label: 'Fase 1: Formazione Range 15m (15:30-15:45)',
+        description: 'Volatilità estrema d\'apertura. Attendere consolidamento range alle 15:45 CET prima dell\'entry.',
+        isEntryAllowed: false,
+      };
+    } else if (currentMinutes < cutoffMinutes) {
+      return {
+        phase: 'ACTIVE_BREAKOUT',
+        label: 'Fase 2: Finestra Operativa Attiva',
+        description: 'Range 15m USA consolidato. Esecuzione consentita al superamento del trigger.',
+        isEntryAllowed: true,
+      };
+    } else {
+      return {
+        phase: 'CUTOFF_PASSED',
+        label: 'Cutoff Raggiunto (17:30 CET)',
+        description: 'Finestra primaria d\'apertura USA conclusa. Preservare il capitale.',
+        isEntryAllowed: false,
+      };
+    }
+  }
+}
+
 export function buildExecutionSetup(
   topCandidate: ScoredCandidate | null,
   catalyst: GeminiCatalystAnalysis | null,
@@ -687,8 +829,6 @@ export function buildExecutionSetup(
   }
 
   // Filter 2: Fundamental / Catalyst disqualification check
-  // Regola fondamentale: l'assenza di notizie non deve essere un motivo di esclusione.
-  // La notizia dà punti in più di score; solo fattori ostativi gravi (utili imminenti durante la seduta, sospensioni) escludono.
   if (catalyst && catalyst.decisione === 'NESSUN_TRADE') {
     const isAbsenceOfNewsOnly =
       catalyst.catalizzatore?.toLowerCase().includes('nessuna notizia') ||
@@ -696,8 +836,8 @@ export function buildExecutionSetup(
       catalyst.catalizzatore?.toLowerCase().includes('assenza di notizie') ||
       (catalyst.rischi?.length === 1 &&
         (catalyst.rischi[0]?.toLowerCase().includes('mancanza di notizie') ||
-         catalyst.rischi[0]?.toLowerCase().includes('assenza di catalizzatore') ||
-         catalyst.rischi[0]?.toLowerCase().includes('assenza di notizie')));
+          catalyst.rischi[0]?.toLowerCase().includes('assenza di catalizzatore') ||
+          catalyst.rischi[0]?.toLowerCase().includes('assenza di notizie')));
 
     if (!isAbsenceOfNewsOnly) {
       return {
@@ -749,17 +889,77 @@ export function buildExecutionSetup(
     stopLossLevel = +(triggerLevel - normalRisk).toFixed(2);
     stopLossTight = +(triggerLevel - tightRisk).toFixed(2);
     stopLossConservative = +(triggerLevel - conservativeRisk).toFixed(2);
-    suggestedKoBarrier = +(triggerLevel - normalRisk * activeParams.suggestedKoBarrierMultiplier).toFixed(2);
-    target1Level = +(triggerLevel + normalRisk * activeParams.target1Multiplier).toFixed(2);
-    target2Level = +(triggerLevel + normalRisk * activeParams.target2Multiplier).toFixed(2);
   } else {
     triggerLevel = +(price * (1 - triggerOffset)).toFixed(2);
     stopLossLevel = +(triggerLevel + normalRisk).toFixed(2);
     stopLossTight = +(triggerLevel + tightRisk).toFixed(2);
     stopLossConservative = +(triggerLevel + conservativeRisk).toFixed(2);
-    suggestedKoBarrier = +(triggerLevel + normalRisk * activeParams.suggestedKoBarrierMultiplier).toFixed(2);
-    target1Level = +(triggerLevel - normalRisk * activeParams.target1Multiplier).toFixed(2);
-    target2Level = +(triggerLevel - normalRisk * activeParams.target2Multiplier).toFixed(2);
+  }
+
+  // Structural Stop Loss Anchoring
+  let structuralLevels: ExecutionSetup['structuralLevels'] = {
+    stopType: 'VOLATILITY_ATR',
+    referencePrice: +(direction === 'LONG' ? triggerLevel - normalRisk : triggerLevel + normalRisk).toFixed(2),
+    explanation: 'Stop basato su 0.5x ATR(14) anti-rumore',
+  };
+
+  if (direction === 'LONG') {
+    if (quote.todayLow != null && quote.todayLow > 0 && quote.todayLow < triggerLevel) {
+      const distToLow = triggerLevel - quote.todayLow;
+      if (distToLow >= normalRisk * 0.3 && distToLow <= normalRisk * 1.8) {
+        stopLossLevel = +(quote.todayLow * 0.998).toFixed(2);
+        structuralLevels = {
+          stopType: 'STRUCTURAL_OPEN_LOW',
+          referencePrice: quote.todayLow,
+          explanation: `Ancorato sotto Minimo Odierno (${quote.todayLow.toFixed(2)} - 0.2% buffer anti-caccia)`,
+        };
+      } else if (quote.vwap != null && quote.vwap > 0 && quote.vwap < triggerLevel) {
+        const distToVwap = triggerLevel - quote.vwap;
+        if (distToVwap >= normalRisk * 0.3 && distToVwap <= normalRisk * 1.5) {
+          stopLossLevel = +(quote.vwap * 0.998).toFixed(2);
+          structuralLevels = {
+            stopType: 'STRUCTURAL_VWAP',
+            referencePrice: quote.vwap,
+            explanation: `Ancorato sotto il VWAP Intraday (${quote.vwap.toFixed(2)} - 0.2% buffer)`,
+          };
+        }
+      }
+    }
+  } else {
+    // SHORT direction
+    if (quote.todayHigh != null && quote.todayHigh > 0 && quote.todayHigh > triggerLevel) {
+      const distToHigh = quote.todayHigh - triggerLevel;
+      if (distToHigh >= normalRisk * 0.3 && distToHigh <= normalRisk * 1.8) {
+        stopLossLevel = +(quote.todayHigh * 1.002).toFixed(2);
+        structuralLevels = {
+          stopType: 'STRUCTURAL_OPEN_HIGH',
+          referencePrice: quote.todayHigh,
+          explanation: `Ancorato sopra Massimo Odierno (${quote.todayHigh.toFixed(2)} + 0.2% buffer anti-caccia)`,
+        };
+      } else if (quote.vwap != null && quote.vwap > 0 && quote.vwap > triggerLevel) {
+        const distToVwap = quote.vwap - triggerLevel;
+        if (distToVwap >= normalRisk * 0.3 && distToVwap <= normalRisk * 1.5) {
+          stopLossLevel = +(quote.vwap * 1.002).toFixed(2);
+          structuralLevels = {
+            stopType: 'STRUCTURAL_VWAP',
+            referencePrice: quote.vwap,
+            explanation: `Ancorato sopra il VWAP Intraday (${quote.vwap.toFixed(2)} + 0.2% buffer)`,
+          };
+        }
+      }
+    }
+  }
+
+  // Calculate targets & barriers proportional to the effective risk distance
+  const effectiveRisk = Math.max(Math.abs(triggerLevel - stopLossLevel), normalRisk);
+  if (direction === 'LONG') {
+    suggestedKoBarrier = +(triggerLevel - effectiveRisk * activeParams.suggestedKoBarrierMultiplier).toFixed(2);
+    target1Level = +(triggerLevel + effectiveRisk * activeParams.target1Multiplier).toFixed(2);
+    target2Level = +(triggerLevel + effectiveRisk * activeParams.target2Multiplier).toFixed(2);
+  } else {
+    suggestedKoBarrier = +(triggerLevel + effectiveRisk * activeParams.suggestedKoBarrierMultiplier).toFixed(2);
+    target1Level = +(triggerLevel - effectiveRisk * activeParams.target1Multiplier).toFixed(2);
+    target2Level = +(triggerLevel - effectiveRisk * activeParams.target2Multiplier).toFixed(2);
   }
 
   const riskRewardRatio = activeParams.target1Multiplier;
@@ -806,6 +1006,26 @@ export function buildExecutionSetup(
     1.00
   );
 
+  const orbPhase = getOrbPhaseInfo(marketType as 'EU' | 'US');
+
+  const ema20 = quote.ema20Daily;
+  const isAlignedWithEma20 =
+    ema20 != null ? (direction === 'LONG' ? price >= ema20 : price <= ema20) : true;
+  const macroTrendAlignment = {
+    ema20Daily: ema20,
+    isAligned: isAlignedWithEma20,
+    label:
+      ema20 != null
+        ? isAlignedWithEma20
+          ? direction === 'LONG'
+            ? `Allineato Rialzista (Sopra EMA20 daily ${ema20.toFixed(2)})`
+            : `Allineato Ribassista (Sotto EMA20 daily ${ema20.toFixed(2)})`
+          : direction === 'LONG'
+          ? `Controtrend Macro (Sotto EMA20 daily ${ema20.toFixed(2)})`
+          : `Controtrend Macro (Sopra EMA20 daily ${ema20.toFixed(2)})`
+        : 'EMA(20) non calcolata (Trend neutro)',
+  };
+
   return {
     candidate: quote,
     decision: 'TRADE',
@@ -828,6 +1048,9 @@ export function buildExecutionSetup(
     cutoffTime,
     catalystAnalysis: catalyst,
     dynamicBreakeven,
+    orbPhase,
+    structuralLevels,
+    macroTrendAlignment,
   };
 }
 

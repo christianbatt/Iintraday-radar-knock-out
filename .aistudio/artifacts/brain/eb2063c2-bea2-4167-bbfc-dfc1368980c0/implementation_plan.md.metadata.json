@@ -1,6 +1,6 @@
 {
-  "summary": "Piano di implementazione dettagliato per l'integrazione dell'audit dei derivati (TASK 5B.9N) nel terminale intraday: calcolo del breakeven dinamico con attrito spread/commissioni, simulazione multi-scenario PnL con leva collassabile nella Execution Card, e motore di stress test ibrido con visual alert e blocco di sicurezza dei setup critici.",
-  "updatedAt": "2026-10-14T22:35:20.811991435Z",
-  "requestFeedback": true,
-  "userFacing": true
+  "summary":  "Piano e resoconto completato delle 5 migliorie strutturali per qualità, precisione e win-rate del terminale intraday (confluenza trend macro EMA20, freschezza catalizzatore, stop loss strutturale ancorato a minimi/massimi/VWAP, tracking fasi ORB 15m e sincronizzazione multi-device 100% dati reali).",
+  "updatedAt":  "2026-10-21T23:36:12.426983395Z",
+  "requestFeedback":  true,
+  "userFacing":  true
 }
