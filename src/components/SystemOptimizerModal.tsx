@@ -426,12 +426,16 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 font-mono text-xs">
               <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/80">
-                <span className="text-[10px] text-slate-500 block">Soglia Minima Score</span>
-                <span className="text-white font-bold">{currentParameters.minScore}/100</span>
+                <span className="text-[10px] text-slate-500 block">Score Min EU / USA</span>
+                <span className="text-white font-bold">{currentParameters.minScoreEurope ?? 48} / {currentParameters.minScoreUSA ?? 58}</span>
               </div>
               <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/80">
-                <span className="text-[10px] text-slate-500 block">RVOL Minimo</span>
-                <span className="text-white font-bold">{currentParameters.minRvol}x</span>
+                <span className="text-[10px] text-slate-500 block">RVOL Min EU / USA</span>
+                <span className="text-white font-bold">{currentParameters.minRvolEurope ?? 0.85}x / {currentParameters.minRvolUSA ?? 1.15}x</span>
+              </div>
+              <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/80">
+                <span className="text-[10px] text-slate-500 block">Gap Min Europa / USA</span>
+                <span className="text-white font-bold">{currentParameters.minGapEurope}% / {currentParameters.minGapUSA}%</span>
               </div>
               <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/80">
                 <span className="text-[10px] text-slate-500 block">Target 1 (R-Multiple)</span>
@@ -448,10 +452,6 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
               <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/80">
                 <span className="text-[10px] text-slate-500 block">Tolleranza Stop Loss</span>
                 <span className="text-rose-400 font-bold">{currentParameters.normalRiskMultiplier}x ATR</span>
-              </div>
-              <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/80">
-                <span className="text-[10px] text-slate-500 block">Gap Min Europa / USA</span>
-                <span className="text-white font-bold">{currentParameters.minGapEurope}% / {currentParameters.minGapUSA}%</span>
               </div>
               <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/80">
                 <span className="text-[10px] text-slate-500 block">Filtro RSI Attivo</span>

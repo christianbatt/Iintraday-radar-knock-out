@@ -39,7 +39,9 @@ export const DailyCircuitBreakerBanner: React.FC<DailyCircuitBreakerBannerProps>
             <span>•</span>
             <span>P&L giornaliero: <strong className="text-white">{dailyPnlPercent.toFixed(2)}%</strong></span>
             <span>•</span>
-            <span className="text-rose-400">Piattaforma congelata fino alla prossima sessione per preservare il capitale.</span>
+            <span className="text-amber-300 font-semibold">
+              Modalità Osservazione Attiva: Scansione continua ogni 20s, setup sempre visibili e monitoraggio prezzi live attivo sulle posizioni a giornale. Nuovi ingressi a giornale bloccati per rigore operativo.
+            </span>
           </div>
         </div>
       </div>

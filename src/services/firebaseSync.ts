@@ -24,6 +24,7 @@ import {
   OptimizationProposal,
   SystemParameters,
   TradeJournalEntry,
+  UnderlyingItem,
 } from '../types/radar';
 
 // Initialize Firebase App
@@ -60,6 +61,7 @@ export interface CloudSystemSettings {
   pendingProposal: OptimizationProposal | null;
   accountCapital: number;
   isPaperMode: boolean;
+  underlyings?: UnderlyingItem[];
   updatedAt: string;
 }
 
@@ -96,6 +98,7 @@ export async function syncSystemSettingsToCloud(
     pendingProposal: OptimizationProposal | null;
     accountCapital: number;
     isPaperMode: boolean;
+    underlyings?: UnderlyingItem[];
   }
 ): Promise<void> {
   try {
@@ -108,6 +111,7 @@ export async function syncSystemSettingsToCloud(
         isPaperMode: settings.isPaperMode,
         parameters: settings.parameters,
         pendingProposal: settings.pendingProposal,
+        underlyings: settings.underlyings || null,
         updatedAt: new Date().toISOString(),
       },
       { merge: true }
@@ -218,6 +222,7 @@ export function subscribeToUserCloudData(
           pendingProposal: d.pendingProposal,
           accountCapital: d.accountCapital ?? 10000,
           isPaperMode: d.isPaperMode ?? true,
+          underlyings: d.underlyings || undefined,
           updatedAt: d.updatedAt || new Date().toISOString(),
         });
       }

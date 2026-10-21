@@ -209,10 +209,14 @@ export interface TradeJournalEntry {
 export interface SystemParameters {
   version: number;
   lastUpdated: string;
-  minScore: number; // e.g. 55
+  minScore: number; // e.g. 55 (fallback globale)
+  minScoreEurope: number; // e.g. 48 (Europa)
+  minScoreUSA: number; // e.g. 58 (USA)
   minGapEurope: number; // e.g. 0.40 (%)
-  minGapUSA: number; // e.g. 0.70 (%)
-  minRvol: number; // e.g. 1.10
+  minGapUSA: number; // e.g. 0.75 (%)
+  minRvol: number; // e.g. 1.0 (fallback globale)
+  minRvolEurope: number; // e.g. 0.85 (Europa)
+  minRvolUSA: number; // e.g. 1.15 (USA)
   minAvgVolume: number; // e.g. 350000
   normalRiskMultiplier: number; // e.g. 0.50 * ATR
   target1Multiplier: number; // e.g. 1.60 * normalRisk

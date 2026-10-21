@@ -265,23 +265,29 @@ export default function App() {
             if (cloudSettings.isPaperMode !== undefined) {
               setIsPaperMode(cloudSettings.isPaperMode);
             }
+            if (cloudSettings.underlyings && cloudSettings.underlyings.length > 0) {
+              setUnderlyings(cloudSettings.underlyings);
+            }
             setCloudSyncStatus('SYNCED');
           },
           (cloudTrades) => {
-            if (cloudTrades.length > 0) {
-              setJournalEntries(cloudTrades);
-            } else {
-              // If cloud is newly initialized, migrate existing local trades
-              if (journalEntries.length > 0) {
-                batchUploadTradesToCloud(user.uid, journalEntries);
-                syncSystemSettingsToCloud(user.uid, {
-                  parameters,
-                  pendingProposal,
-                  accountCapital,
-                  isPaperMode,
-                });
+            setJournalEntries((prevLocal) => {
+              // Bidirectional merge: combine local and cloud trades by id
+              const tradeMap = new Map<string, TradeJournalEntry>();
+              prevLocal.forEach((t) => tradeMap.set(t.id, t));
+              cloudTrades.forEach((t) => tradeMap.set(t.id, t));
+              const merged = Array.from(tradeMap.values());
+              merged.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+              // Upload any local-only trades that aren't yet in Firestore
+              const cloudIds = new Set(cloudTrades.map((t) => t.id));
+              const missingInCloud = prevLocal.filter((t) => !cloudIds.has(t.id));
+              if (missingInCloud.length > 0) {
+                batchUploadTradesToCloud(user.uid, missingInCloud);
               }
-            }
+
+              return merged;
+            });
             setCloudSyncStatus('SYNCED');
           }
         );
@@ -373,9 +379,18 @@ export default function App() {
 
     try {
       // 1. Fetch live quotes and fresh futures simultaneously
+      // Ensure all open journal positions are also fetched so their live prices stay up to date
+      const openTickers = journalEntries.filter((t) => t.status === 'OPEN').map((t) => t.ticker);
+      const scanBasket = [...underlyings];
+      openTickers.forEach((ticker) => {
+        if (!scanBasket.some((u) => u.ticker === ticker)) {
+          scanBasket.push({ ticker, nome: ticker, mercato: 'US', valuta: 'USD' });
+        }
+      });
+
       const [freshFutures, rawQuotes] = await Promise.all([
         fetchBenchmarkFutures(true).catch(() => futures),
-        fetchMarketData(underlyings, true),
+        fetchMarketData(scanBasket, true),
       ]);
 
       if (freshFutures) {
@@ -495,7 +510,7 @@ export default function App() {
     } finally {
       setIsScanning(false);
     }
-  }, [underlyings, currentSession, futures, rsiFilterActive, parameters]);
+  }, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries]);
 
   // Re-rank instantly when RSI Filter or parameters are changed
   useEffect(() => {
@@ -581,7 +596,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    if (!isAutoRefresh || circuitBreakerActive) return;
+    if (!isAutoRefresh) return;
 
     const timer = setInterval(() => {
       setAutoRefreshCountdown((prev) => {
@@ -594,7 +609,7 @@ export default function App() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [isAutoRefresh, circuitBreakerActive]);
+  }, [isAutoRefresh]);
 
   // Run initial scan once futures are available
   const initialScanDoneRef = React.useRef(false);
@@ -1463,7 +1478,7 @@ export default function App() {
         <TradeJournal
           entries={journalEntries}
           quotes={quotes}
-          onAddEntry={(entry) => setJournalEntries((prev) => [entry, ...prev])}
+          onAddEntry={handleAddJournalTrade}
           onUpdateEntry={handleUpdateJournalTrade}
           onDeleteEntry={handleDeleteJournalTrade}
           onClearAll={handleClearJournal}
@@ -1471,6 +1486,8 @@ export default function App() {
           isPaperMode={isPaperMode}
           onOpenOptimizerModal={() => setIsOptimizerModalOpen(true)}
           optimizationProposal={pendingProposal}
+          currentUser={currentUser}
+          onSignInGoogle={handleSignInGoogle}
         />
       </main>
 
@@ -1509,6 +1526,15 @@ export default function App() {
         underlyings={underlyings}
         onUpdateUnderlyings={(newItems) => {
           setUnderlyings(newItems);
+          if (currentUser) {
+            syncSystemSettingsToCloud(currentUser.uid, {
+              parameters,
+              pendingProposal,
+              accountCapital,
+              isPaperMode,
+              underlyings: newItems,
+            });
+          }
         }}
       />
 

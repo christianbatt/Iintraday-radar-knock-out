@@ -32,10 +32,14 @@ import {
 export const DEFAULT_SYSTEM_PARAMETERS: SystemParameters = {
   version: 1,
   lastUpdated: new Date().toISOString(),
-  minScore: 55, // Out of 100
-  minGapEurope: 0.4, // %
-  minGapUSA: 0.7, // %
-  minRvol: 1.1, // Relative volume ratio
+  minScore: 55, // Out of 100 (fallback globale)
+  minScoreEurope: 48, // Out of 100 (Europa: gap più contenuti ma affidabili)
+  minScoreUSA: 58, // Out of 100 (USA: richiesta maggiore spinta)
+  minGapEurope: 0.40, // % (Europa)
+  minGapUSA: 0.75, // % (USA)
+  minRvol: 1.0, // Relative volume ratio fallback
+  minRvolEurope: 0.85, // Relative volume ratio (Europa: compensa minore liquidità pre-apertura)
+  minRvolUSA: 1.15, // Relative volume ratio (USA)
   minAvgVolume: 350000, // Shares daily average
   normalRiskMultiplier: 0.50, // 0.50 of ATR
   target1Multiplier: 1.60, // 1.60 of normal risk
@@ -349,14 +353,18 @@ export function isCandidateCompliantWithParameters(
   if (price == null || price <= 0) reasons.push('Prezzo non disponibile');
   if (quote.atr14 == null || quote.atr14 <= 0) reasons.push('ATR(14) non calcolabile');
 
-  if (score < params.minScore) {
-    reasons.push(`Score ${score}/100 < ${params.minScore}/100`);
+  const isEU = quote.market === 'EU';
+  const minScore = isEU ? (params.minScoreEurope ?? 48) : (params.minScoreUSA ?? 58);
+  const minRvol = isEU ? (params.minRvolEurope ?? 0.85) : (params.minRvolUSA ?? 1.15);
+  const minGap = isEU ? params.minGapEurope : params.minGapUSA;
+
+  if (score < minScore) {
+    reasons.push(`Score ${score}/100 < ${minScore}/100 (${isEU ? 'EU' : 'US'})`);
   }
-  const rvol = quote.rvol ?? 1.0;
-  if (rvol < params.minRvol) {
-    reasons.push(`RVOL ${rvol.toFixed(2)}x < ${params.minRvol}x`);
+  const rvol = quote.rvol != null ? quote.rvol : (isEU ? 1.0 : 1.0);
+  if (rvol < minRvol) {
+    reasons.push(`RVOL ${rvol.toFixed(2)}x < ${minRvol}x (${isEU ? 'EU' : 'US'})`);
   }
-  const minGap = quote.market === 'EU' ? params.minGapEurope : params.minGapUSA;
   const absGap = Math.abs(quote.gapPercent ?? 0);
   if (absGap < minGap) {
     reasons.push(`Gap ${(quote.gapPercent ?? 0).toFixed(2)}% < ±${minGap}%`);
@@ -580,12 +588,18 @@ export function buildExecutionSetup(
 
   const isGapLong = (quote.gapPercent ?? 0) >= 0;
 
-  // Filter 1: Minimum score requirement (from active parameters)
-  if (score < activeParams.minScore) {
+  const marketType = quote.market || (session === 'US' ? 'US' : 'EU');
+  const isEU = marketType === 'EU';
+  const minScore = isEU ? (activeParams.minScoreEurope ?? 48) : (activeParams.minScoreUSA ?? 58);
+  const minRvol = isEU ? (activeParams.minRvolEurope ?? 0.85) : (activeParams.minRvolUSA ?? 1.15);
+  const minGap = isEU ? activeParams.minGapEurope : activeParams.minGapUSA;
+
+  // Filter 1: Minimum score requirement (differentiated by market)
+  if (score < minScore) {
     return {
       candidate: quote,
       decision: 'NESSUN_TRADE',
-      reasonNoTrade: `Punteggio di candidatura (${score}/100) inferiore alla soglia minima attiva (${activeParams.minScore}/100). Preservazione del capitale: nessun trade con score sotto soglia.`,
+      reasonNoTrade: `Punteggio di candidatura (${score}/100) inferiore alla soglia minima attiva per ${isEU ? 'Europa' : 'USA'} (${minScore}/100). Preservazione del capitale: nessun trade con score sotto soglia.`,
       direction: 'NESSUNA',
       strategy: 'Nessun setup',
       triggerLevel: null,
@@ -603,12 +617,12 @@ export function buildExecutionSetup(
   }
 
   // Filter 1b: Minimum Relative Volume (RVOL) requirement
-  const rvol = quote.rvol ?? 1.0;
-  if (rvol < activeParams.minRvol) {
+  const rvol = quote.rvol != null ? quote.rvol : (isEU ? 1.0 : 1.0);
+  if (rvol < minRvol) {
     return {
       candidate: quote,
       decision: 'NESSUN_TRADE',
-      reasonNoTrade: `Volume Relativo (${rvol.toFixed(2)}x) inferiore alla soglia minima attiva (${activeParams.minRvol}x). Protezione da trappole di liquidità e falsi breakout.`,
+      reasonNoTrade: `Volume Relativo (${rvol.toFixed(2)}x) inferiore alla soglia minima attiva per ${isEU ? 'Europa' : 'USA'} (${minRvol}x). Protezione da trappole di liquidità e falsi breakout.`,
       direction: 'NESSUNA',
       strategy: 'Nessun setup',
       triggerLevel: null,
@@ -626,14 +640,12 @@ export function buildExecutionSetup(
   }
 
   // Filter 1c: Minimum Opening Gap % requirement
-  const marketType = quote.market || (session === 'US' ? 'US' : 'EU');
-  const minGap = marketType === 'EU' ? activeParams.minGapEurope : activeParams.minGapUSA;
   const absGap = Math.abs(quote.gapPercent ?? 0);
   if (absGap < minGap) {
     return {
       candidate: quote,
       decision: 'NESSUN_TRADE',
-      reasonNoTrade: `Ampiezza Gap (${(quote.gapPercent ?? 0).toFixed(2)}%) inferiore alla soglia minima attiva (±${minGap}%). Impulso direzionale d'apertura insufficiente per breakout orario.`,
+      reasonNoTrade: `Ampiezza Gap (${(quote.gapPercent ?? 0).toFixed(2)}%) inferiore alla soglia minima attiva per ${isEU ? 'Europa' : 'USA'} (±${minGap}%). Impulso direzionale d'apertura insufficiente per breakout orario.`,
       direction: 'NESSUNA',
       strategy: 'Nessun setup',
       triggerLevel: null,
@@ -1951,7 +1963,12 @@ export function generateFilteringAuditReport(
   const totalScanned = quotes.length;
   const qualifiedTickers = new Set<string>();
 
-  if (dualTop.topEU && dualTop.topEU.score.total >= parameters.minScore) {
+  const minScoreEU = parameters.minScoreEurope ?? 48;
+  const minScoreUS = parameters.minScoreUSA ?? 58;
+  const minRvolEU = parameters.minRvolEurope ?? 0.85;
+  const minRvolUS = parameters.minRvolUSA ?? 1.15;
+
+  if (dualTop.topEU && dualTop.topEU.score.total >= minScoreEU) {
     const cat = catalystCache[dualTop.topEU.quote.ticker];
     const isAbsenceOfNewsOnly = cat && (
       cat.catalizzatore?.toLowerCase().includes('nessuna notizia') ||
@@ -1963,7 +1980,7 @@ export function generateFilteringAuditReport(
     }
   }
 
-  if (dualTop.topUS && dualTop.topUS.score.total >= parameters.minScore) {
+  if (dualTop.topUS && dualTop.topUS.score.total >= minScoreUS) {
     const cat = catalystCache[dualTop.topUS.quote.ticker];
     const isAbsenceOfNewsOnly = cat && (
       cat.catalizzatore?.toLowerCase().includes('nessuna notizia') ||
@@ -1998,18 +2015,22 @@ export function generateFilteringAuditReport(
         ? futuresChange.US
         : futuresChange.EU;
 
+    const isEU = q.market === 'EU';
+    const minScore = isEU ? minScoreEU : minScoreUS;
+    const minRvol = isEU ? minRvolEU : minRvolUS;
+    const minGap = isEU ? parameters.minGapEurope : parameters.minGapUSA;
+
     const cat = catalystCache[q.ticker];
     const scoreObj = calculateCandidateScore(q, change, cat);
     const score = scoreObj.total;
     const rsi = q.rsi5m ?? q.rsi14 ?? null;
     const gap = q.gapPercent ?? 0;
     const absGap = Math.abs(gap);
-    const minGap = q.market === 'EU' ? parameters.minGapEurope : parameters.minGapUSA;
-    const rvol = q.rvol ?? 1.0;
+    const rvol = q.rvol != null ? q.rvol : (isEU ? 1.0 : 1.0);
 
     let primaryReasonCategory: ExclusionCategory = 'SCORE_BELOW_MIN';
-    let primaryReasonLabel = 'Punteggio complessivo sotto soglia';
-    let detail = `Punteggio quantitativo ${score}/100 inferiore alla soglia minima richiesta di ${parameters.minScore}/100.`;
+    let primaryReasonLabel = `Punteggio complessivo sotto soglia (${isEU ? 'EU' : 'US'})`;
+    let detail = `Punteggio quantitativo ${score}/100 inferiore alla soglia minima richiesta di ${minScore}/100 per ${isEU ? 'Europa' : 'USA'}.`;
 
     // Hierarchy of exclusions:
     if (q.currentPrice == null && q.preMarketPrice == null) {
@@ -2032,9 +2053,9 @@ export function generateFilteringAuditReport(
       primaryReasonLabel = `Gap % insufficiente (${gap.toFixed(2)}% vs min ±${minGap}%)`;
       detail = `Il sottostante non presenta un gap d'apertura minimo per attivare strategie Gap & Go o ORB.`;
       countsByCategory.gapInsufficient++;
-    } else if (rvol < parameters.minRvol) {
+    } else if (rvol < minRvol) {
       primaryReasonCategory = 'RVOL_INSUFFICIENT';
-      primaryReasonLabel = `Volume Relativo basso (${rvol.toFixed(2)}x vs min ${parameters.minRvol}x)`;
+      primaryReasonLabel = `Volume Relativo basso (${rvol.toFixed(2)}x vs min ${minRvol}x)`;
       detail = `Scambi istituzionali inferiori alla media mobile a 20 periodi; rischio falsa rottura.`;
       countsByCategory.rvolInsufficient++;
     } else if (cat && cat.decisione === 'NESSUN_TRADE') {
@@ -2052,10 +2073,10 @@ export function generateFilteringAuditReport(
         primaryReasonLabel = 'Rischio fondamentale avverso o trimestrale';
         detail = cat.catalizzatore || 'Rischio trimestrale o evento societario critico attivo nella giornata odierna.';
         countsByCategory.catalystUnverified++;
-      } else if (score < parameters.minScore) {
+      } else if (score < minScore) {
         primaryReasonCategory = 'SCORE_BELOW_MIN';
-        primaryReasonLabel = `Punteggio sotto soglia (${score}/100 vs min ${parameters.minScore})`;
-        detail = `Punteggio ${score}/100: confluenza tecnica debole tra gap, book e futures.`;
+        primaryReasonLabel = `Punteggio sotto soglia (${score}/100 vs min ${minScore})`;
+        detail = `Punteggio ${score}/100: confluenza tecnica debole tra gap, book e futures per ${isEU ? 'Europa' : 'USA'}.`;
         countsByCategory.scoreBelowMin++;
       } else {
         primaryReasonCategory = 'CUTOFF_PASSED';
@@ -2063,10 +2084,10 @@ export function generateFilteringAuditReport(
         detail = `Sessione oltre l'orario di cutoff consentito (${q.market === 'EU' ? '11:30' : '17:30'} CET).`;
         countsByCategory.cutoffPassed++;
       }
-    } else if (score < parameters.minScore) {
+    } else if (score < minScore) {
       primaryReasonCategory = 'SCORE_BELOW_MIN';
-      primaryReasonLabel = `Punteggio sotto soglia (${score}/100 vs min ${parameters.minScore})`;
-      detail = `Punteggio ${score}/100: confluenza tecnica debole tra gap, book e futures.`;
+      primaryReasonLabel = `Punteggio sotto soglia (${score}/100 vs min ${minScore})`;
+      detail = `Punteggio ${score}/100: confluenza tecnica debole tra gap, book e futures per ${isEU ? 'Europa' : 'USA'}.`;
       countsByCategory.scoreBelowMin++;
     } else {
       primaryReasonCategory = 'CUTOFF_PASSED';

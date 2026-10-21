@@ -938,6 +938,8 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
                 className={`flex-1 py-2.5 px-3 rounded-l-xl text-xs font-bold font-mono flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer ${
                   isBlockedByStress
                     ? 'bg-rose-950/60 text-rose-300 border border-rose-800/80 cursor-not-allowed opacity-80'
+                    : circuitBreakerActive
+                    ? 'bg-slate-800/80 text-amber-300 border border-amber-800/60 cursor-not-allowed'
                     : tradeSaved
                     ? 'bg-emerald-500 text-slate-950'
                     : 'bg-emerald-600 hover:bg-emerald-500 text-white active:scale-95'
@@ -947,6 +949,11 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
                   <>
                     <Lock className="w-4 h-4 text-rose-400" />
                     <span className="truncate">Bloccato da Stress Test</span>
+                  </>
+                ) : circuitBreakerActive ? (
+                  <>
+                    <Lock className="w-4 h-4 text-amber-400" />
+                    <span className="truncate">2/2 Trade Oggi (Solo Osservazione)</span>
                   </>
                 ) : tradeSaved ? (
                   <>

@@ -23,7 +23,10 @@ import {
   AlertTriangle,
   Zap,
   Target,
+  Cloud,
+  Smartphone,
 } from 'lucide-react';
+import { User } from 'firebase/auth';
 import { PerformanceSummary } from './PerformanceSummary';
 import { HistoricalEquityDashboard } from './HistoricalEquityDashboard';
 
@@ -38,6 +41,8 @@ interface TradeJournalProps {
   isPaperMode: boolean;
   onOpenOptimizerModal?: () => void;
   optimizationProposal?: OptimizationProposal | null;
+  currentUser?: User | null;
+  onSignInGoogle?: () => void;
 }
 
 export const TradeJournal: React.FC<TradeJournalProps> = ({
@@ -51,6 +56,8 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
   isPaperMode,
   onOpenOptimizerModal,
   optimizationProposal,
+  currentUser,
+  onSignInGoogle,
 }) => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [filterMode, setFilterMode] = useState<'ALL' | 'PAPER' | 'REAL'>('ALL');
@@ -334,6 +341,42 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
           )}
         </div>
       </div>
+
+      {/* 1.5. Cross-Device Cloud Sync Information */}
+      {!currentUser ? (
+        <div className="px-5 py-2.5 bg-sky-950/40 border-b border-sky-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs font-mono">
+          <div className="flex items-center gap-2.5">
+            <div className="w-6 h-6 rounded-md bg-sky-900/80 border border-sky-500/50 flex items-center justify-center text-sky-400 shrink-0">
+              <Cloud className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <span className="text-sky-300 font-bold">Sincronizzazione Desktop ⟷ Mobile (Stessa App): </span>
+              <span className="text-slate-300">
+                Sei in memoria locale. Per visualizzare gli stessi trade su PC e Smartphone e raggiungere insieme il ciclo di 20 trade, accedi con Google.
+              </span>
+            </div>
+          </div>
+          {onSignInGoogle && (
+            <button
+              onClick={onSignInGoogle}
+              className="px-3 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer self-start sm:self-center shadow"
+            >
+              <Cloud className="w-3.5 h-3.5" />
+              <span>Connetti Google</span>
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="px-5 py-2 bg-emerald-950/30 border-b border-emerald-800/40 flex items-center justify-between text-[11px] font-mono text-emerald-300">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>
+              Cloud Sync Attivo ({currentUser.displayName || currentUser.email}): Ogni trade registrato su Desktop o Mobile è condiviso in tempo reale sul database unico.
+            </span>
+          </div>
+          <span className="text-slate-500 text-[10px] hidden sm:inline">Ciclo di 20 trade unificato</span>
+        </div>
+      )}
 
       {/* 2. Sub-Toolbar: Filters & 20-Setup Cycle Badge (Zero Overlap!) */}
       <div className="px-5 py-2.5 bg-slate-950/80 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5 text-xs font-mono">
