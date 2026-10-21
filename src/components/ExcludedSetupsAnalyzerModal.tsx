@@ -175,7 +175,10 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
               </div>
               <button
                 type="button"
-                onClick={onApplyAllUrgentCorrections}
+                onClick={() => {
+                  onApplyAllUrgentCorrections();
+                  onClose();
+                }}
                 className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-amber-500/20 shrink-0 cursor-pointer transition-all"
               >
                 <Sliders className="w-3.5 h-3.5" />
@@ -344,13 +347,14 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
                           </div>
                           <button
                             type="button"
-                            onClick={() =>
+                            onClick={() => {
                               onApplyCorrection(
                                 cat.correctionProposal!.parameterKey,
                                 cat.correctionProposal!.proposedValue,
                                 cat.correctionProposal!.explanation
-                              )
-                            }
+                              );
+                              onClose();
+                            }}
                             className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/50 font-bold text-xs shrink-0 cursor-pointer transition-colors"
                           >
                             Applica Correzione

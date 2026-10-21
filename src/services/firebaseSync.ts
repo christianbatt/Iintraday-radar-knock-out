@@ -9,6 +9,7 @@ import {
   User,
 } from 'firebase/auth';
 import {
+  initializeFirestore,
   getFirestore,
   doc,
   collection,
@@ -16,7 +17,6 @@ import {
   setDoc,
   deleteDoc,
   writeBatch,
-  getDocFromServer,
   getDocs,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
@@ -32,27 +32,28 @@ const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 // Initialize Auth
 export const auth = getAuth(app);
 
-// Initialize Firestore with custom databaseId if specified
-export const db = getFirestore(
-  app,
+// Initialize Firestore with robust long-polling auto-detection for cloud iframes & web sandboxes
+const databaseId =
   firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
     ? firebaseConfig.firestoreDatabaseId
-    : '(default)'
-);
+    : '(default)';
+
+let firestoreInstance;
+try {
+  firestoreInstance = initializeFirestore(
+    app,
+    {
+      experimentalAutoDetectLongPolling: true,
+    },
+    databaseId
+  );
+} catch {
+  firestoreInstance = getFirestore(app, databaseId);
+}
+
+export const db = firestoreInstance;
 
 const googleProvider = new GoogleAuthProvider();
-
-// Connection check as mandated by skill
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn('[Firebase] Warning: Client is offline or Firestore is initializing.');
-    }
-  }
-}
-testConnection();
 
 export interface CloudSystemSettings {
   parameters: SystemParameters;

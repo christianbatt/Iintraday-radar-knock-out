@@ -256,8 +256,11 @@ async function fetchQuoteForTicker(
     }
   }
 
+  const isSpaceX = ticker.toUpperCase() === 'SPACEX';
+  const queryTicker = isSpaceX ? 'DXYZ' : ticker;
+
   // Launch 5m intraday metrics fetch (RSI 5m + RVOL 20m) in parallel for zero added latency
-  const intraday5mPromise = getIntraday5mMetrics(ticker);
+  const intraday5mPromise = getIntraday5mMetrics(queryTicker);
 
   let quoteData: Partial<RawQuoteData> = {};
   let source = 'Exchange Feed (Real-Time)';
@@ -266,7 +269,7 @@ async function fetchQuoteForTicker(
   const finnhubKey = process.env.FINNHUB_API_KEY;
   if (finnhubKey) {
     try {
-      const cleanTicker = ticker.replace('.DE', '').replace('.MI', '').replace('.PA', '').replace('.AS', '');
+      const cleanTicker = queryTicker.replace('.DE', '').replace('.MI', '').replace('.PA', '').replace('.AS', '');
       const resp = await fetch(
         `https://finnhub.io/api/v1/quote?symbol=${cleanTicker}&token=${finnhubKey}`
       );
@@ -288,7 +291,7 @@ async function fetchQuoteForTicker(
 
   // 2. Fetch real data from Yahoo Finance Chart API (with cachebuster to bypass CDN stale cache)
   try {
-    const ySymbol = ticker.includes('.') ? ticker : `${ticker}`;
+    const ySymbol = queryTicker.includes('.') ? queryTicker : `${queryTicker}`;
     const nocache = Date.now();
     const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}?interval=1d&range=1mo&includePrePost=true&_=${nocache}`;
     const yResp = await fetch(yUrl, {
@@ -650,13 +653,17 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
   const cached = cache.get<NewsItem[]>(cacheKey);
   if (cached) return cached.data;
 
+  const isSpaceX = ticker.toUpperCase() === 'SPACEX';
+  const queryTicker = isSpaceX ? 'DXYZ' : ticker;
+  const searchName = isSpaceX ? 'SpaceX' : name;
+
   const newsList: NewsItem[] = [];
 
   // 1. Try Finnhub if key provided
   const finnhubKey = process.env.FINNHUB_API_KEY;
   if (finnhubKey) {
     try {
-      const cleanTicker = ticker.split('.')[0];
+      const cleanTicker = queryTicker.split('.')[0];
       const today = new Date().toISOString().split('T')[0];
       const yesterday = new Date(Date.now() - 86400000 * 2).toISOString().split('T')[0];
       const resp = await fetch(
@@ -688,7 +695,7 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
   // 2. Fetch real live articles from Google News RSS feed (Italian financial coverage)
   if (newsList.length === 0) {
     try {
-      const query = encodeURIComponent(`${name} ${ticker} borsa`);
+      const query = encodeURIComponent(`${searchName} ${isSpaceX ? 'SpaceX' : ticker} borsa`);
       const rssUrl = `https://news.google.com/rss/search?q=${query}&hl=it&gl=IT&ceid=IT:it`;
       const rssResp = await fetch(rssUrl, {
         headers: {

@@ -4,6 +4,7 @@ import {
   ScoreBreakdown,
   ExecutionSetup,
   GeminiCatalystAnalysis,
+  NewsItem,
   KnockOutCalculatorInput,
   KnockOutSafetyCheck,
   PnLScenario,

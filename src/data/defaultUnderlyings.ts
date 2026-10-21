@@ -36,6 +36,7 @@ export const DEFAULT_TRADE_REPUBLIC_UNDERLYINGS: UnderlyingItem[] = [
   { ticker: 'MARA', nome: 'MARA Holdings Inc.', mercato: 'US', valuta: 'USD' },
   { ticker: 'PLTR', nome: 'Palantir Technologies', mercato: 'US', valuta: 'USD' },
   { ticker: 'COIN', nome: 'Coinbase Global Inc.', mercato: 'US', valuta: 'USD' },
+  { ticker: 'SPACEX', nome: 'SpaceX (Destiny Tech100)', mercato: 'US', valuta: 'USD' },
 ];
 
 export function parseUnderlyingsCsv(csvText: string): { items: UnderlyingItem[]; errors: string[] } {

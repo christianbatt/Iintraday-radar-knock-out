@@ -362,14 +362,20 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
 
                     <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
                       <button
-                        onClick={onRejectProposal}
+                        onClick={() => {
+                          onRejectProposal();
+                          onClose();
+                        }}
                         className="flex-1 sm:flex-initial px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-bold font-mono text-xs transition-colors cursor-pointer"
                       >
                         Rifiuta (Mantieni Attuali)
                       </button>
 
                       <button
-                        onClick={onAcceptProposal}
+                        onClick={() => {
+                          onAcceptProposal();
+                          onClose();
+                        }}
                         className="flex-1 sm:flex-initial px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold font-mono text-xs shadow-lg shadow-emerald-900/40 flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer"
                       >
                         <CheckCircle2 className="w-4 h-4" />
