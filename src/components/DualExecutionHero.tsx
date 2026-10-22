@@ -7,6 +7,7 @@ import {
 } from '../types/radar';
 import { calculateKnockOutSafety, createDefaultSafetyCheck } from '../utils/calculator';
 import { ImpliedVolatilityGauge } from './ImpliedVolatilityGauge';
+import { tradingAudio } from '../utils/audioAlert';
 import {
   ShieldAlert,
   ShieldCheck,
@@ -29,6 +30,11 @@ import {
   ChevronDown,
   ChevronUp,
   Info,
+  Volume2,
+  VolumeX,
+  Copy,
+  Check,
+  Compass,
 } from 'lucide-react';
 
 interface SingleMarketHeroCardProps {
@@ -80,6 +86,13 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
   const [barrierStrike, setBarrierStrike] = useState<number>(defaultBarrier);
   const [leverage, setLeverage] = useState<number>(10);
   const [certPrice, setCertPrice] = useState<number>(2.5);
+  const [ratio, setRatio] = useState<number>(market === 'US' ? 0.1 : 1);
+  const [fxRateEurUsd, setFxRateEurUsd] = useState<number>(1.08);
+  const [audioEnabled, setAudioEnabled] = useState<boolean>(tradingAudio.getEnabled());
+  const [copiedTicket, setCopiedTicket] = useState<boolean>(false);
+  const [target1MovedToBE, setTarget1MovedToBE] = useState<boolean>(false);
+  const triggerAudioRef = React.useRef<{ playedBreakout?: string; playedT1?: string }>({});
+
   const [maxRiskPercent, setMaxRiskPercent] = useState<number>(1.0);
   const [spreadEur, setSpreadEur] = useState<number>(0.02);
   const [brokerFeeEur, setBrokerFeeEur] = useState<number>(1.0);
@@ -111,6 +124,8 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
     maxRiskPercent,
     spreadEur,
     brokerFeeEur,
+    ratio,
+    fxRateEurUsd,
   };
 
   const koSafety: KnockOutSafetyCheck = setup
@@ -168,6 +183,71 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
   const atrVal = quote?.atr14 ?? null;
   const atrPct = atrVal && refPrice > 0 ? ((atrVal / refPrice) * 100).toFixed(1) : null;
 
+  const isEU = market === 'EU';
+  const minScore = isEU ? 48 : 58;
+  const minRvol = isEU ? 0.85 : 1.15;
+  const minGap = isEU ? 0.5 : 0.8;
+  const currentScore = candidate?.score?.total;
+  const currentRvol = quote?.rvol != null ? quote.rvol : 1.0;
+  const currentGap = Math.abs(quote?.gapPercent ?? 0);
+  const isScorePass = currentScore != null ? currentScore >= minScore : false;
+  const isRvolPass = currentRvol >= minRvol;
+  const isGapPass = currentGap >= minGap;
+
+  const isTarget1Reached = Boolean(
+    setup &&
+    setup.decision === 'TRADE' &&
+    setup.target1Level &&
+    refPrice > 0 &&
+    (setup.direction === 'LONG' ? refPrice >= setup.target1Level : refPrice <= setup.target1Level)
+  );
+
+  React.useEffect(() => {
+    if (!setup || setup.decision !== 'TRADE' || !setup.triggerLevel || refPrice <= 0) return;
+    const isBreakout =
+      setup.direction === 'LONG' ? refPrice >= setup.triggerLevel : refPrice <= setup.triggerLevel;
+
+    if (isBreakout && triggerAudioRef.current.playedBreakout !== quote?.ticker) {
+      triggerAudioRef.current.playedBreakout = quote?.ticker;
+      tradingAudio.playTriggerBreakoutAlert();
+    }
+    if (isTarget1Reached && triggerAudioRef.current.playedT1 !== quote?.ticker) {
+      triggerAudioRef.current.playedT1 = quote?.ticker;
+      tradingAudio.playTargetReachedAlert();
+    }
+  }, [refPrice, setup, quote?.ticker, isTarget1Reached]);
+
+  const handleCopyTicket = () => {
+    if (!setup || !quote) return;
+    const ticketText = `📋 TICKET ORDINE TURBO KNOCK-OUT
+Sottostante: ${quote.ticker} (${quote.name}) | Mercato: ${market}
+Direzione: ${setup.direction}
+Strategia: ${setup.strategy}
+Trigger Ingresso: ${setup.triggerLevel?.toFixed(2)} ${quote.currency} (Breakout confermato + VWAP)
+Stop Loss: ${setup.stopLossLevel?.toFixed(2)} ${quote.currency} (${setup.structuralLevels?.explanation || 'Stop protettivo'})
+Barriera KO Suggerita: ${barrierStrike.toFixed(2)} ${quote.currency} (Leva ${leverage}x | Parità ${ratio})
+Prezzo Certificato Stimato: ${(koSafety.theoreticalCertPriceEur || certPrice).toFixed(2)} €
+N. Quote Consigliate (1% Rischio): ${koSafety.suggestedCertificates} quote (~${koSafety.totalInvestedEur.toFixed(2)} €)
+Target 1 (1.6R): ${setup.target1Level?.toFixed(2)} ${quote.currency} (Monetizza 65-70% della posizione)
+Target 2 (2.8R): ${setup.target2Level?.toFixed(2)} ${quote.currency} (Runner finale)
+Breakeven Reale: ${dynamicBreakeven?.underlyingBreakevenPrice.toFixed(2)} ${quote.currency}
+Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo Overnight.`;
+
+    navigator.clipboard.writeText(ticketText).then(() => {
+      setCopiedTicket(true);
+      setTimeout(() => setCopiedTicket(false), 2500);
+    });
+  };
+
+  const handleToggleAudio = () => {
+    const next = !audioEnabled;
+    setAudioEnabled(next);
+    tradingAudio.setEnabled(next);
+    if (next) {
+      tradingAudio.playTriggerBreakoutAlert();
+    }
+  };
+
   return (
     <div
       className={`relative flex flex-col justify-between rounded-2xl border transition-all duration-200 overflow-hidden shadow-2xl ${
@@ -199,8 +279,45 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
           </div>
         </div>
 
-        {/* Trade Decision Badge */}
-        <div>
+        {/* Actions & Trade Decision Badge */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleToggleAudio}
+            className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
+              audioEnabled
+                ? 'bg-emerald-950/80 border-emerald-700/80 text-emerald-300'
+                : 'bg-slate-800/80 border-slate-700 text-slate-500 hover:text-slate-300'
+            }`}
+            title={audioEnabled ? 'Audio Alert Attivo (Suono alla rottura del trigger e a T1)' : 'Audio Alert Disattivato'}
+          >
+            {audioEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+          </button>
+
+          {isNoTrade ? (
+            <span
+              className="px-2 py-1 rounded-lg border border-slate-800 bg-slate-900/60 text-slate-500 text-xs font-mono flex items-center gap-1 cursor-not-allowed select-none"
+              title="Ticket d'ordine disabilitato: le condizioni operative minime non sono soddisfatte (Preservazione del Capitale)"
+            >
+              <Lock className="w-3.5 h-3.5 text-slate-500" />
+              <span>Ticket Bloccato</span>
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={handleCopyTicket}
+              className={`px-2 py-1 rounded-lg border text-xs font-mono font-semibold flex items-center gap-1 transition-colors cursor-pointer ${
+                copiedTicket
+                  ? 'bg-emerald-500 text-slate-950 border-emerald-400 font-bold'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+              }`}
+              title="Copia negli appunti il ticket ordine formattato per il broker"
+            >
+              {copiedTicket ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copiedTicket ? 'Copiato!' : 'Ticket'}</span>
+            </button>
+          )}
+
           {isNoTrade ? (
             <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 text-slate-300 text-xs font-mono font-semibold">
               <Ban className="w-3.5 h-3.5 text-slate-400" />
@@ -226,7 +343,59 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
       </div>
 
       {/* Main Body */}
-      <div className="p-5 flex-1 flex flex-col justify-between space-y-5">
+      <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
+        {/* Target 1 Reached Discipline Alert */}
+        {isTarget1Reached && (
+          <div className="bg-gradient-to-r from-emerald-950 via-emerald-900/60 to-slate-900 border-2 border-emerald-500/80 rounded-xl p-3 font-mono shadow-lg animate-pulse">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2">
+                <Target className="w-5 h-5 text-emerald-400 shrink-0" />
+                <div>
+                  <div className="text-xs font-bold text-emerald-300 uppercase tracking-wide">
+                    🎯 Target 1 Raggiunto (+1.6R su {setup?.target1Level} {quote?.currency})!
+                  </div>
+                  <div className="text-[11px] text-slate-200 mt-0.5">
+                    Regola ferrea: Incassa il 65-70% del controvalore e sposta lo Stop a <strong>{dynamicBreakeven?.underlyingBreakevenPrice.toFixed(2)} {quote?.currency}</strong> (Breakeven Dinamico).
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setTarget1MovedToBE(true);
+                  handleLogTrade('WIN');
+                }}
+                disabled={target1MovedToBE}
+                className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shrink-0 cursor-pointer transition-colors shadow"
+              >
+                {target1MovedToBE ? 'Protetta a BE ✓' : 'Incassa 70% & Sposta a BE'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Macro Blackout Warning Window */}
+        {setup?.macroBlackout?.isBlackoutActive && (
+          <div className="bg-amber-950/60 border border-amber-600/80 rounded-xl p-2.5 flex items-center gap-2.5 text-xs font-mono text-amber-200">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <div className="min-w-0">
+              <strong className="block text-[11px] uppercase tracking-wide text-amber-300">{setup.macroBlackout.label}</strong>
+              <span className="text-[11px] text-amber-200/90">{setup.macroBlackout.description}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Overnight Close Countdown Warning */}
+        {setup?.overnightWarning?.isCloseImminent && (
+          <div className="bg-rose-950/60 border border-rose-600/80 rounded-xl p-2.5 flex items-center gap-2.5 text-xs font-mono text-rose-200">
+            <Clock className="w-4 h-4 text-rose-400 shrink-0" />
+            <div className="min-w-0">
+              <strong className="block text-[11px] uppercase tracking-wide text-rose-300">{setup.overnightWarning.label}</strong>
+              <span className="text-[11px] text-rose-200/90">{setup.overnightWarning.description}</span>
+            </div>
+          </div>
+        )}
+
         {/* Ticker & Live Price Row */}
         {quote?.ticker ? (
           <div>
@@ -290,42 +459,72 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
           </div>
         )}
 
-        {/* If NO TRADE, show strict rationale */}
-        {isNoTrade ? (
-          <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl p-4 flex-1 flex flex-col justify-between">
-            <div>
-              <div className="flex items-center gap-2 text-xs font-semibold text-amber-400 uppercase tracking-wider mb-2 font-mono">
+        {/* If NO TRADE, show strict rationale & verification checklist */}
+        {isNoTrade && (
+          <div className="bg-amber-950/25 border border-amber-600/70 rounded-xl p-3.5 space-y-2.5 font-mono shadow-md">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-amber-400 uppercase tracking-wider">
                 <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
-                <span>Condizioni Operative Non Soddisfatte</span>
+                <span>Condizioni Operative Non Soddisfatte (Trade Sospeso)</span>
               </div>
-              <p className="text-xs text-slate-300 leading-relaxed font-mono">
-                {setup?.reasonNoTrade ||
-                  `I titoli monitorati per ${marketLabel} non hanno raggiunto il punteggio minimo (score ≥ 55) o mancano di coerenza tra gap, RVOL e futures. Preservazione del capitale: nessun trade consentito.`}
-              </p>
+              <span className="text-[10px] text-amber-300/90 bg-amber-950 px-2 py-0.5 rounded border border-amber-700/60 font-semibold">
+                Filtro Rischio Attivo
+              </span>
             </div>
 
-            {quote?.ticker && (
-              <div className="my-2">
-                <ImpliedVolatilityGauge quote={quote} compact />
-              </div>
-            )}
+            <p className="text-xs text-slate-300 leading-relaxed">
+              {setup?.reasonNoTrade ||
+                `I requisiti minimi di liquidità e allineamento per ${marketLabel} non sono soddisfatti. Preservazione del capitale: nessun ordine consentito.`}
+            </p>
 
-            <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500 font-mono">
-              <span>Orario limite: {setup?.cutoffTime || '11:30 CET'}</span>
-              <span>Rigorosa selezione zero-errore umano</span>
-            </div>
-          </div>
-        ) : (
-          /* TRADE SETUP ACTIVE */
-          <div className="space-y-4">
-            {/* Strategy Title & ORB Phase */}
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
-              <div className="flex items-center gap-2">
-                <span className="text-slate-400">Strategia:</span>
-                <span className="font-semibold text-emerald-300 bg-emerald-950/50 px-2 py-0.5 rounded border border-emerald-800/50">
-                  {setup.strategy}
+            {/* Checklist filtri di ammissione */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-amber-900/40 text-[11px]">
+              <div className="bg-slate-950/70 px-2.5 py-1.5 rounded-lg border border-slate-800 flex items-center justify-between">
+                <span className="text-slate-400">Score Algoritmico:</span>
+                <span className={`font-bold flex items-center gap-1 ${isScorePass ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {currentScore != null ? `${currentScore}/100` : 'nd'} {isScorePass ? '✓' : '✗'}
                 </span>
               </div>
+
+              <div className="bg-slate-950/70 px-2.5 py-1.5 rounded-lg border border-slate-800 flex items-center justify-between">
+                <span className="text-slate-400">Volume Relativo:</span>
+                <span className={`font-bold flex items-center gap-1 ${isRvolPass ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {currentRvol.toFixed(2)}x (min {minRvol}x) {isRvolPass ? '✓' : '✗'}
+                </span>
+              </div>
+
+              <div className="bg-slate-950/70 px-2.5 py-1.5 rounded-lg border border-slate-800 flex items-center justify-between">
+                <span className="text-slate-400">Ampiezza Gap:</span>
+                <span className={`font-bold flex items-center gap-1 ${isGapPass ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {gapVal >= 0 ? '+' : ''}{gapVal.toFixed(2)}% (min ±{minGap}%) {isGapPass ? '✓' : '✗'}
+                </span>
+              </div>
+
+              <div className="bg-slate-950/70 px-2.5 py-1.5 rounded-lg border border-slate-800 flex items-center justify-between">
+                <span className="text-slate-400">Catalizzatore:</span>
+                <span className={`font-bold ${setup?.catalystAnalysis?.decisione === 'NESSUN_TRADE' ? 'text-rose-400' : 'text-emerald-400'}`}>
+                  {setup?.catalystAnalysis?.decisione === 'NESSUN_TRADE' ? 'Sfavorevole ✗' : 'Idoneo ✓'}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Technical Analysis & Execution/Monitoring Details */}
+        {setup && (
+          <div className="space-y-4">
+          {/* Strategy Title & ORB Phase */}
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+            <div className="flex items-center gap-2">
+              <span className="text-slate-400">Strategia:</span>
+              <span className={`font-semibold px-2 py-0.5 rounded border ${
+                isNoTrade
+                  ? 'text-amber-300 bg-amber-950/40 border-amber-800/50'
+                  : 'text-emerald-300 bg-emerald-950/50 border-emerald-800/50'
+              }`}>
+                {setup?.strategy && setup.strategy !== 'Nessun setup' ? setup.strategy : 'In Monitoraggio Condizionato'}
+              </span>
+            </div>
               {setup.orbPhase && (
                 <div
                   className={`px-2 py-0.5 rounded border text-[11px] font-semibold flex items-center gap-1.5 ${
@@ -356,8 +555,62 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
               </div>
             )}
 
+            {/* ADR Space & Initial Balance Badges */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] font-mono">
+              {setup.adrInfo && (
+                <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-2 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-slate-400">
+                    <Activity className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>Spazio ADR:</span>
+                  </div>
+                  <span className={`font-semibold ${
+                    setup.adrInfo.status === 'OPTIMAL'
+                      ? 'text-emerald-400'
+                      : setup.adrInfo.status === 'MODERATE'
+                      ? 'text-amber-400'
+                      : 'text-rose-400'
+                  }`}>
+                    {setup.adrInfo.remainingPct}% residuo ({setup.adrInfo.status === 'OPTIMAL' ? 'Ottimale' : setup.adrInfo.status === 'MODERATE' ? 'Moderato' : 'Esaurito'})
+                  </span>
+                </div>
+              )}
+
+              {setup.initialBalance && (
+                <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-2 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-slate-400">
+                    <Compass className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                    <span>Initial Balance:</span>
+                  </div>
+                  <span className={`font-semibold truncate max-w-[170px] ${
+                    setup.initialBalance.status === 'TREND_EXPANSION'
+                      ? 'text-emerald-300'
+                      : setup.initialBalance.status === 'RANGE_ROTATION'
+                      ? 'text-slate-300'
+                      : 'text-amber-400'
+                  }`} title={setup.initialBalance.label}>
+                    {setup.initialBalance.status === 'TREND_EXPANSION'
+                      ? 'Trend Day'
+                      : setup.initialBalance.status === 'RANGE_ROTATION'
+                      ? 'Rotazione'
+                      : 'Formazione...'}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Execution Levels Header for NESSUN_TRADE */}
+            {isNoTrade && setup?.triggerLevel && (
+              <div className="text-[11px] font-mono text-slate-300 bg-slate-950/90 border border-amber-700/60 rounded-xl px-3 py-1.5 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-amber-300 font-semibold">
+                  <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>LIVELLI TEORICI IN MONITORAGGIO</span>
+                </div>
+                <span className="text-[10px] text-slate-400">Non operativo: attesa RVOL ≥ {minRvol}x</span>
+              </div>
+            )}
+
             {/* Execution Levels Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center font-mono">
+            <div className={`grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center font-mono ${isNoTrade ? 'opacity-85' : ''}`}>
               {/* Trigger */}
               <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-2.5">
                 <div className="text-[10px] text-slate-400 uppercase font-semibold">
@@ -417,7 +670,7 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
             </div>
 
             {/* Dynamic Breakeven & Execution Friction Strip */}
-            {dynamicBreakeven && (
+            {dynamicBreakeven && !isNoTrade && (
               <div className="bg-slate-950/80 border border-slate-800/90 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 font-mono">
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-lg bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0">
@@ -628,7 +881,7 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
               {showKoCalculator && (
                 <div className="mt-3 p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3 font-mono text-xs">
                   {/* Parameter Inputs Grid */}
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                  <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5">
                     <div>
                       <label className="text-[10px] text-slate-400 block mb-1">
                         Strike Barriera KO
@@ -655,6 +908,20 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
                         <option value={10}>10x (Standard)</option>
                         <option value={15}>15x (Dinamica)</option>
                         <option value={20}>20x (Alta)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-1">
+                        Parità / Ratio
+                      </label>
+                      <select
+                        value={ratio}
+                        onChange={(e) => setRatio(parseFloat(e.target.value) || 1)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white"
+                      >
+                        <option value={1}>1:1 (EU)</option>
+                        <option value={0.1}>10:1 (0.1 USA)</option>
+                        <option value={0.01}>100:1 (0.01)</option>
                       </select>
                     </div>
                     <div>
@@ -696,6 +963,19 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
                       />
                     </div>
                   </div>
+
+                  {koSafety.theoreticalCertPriceEur != null && (
+                    <div className="flex items-center justify-between text-[11px] pt-1 text-slate-400 border-t border-slate-800">
+                      <span>Prezzo teorico certificato in EUR: <strong className="text-sky-300 font-bold">{koSafety.theoreticalCertPriceEur.toFixed(2)} €</strong></span>
+                      <button
+                        type="button"
+                        onClick={() => setCertPrice(koSafety.theoreticalCertPriceEur || certPrice)}
+                        className="text-sky-400 hover:text-sky-300 underline cursor-pointer text-[10px]"
+                      >
+                        Applica Prezzo Teorico
+                      </button>
+                    </div>
+                  )}
 
                   {/* Safety Buffer Indicator */}
                   <div

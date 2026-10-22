@@ -232,6 +232,62 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
     downloadAnchor.remove();
   };
 
+  const handleExportCsv = () => {
+    if (entries.length === 0) return;
+    const headers = [
+      'ID',
+      'Data',
+      'Sessione',
+      'Ticker',
+      'Direzione',
+      'Strategia',
+      'Entry',
+      'Exit',
+      'StopLoss',
+      'Target1',
+      'PnL_EUR',
+      'R_Multiple',
+      'Esito',
+      'Stato',
+      'Barriera_KO',
+      'Leva',
+      'Quote',
+      'Rischio_EUR',
+      'Note',
+    ];
+    const rows = entries.map((e) => [
+      e.id,
+      e.date,
+      e.session,
+      e.ticker,
+      e.direction,
+      `"${e.strategy}"`,
+      e.entryPrice,
+      e.exitPrice,
+      e.stopLoss,
+      e.target1,
+      e.pnlEur,
+      e.rMultiple,
+      e.outcome,
+      e.status || 'CLOSED',
+      e.barrierStrike ?? '',
+      e.leverage ?? '',
+      e.suggestedCertificates ?? '',
+      e.maxRiskEur ?? '',
+      `"${(e.notes || '').replace(/"/g, '""')}"`,
+    ]);
+    const csvContent =
+      'data:text/csv;charset=utf-8,' +
+      [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `intraday_radar_trades_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
   // Identify any open positions in monitoring
   const openTrades = entries.filter((e) => e.status === 'OPEN');
 
@@ -318,6 +374,15 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
           >
             <Plus className="w-4 h-4" />
             <span>Aggiungi Trade</span>
+          </button>
+
+          <button
+            onClick={handleExportCsv}
+            className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors cursor-pointer text-xs font-mono flex items-center gap-1"
+            title="Esporta diario in CSV (compatibile Excel/Fogli)"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-400" />
+            <span>CSV</span>
           </button>
 
           <button

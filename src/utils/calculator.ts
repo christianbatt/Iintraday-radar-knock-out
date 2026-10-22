@@ -643,6 +643,190 @@ export function getOrbPhaseInfo(market: 'EU' | 'US'): {
   }
 }
 
+export function getMacroBlackoutStatus(): {
+  isBlackoutActive: boolean;
+  label: string;
+  description: string;
+} {
+  const now = new Date();
+  const cetFormatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Rome',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = cetFormatter.formatToParts(now);
+  const hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
+  const minute = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
+  const currentMinutes = hour * 60 + minute;
+
+  // Window 1: 14:15 - 14:45 CET (US Macro Data: CPI, NFP, Retail Sales at 14:30 CET)
+  if (currentMinutes >= 14 * 60 + 15 && currentMinutes <= 14 * 60 + 45) {
+    return {
+      isBlackoutActive: true,
+      label: 'Blackout Macro Imminente (14:15 - 14:45 CET)',
+      description: 'Finestra rilascio dati macro USA (ore 14:30 CET). Spike e allargamento spread broker: astenersi da nuovi ingressi a ridosso del dato.',
+    };
+  }
+
+  // Window 2: 19:45 - 20:30 CET (FOMC Fed Decision at 20:00 CET)
+  if (currentMinutes >= 19 * 60 + 45 && currentMinutes <= 20 * 60 + 30) {
+    return {
+      isBlackoutActive: true,
+      label: 'Blackout Decisione Tassi Fed (19:45 - 20:30 CET)',
+      description: 'Annuncio tassi e conferenza stampa Fed: volatilità estrema a due vie. Proteggere le posizioni aperte.',
+    };
+  }
+
+  return {
+    isBlackoutActive: false,
+    label: 'Nessun Blackout Macro Imminente',
+    description: 'Nessun rilascio macro primario nell\'immediato. Flusso di mercato regolare.',
+  };
+}
+
+export function getOvernightCountdownStatus(market: 'EU' | 'US'): {
+  isCloseImminent: boolean;
+  label: string;
+  description: string;
+} {
+  const now = new Date();
+  const cetFormatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Rome',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = cetFormatter.formatToParts(now);
+  const hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
+  const minute = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
+  const currentMinutes = hour * 60 + minute;
+
+  if (market === 'EU') {
+    if (currentMinutes >= 17 * 60 && currentMinutes <= 17 * 60 + 35) {
+      return {
+        isCloseImminent: true,
+        label: 'Chiusura Imminente Seduta Europa (17:30 CET)',
+        description: 'Regola ferrea anti-overnight: liquidare qualsiasi certificato Turbo prima del settlement. Vietato mantenere leva notturna.',
+      };
+    }
+  } else {
+    if (currentMinutes >= 21 * 60 + 30 && currentMinutes <= 22 * 60 + 5) {
+      return {
+        isCloseImminent: true,
+        label: 'Chiusura Imminente Wall Street (22:00 CET)',
+        description: 'Campanella di chiusura USA alle 22:00 CET: monetizzare qualsiasi quota residua. Prevenzione gap notturno.',
+      };
+    }
+  }
+
+  return {
+    isCloseImminent: false,
+    label: 'Finestra Regolare',
+    description: 'Seduta attiva senza allerta di chiusura immediata.',
+  };
+}
+
+export function calculateInitialBalance(quote: RawQuoteData, market: 'EU' | 'US'): {
+  isFormed: boolean;
+  high: number;
+  low: number;
+  status: 'TREND_EXPANSION' | 'RANGE_ROTATION' | 'FORMING';
+  label: string;
+} {
+  const now = new Date();
+  const cetFormatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Rome',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = cetFormatter.formatToParts(now);
+  const hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
+  const minute = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
+  const currentMinutes = hour * 60 + minute;
+
+  const isFormed = market === 'EU' ? currentMinutes >= 9 * 60 + 30 : currentMinutes >= 16 * 60;
+  const price = quote.preMarketPrice ?? quote.currentPrice ?? 0;
+  const high = quote.todayHigh ?? +(price * 1.006).toFixed(2);
+  const low = quote.todayLow ?? +(price * 0.994).toFixed(2);
+
+  if (!isFormed) {
+    return {
+      isFormed: false,
+      high,
+      low,
+      status: 'FORMING',
+      label: `Formazione Initial Balance 30m in corso (chiusura ore ${market === 'EU' ? '09:30' : '16:00'} CET)`,
+    };
+  }
+
+  if (price > high) {
+    return {
+      isFormed: true,
+      high,
+      low,
+      status: 'TREND_EXPANSION',
+      label: `Espansione sopra Initial Balance High (${high.toFixed(2)}) - Trend Day`,
+    };
+  } else if (price < low) {
+    return {
+      isFormed: true,
+      high,
+      low,
+      status: 'TREND_EXPANSION',
+      label: `Espansione sotto Initial Balance Low (${low.toFixed(2)}) - Trend Day`,
+    };
+  } else {
+    return {
+      isFormed: true,
+      high,
+      low,
+      status: 'RANGE_ROTATION',
+      label: `Rotazione all'interno dell'Initial Balance 30m [${low.toFixed(2)} - ${high.toFixed(2)}]`,
+    };
+  }
+}
+
+export function calculateAdrInfo(quote: RawQuoteData): {
+  consumptionPct: number;
+  remainingPct: number;
+  status: 'OPTIMAL' | 'MODERATE' | 'EXHAUSTED';
+  description: string;
+} {
+  const price = quote.preMarketPrice ?? quote.currentPrice ?? 0;
+  const atr = quote.atr14 ?? (price * 0.018);
+  const high = quote.todayHigh ?? price;
+  const low = quote.todayLow ?? price;
+  const sessionRange = high > low ? high - low : price * 0.007;
+
+  const consumptionPct = atr > 0 ? +Math.min(100, (sessionRange / atr) * 100).toFixed(1) : 40;
+  const remainingPct = +(100 - consumptionPct).toFixed(1);
+
+  if (remainingPct >= 45) {
+    return {
+      consumptionPct,
+      remainingPct,
+      status: 'OPTIMAL',
+      description: `Spazio ADR Residuo (${remainingPct}%): eccellente capacità di espansione verso i target.`,
+    };
+  } else if (remainingPct >= 25) {
+    return {
+      consumptionPct,
+      remainingPct,
+      status: 'MODERATE',
+      description: `Spazio ADR Intermedio (${remainingPct}%): estensione discreta, preferire primo take-profit a T1.`,
+    };
+  } else {
+    return {
+      consumptionPct,
+      remainingPct,
+      status: 'EXHAUSTED',
+      description: `Range ADR Prossimo a Esaurimento (${consumptionPct}% consumato): alto rischio di consolidamento/fade.`,
+    };
+  }
+}
+
 export function buildExecutionSetup(
   topCandidate: ScoredCandidate | null,
   catalyst: GeminiCatalystAnalysis | null,
@@ -736,25 +920,71 @@ export function buildExecutionSetup(
   const minRvol = isEU ? (activeParams.minRvolEurope ?? 0.85) : (activeParams.minRvolUSA ?? 1.15);
   const minGap = isEU ? activeParams.minGapEurope : activeParams.minGapUSA;
 
+  const atr = quote.atr14;
+  const atrPercent = price > 0 ? +((atr / price) * 100).toFixed(2) : null;
+  const orbPhase = getOrbPhaseInfo(marketType as 'EU' | 'US');
+  const adrInfo = calculateAdrInfo(quote);
+  const macroBlackout = getMacroBlackoutStatus();
+  const overnightWarning = getOvernightCountdownStatus(marketType as 'EU' | 'US');
+  const initialBalance = calculateInitialBalance(quote, marketType as 'EU' | 'US');
+
+  const hypotheticalDirection: 'LONG' | 'SHORT' = catalyst?.direzione === 'SHORT' ? 'SHORT' : isGapLong ? 'LONG' : 'SHORT';
+  const normalRiskMult = activeParams.normalRiskMultiplier;
+  const normalRisk = Math.max(+(atr * normalRiskMult).toFixed(2), +(price * 0.007).toFixed(2));
+  const triggerOffset = activeParams.triggerOffsetPercent / 100;
+  const theoTrigger = +(hypotheticalDirection === 'LONG' ? price * (1 + triggerOffset) : price * (1 - triggerOffset)).toFixed(2);
+  const theoStop = +(hypotheticalDirection === 'LONG' ? theoTrigger - normalRisk : theoTrigger + normalRisk).toFixed(2);
+  const theoTarget1 = +(hypotheticalDirection === 'LONG' ? theoTrigger + normalRisk * activeParams.target1Multiplier : theoTrigger - normalRisk * activeParams.target1Multiplier).toFixed(2);
+  const theoTarget2 = +(hypotheticalDirection === 'LONG' ? theoTrigger + normalRisk * activeParams.target2Multiplier : theoTrigger - normalRisk * activeParams.target2Multiplier).toFixed(2);
+  const theoKoBarrier = +(hypotheticalDirection === 'LONG' ? theoTrigger - normalRisk * activeParams.suggestedKoBarrierMultiplier : theoTrigger + normalRisk * activeParams.suggestedKoBarrierMultiplier).toFixed(2);
+
+  const ema20 = quote.ema20Daily;
+  const isAlignedWithEma20 =
+    ema20 != null ? (hypotheticalDirection === 'LONG' ? price >= ema20 : price <= ema20) : true;
+  const macroTrendAlignment = {
+    ema20Daily: ema20,
+    isAligned: isAlignedWithEma20,
+    label:
+      ema20 != null
+        ? isAlignedWithEma20
+          ? hypotheticalDirection === 'LONG'
+            ? `Allineato Rialzista (Sopra EMA20 daily ${ema20.toFixed(2)})`
+            : `Allineato Ribassista (Sotto EMA20 daily ${ema20.toFixed(2)})`
+          : hypotheticalDirection === 'LONG'
+          ? `Controtrend Macro (Sotto EMA20 daily ${ema20.toFixed(2)})`
+          : `Controtrend Macro (Sopra EMA20 daily ${ema20.toFixed(2)})`
+        : 'EMA(20) non calcolata (Trend neutro)',
+  };
+
   // Filter 1: Minimum score requirement (differentiated by market)
   if (score < minScore) {
     return {
       candidate: quote,
       decision: 'NESSUN_TRADE',
       reasonNoTrade: `Punteggio di candidatura (${score}/100) inferiore alla soglia minima attiva per ${isEU ? 'Europa' : 'USA'} (${minScore}/100). Preservazione del capitale: nessun trade con score sotto soglia.`,
-      direction: 'NESSUNA',
+      direction: hypotheticalDirection,
       strategy: 'Nessun setup',
-      triggerLevel: null,
-      vwapCondition: 'N/A',
-      volumeCondition: 'N/A',
-      stopLossLevel: null,
-      target1Level: null,
-      target2Level: null,
-      riskRewardRatio: null,
+      triggerLevel: theoTrigger,
+      vwapCondition: hypotheticalDirection === 'LONG' ? 'Sopra VWAP Intraday' : 'Sotto VWAP Intraday',
+      volumeCondition: `Score ${score} < ${minScore}`,
+      stopLossLevel: theoStop,
+      target1Level: theoTarget1,
+      target2Level: theoTarget2,
+      suggestedKoBarrier: theoKoBarrier,
+      atrValue: atr,
+      atrPercent,
+      marketType: marketType as 'EU' | 'US',
+      riskRewardRatio: activeParams.target1Multiplier,
       invalidationConditions: ['Punteggio algoritmico inferiore alla soglia minima di rigore'],
       cutoffTime,
       catalystAnalysis: catalyst,
       dynamicBreakeven: null,
+      orbPhase,
+      macroTrendAlignment,
+      adrInfo,
+      initialBalance,
+      macroBlackout,
+      overnightWarning,
     };
   }
 
@@ -765,19 +995,29 @@ export function buildExecutionSetup(
       candidate: quote,
       decision: 'NESSUN_TRADE',
       reasonNoTrade: `Volume Relativo (${rvol.toFixed(2)}x) inferiore alla soglia minima attiva per ${isEU ? 'Europa' : 'USA'} (${minRvol}x). Protezione da trappole di liquidità e falsi breakout.`,
-      direction: 'NESSUNA',
+      direction: hypotheticalDirection,
       strategy: 'Nessun setup',
-      triggerLevel: null,
-      vwapCondition: 'N/A',
-      volumeCondition: 'N/A',
-      stopLossLevel: null,
-      target1Level: null,
-      target2Level: null,
-      riskRewardRatio: null,
+      triggerLevel: theoTrigger,
+      vwapCondition: hypotheticalDirection === 'LONG' ? 'Sopra VWAP Intraday' : 'Sotto VWAP Intraday',
+      volumeCondition: `RVOL ${rvol.toFixed(2)}x < soglia minima ${minRvol}x`,
+      stopLossLevel: theoStop,
+      target1Level: theoTarget1,
+      target2Level: theoTarget2,
+      suggestedKoBarrier: theoKoBarrier,
+      atrValue: atr,
+      atrPercent,
+      marketType: marketType as 'EU' | 'US',
+      riskRewardRatio: activeParams.target1Multiplier,
       invalidationConditions: ['Volume Relativo (RVOL) insufficiente per garantire continuazione'],
       cutoffTime,
       catalystAnalysis: catalyst,
       dynamicBreakeven: null,
+      orbPhase,
+      macroTrendAlignment,
+      adrInfo,
+      initialBalance,
+      macroBlackout,
+      overnightWarning,
     };
   }
 
@@ -788,19 +1028,29 @@ export function buildExecutionSetup(
       candidate: quote,
       decision: 'NESSUN_TRADE',
       reasonNoTrade: `Ampiezza Gap (${(quote.gapPercent ?? 0).toFixed(2)}%) inferiore alla soglia minima attiva per ${isEU ? 'Europa' : 'USA'} (±${minGap}%). Impulso direzionale d'apertura insufficiente per breakout orario.`,
-      direction: 'NESSUNA',
+      direction: hypotheticalDirection,
       strategy: 'Nessun setup',
-      triggerLevel: null,
-      vwapCondition: 'N/A',
-      volumeCondition: 'N/A',
-      stopLossLevel: null,
-      target1Level: null,
-      target2Level: null,
-      riskRewardRatio: null,
+      triggerLevel: theoTrigger,
+      vwapCondition: hypotheticalDirection === 'LONG' ? 'Sopra VWAP Intraday' : 'Sotto VWAP Intraday',
+      volumeCondition: `Gap ${absGap.toFixed(2)}% < ${minGap}%`,
+      stopLossLevel: theoStop,
+      target1Level: theoTarget1,
+      target2Level: theoTarget2,
+      suggestedKoBarrier: theoKoBarrier,
+      atrValue: atr,
+      atrPercent,
+      marketType: marketType as 'EU' | 'US',
+      riskRewardRatio: activeParams.target1Multiplier,
       invalidationConditions: ['Gap percentuale d\'apertura inferiore alla soglia minima richiesta'],
       cutoffTime,
       catalystAnalysis: catalyst,
       dynamicBreakeven: null,
+      orbPhase,
+      macroTrendAlignment,
+      adrInfo,
+      initialBalance,
+      macroBlackout,
+      overnightWarning,
     };
   }
 
@@ -812,19 +1062,29 @@ export function buildExecutionSetup(
       candidate: quote,
       decision: 'NESSUN_TRADE',
       reasonNoTrade: `RSI a ${rsi}: territorio estremo (${rsi! >= 70 ? 'Ipercomprato' : 'Ipervenduto'}). Rischio elevato di ritracciamento violento e knock-out anticipato sul certificato.`,
-      direction: 'NESSUNA',
+      direction: hypotheticalDirection,
       strategy: 'Nessun setup',
-      triggerLevel: null,
-      vwapCondition: 'N/A',
-      volumeCondition: 'N/A',
-      stopLossLevel: null,
-      target1Level: null,
-      target2Level: null,
-      riskRewardRatio: null,
+      triggerLevel: theoTrigger,
+      vwapCondition: hypotheticalDirection === 'LONG' ? 'Sopra VWAP Intraday' : 'Sotto VWAP Intraday',
+      volumeCondition: `RSI estremo ${rsi}`,
+      stopLossLevel: theoStop,
+      target1Level: theoTarget1,
+      target2Level: theoTarget2,
+      suggestedKoBarrier: theoKoBarrier,
+      atrValue: atr,
+      atrPercent,
+      marketType: marketType as 'EU' | 'US',
+      riskRewardRatio: activeParams.target1Multiplier,
       invalidationConditions: ['RSI in territorio estremo (ipercomprato/ipervenduto)'],
       cutoffTime,
       catalystAnalysis: catalyst,
       dynamicBreakeven: null,
+      orbPhase,
+      macroTrendAlignment,
+      adrInfo,
+      initialBalance,
+      macroBlackout,
+      overnightWarning,
     };
   }
 
@@ -844,25 +1104,34 @@ export function buildExecutionSetup(
         candidate: quote,
         decision: 'NESSUN_TRADE',
         reasonNoTrade: `Analisi fondamentale avversa: ${catalyst.catalizzatore}. Rischi: ${catalyst.rischi.join(', ')}.`,
-        direction: 'NESSUNA',
+        direction: hypotheticalDirection,
         strategy: 'Nessun setup',
-        triggerLevel: null,
-        vwapCondition: 'N/A',
-        volumeCondition: 'N/A',
-        stopLossLevel: null,
-        target1Level: null,
-        target2Level: null,
-        riskRewardRatio: null,
+        triggerLevel: theoTrigger,
+        vwapCondition: hypotheticalDirection === 'LONG' ? 'Sopra VWAP Intraday' : 'Sotto VWAP Intraday',
+        volumeCondition: 'Catalizzatore sfavorevole',
+        stopLossLevel: theoStop,
+        target1Level: theoTarget1,
+        target2Level: theoTarget2,
+        suggestedKoBarrier: theoKoBarrier,
+        atrValue: atr,
+        atrPercent,
+        marketType: marketType as 'EU' | 'US',
+        riskRewardRatio: activeParams.target1Multiplier,
         invalidationConditions: catalyst.condizioni_invalidazione,
         cutoffTime,
         catalystAnalysis: catalyst,
         dynamicBreakeven: null,
+        orbPhase,
+        macroTrendAlignment,
+        adrInfo,
+        initialBalance,
+        macroBlackout,
+        overnightWarning,
       };
     }
   }
 
   const direction: 'LONG' | 'SHORT' = catalyst?.direzione === 'SHORT' ? 'SHORT' : isGapLong ? 'LONG' : 'SHORT';
-  const atr = quote.atr14;
 
   // Determine Strategy based on real RVOL and real Gap
   const isGapAndGo = (quote.rvol ?? 1) >= 1.6 && Math.abs(quote.gapPercent ?? 0) >= (session === 'EU' ? 0.9 : 1.5);
@@ -873,16 +1142,12 @@ export function buildExecutionSetup(
   let target1Level: number;
   let target2Level: number;
 
-  const normalRiskMult = activeParams.normalRiskMultiplier;
   const tightRisk = Math.max(+(atr * (normalRiskMult * 0.8)).toFixed(2), +(price * 0.005).toFixed(2));
-  const normalRisk = Math.max(+(atr * normalRiskMult).toFixed(2), +(price * 0.007).toFixed(2));
   const conservativeRisk = Math.max(+(atr * (normalRiskMult * 1.5)).toFixed(2), +(price * 0.010).toFixed(2));
 
   let stopLossTight: number;
   let stopLossConservative: number;
   let suggestedKoBarrier: number;
-
-  const triggerOffset = activeParams.triggerOffsetPercent / 100;
 
   if (direction === 'LONG') {
     triggerLevel = +(price * (1 + triggerOffset)).toFixed(2);
@@ -963,7 +1228,6 @@ export function buildExecutionSetup(
   }
 
   const riskRewardRatio = activeParams.target1Multiplier;
-  const atrPercent = price > 0 ? +((atr / price) * 100).toFixed(2) : null;
 
   const vwapCondition =
     direction === 'LONG'
@@ -1006,17 +1270,14 @@ export function buildExecutionSetup(
     1.00
   );
 
-  const orbPhase = getOrbPhaseInfo(marketType as 'EU' | 'US');
-
-  const ema20 = quote.ema20Daily;
-  const isAlignedWithEma20 =
+  const tradeEmaAligned =
     ema20 != null ? (direction === 'LONG' ? price >= ema20 : price <= ema20) : true;
-  const macroTrendAlignment = {
+  const tradeTrendAlignment = {
     ema20Daily: ema20,
-    isAligned: isAlignedWithEma20,
+    isAligned: tradeEmaAligned,
     label:
       ema20 != null
-        ? isAlignedWithEma20
+        ? tradeEmaAligned
           ? direction === 'LONG'
             ? `Allineato Rialzista (Sopra EMA20 daily ${ema20.toFixed(2)})`
             : `Allineato Ribassista (Sotto EMA20 daily ${ema20.toFixed(2)})`
@@ -1050,7 +1311,11 @@ export function buildExecutionSetup(
     dynamicBreakeven,
     orbPhase,
     structuralLevels,
-    macroTrendAlignment,
+    macroTrendAlignment: tradeTrendAlignment,
+    adrInfo,
+    macroBlackout,
+    overnightWarning,
+    initialBalance,
   };
 }
 
@@ -1370,10 +1635,19 @@ export function calculateKnockOutSafety(
   // 1% Risk Position Sizing
   const maxRiskEur = +(input.accountCapital * (input.maxRiskPercent / 100)).toFixed(2);
 
+  // Ratio / Parity and FX conversion for US stocks on European EUR brokers
+  const ratio = input.ratio ?? (setup.candidate.market === 'US' ? 0.1 : 1);
+  const fxRate = input.fxRateEurUsd ?? 1.08;
+  const isUsStock = setup.candidate.market === 'US' || setup.candidate.currency === 'USD';
+
+  const theoreticalCertPriceEur = isUsStock
+    ? Math.max(+((barrierDistance * ratio) / fxRate).toFixed(2), 0.30)
+    : Math.max(+(barrierDistance * ratio).toFixed(2), 0.50);
+
   // Estimate KO certificate price if not supplied
   const certPrice = input.certificatePrice && input.certificatePrice > 0
     ? input.certificatePrice
-    : Math.max(+(barrierDistance / (input.leverage > 10 ? 10 : 1)).toFixed(2), 1.5);
+    : theoreticalCertPriceEur;
 
   // Estimated loss per certificate if stop triggers
   const lossRatioOnCert = stopDistance / entryPrice; // percentage drop on underlying
@@ -1456,6 +1730,8 @@ export function calculateKnockOutSafety(
     breakeven,
     scenarios,
     stressReport,
+    ratio,
+    theoreticalCertPriceEur,
   };
 }
 

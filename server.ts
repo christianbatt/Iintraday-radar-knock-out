@@ -350,15 +350,15 @@ async function fetchQuoteForTicker(
           yLow = lastBar.low;
         }
 
-        // Live prices
+        // Live prices: capture real-time regular, pre-market, or post-market price
         let currentP: number | null = meta.regularMarketPrice ?? (lastBar ? lastBar.close : null);
-        let preMarketP: number | null = meta.preMarketPrice ?? null;
-        let pmVol: number | null = meta.preMarketVolume ?? null;
-        const regVol: number | null = meta.regularMarketVolume ?? (isTodayBar && lastBar ? lastBar.volume : null);
+        let preMarketP: number | null = meta.preMarketPrice ?? meta.postMarketPrice ?? null;
+        let pmVol: number | null = meta.preMarketVolume ?? meta.postMarketVolume ?? null;
+        const regVol: number | null = meta.regularMarketVolume ?? (lastBar ? lastBar.volume : null);
 
-        // For US stocks in pre-market, query the 5m intraday feed to get live pre-market price tick & volume
+        // For US stocks, query the 5m intraday feed if pre-market price or volume is missing
         const cet = getCETTime();
-        if (market === 'US' && cet.isUSAPreMarket && (!preMarketP || preMarketP === prevC)) {
+        if (market === 'US' && (!pmVol || !preMarketP || preMarketP === prevC)) {
           try {
             const pmUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}?interval=5m&range=1d&includePrePost=true&_=${Date.now()}`;
             const pmResp = await fetch(pmUrl, {
@@ -370,8 +370,10 @@ async function fetchQuoteForTicker(
               const pmCloses = pmQuotes?.close?.filter((c: any) => typeof c === 'number');
               if (pmCloses && pmCloses.length > 0) {
                 const latestTick = pmCloses[pmCloses.length - 1];
-                preMarketP = latestTick;
-                currentP = latestTick;
+                if (!preMarketP || preMarketP === prevC) {
+                  preMarketP = latestTick;
+                  currentP = latestTick;
+                }
               }
               const pmVolumes = pmQuotes?.volume?.filter((v: any) => typeof v === 'number');
               if (pmVolumes && pmVolumes.length > 0) {
@@ -424,6 +426,9 @@ async function fetchQuoteForTicker(
           } else if (pmVol && pmVol > 0) {
             // Pre-Market Session: typical pre-market expected fraction ~4% of full day volume
             calcRvol = +(pmVol / (avgVol * 0.04)).toFixed(2);
+          } else if (regVol && regVol > 0) {
+            // Last active trading session volume pace vs 20-day average
+            calcRvol = +(regVol / avgVol).toFixed(2);
           }
         }
 
@@ -533,9 +538,9 @@ async function fetchQuoteForTicker(
         }
 
         // Real Today Open, Day High, Day Low, and Intraday VWAP estimate from official feed
-        const tOpen: number | null = meta.regularMarketOpen ?? (isTodayBar && lastBar ? lastBar.close : null);
-        const tHigh: number | null = meta.regularMarketDayHigh ?? (isTodayBar && lastBar ? lastBar.high : null);
-        const tLow: number | null = meta.regularMarketDayLow ?? (isTodayBar && lastBar ? lastBar.low : null);
+        const tOpen: number | null = meta.regularMarketOpen ?? (lastBar ? lastBar.close : null);
+        const tHigh: number | null = meta.regularMarketDayHigh ?? (lastBar ? lastBar.high : null);
+        const tLow: number | null = meta.regularMarketDayLow ?? (lastBar ? lastBar.low : null);
         let calcVwap: number | null = null;
         if (tHigh && tLow && currentP) {
           calcVwap = +((tHigh + tLow + currentP) / 3).toFixed(2);
@@ -595,6 +600,11 @@ async function fetchQuoteForTicker(
     prevLow: quoteData.prevLow ?? null,
     preMarketHigh: quoteData.preMarketHigh ?? null,
     preMarketLow: quoteData.preMarketLow ?? null,
+    todayOpen: quoteData.todayOpen ?? null,
+    todayHigh: quoteData.todayHigh ?? null,
+    todayLow: quoteData.todayLow ?? null,
+    vwap: quoteData.vwap ?? null,
+    ema20Daily: quoteData.ema20Daily ?? null,
     avgVolume20d: quoteData.avgVolume20d ?? null,
     preMarketVolume: quoteData.preMarketVolume ?? null,
     atr14: quoteData.atr14 ?? null,
@@ -791,6 +801,74 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
       }
     } catch (e: any) {
       console.error(`Errore fetch RSS per ${ticker}:`, e.message);
+    }
+  }
+
+  // 3. For US stocks or when Italian coverage is empty, query real English/US financial RSS
+  if (newsList.length === 0) {
+    try {
+      const usQuery = encodeURIComponent(`${searchName} ${isSpaceX ? 'SpaceX' : ticker} stock`);
+      const usRssUrl = `https://news.google.com/rss/search?q=${usQuery}&hl=en-US&gl=US&ceid=US:en`;
+      const usResp = await fetch(usRssUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      });
+
+      if (usResp.ok) {
+        const text = await usResp.text();
+        const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+        let match;
+        let idx = 0;
+
+        while ((match = itemRegex.exec(text)) !== null && idx < 5) {
+          const itemBlock = match[1];
+          const titleM = itemBlock.match(/<title>([\s\S]*?)<\/title>/);
+          const linkM = itemBlock.match(/<link>([\s\S]*?)<\/link>/);
+          const sourceM = itemBlock.match(/<source[^>]*>([\s\S]*?)<\/source>/);
+          const pubDateM = itemBlock.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
+          const descM = itemBlock.match(/<description>([\s\S]*?)<\/description>/);
+
+          if (titleM) {
+            const cleanTitle = titleM[1]
+              .replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1')
+              .replace(/&quot;/g, '"')
+              .replace(/&#39;/g, "'")
+              .replace(/&amp;/g, '&')
+              .replace(/&lt;.*?&gt;/g, '')
+              .trim();
+
+            const cleanLink = linkM ? linkM[1].trim() : 'https://news.google.com';
+            const source = sourceM
+              ? sourceM[1].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim()
+              : 'Financial Wire';
+            const publishedAt = pubDateM ? new Date(pubDateM[1].trim()).toISOString() : new Date().toISOString();
+            const rawDesc = descM
+              ? descM[1]
+                  .replace(/&lt;.*?&gt;/gi, '')
+                  .replace(/<[^>]+>/g, '')
+                  .replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1')
+                  .replace(/&quot;/g, '"')
+                  .replace(/&#39;/g, "'")
+                  .replace(/&amp;/g, '&')
+                  .replace(/&nbsp;/g, ' ')
+                  .trim()
+              : cleanTitle;
+
+            newsList.push({
+              id: `rss-us-${ticker}-${idx}`,
+              title: cleanTitle,
+              summary: rawDesc.slice(0, 200),
+              source,
+              url: cleanLink,
+              publishedAt,
+            });
+            idx++;
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error(`Errore fetch US RSS per ${ticker}:`, e.message);
     }
   }
 

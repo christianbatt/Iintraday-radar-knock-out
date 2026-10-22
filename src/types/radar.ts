@@ -134,6 +134,35 @@ export interface ExecutionSetup {
     isAligned: boolean;
     label: string;
   };
+  adrInfo?: {
+    consumptionPct: number;
+    remainingPct: number;
+    status: 'OPTIMAL' | 'MODERATE' | 'EXHAUSTED';
+    description: string;
+  };
+  macroBlackout?: {
+    isBlackoutActive: boolean;
+    label: string;
+    description: string;
+  };
+  overnightWarning?: {
+    isCloseImminent: boolean;
+    label: string;
+    description: string;
+  };
+  initialBalance?: {
+    isFormed: boolean;
+    high: number;
+    low: number;
+    status: 'TREND_EXPANSION' | 'RANGE_ROTATION' | 'FORMING';
+    label: string;
+  };
+  benchmarkConfluence?: {
+    benchmarkSymbol: string;
+    changePercent: number;
+    isAligned: boolean;
+    label: string;
+  };
 }
 
 export interface PnLScenario {
@@ -184,6 +213,8 @@ export interface KnockOutCalculatorInput {
   maxRiskPercent: number; // default 1%
   spreadEur?: number;
   brokerFeeEur?: number;
+  ratio?: number; // e.g. 1, 0.1 (10:1), 0.01 (100:1)
+  fxRateEurUsd?: number; // EUR/USD exchange rate
 }
 
 export interface KnockOutSafetyCheck {
@@ -204,6 +235,8 @@ export interface KnockOutSafetyCheck {
   breakeven: DynamicBreakevenInfo;
   scenarios: PnLScenario[];
   stressReport: DerivativeStressReport;
+  ratio?: number;
+  theoreticalCertPriceEur?: number;
 }
 
 export interface TradeJournalEntry {
@@ -226,6 +259,12 @@ export interface TradeJournalEntry {
   isPaper: boolean;
   closedAt?: string;
   closeReason?: 'TARGET_HIT' | 'STOP_HIT' | 'BREAKEVEN' | 'CUTOFF_EXPIRED' | 'MANUAL';
+  barrierStrike?: number;
+  leverage?: number;
+  suggestedCertificates?: number;
+  maxRiskEur?: number;
+  potentialGainT1Eur?: number;
+  investedEur?: number;
 }
 
 export interface SystemParameters {
