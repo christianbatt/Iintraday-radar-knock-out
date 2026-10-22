@@ -90,6 +90,15 @@ export function calculateCandidateScore(
 
   const isEurope = quote.market === 'EU';
 
+  // Direction determination for coherent confluence:
+  // If catalyst already specified explicit direction, align with it; otherwise follow opening gap direction.
+  let isCandidateLong = (quote.gapPercent ?? 0) >= 0;
+  if (newsOrCatalyst && typeof newsOrCatalyst === 'object' && 'direzione' in newsOrCatalyst) {
+    const dir = (newsOrCatalyst as GeminiCatalystAnalysis).direzione;
+    if (dir === 'LONG') isCandidateLong = true;
+    else if (dir === 'SHORT') isCandidateLong = false;
+  }
+
   // 1. GAP SCORE (max 25) - Only from real calculated gap
   if (quote.gapPercent != null) {
     const absGap = Math.abs(quote.gapPercent);
@@ -100,12 +109,15 @@ export function calculateCandidateScore(
     } else if (absGap >= gapThreshold) {
       gapScore = 20;
       details.push(`Gap significativo (${absGap.toFixed(2)}%): +20pt`);
-    } else if (absGap >= (isEurope ? 0.4 : 0.7)) {
+    } else if (absGap >= gapThreshold * 0.5) {
       gapScore = 12;
       details.push(`Gap moderato (${absGap.toFixed(2)}%): +12pt`);
+    } else if (absGap >= (isEurope ? 0.2 : 0.35)) {
+      gapScore = 6;
+      details.push(`Gap ridotto (${absGap.toFixed(2)}%): +6pt`);
     } else {
-      gapScore = 4;
-      details.push(`Gap debole o piatto (${absGap.toFixed(2)}%): +4pt`);
+      gapScore = 2;
+      details.push(`Gap debole o piatto (${absGap.toFixed(2)}%): +2pt`);
     }
   } else {
     gapScore = 0;
@@ -130,7 +142,12 @@ export function calculateCandidateScore(
     }
     if (quote.rvol20m != null) {
       if (quote.rvol20m >= 1.5) {
-        details.push(`🔥 Spike Volumi ultimi 20m (${quote.rvol20m.toFixed(2)}x vs media mobile 20m): forte afflusso istituzionale in corso.`);
+        if (rvolScore < 25) {
+          rvolScore = Math.min(25, rvolScore + 3);
+          details.push(`🔥 Spike Volumi ultimi 20m (${quote.rvol20m.toFixed(2)}x vs media 20m): +3pt spinta istituzionale in accelerazione.`);
+        } else {
+          details.push(`🔥 Spike Volumi ultimi 20m (${quote.rvol20m.toFixed(2)}x vs media mobile 20m): forte afflusso istituzionale in corso.`);
+        }
       } else if (quote.rvol20m >= 1.1) {
         details.push(`⚡ Flusso Volumi 20m solido (${quote.rvol20m.toFixed(2)}x vs media mobile 20m).`);
       } else if (quote.rvol20m < 0.7) {
@@ -164,11 +181,10 @@ export function calculateCandidateScore(
   }
 
   // 4. FUTURES COHERENCE (max 20)
-  const isGapLong = (quote.gapPercent ?? 0) > 0;
   const isFuturesGreen = benchmarkFuturesChangePercent > 0.15;
   const isFuturesRed = benchmarkFuturesChangePercent < -0.15;
 
-  if ((isGapLong && isFuturesGreen) || (!isGapLong && isFuturesRed)) {
+  if ((isCandidateLong && isFuturesGreen) || (!isCandidateLong && isFuturesRed)) {
     futuresScore = 20;
     details.push(`Allineamento totale titolo/futures indice (${benchmarkFuturesChangePercent > 0 ? '+' : ''}${benchmarkFuturesChangePercent.toFixed(2)}%): +20pt`);
   } else if (Math.abs(benchmarkFuturesChangePercent) <= 0.15) {
@@ -184,12 +200,18 @@ export function calculateCandidateScore(
   const prevLow = quote.prevLow;
 
   if (price > 0 && prevHigh != null && prevLow != null) {
-    if (isGapLong && price >= prevHigh) {
+    if (isCandidateLong && price >= prevHigh) {
       levelScore = 10;
-      details.push(`Rottura/apertura sopra il Massimo reale di ieri: +10pt`);
-    } else if (!isGapLong && price <= prevLow) {
+      details.push(`Rottura/apertura sopra il Massimo reale di ieri (${prevHigh.toFixed(2)}): +10pt`);
+    } else if (!isCandidateLong && price <= prevLow) {
       levelScore = 10;
-      details.push(`Rottura/apertura sotto il Minimo reale di ieri: +10pt`);
+      details.push(`Rottura/apertura sotto il Minimo reale di ieri (${prevLow.toFixed(2)}): +10pt`);
+    } else if (isCandidateLong && price >= prevHigh * 0.995) {
+      levelScore = 7;
+      details.push(`Prezzo a ridosso del Massimo di ieri (${prevHigh.toFixed(2)}): +7pt (test di rottura imminente)`);
+    } else if (!isCandidateLong && price <= prevLow * 1.005) {
+      levelScore = 7;
+      details.push(`Prezzo a ridosso del Minimo di ieri (${prevLow.toFixed(2)}): +7pt (test di breakdown imminente)`);
     } else {
       levelScore = 5;
       details.push(`Prezzo all'interno del range di ieri: +5pt`);
@@ -205,7 +227,7 @@ export function calculateCandidateScore(
   const rsiTimeframe = quote.rsi5m != null ? '5m Intraday' : '1D Daily';
 
   if (activeRsi != null) {
-    if (isGapLong) {
+    if (isCandidateLong) {
       if (activeRsi >= 46 && activeRsi <= 66) {
         rsiScore = 10;
         details.push(`RSI ${rsiTimeframe} (${activeRsi}) ottimale per Turbo Long: espansione sana senza saturazione (+10pt)`);
@@ -244,9 +266,9 @@ export function calculateCandidateScore(
 
     // Dual-Timeframe Confluence bonus note
     if (quote.rsi5m != null && quote.rsi14 != null) {
-      if (isGapLong && quote.rsi5m <= 68 && quote.rsi14 <= 70) {
+      if (isCandidateLong && quote.rsi5m <= 68 && quote.rsi14 <= 70) {
         details.push(`Conferma Multi-Timeframe (5m: ${quote.rsi5m} | 1D: ${quote.rsi14}): allineamento coerente tra respiro intraday e trend macro.`);
-      } else if (!isGapLong && quote.rsi5m >= 32 && quote.rsi14 >= 30) {
+      } else if (!isCandidateLong && quote.rsi5m >= 32 && quote.rsi14 >= 30) {
         details.push(`Conferma Multi-Timeframe (5m: ${quote.rsi5m} | 1D: ${quote.rsi14}): allineamento coerente ribassista tra 5m e 1D.`);
       }
     }
@@ -319,18 +341,18 @@ export function calculateCandidateScore(
   let trendScore = 0;
   if (quote.ema20Daily != null && quote.ema20Daily > 0) {
     const isAboveEma = price >= quote.ema20Daily;
-    if (isGapLong && isAboveEma) {
+    if (isCandidateLong && isAboveEma) {
       trendScore = 8;
       details.push(`Confluenza Trend Rialzista Macro: Prezzo (${price.toFixed(2)}) sopra EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +8pt`);
-    } else if (!isGapLong && !isAboveEma) {
+    } else if (!isCandidateLong && !isAboveEma) {
       trendScore = 8;
       details.push(`Confluenza Trend Ribassista Macro: Prezzo (${price.toFixed(2)}) sotto EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +8pt`);
-    } else if (isGapLong && !isAboveEma) {
+    } else if (isCandidateLong && !isAboveEma) {
       trendScore = 2;
-      details.push(`Controtendenza Macro: Gap Long con Prezzo sotto EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +2pt (cautela)`);
+      details.push(`Controtendenza Macro: Setup Long con Prezzo sotto EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +2pt (cautela)`);
     } else {
       trendScore = 2;
-      details.push(`Controtendenza Macro: Gap Short con Prezzo sopra EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +2pt (cautela)`);
+      details.push(`Controtendenza Macro: Setup Short con Prezzo sopra EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +2pt (cautela)`);
     }
   } else {
     trendScore = 4;
@@ -344,7 +366,7 @@ export function calculateCandidateScore(
     if (of.flowQuality === 'ABSORPTION_TRAP' || of.cvdTrend === 'ABSORPTION_TRAP') {
       orderFlowScore = -10;
       details.push(`⚠️ Trappola di Assorbimento Delta (-10pt): divergenza tra prezzo e CVD (rischio falso breakout)`);
-    } else if (isGapLong) {
+    } else if (isCandidateLong) {
       if (of.buyerVolumePercent >= 58 && of.cvdTrend === 'EXPANDING_UP' && of.isPriceAboveVpoc) {
         orderFlowScore = 10;
         details.push(`🔥 Order Flow Bullish Istituzionale (+10pt): Delta +${of.netDeltaPercent}%, CVD in espansione sopra VPOC (${of.vpocPrice ?? 'N/D'})`);
@@ -379,7 +401,7 @@ export function calculateCandidateScore(
   }
 
   const rawTotal = gapScore + rvolScore + liquidityScore + futuresScore + levelScore + rsiScore + newsScore + trendScore + orderFlowScore;
-  const total = Math.max(0, Math.min(100, rawTotal));
+  const total = Math.max(0, Math.min(100, Math.round(rawTotal)));
 
   return {
     gapScore,
@@ -391,6 +413,7 @@ export function calculateCandidateScore(
     newsScore,
     trendScore,
     orderFlowScore,
+    rawTotal: +rawTotal.toFixed(1),
     total,
     details,
   };
@@ -501,7 +524,16 @@ export function rankMarketCandidates(
     };
   });
 
-  scored.sort((a, b) => b.score.total - a.score.total);
+  scored.sort((a, b) => {
+    if (b.score.total !== a.score.total) return b.score.total - a.score.total;
+    const rawB = b.score.rawTotal ?? b.score.total;
+    const rawA = a.score.rawTotal ?? a.score.total;
+    if (rawB !== rawA) return rawB - rawA;
+    const rvolB = b.quote.rvol ?? 0;
+    const rvolA = a.quote.rvol ?? 0;
+    if (rvolB !== rvolA) return rvolB - rvolA;
+    return Math.abs(b.quote.gapPercent ?? 0) - Math.abs(a.quote.gapPercent ?? 0);
+  });
 
   return scored.map((item, index) => ({
     ...item,
@@ -535,7 +567,16 @@ export function rankTopCandidates(
     };
   });
 
-  scored.sort((a, b) => b.score.total - a.score.total);
+  scored.sort((a, b) => {
+    if (b.score.total !== a.score.total) return b.score.total - a.score.total;
+    const rawB = b.score.rawTotal ?? b.score.total;
+    const rawA = a.score.rawTotal ?? a.score.total;
+    if (rawB !== rawA) return rawB - rawA;
+    const rvolB = b.quote.rvol ?? 0;
+    const rvolA = a.quote.rvol ?? 0;
+    if (rvolB !== rvolA) return rvolB - rvolA;
+    return Math.abs(b.quote.gapPercent ?? 0) - Math.abs(a.quote.gapPercent ?? 0);
+  });
 
   return scored.map((item, index) => ({
     ...item,

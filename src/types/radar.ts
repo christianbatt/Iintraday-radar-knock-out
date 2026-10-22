@@ -71,6 +71,7 @@ export interface ScoreBreakdown {
   newsScore?: number; // Bonus news & catalyst quality (+0 to +15pt)
   trendScore?: number; // Bonus Confluenza Trend Macro Daily EMA 20 (+0 to +8pt)
   orderFlowScore?: number; // Convalida Ordini Aggressivi Delta & VPOC (-10pt a +10pt)
+  rawTotal?: number; // Somma grezza pre-cap a 100 per tie-breaking quantitativo
   total: number;
   details: string[];
 }
