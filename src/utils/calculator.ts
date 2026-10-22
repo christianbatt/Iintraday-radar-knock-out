@@ -337,8 +337,49 @@ export function calculateCandidateScore(
     details.push('Trend Macro EMA(20) daily non disponibile: +4pt (neutro)');
   }
 
-  const rawTotal = gapScore + rvolScore + liquidityScore + futuresScore + levelScore + rsiScore + newsScore + trendScore;
-  const total = Math.min(100, rawTotal);
+  // 9. CONVALIDA ORDER FLOW SYNTHETIC L2 & DELTA / VPOC (-10pt a +10pt)
+  let orderFlowScore = 0;
+  const of = quote.orderFlow;
+  if (of) {
+    if (of.flowQuality === 'ABSORPTION_TRAP' || of.cvdTrend === 'ABSORPTION_TRAP') {
+      orderFlowScore = -10;
+      details.push(`⚠️ Trappola di Assorbimento Delta (-10pt): divergenza tra prezzo e CVD (rischio falso breakout)`);
+    } else if (isGapLong) {
+      if (of.buyerVolumePercent >= 58 && of.cvdTrend === 'EXPANDING_UP' && of.isPriceAboveVpoc) {
+        orderFlowScore = 10;
+        details.push(`🔥 Order Flow Bullish Istituzionale (+10pt): Delta +${of.netDeltaPercent}%, CVD in espansione sopra VPOC (${of.vpocPrice ?? 'N/D'})`);
+      } else if (of.buyerVolumePercent >= 53 && of.cvdTrend !== 'EXPANDING_DOWN') {
+        orderFlowScore = 6;
+        details.push(`Order Flow a Favore (+6pt): Pressione acquirente (${of.buyerVolumePercent}% Ask) con Delta positivo`);
+      } else if (of.sellerVolumePercent >= 58) {
+        orderFlowScore = -6;
+        details.push(`Allerta Delta Contrario (-6pt): Forte pressione venditrice (${of.sellerVolumePercent}% Bid) su setup Long`);
+      } else {
+        orderFlowScore = 2;
+        details.push(`Order Flow Bilanciato (+2pt): ${of.buyerVolumePercent}% Ask vs ${of.sellerVolumePercent}% Bid`);
+      }
+    } else {
+      // Short setup
+      if (of.sellerVolumePercent >= 58 && of.cvdTrend === 'EXPANDING_DOWN' && of.isPriceAboveVpoc === false) {
+        orderFlowScore = 10;
+        details.push(`🔥 Order Flow Bearish Istituzionale (+10pt): Delta ${of.netDeltaPercent}%, CVD ribassista sotto VPOC (${of.vpocPrice ?? 'N/D'})`);
+      } else if (of.sellerVolumePercent >= 53 && of.cvdTrend !== 'EXPANDING_UP') {
+        orderFlowScore = 6;
+        details.push(`Order Flow a Favore (+6pt): Pressione venditrice (${of.sellerVolumePercent}% Bid) con Delta negativo`);
+      } else if (of.buyerVolumePercent >= 58) {
+        orderFlowScore = -6;
+        details.push(`Allerta Delta Contrario (-6pt): Forte pressione compratrice (${of.buyerVolumePercent}% Ask) su setup Short`);
+      } else {
+        orderFlowScore = 2;
+        details.push(`Order Flow Bilanciato (+2pt): ${of.buyerVolumePercent}% Ask vs ${of.sellerVolumePercent}% Bid`);
+      }
+    }
+  } else {
+    orderFlowScore = 0;
+  }
+
+  const rawTotal = gapScore + rvolScore + liquidityScore + futuresScore + levelScore + rsiScore + newsScore + trendScore + orderFlowScore;
+  const total = Math.max(0, Math.min(100, rawTotal));
 
   return {
     gapScore,
@@ -349,6 +390,7 @@ export function calculateCandidateScore(
     rsiScore,
     newsScore,
     trendScore,
+    orderFlowScore,
     total,
     details,
   };
@@ -985,6 +1027,7 @@ export function buildExecutionSetup(
       initialBalance,
       macroBlackout,
       overnightWarning,
+      orderFlow: quote.orderFlow ?? null,
     };
   }
 
@@ -1018,6 +1061,7 @@ export function buildExecutionSetup(
       initialBalance,
       macroBlackout,
       overnightWarning,
+      orderFlow: quote.orderFlow ?? null,
     };
   }
 
@@ -1051,6 +1095,7 @@ export function buildExecutionSetup(
       initialBalance,
       macroBlackout,
       overnightWarning,
+      orderFlow: quote.orderFlow ?? null,
     };
   }
 
@@ -1085,6 +1130,7 @@ export function buildExecutionSetup(
       initialBalance,
       macroBlackout,
       overnightWarning,
+      orderFlow: quote.orderFlow ?? null,
     };
   }
 
@@ -1127,6 +1173,7 @@ export function buildExecutionSetup(
         initialBalance,
         macroBlackout,
         overnightWarning,
+        orderFlow: quote.orderFlow ?? null,
       };
     }
   }
@@ -1243,6 +1290,9 @@ export function buildExecutionSetup(
     `Rottura e chiusura 5 min oltre lo Stop Loss sul sottostante a ${stopLossLevel} ${quote.currency}`,
     `Inversione del VWAP intraday con candela di rigetto contraria`,
     `Superamento dell'orario limite di permanenza (${cutoffTime}) senza raggiungimento del Target 1`,
+    ...(quote.orderFlow?.flowQuality === 'ABSORPTION_TRAP'
+      ? ['Allerta Order Flow: Trappola di Assorbimento Delta attiva (divergenza prezzo/CVD - rischio fakeout)']
+      : []),
     ...(catalyst?.condizioni_invalidazione || []),
   ];
 
@@ -1316,6 +1366,7 @@ export function buildExecutionSetup(
     macroBlackout,
     overnightWarning,
     initialBalance,
+    orderFlow: quote.orderFlow ?? null,
   };
 }
 

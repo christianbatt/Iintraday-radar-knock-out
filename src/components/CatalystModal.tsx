@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   RotateCcw,
   Newspaper,
+  Layers,
 } from 'lucide-react';
 import { ScoredCandidate, NewsItem, GeminiCatalystAnalysis } from '../types/radar';
 
@@ -99,6 +100,36 @@ export const CatalystModal: React.FC<CatalystModalProps> = ({
               </span>
             </div>
           </div>
+
+          {/* Synthetic Level-2 Order Flow Snapshot if available */}
+          {q.orderFlow && (
+            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2 font-mono text-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-cyan-400" />
+                  <span className="font-bold text-slate-200 uppercase tracking-wider text-[11px]">
+                    Order Flow & Delta L2 (30m Intraday)
+                  </span>
+                </div>
+                <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
+                  q.orderFlow.cvdTrend === 'ABSORPTION_TRAP'
+                    ? 'bg-rose-950 text-rose-300 border border-rose-600 animate-pulse'
+                    : q.orderFlow.netDeltaPercent >= 0
+                    ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                    : 'bg-rose-950 text-rose-300 border border-rose-800'
+                }`}>
+                  Delta: {q.orderFlow.netDeltaPercent >= 0 ? `+${q.orderFlow.netDeltaPercent}% Ask` : `${q.orderFlow.netDeltaPercent}% Bid`}
+                </span>
+              </div>
+              <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden flex">
+                <div className="bg-emerald-500" style={{ width: `${q.orderFlow.buyerVolumePercent}%` }} />
+                <div className="bg-rose-500" style={{ width: `${q.orderFlow.sellerVolumePercent}%` }} />
+              </div>
+              <div className="text-[11px] text-slate-400 pt-0.5">
+                {q.orderFlow.summary}
+              </div>
+            </div>
+          )}
 
           {/* Gemini Catalyst Analysis Section */}
           <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-4">

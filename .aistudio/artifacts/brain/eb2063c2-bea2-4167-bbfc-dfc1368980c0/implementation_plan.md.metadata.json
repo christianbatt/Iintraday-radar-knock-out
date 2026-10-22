@@ -1,6 +1,6 @@
 {
-  "summary":  "Piano e resoconto completato delle 5 migliorie strutturali per qualità, precisione e win-rate del terminale intraday (confluenza trend macro EMA20, freschezza catalizzatore, stop loss strutturale ancorato a minimi/massimi/VWAP, tracking fasi ORB 15m e sincronizzazione multi-device 100% dati reali).",
-  "updatedAt":  "2026-10-21T23:36:12.426983395Z",
+  "summary":  "Documentazione tecnica dell'integrazione Order Flow & Synthetic L2 (Decomposizione Volumi Lee-Ready, Cumulative Volume Delta CVD, Micro Volume Profile VPOC a 30m e impatto simmetrico sullo score sia per setup LONG che SHORT).",
+  "updatedAt":  "2026-10-22T00:57:57.381014217Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

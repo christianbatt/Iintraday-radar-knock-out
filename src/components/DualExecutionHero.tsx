@@ -768,6 +768,109 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
             {/* Implied Volatility (IV) Gauge vs 30-Day Average */}
             <ImpliedVolatilityGauge quote={quote} />
 
+            {/* Synthetic Level-2 Order Flow & CVD Delta Strip */}
+            {quote?.orderFlow && (
+              <div className="bg-slate-950/90 border border-slate-800/90 rounded-xl p-3 font-mono space-y-2.5">
+                <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                    <span className="font-bold text-slate-200 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                      Order Flow & Delta L2 (30m Intraday)
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px]">
+                    {quote.orderFlow.cvdTrend === 'ABSORPTION_TRAP' ? (
+                      <span className="px-2 py-0.5 rounded bg-rose-950/80 border border-rose-500/80 text-rose-300 font-bold flex items-center gap-1 animate-pulse">
+                        <AlertTriangle className="w-3 h-3 text-rose-400" />
+                        TRAPPOLA ASSORBIMENTO (Divergenza Delta)
+                      </span>
+                    ) : quote.orderFlow.flowQuality === 'INSTITUTIONAL_BUYING' ? (
+                      <span className="px-2 py-0.5 rounded bg-emerald-950/80 border border-emerald-500/80 text-emerald-300 font-bold flex items-center gap-1">
+                        <TrendingUp className="w-3 h-3 text-emerald-400" />
+                        PRESSIONE BUYER (+{quote.orderFlow.netDeltaPercent}%)
+                      </span>
+                    ) : quote.orderFlow.flowQuality === 'INSTITUTIONAL_SELLING' ? (
+                      <span className="px-2 py-0.5 rounded bg-rose-950/80 border border-rose-500/80 text-rose-300 font-bold flex items-center gap-1">
+                        <TrendingUp className="w-3 h-3 text-rose-400 rotate-180" />
+                        PRESSIONE SELLER ({quote.orderFlow.netDeltaPercent}%)
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-400">
+                        FLUSSO BILANCIATO
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Bi-color Buyer vs Seller Volume Ratio Bar */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-emerald-400 font-bold flex items-center gap-1">
+                      <span>Ask (Buyer Aggressivi):</span>
+                      <span>{quote.orderFlow.buyerVolumePercent}%</span>
+                    </span>
+                    <span className="text-slate-400 text-[9px]">
+                      Delta Netto: <strong className={quote.orderFlow.netDeltaPercent >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                        {quote.orderFlow.netDeltaPercent >= 0 ? '+' : ''}{quote.orderFlow.netDeltaPercent}%
+                      </strong>
+                    </span>
+                    <span className="text-rose-400 font-bold flex items-center gap-1">
+                      <span>{quote.orderFlow.sellerVolumePercent}%</span>
+                      <span>: Bid (Seller Aggressivi)</span>
+                    </span>
+                  </div>
+                  <div className="h-2 w-full bg-slate-900 rounded-full overflow-hidden flex">
+                    <div
+                      className="bg-emerald-500 transition-all duration-300"
+                      style={{ width: `${quote.orderFlow.buyerVolumePercent}%` }}
+                    />
+                    <div
+                      className="bg-rose-500 transition-all duration-300"
+                      style={{ width: `${quote.orderFlow.sellerVolumePercent}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Secondary row: Micro Volume Profile VPOC & CVD Trend Confirmation */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[11px] border-t border-slate-800/80">
+                  <div className="flex items-center justify-between bg-slate-900/60 px-2.5 py-1.5 rounded-lg border border-slate-800">
+                    <span className="text-slate-400">VPOC Micro-Profilo (30m):</span>
+                    <div className="flex items-center gap-1.5 font-bold">
+                      <span className="text-white">{quote.orderFlow.vpocPrice ? `${quote.orderFlow.vpocPrice.toFixed(2)} ${quote.currency}` : 'N/D'}</span>
+                      {quote.orderFlow.isPriceAboveVpoc != null && (
+                        <span className={`text-[9px] px-1.5 py-0.2 rounded font-semibold ${quote.orderFlow.isPriceAboveVpoc ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-rose-950 text-rose-300 border border-rose-800'}`}>
+                          {quote.orderFlow.isPriceAboveVpoc ? 'Prezzo > VPOC ✓' : 'Prezzo < VPOC ✗'}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between bg-slate-900/60 px-2.5 py-1.5 rounded-lg border border-slate-800">
+                    <span className="text-slate-400">Pendenza CVD (Delta):</span>
+                    <span className={`font-bold flex items-center gap-1 ${
+                      quote.orderFlow.cvdTrend === 'EXPANDING_UP'
+                        ? 'text-emerald-400'
+                        : quote.orderFlow.cvdTrend === 'EXPANDING_DOWN'
+                        ? 'text-rose-400'
+                        : quote.orderFlow.cvdTrend === 'ABSORPTION_TRAP'
+                        ? 'text-rose-400 animate-pulse'
+                        : 'text-slate-300'
+                    }`}>
+                      {quote.orderFlow.cvdTrend === 'EXPANDING_UP' && '↗ Espansione Rialzista'}
+                      {quote.orderFlow.cvdTrend === 'EXPANDING_DOWN' && '↘ Espansione Ribassista'}
+                      {quote.orderFlow.cvdTrend === 'ABSORPTION_TRAP' && '⚠️ Divergenza/Trappola'}
+                      {quote.orderFlow.cvdTrend === 'NEUTRAL' && '→ Neutro/Laterale'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="text-[10px] text-slate-400/90 leading-relaxed italic bg-slate-900/40 px-2 py-1 rounded border border-slate-800/50">
+                  {quote.orderFlow.summary}
+                </div>
+              </div>
+            )}
+
             {/* ATR Volatility, RSI & Recommended Trade Republic KO Barrier (Dedicated 3-column grid with zero overlap) */}
             <div className="bg-slate-950/90 border border-slate-800 rounded-xl p-2.5 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-mono">
               <div className="flex items-center gap-2 min-w-0">

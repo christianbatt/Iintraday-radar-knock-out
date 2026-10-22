@@ -33,8 +33,20 @@ export interface RawQuoteData {
   rsi14?: number | null;
   rsi5m?: number | null;
   rvol20m?: number | null;
+  orderFlow?: OrderFlowMetrics | null;
   timestamp: string;
   source: string;
+}
+
+export interface OrderFlowMetrics {
+  buyerVolumePercent: number; // e.g. 64 (%)
+  sellerVolumePercent: number; // e.g. 36 (%)
+  netDeltaPercent: number; // buyerVolumePercent - sellerVolumePercent (e.g. +28%)
+  cvdTrend: 'EXPANDING_UP' | 'EXPANDING_DOWN' | 'NEUTRAL' | 'ABSORPTION_TRAP';
+  vpocPrice: number | null; // Volume Point of Control (30m)
+  isPriceAboveVpoc: boolean | null;
+  flowQuality: 'INSTITUTIONAL_BUYING' | 'INSTITUTIONAL_SELLING' | 'ABSORPTION_TRAP' | 'BALANCED';
+  summary: string;
 }
 
 export interface ImpliedVolatilityMetrics {
@@ -58,6 +70,7 @@ export interface ScoreBreakdown {
   rsiScore?: number; // Intraday 5m Momentum & Multi-timeframe RSI quality (max 10)
   newsScore?: number; // Bonus news & catalyst quality (+0 to +15pt)
   trendScore?: number; // Bonus Confluenza Trend Macro Daily EMA 20 (+0 to +8pt)
+  orderFlowScore?: number; // Convalida Ordini Aggressivi Delta & VPOC (-10pt a +10pt)
   total: number;
   details: string[];
 }
@@ -163,6 +176,7 @@ export interface ExecutionSetup {
     isAligned: boolean;
     label: string;
   };
+  orderFlow?: OrderFlowMetrics | null;
 }
 
 export interface PnLScenario {

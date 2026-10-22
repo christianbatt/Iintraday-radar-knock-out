@@ -457,6 +457,25 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
                             1D:{q.rsi14}
                           </span>
                         )}
+
+                        {q.orderFlow != null && (
+                          <span
+                            className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold tracking-tight inline-flex items-center gap-1 ${
+                              q.orderFlow.cvdTrend === 'ABSORPTION_TRAP'
+                                ? 'bg-rose-950 text-rose-300 border border-rose-600 animate-pulse'
+                                : q.orderFlow.flowQuality === 'INSTITUTIONAL_BUYING'
+                                ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/80'
+                                : q.orderFlow.flowQuality === 'INSTITUTIONAL_SELLING'
+                                ? 'bg-rose-950 text-rose-300 border border-rose-800'
+                                : 'bg-slate-900 text-slate-300 border border-slate-700'
+                            }`}
+                            title={`Order Flow Synthetic L2 (30m): ${q.orderFlow.buyerVolumePercent}% Ask / ${q.orderFlow.sellerVolumePercent}% Bid (Delta: ${q.orderFlow.netDeltaPercent >= 0 ? '+' : ''}${q.orderFlow.netDeltaPercent}%). VPOC: ${q.orderFlow.vpocPrice ?? 'N/D'}`}
+                          >
+                            <span>L2 Delta:</span>
+                            <span>{q.orderFlow.netDeltaPercent >= 0 ? `+${q.orderFlow.netDeltaPercent}% Ask` : `${q.orderFlow.netDeltaPercent}% Bid`}</span>
+                            {q.orderFlow.cvdTrend === 'ABSORPTION_TRAP' && <span>⚠️</span>}
+                          </span>
+                        )}
                       </div>
                     </td>
 

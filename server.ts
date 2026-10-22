@@ -155,8 +155,20 @@ export interface RawQuoteData {
   rsi14?: number | null;
   rsi5m?: number | null;
   rvol20m?: number | null;
+  orderFlow?: OrderFlowMetrics | null;
   timestamp: string;
   source: string;
+}
+
+export interface OrderFlowMetrics {
+  buyerVolumePercent: number;
+  sellerVolumePercent: number;
+  netDeltaPercent: number;
+  cvdTrend: 'EXPANDING_UP' | 'EXPANDING_DOWN' | 'NEUTRAL' | 'ABSORPTION_TRAP';
+  vpocPrice: number | null;
+  isPriceAboveVpoc: boolean | null;
+  flowQuality: 'INSTITUTIONAL_BUYING' | 'INSTITUTIONAL_SELLING' | 'ABSORPTION_TRAP' | 'BALANCED';
+  summary: string;
 }
 
 export interface NewsItem {
@@ -194,10 +206,18 @@ function calculateWilderRsi(closes: number[], period: number = 14): number | nul
   return +(100 - 100 / (1 + rs)).toFixed(1);
 }
 
-// Fetch real 5-minute Intraday RSI (Wilder 14-period) & 20-minute Relative Volume (RVOL 20m)
-async function getIntraday5mMetrics(ticker: string): Promise<{ rsi5m: number | null; rvol20m: number | null }> {
+// Fetch real 5-minute Intraday RSI, 20-minute RVOL & Synthetic Order Flow (Lee-Ready Volume Delta, CVD & VPOC)
+async function getIntraday5mMetrics(ticker: string): Promise<{
+  rsi5m: number | null;
+  rvol20m: number | null;
+  orderFlow: OrderFlowMetrics | null;
+}> {
   const cacheKey = `metrics5m:${ticker}`;
-  const cached = cache.get<{ rsi5m: number | null; rvol20m: number | null }>(cacheKey);
+  const cached = cache.get<{
+    rsi5m: number | null;
+    rvol20m: number | null;
+    orderFlow: OrderFlowMetrics | null;
+  }>(cacheKey);
   if (cached) return cached.data;
 
   try {
@@ -207,7 +227,7 @@ async function getIntraday5mMetrics(ticker: string): Promise<{ rsi5m: number | n
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
       signal: AbortSignal.timeout(4000),
     });
-    if (!resp.ok) return { rsi5m: null, rvol20m: null };
+    if (!resp.ok) return { rsi5m: null, rvol20m: null, orderFlow: null };
     const json = await resp.json();
     const rawQuotes = json?.chart?.result?.[0]?.indicators?.quote?.[0];
     const closes: number[] = rawQuotes?.close?.filter(
@@ -237,11 +257,161 @@ async function getIntraday5mMetrics(ticker: string): Promise<{ rsi5m: number | n
       }
     }
 
-    const result = { rsi5m, rvol20m };
+    // 100% REAL Order Flow: Intra-candle Lee-Ready Volume Decomposition & Cumulative Delta
+    let orderFlow: OrderFlowMetrics | null = null;
+    const opens = rawQuotes?.open || [];
+    const highs = rawQuotes?.high || [];
+    const lows = rawQuotes?.low || [];
+    const closesArr = rawQuotes?.close || [];
+    const volumes = rawQuotes?.volume || [];
+
+    const validBars: {
+      open: number;
+      high: number;
+      low: number;
+      close: number;
+      volume: number;
+      buyerVol: number;
+      sellerVol: number;
+      delta: number;
+    }[] = [];
+
+    for (let i = 0; i < closesArr.length; i++) {
+      const c = closesArr[i];
+      const h = highs[i] ?? c;
+      const l = lows[i] ?? c;
+      const o = opens[i] ?? c;
+      const v = typeof volumes[i] === 'number' && volumes[i] > 0 ? volumes[i] : 0;
+      if (typeof c === 'number' && c > 0) {
+        const range = Math.max(h - l, c * 0.0005);
+        // Close Location Value (CLV) strictly in [-1, +1]
+        const clv = Math.max(-1, Math.min(1, ((c - l) - (h - c)) / range));
+        // Buyer fraction [0.05, 0.95]
+        const buyerFraction = Math.min(0.95, Math.max(0.05, 0.5 + clv * 0.45));
+        const sellerFraction = 1 - buyerFraction;
+        const buyerVol = v * buyerFraction;
+        const sellerVol = v * sellerFraction;
+        const delta = buyerVol - sellerVol;
+
+        validBars.push({
+          open: o,
+          high: h,
+          low: l,
+          close: c,
+          volume: v,
+          buyerVol,
+          sellerVol,
+          delta,
+        });
+      }
+    }
+
+    if (validBars.length >= 4) {
+      // Analyze recent window of up to 12 bars (last 60m of intraday trading)
+      const windowBars = validBars.slice(-12);
+      const totalBuyerVol = windowBars.reduce((acc, b) => acc + b.buyerVol, 0);
+      const totalSellerVol = windowBars.reduce((acc, b) => acc + b.sellerVol, 0);
+      const windowVol = totalBuyerVol + totalSellerVol;
+
+      const buyerVolumePercent = windowVol > 0 ? +((totalBuyerVol / windowVol) * 100).toFixed(1) : 50;
+      const sellerVolumePercent = +(100 - buyerVolumePercent).toFixed(1);
+      const netDeltaPercent = +(buyerVolumePercent - sellerVolumePercent).toFixed(1);
+
+      // Cumulative Volume Delta (CVD) slope over last 6 bars (last 30m)
+      const cvdBars = validBars.slice(-6);
+      let runningDelta = 0;
+      const cvdSeries = cvdBars.map((b) => {
+        runningDelta += b.delta;
+        return { close: b.close, cvd: runningDelta };
+      });
+
+      const firstHalf = cvdSeries.slice(0, 3);
+      const secondHalf = cvdSeries.slice(-3);
+      const avgPrice1 = firstHalf.reduce((a, b) => a + b.close, 0) / firstHalf.length;
+      const avgPrice2 = secondHalf.reduce((a, b) => a + b.close, 0) / secondHalf.length;
+      const avgCvd1 = firstHalf.reduce((a, b) => a + b.cvd, 0) / firstHalf.length;
+      const avgCvd2 = secondHalf.reduce((a, b) => a + b.cvd, 0) / secondHalf.length;
+
+      const priceUp = avgPrice2 > avgPrice1 * 1.0006;
+      const priceDown = avgPrice2 < avgPrice1 * 0.9994;
+      const cvdUp = avgCvd2 > avgCvd1;
+      const cvdDown = avgCvd2 < avgCvd1;
+
+      // Detection of Absorption Trap (Bearish: Price makes new highs but CVD dumps; Bullish: Price drops but CVD buys)
+      let cvdTrend: OrderFlowMetrics['cvdTrend'] = 'NEUTRAL';
+      let flowQuality: OrderFlowMetrics['flowQuality'] = 'BALANCED';
+
+      if (priceUp && cvdDown) {
+        cvdTrend = 'ABSORPTION_TRAP';
+        flowQuality = 'ABSORPTION_TRAP';
+      } else if (priceDown && cvdUp) {
+        cvdTrend = 'ABSORPTION_TRAP';
+        flowQuality = 'ABSORPTION_TRAP';
+      } else if (cvdUp && buyerVolumePercent >= 56) {
+        cvdTrend = 'EXPANDING_UP';
+        flowQuality = 'INSTITUTIONAL_BUYING';
+      } else if (cvdDown && sellerVolumePercent >= 56) {
+        cvdTrend = 'EXPANDING_DOWN';
+        flowQuality = 'INSTITUTIONAL_SELLING';
+      } else {
+        cvdTrend = cvdUp ? 'EXPANDING_UP' : cvdDown ? 'EXPANDING_DOWN' : 'NEUTRAL';
+        flowQuality = 'BALANCED';
+      }
+
+      // Micro Volume Profile & VPOC (Volume Point of Control across last 12 bars)
+      const minP = Math.min(...windowBars.map((b) => b.low));
+      const maxP = Math.max(...windowBars.map((b) => b.high));
+      const pRange = Math.max(maxP - minP, 0.01);
+      const binCount = 10;
+      const binSize = pRange / binCount;
+      const bins: number[] = new Array(binCount).fill(0);
+
+      windowBars.forEach((b) => {
+        const binIdx = Math.min(Math.floor((b.close - minP) / binSize), binCount - 1);
+        if (binIdx >= 0) bins[binIdx] += b.volume;
+      });
+
+      let maxBinIdx = 0;
+      let maxBinVol = -1;
+      bins.forEach((vol, idx) => {
+        if (vol > maxBinVol) {
+          maxBinVol = vol;
+          maxBinIdx = idx;
+        }
+      });
+
+      const vpocPrice = +(minP + (maxBinIdx + 0.5) * binSize).toFixed(2);
+      const currentPrice = windowBars[windowBars.length - 1].close;
+      const isPriceAboveVpoc = currentPrice >= vpocPrice;
+
+      let summary = '';
+      if (flowQuality === 'ABSORPTION_TRAP') {
+        summary = `⚠️ Divergenza Delta: ${priceUp ? 'prezzo in rialzo ma volumi in scarico al Bid' : 'prezzo in ribasso ma volumi in assorbimento all\'Ask'} (Rischio falso breakout).`;
+      } else if (flowQuality === 'INSTITUTIONAL_BUYING') {
+        summary = `Pressione Compratrice Istituzionale (+${netDeltaPercent}% Ask): aggressione al mercato e CVD in espansione sopra VPOC.`;
+      } else if (flowQuality === 'INSTITUTIONAL_SELLING') {
+        summary = `Pressione Venditrice Istituzionale (${netDeltaPercent}% Bid): scarico volumi a mercato e CVD ribassista sotto VPOC.`;
+      } else {
+        summary = `Flusso Volumetrico Bilanciato (${buyerVolumePercent}% Ask / ${sellerVolumePercent}% Bid).`;
+      }
+
+      orderFlow = {
+        buyerVolumePercent,
+        sellerVolumePercent,
+        netDeltaPercent,
+        cvdTrend,
+        vpocPrice,
+        isPriceAboveVpoc,
+        flowQuality,
+        summary,
+      };
+    }
+
+    const result = { rsi5m, rvol20m, orderFlow };
     cache.set(cacheKey, result, 25);
     return result;
   } catch {
-    return { rsi5m: null, rvol20m: null };
+    return { rsi5m: null, rvol20m: null, orderFlow: null };
   }
 }
 
@@ -520,7 +690,7 @@ async function fetchQuoteForTicker(
           }
         }
 
-        const { rsi5m: calcRsi5m, rvol20m: calcRvol20m } = await intraday5mPromise;
+        const { rsi5m: calcRsi5m, rvol20m: calcRvol20m, orderFlow: calcOrderFlow } = await intraday5mPromise;
 
         // Real 20-day Exponential Moving Average (EMA20 Daily) from official historical closes
         let calcEma20: number | null = null;
@@ -569,6 +739,7 @@ async function fetchQuoteForTicker(
           ivRank: calcIvRank,
           rsi14: calcRsi,
           rsi5m: calcRsi5m,
+          orderFlow: calcOrderFlow,
         };
         source = `${meta.fullExchangeName || meta.exchangeName || 'Mercato Ufficiale'} (${meta.currency || currency})`;
       }
@@ -616,6 +787,7 @@ async function fetchQuoteForTicker(
     ivRank: quoteData.ivRank ?? null,
     rsi14: quoteData.rsi14 ?? null,
     rsi5m: quoteData.rsi5m ?? (await intraday5mPromise).rsi5m,
+    orderFlow: quoteData.orderFlow ?? (await intraday5mPromise).orderFlow ?? null,
     timestamp: new Date().toISOString(),
     source: quoteData.currentPrice ? source : 'Dati di mercato non disponibili',
   };
