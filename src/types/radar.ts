@@ -540,3 +540,12 @@ export interface ExcludedSetupsAutoAnalysis {
   }>;
   analyzedAt: string;
 }
+
+export interface MarketFreezeState {
+  isFrozen: boolean;
+  frozenTicker: string | null;
+  frozenAt: string | null; // ISO timestamp
+  frozenTimeFormatted: string | null; // e.g. "09:15 CET"
+  isAutoFrozen: boolean;
+  unlockedByUser: boolean;
+}

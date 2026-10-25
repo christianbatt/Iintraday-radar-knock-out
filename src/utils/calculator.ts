@@ -99,25 +99,49 @@ export function calculateCandidateScore(
     else if (dir === 'SHORT') isCandidateLong = false;
   }
 
-  // 1. GAP SCORE (max 25) - Only from real calculated gap
+  // 1. GAP SCORE (max 25) - Normalized by Volatility (ATR-scaled Gap)
   if (quote.gapPercent != null) {
     const absGap = Math.abs(quote.gapPercent);
-    const gapThreshold = isEurope ? 0.8 : 1.4;
-    if (absGap >= gapThreshold * 1.5) {
-      gapScore = 25;
-      details.push(`Gap elevato (${absGap.toFixed(2)}% vs soglia ${gapThreshold}%): +25pt`);
-    } else if (absGap >= gapThreshold) {
-      gapScore = 20;
-      details.push(`Gap significativo (${absGap.toFixed(2)}%): +20pt`);
-    } else if (absGap >= gapThreshold * 0.5) {
-      gapScore = 12;
-      details.push(`Gap moderato (${absGap.toFixed(2)}%): +12pt`);
-    } else if (absGap >= (isEurope ? 0.2 : 0.35)) {
-      gapScore = 6;
-      details.push(`Gap ridotto (${absGap.toFixed(2)}%): +6pt`);
+    const atr = quote.atr14;
+    const atrPct = (price != null && price > 0 && atr != null && atr > 0) ? (atr / price) * 100 : null;
+
+    if (atrPct != null && atrPct > 0) {
+      // Volatility-Normalized Gap Ratio: |gap%| / ATR%
+      const gapToAtrRatio = absGap / atrPct;
+      if (gapToAtrRatio >= 0.75) {
+        gapScore = 25;
+        details.push(`Gap elevato normalizzato per ATR (${gapToAtrRatio.toFixed(2)}x ATR | ${absGap.toFixed(2)}% vs ATR ${atrPct.toFixed(2)}%): +25pt`);
+      } else if (gapToAtrRatio >= 0.50) {
+        gapScore = 20;
+        details.push(`Gap significativo normalizzato per ATR (${gapToAtrRatio.toFixed(2)}x ATR | ${absGap.toFixed(2)}%): +20pt`);
+      } else if (gapToAtrRatio >= 0.30) {
+        gapScore = 12;
+        details.push(`Gap moderato normalizzato per ATR (${gapToAtrRatio.toFixed(2)}x ATR | ${absGap.toFixed(2)}%): +12pt`);
+      } else if (gapToAtrRatio >= 0.15) {
+        gapScore = 6;
+        details.push(`Gap ridotto (${gapToAtrRatio.toFixed(2)}x ATR | ${absGap.toFixed(2)}%): +6pt`);
+      } else {
+        gapScore = 2;
+        details.push(`Gap debole o piatto (<0.15x ATR | ${absGap.toFixed(2)}%): +2pt`);
+      }
     } else {
-      gapScore = 2;
-      details.push(`Gap debole o piatto (${absGap.toFixed(2)}%): +2pt`);
+      const gapThreshold = isEurope ? 0.8 : 1.4;
+      if (absGap >= gapThreshold * 1.5) {
+        gapScore = 25;
+        details.push(`Gap elevato (${absGap.toFixed(2)}% vs soglia ${gapThreshold}%): +25pt`);
+      } else if (absGap >= gapThreshold) {
+        gapScore = 20;
+        details.push(`Gap significativo (${absGap.toFixed(2)}%): +20pt`);
+      } else if (absGap >= gapThreshold * 0.5) {
+        gapScore = 12;
+        details.push(`Gap moderato (${absGap.toFixed(2)}%): +12pt`);
+      } else if (absGap >= (isEurope ? 0.2 : 0.35)) {
+        gapScore = 6;
+        details.push(`Gap ridotto (${absGap.toFixed(2)}%): +6pt`);
+      } else {
+        gapScore = 2;
+        details.push(`Gap debole o piatto (${absGap.toFixed(2)}%): +2pt`);
+      }
     }
   } else {
     gapScore = 0;
@@ -217,8 +241,8 @@ export function calculateCandidateScore(
       details.push(`Prezzo all'interno del range di ieri: +5pt`);
     }
   } else {
-    levelScore = 2;
-    details.push('Livelli High/Low ieri non disponibili: +2pt');
+    levelScore = 0;
+    details.push('Livelli High/Low ieri non disponibili: 0pt (nessun punteggio per dati mancanti)');
   }
 
   // 6. RSI MOMENTUM & TURBO KO QUALITY (max 10)
@@ -273,13 +297,14 @@ export function calculateCandidateScore(
       }
     }
   } else {
-    rsiScore = 5;
-    details.push('RSI non disponibile dal feed: punteggio neutro (+5pt)');
+    rsiScore = 0;
+    details.push('RSI non disponibile dal feed: 0pt (nessun punteggio per dati mancanti)');
   }
 
   // 7. NEWS & CATALYST BONUS SCORE (+0 to +15pt)
   // Regola fondamentale: l'assenza di notizie non è motivo di esclusione (+0pt bonus).
-  // La presenza di buone notizie o catalizzatore dà punti bonus in più allo score del ticket.
+  // La presenza di buone notizie o catalizzatore dà punti bonus in più allo score del ticket,
+  // MA viene convalidata contro l'azione di prezzo per evitare trappole "sell the news".
   let newsScore = 0;
   if (typeof newsOrCatalyst === 'number') {
     newsScore = Math.max(0, Math.min(15, newsOrCatalyst));
@@ -331,6 +356,19 @@ export function calculateCandidateScore(
     }
   }
 
+  // Convalida Catalizzatore con Azione di Prezzo (Protezione Sell-the-News)
+  if (newsScore > 0 && typeof newsOrCatalyst === 'object' && newsOrCatalyst !== null && 'direzione' in newsOrCatalyst) {
+    const catDir = (newsOrCatalyst as GeminiCatalystAnalysis).direzione;
+    const isContrarian =
+      (catDir === 'LONG' && ((quote.gapPercent ?? 0) < -0.3 || (quote.vwap != null && price != null && price < quote.vwap * 0.995))) ||
+      (catDir === 'SHORT' && ((quote.gapPercent ?? 0) > 0.3 || (quote.vwap != null && price != null && price > quote.vwap * 1.005)));
+    if (isContrarian) {
+      const reducedBonus = Math.min(3, Math.floor(newsScore * 0.25));
+      details.push(`⚠️ Notizia ${catDir} in contrasto con l'azione di prezzo/VWAP (possibile trappola sell-the-news): bonus ridotto da +${newsScore}pt a +${reducedBonus}pt`);
+      newsScore = reducedBonus;
+    }
+  }
+
   if (newsScore > 0 && !details.some((d) => d.includes('Notizia'))) {
     details.push(`🔥 Bonus Notizie/Catalizzatore Attivo: +${newsScore}pt sullo score del titolo`);
   } else if (newsScore === 0) {
@@ -355,8 +393,8 @@ export function calculateCandidateScore(
       details.push(`Controtendenza Macro: Setup Short con Prezzo sopra EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +2pt (cautela)`);
     }
   } else {
-    trendScore = 4;
-    details.push('Trend Macro EMA(20) daily non disponibile: +4pt (neutro)');
+    trendScore = 0;
+    details.push('Trend Macro EMA(20) daily non disponibile: 0pt (nessun punteggio per dati mancanti)');
   }
 
   // 9. CONVALIDA ORDER FLOW SYNTHETIC L2 & DELTA / VPOC (-10pt a +10pt)

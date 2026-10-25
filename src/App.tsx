@@ -13,6 +13,7 @@ import {
   FilteringAuditReport,
   ExcludedSetupRecord,
   ExcludedSetupsAutoAnalysis,
+  MarketFreezeState,
 } from './types/radar';
 import { DEFAULT_TRADE_REPUBLIC_UNDERLYINGS } from './data/defaultUnderlyings';
 import {
@@ -110,6 +111,53 @@ export default function App() {
   const [setupEU, setSetupEU] = useState<ExecutionSetup | null>(null);
   const [setupUS, setSetupUS] = useState<ExecutionSetup | null>(null);
   const [selectedCandidate, setSelectedCandidate] = useState<ScoredCandidate | null>(null);
+
+  // 3.5. Selection Freeze / Snapshot State (09:15 CET for Europe & 15:45 CET for USA)
+  const [freezeStateEU, setFreezeStateEU] = useState<MarketFreezeState>(() => {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const saved = localStorage.getItem(`intraday_radar_freeze_EU_${today}`);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {
+      isFrozen: false,
+      frozenTicker: null,
+      frozenAt: null,
+      frozenTimeFormatted: null,
+      isAutoFrozen: false,
+      unlockedByUser: false,
+    };
+  });
+
+  const [freezeStateUS, setFreezeStateUS] = useState<MarketFreezeState>(() => {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const saved = localStorage.getItem(`intraday_radar_freeze_US_${today}`);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {
+      isFrozen: false,
+      frozenTicker: null,
+      frozenAt: null,
+      frozenTimeFormatted: null,
+      isAutoFrozen: false,
+      unlockedByUser: false,
+    };
+  });
+
+  const freezeStateEURef = React.useRef(freezeStateEU);
+  const freezeStateUSRef = React.useRef(freezeStateUS);
+  useEffect(() => {
+    freezeStateEURef.current = freezeStateEU;
+    const today = new Date().toISOString().slice(0, 10);
+    localStorage.setItem(`intraday_radar_freeze_EU_${today}`, JSON.stringify(freezeStateEU));
+  }, [freezeStateEU]);
+
+  useEffect(() => {
+    freezeStateUSRef.current = freezeStateUS;
+    const today = new Date().toISOString().slice(0, 10);
+    localStorage.setItem(`intraday_radar_freeze_US_${today}`, JSON.stringify(freezeStateUS));
+  }, [freezeStateUS]);
 
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [cachedAt, setCachedAt] = useState<string | undefined>(undefined);
@@ -408,33 +456,99 @@ export default function App() {
       // 3. Dual-Market Ranking: Top 1 Europe, Top 1 USA, and All Ranked
       const dual = getDualTopCandidates(rawQuotes, futuresMapping, { rsiFilterActive, parameters });
 
-      setTopCandidateEU(dual.topEU);
-      setTopCandidateUS(dual.topUS);
+      const freezeEU = freezeStateEURef.current;
+      const freezeUS = freezeStateUSRef.current;
+
+      // Determine candidate for EU: if frozen, lock to the frozen ticker with real-time live quotes
+      let activeTopEU = dual.topEU;
+      if (freezeEU.isFrozen && freezeEU.frozenTicker) {
+        const matched = dual.allRanked.find((c) => c.quote.ticker === freezeEU.frozenTicker);
+        if (matched) {
+          activeTopEU = matched;
+        }
+      }
+
+      // Determine candidate for US: if frozen, lock to the frozen ticker with real-time live quotes
+      let activeTopUS = dual.topUS;
+      if (freezeUS.isFrozen && freezeUS.frozenTicker) {
+        const matched = dual.allRanked.find((c) => c.quote.ticker === freezeUS.frozenTicker);
+        if (matched) {
+          activeTopUS = matched;
+        }
+      }
+
+      // Auto-freeze at 09:15 CET for Europe and 15:45 CET for USA if not unlocked by user
+      const cetMins =
+        sessionInfo?.cet?.currentMinutes ??
+        ((new Date().getUTCHours() + 1) * 60 + new Date().getUTCMinutes());
+
+      if (
+        cetMins >= 555 &&
+        cetMins <= 1050 &&
+        !freezeEU.isFrozen &&
+        !freezeEU.unlockedByUser &&
+        activeTopEU
+      ) {
+        const newFreeze: MarketFreezeState = {
+          isFrozen: true,
+          frozenTicker: activeTopEU.quote.ticker,
+          frozenAt: new Date().toISOString(),
+          frozenTimeFormatted: '09:15 CET (Snapshot ORB 15m)',
+          isAutoFrozen: true,
+          unlockedByUser: false,
+        };
+        setFreezeStateEU(newFreeze);
+        freezeStateEURef.current = newFreeze;
+      }
+
+      if (
+        cetMins >= 945 &&
+        cetMins <= 1320 &&
+        !freezeUS.isFrozen &&
+        !freezeUS.unlockedByUser &&
+        activeTopUS
+      ) {
+        const newFreeze: MarketFreezeState = {
+          isFrozen: true,
+          frozenTicker: activeTopUS.quote.ticker,
+          frozenAt: new Date().toISOString(),
+          frozenTimeFormatted: '15:45 CET (Snapshot ORB 15m)',
+          isAutoFrozen: true,
+          unlockedByUser: false,
+        };
+        setFreezeStateUS(newFreeze);
+        freezeStateUSRef.current = newFreeze;
+      }
+
+      setTopCandidateEU(activeTopEU);
+      setTopCandidateUS(activeTopUS);
       setTopCandidates(dual.allRanked);
 
       // Select default candidate
       if (currentSession === 'US') {
-        setSelectedCandidate(dual.topUS || dual.topEU);
+        setSelectedCandidate(activeTopUS || activeTopEU);
       } else {
-        setSelectedCandidate(dual.topEU || dual.topUS);
+        setSelectedCandidate(activeTopEU || activeTopUS);
       }
 
       // 4. Concurrently analyze catalysts & build execution setups for both Top picks
-      let finalTopEU = dual.topEU;
-      let finalTopUS = dual.topUS;
+      let finalTopEU = activeTopEU;
+      let finalTopUS = activeTopUS;
 
       const [catEU, catUS] = await Promise.all([
-        resolveCandidateCatalyst(dual.topEU, activeFut?.europe),
-        resolveCandidateCatalyst(dual.topUS, activeFut?.usa),
+        resolveCandidateCatalyst(activeTopEU, activeFut?.europe),
+        resolveCandidateCatalyst(activeTopUS, activeFut?.usa),
       ]);
 
       let finalCatEU = catEU;
       let finalCatUS = catUS;
 
-      // If top candidate is disqualified by negative catalyst, check if a qualified runner-up has a valid catalyst
-      if (catEU?.decisione === 'NESSUN_TRADE' && dual.rankedEU.length > 1) {
+      // If top candidate is disqualified by negative catalyst, check if a qualified runner-up has a valid catalyst (only when not frozen)
+      if (!freezeEU.isFrozen && catEU?.decisione === 'NESSUN_TRADE' && dual.rankedEU.length > 1) {
         const runnerUp = dual.rankedEU.find(
-          (c) => c.quote.ticker !== dual.topEU?.quote.ticker && isCandidateCompliantWithParameters(c.quote, c.score.total, parameters, rsiFilterActive).compliant
+          (c) =>
+            c.quote.ticker !== dual.topEU?.quote.ticker &&
+            isCandidateCompliantWithParameters(c.quote, c.score.total, parameters, rsiFilterActive).compliant
         );
         if (runnerUp) {
           const runnerCat = await resolveCandidateCatalyst(runnerUp, activeFut?.europe);
@@ -445,9 +559,11 @@ export default function App() {
         }
       }
 
-      if (catUS?.decisione === 'NESSUN_TRADE' && dual.rankedUS.length > 1) {
+      if (!freezeUS.isFrozen && catUS?.decisione === 'NESSUN_TRADE' && dual.rankedUS.length > 1) {
         const runnerUp = dual.rankedUS.find(
-          (c) => c.quote.ticker !== dual.topUS?.quote.ticker && isCandidateCompliantWithParameters(c.quote, c.score.total, parameters, rsiFilterActive).compliant
+          (c) =>
+            c.quote.ticker !== dual.topUS?.quote.ticker &&
+            isCandidateCompliantWithParameters(c.quote, c.score.total, parameters, rsiFilterActive).compliant
         );
         if (runnerUp) {
           const runnerCat = await resolveCandidateCatalyst(runnerUp, activeFut?.usa);
@@ -521,29 +637,46 @@ export default function App() {
     const futuresMapping = { EU: euChange, US: usChange };
 
     const dual = getDualTopCandidates(quotes, futuresMapping, { rsiFilterActive, parameters });
-    setTopCandidateEU(dual.topEU);
-    setTopCandidateUS(dual.topUS);
+    const freezeEU = freezeStateEURef.current;
+    const freezeUS = freezeStateUSRef.current;
+
+    let activeTopEU = dual.topEU;
+    if (freezeEU.isFrozen && freezeEU.frozenTicker) {
+      const matched = dual.allRanked.find((c) => c.quote.ticker === freezeEU.frozenTicker);
+      if (matched) activeTopEU = matched;
+    }
+
+    let activeTopUS = dual.topUS;
+    if (freezeUS.isFrozen && freezeUS.frozenTicker) {
+      const matched = dual.allRanked.find((c) => c.quote.ticker === freezeUS.frozenTicker);
+      if (matched) activeTopUS = matched;
+    }
+
+    setTopCandidateEU(activeTopEU);
+    setTopCandidateUS(activeTopUS);
     setTopCandidates(dual.allRanked);
 
     if (currentSession === 'US') {
-      setSelectedCandidate(dual.topUS || dual.topEU);
+      setSelectedCandidate(activeTopUS || activeTopEU);
     } else {
-      setSelectedCandidate(dual.topEU || dual.topUS);
+      setSelectedCandidate(activeTopEU || activeTopUS);
     }
 
     Promise.all([
-      resolveCandidateCatalyst(dual.topEU, activeFut?.europe),
-      resolveCandidateCatalyst(dual.topUS, activeFut?.usa),
+      resolveCandidateCatalyst(activeTopEU, activeFut?.europe),
+      resolveCandidateCatalyst(activeTopUS, activeFut?.usa),
     ]).then(async ([catEU, catUS]) => {
-      let finalTopEU = dual.topEU;
-      let finalTopUS = dual.topUS;
+      let finalTopEU = activeTopEU;
+      let finalTopUS = activeTopUS;
       let finalCatEU = catEU;
       let finalCatUS = catUS;
 
-      // If top candidate is disqualified by negative catalyst, check runner-up qualified candidate
-      if (catEU?.decisione === 'NESSUN_TRADE' && dual.rankedEU.length > 1) {
+      // If top candidate is disqualified by negative catalyst, check runner-up qualified candidate (only when not frozen)
+      if (!freezeEU.isFrozen && catEU?.decisione === 'NESSUN_TRADE' && dual.rankedEU.length > 1) {
         const runnerUp = dual.rankedEU.find(
-          (c) => c.quote.ticker !== dual.topEU?.quote.ticker && isCandidateCompliantWithParameters(c.quote, c.score.total, parameters, rsiFilterActive).compliant
+          (c) =>
+            c.quote.ticker !== dual.topEU?.quote.ticker &&
+            isCandidateCompliantWithParameters(c.quote, c.score.total, parameters, rsiFilterActive).compliant
         );
         if (runnerUp) {
           const runnerCat = await resolveCandidateCatalyst(runnerUp, activeFut?.europe);
@@ -554,9 +687,11 @@ export default function App() {
         }
       }
 
-      if (catUS?.decisione === 'NESSUN_TRADE' && dual.rankedUS.length > 1) {
+      if (!freezeUS.isFrozen && catUS?.decisione === 'NESSUN_TRADE' && dual.rankedUS.length > 1) {
         const runnerUp = dual.rankedUS.find(
-          (c) => c.quote.ticker !== dual.topUS?.quote.ticker && isCandidateCompliantWithParameters(c.quote, c.score.total, parameters, rsiFilterActive).compliant
+          (c) =>
+            c.quote.ticker !== dual.topUS?.quote.ticker &&
+            isCandidateCompliantWithParameters(c.quote, c.score.total, parameters, rsiFilterActive).compliant
         );
         if (runnerUp) {
           const runnerCat = await resolveCandidateCatalyst(runnerUp, activeFut?.usa);
@@ -610,6 +745,69 @@ export default function App() {
 
     return () => clearInterval(timer);
   }, [isAutoRefresh]);
+
+  // Freeze / Unfreeze Toggles for Europe and USA
+  const handleToggleFreezeEU = useCallback(() => {
+    setFreezeStateEU((prev) => {
+      if (prev.isFrozen) {
+        const updated: MarketFreezeState = {
+          isFrozen: false,
+          frozenTicker: null,
+          frozenAt: null,
+          frozenTimeFormatted: null,
+          isAutoFrozen: false,
+          unlockedByUser: true,
+        };
+        freezeStateEURef.current = updated;
+        return updated;
+      } else {
+        const candTicker = topCandidateEU?.quote.ticker || null;
+        if (!candTicker) return prev;
+        const updated: MarketFreezeState = {
+          isFrozen: true,
+          frozenTicker: candTicker,
+          frozenAt: new Date().toISOString(),
+          frozenTimeFormatted: `${sessionInfo?.cet?.formatted || 'Manuale'} CET`,
+          isAutoFrozen: false,
+          unlockedByUser: false,
+        };
+        freezeStateEURef.current = updated;
+        return updated;
+      }
+    });
+    setTimeout(() => handleRunScreeningRef.current(), 30);
+  }, [topCandidateEU, sessionInfo]);
+
+  const handleToggleFreezeUS = useCallback(() => {
+    setFreezeStateUS((prev) => {
+      if (prev.isFrozen) {
+        const updated: MarketFreezeState = {
+          isFrozen: false,
+          frozenTicker: null,
+          frozenAt: null,
+          frozenTimeFormatted: null,
+          isAutoFrozen: false,
+          unlockedByUser: true,
+        };
+        freezeStateUSRef.current = updated;
+        return updated;
+      } else {
+        const candTicker = topCandidateUS?.quote.ticker || null;
+        if (!candTicker) return prev;
+        const updated: MarketFreezeState = {
+          isFrozen: true,
+          frozenTicker: candTicker,
+          frozenAt: new Date().toISOString(),
+          frozenTimeFormatted: `${sessionInfo?.cet?.formatted || 'Manuale'} CET`,
+          isAutoFrozen: false,
+          unlockedByUser: false,
+        };
+        freezeStateUSRef.current = updated;
+        return updated;
+      }
+    });
+    setTimeout(() => handleRunScreeningRef.current(), 30);
+  }, [topCandidateUS, sessionInfo]);
 
   // Run initial scan once futures are available
   const initialScanDoneRef = React.useRef(false);
@@ -1446,6 +1644,10 @@ export default function App() {
           isPaperMode={isPaperMode}
           circuitBreakerActive={circuitBreakerActive}
           currentSession={currentSession}
+          freezeStateEU={freezeStateEU}
+          freezeStateUS={freezeStateUS}
+          onToggleFreezeEU={handleToggleFreezeEU}
+          onToggleFreezeUS={handleToggleFreezeUS}
         />
 
         {/* 6. Intraday Live Radar: Titoli a Mercati Aperti con Filtri e ATR Esteso */}

@@ -4,6 +4,7 @@ import {
   KnockOutCalculatorInput,
   KnockOutSafetyCheck,
   ScoredCandidate,
+  MarketFreezeState,
 } from '../types/radar';
 import { calculateKnockOutSafety, createDefaultSafetyCheck } from '../utils/calculator';
 import { ImpliedVolatilityGauge } from './ImpliedVolatilityGauge';
@@ -27,6 +28,7 @@ import {
   Scale,
   Layers,
   Lock,
+  Unlock,
   ChevronDown,
   ChevronUp,
   Info,
@@ -51,6 +53,8 @@ interface SingleMarketHeroCardProps {
   isPaperMode: boolean;
   circuitBreakerActive: boolean;
   isPreferredSession?: boolean;
+  freezeState?: MarketFreezeState;
+  onToggleFreeze?: () => void;
 }
 
 export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
@@ -67,6 +71,8 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
   isPaperMode,
   circuitBreakerActive,
   isPreferredSession,
+  freezeState,
+  onToggleFreeze,
 }) => {
   const isNoTrade = !setup || setup.decision === 'NESSUN_TRADE';
   const quote = setup?.candidate || candidate?.quote;
@@ -344,6 +350,68 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
 
       {/* Main Body */}
       <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
+        {/* Selection Freeze / Snapshot Bar */}
+        <div
+          className={`px-3 py-2 rounded-xl border text-xs font-mono flex items-center justify-between gap-2.5 transition-all ${
+            freezeState?.isFrozen
+              ? 'bg-sky-950/60 border-sky-500/60 text-sky-200 shadow-md shadow-sky-950/30'
+              : 'bg-slate-950/60 border-slate-800 text-slate-300'
+          }`}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            {freezeState?.isFrozen ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-sky-400 shrink-0 shadow-[0_0_8px_rgba(56,189,248,0.9)] animate-pulse" />
+                <div className="truncate">
+                  <span className="font-bold text-sky-300">Candidato Congelato</span>
+                  <span className="text-[11px] text-sky-300/80 ml-1.5 hidden sm:inline">
+                    ({freezeState.frozenTimeFormatted || 'Snapshot ORB 15m'} • Scelta Stabile)
+                  </span>
+                </div>
+              </>
+            ) : (
+              <>
+                <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 animate-ping" />
+                <div className="truncate">
+                  <span className="font-bold text-slate-200">Radar Dinamico Live</span>
+                  <span className="text-[11px] text-slate-400 ml-1.5 hidden sm:inline">
+                    (Aggiornamento continuo in tempo reale)
+                  </span>
+                </div>
+              </>
+            )}
+          </div>
+
+          {onToggleFreeze && (
+            <button
+              type="button"
+              onClick={onToggleFreeze}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold font-mono transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
+                freezeState?.isFrozen
+                  ? 'bg-sky-500 hover:bg-sky-400 text-slate-950 shadow-md shadow-sky-950/50'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+              }`}
+              title={
+                freezeState?.isFrozen
+                  ? 'Sblocca per passare subito al miglior candidato calcolato in tempo reale'
+                  : 'Congela questo candidato per non cambiare titolo durante la sessione'
+              }
+            >
+              {freezeState?.isFrozen ? (
+                <>
+                  <Unlock className="w-3.5 h-3.5" />
+                  <span>Scongela (Passa a Live)</span>
+                </>
+              ) : (
+                <>
+                  <Lock className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Congela Candidato</span>
+                </>
+              )}
+            </button>
+          )}
+        </div>
+
         {/* Target 1 Reached Discipline Alert */}
         {isTarget1Reached && (
           <div className="bg-gradient-to-r from-emerald-950 via-emerald-900/60 to-slate-900 border-2 border-emerald-500/80 rounded-xl p-3 font-mono shadow-lg animate-pulse">
@@ -1485,6 +1553,10 @@ interface DualExecutionHeroProps {
   isPaperMode: boolean;
   circuitBreakerActive: boolean;
   currentSession: 'EU' | 'US' | 'GLOBAL';
+  freezeStateEU?: MarketFreezeState;
+  freezeStateUS?: MarketFreezeState;
+  onToggleFreezeEU?: () => void;
+  onToggleFreezeUS?: () => void;
 }
 
 export const DualExecutionHero: React.FC<DualExecutionHeroProps> = ({
@@ -1499,6 +1571,10 @@ export const DualExecutionHero: React.FC<DualExecutionHeroProps> = ({
   isPaperMode,
   circuitBreakerActive,
   currentSession,
+  freezeStateEU,
+  freezeStateUS,
+  onToggleFreezeEU,
+  onToggleFreezeUS,
 }) => {
   return (
     <section className="mb-8">
@@ -1542,6 +1618,8 @@ export const DualExecutionHero: React.FC<DualExecutionHeroProps> = ({
           isPaperMode={isPaperMode}
           circuitBreakerActive={circuitBreakerActive}
           isPreferredSession={currentSession === 'EU' || currentSession === 'GLOBAL'}
+          freezeState={freezeStateEU}
+          onToggleFreeze={onToggleFreezeEU}
         />
 
         {/* Card 2: TOP USA */}
@@ -1559,6 +1637,8 @@ export const DualExecutionHero: React.FC<DualExecutionHeroProps> = ({
           isPaperMode={isPaperMode}
           circuitBreakerActive={circuitBreakerActive}
           isPreferredSession={currentSession === 'US' || currentSession === 'GLOBAL'}
+          freezeState={freezeStateUS}
+          onToggleFreeze={onToggleFreezeUS}
         />
       </div>
     </section>
