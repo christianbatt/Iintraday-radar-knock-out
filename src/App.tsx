@@ -14,7 +14,10 @@ import {
   ExcludedSetupRecord,
   ExcludedSetupsAutoAnalysis,
   MarketFreezeState,
+  EntryMode,
 } from './types/radar';
+import { TRADING_PARAMS } from './config/tradingParams';
+import { getMarketTime } from './utils/timezone';
 import { DEFAULT_TRADE_REPUBLIC_UNDERLYINGS } from './data/defaultUnderlyings';
 import {
   getDualTopCandidates,
@@ -26,6 +29,7 @@ import {
   updateExcludedSetupsWithLiveQuotes,
   runExcludedSetupsAutoAnalysis,
   isCandidateCompliantWithParameters,
+  createJournalEntryFromSetup,
 } from './utils/calculator';
 import {
   fetchSessionInfo,
@@ -477,14 +481,13 @@ export default function App() {
         }
       }
 
-      // Auto-freeze at 09:15 CET for Europe and 15:45 CET for USA if not unlocked by user
-      const cetMins =
-        sessionInfo?.cet?.currentMinutes ??
-        ((new Date().getUTCHours() + 1) * 60 + new Date().getUTCMinutes());
+      // Auto-freeze at 09:15 Rome for Europe and 09:45 NY for USA using Intl.DateTimeFormat
+      const marketTimeEU = getMarketTime('EU');
+      const marketTimeUS = getMarketTime('US');
 
       if (
-        cetMins >= 555 &&
-        cetMins <= 1050 &&
+        marketTimeEU.isAfterOrb &&
+        marketTimeEU.isSessionActive &&
         !freezeEU.isFrozen &&
         !freezeEU.unlockedByUser &&
         activeTopEU
@@ -493,7 +496,7 @@ export default function App() {
           isFrozen: true,
           frozenTicker: activeTopEU.quote.ticker,
           frozenAt: new Date().toISOString(),
-          frozenTimeFormatted: '09:15 CET (Snapshot ORB 15m)',
+          frozenTimeFormatted: '09:15 Rome (Snapshot ORB 15m)',
           isAutoFrozen: true,
           unlockedByUser: false,
         };
@@ -502,8 +505,8 @@ export default function App() {
       }
 
       if (
-        cetMins >= 945 &&
-        cetMins <= 1320 &&
+        marketTimeUS.isAfterOrb &&
+        marketTimeUS.isSessionActive &&
         !freezeUS.isFrozen &&
         !freezeUS.unlockedByUser &&
         activeTopUS
@@ -512,7 +515,7 @@ export default function App() {
           isFrozen: true,
           frozenTicker: activeTopUS.quote.ticker,
           frozenAt: new Date().toISOString(),
-          frozenTimeFormatted: '15:45 CET (Snapshot ORB 15m)',
+          frozenTimeFormatted: '09:45 NY (Snapshot ORB 15m)',
           isAutoFrozen: true,
           unlockedByUser: false,
         };
@@ -574,10 +577,26 @@ export default function App() {
         }
       }
 
+      const entryModeEU: EntryMode = freezeEU.isAutoFrozen
+        ? 'SNAPSHOT_0915'
+        : freezeEU.unlockedByUser
+        ? 'UNFROZEN_LATE'
+        : freezeEU.isFrozen
+        ? 'MANUAL_FREEZE'
+        : 'UNFROZEN_LATE';
+
+      const entryModeUS: EntryMode = freezeUS.isAutoFrozen
+        ? 'SNAPSHOT_0915'
+        : freezeUS.unlockedByUser
+        ? 'UNFROZEN_LATE'
+        : freezeUS.isFrozen
+        ? 'MANUAL_FREEZE'
+        : 'UNFROZEN_LATE';
+
       setTopCandidateEU(finalTopEU);
       setTopCandidateUS(finalTopUS);
-      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters));
-      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters));
+      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU }));
+      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters, { entryMode: entryModeUS }));
 
       // 4.5. Visual Filtering Audit Generation (triggers 3-5s notification banner)
       const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCache };
@@ -702,10 +721,26 @@ export default function App() {
         }
       }
 
+      const entryModeEU: EntryMode = freezeEU.isAutoFrozen
+        ? 'SNAPSHOT_0915'
+        : freezeEU.unlockedByUser
+        ? 'UNFROZEN_LATE'
+        : freezeEU.isFrozen
+        ? 'MANUAL_FREEZE'
+        : 'UNFROZEN_LATE';
+
+      const entryModeUS: EntryMode = freezeUS.isAutoFrozen
+        ? 'SNAPSHOT_0915'
+        : freezeUS.unlockedByUser
+        ? 'UNFROZEN_LATE'
+        : freezeUS.isFrozen
+        ? 'MANUAL_FREEZE'
+        : 'UNFROZEN_LATE';
+
       setTopCandidateEU(finalTopEU);
       setTopCandidateUS(finalTopUS);
-      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters));
-      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters));
+      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU }));
+      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters, { entryMode: entryModeUS }));
 
       const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCache };
       if (finalTopEU && finalCatEU) currentCache[finalTopEU.quote.ticker] = finalCatEU;
@@ -1032,60 +1067,13 @@ export default function App() {
 
   // Journal Actions
   const handleAddJournalTrade = (tradeData: any) => {
-    const initialOutcome = tradeData.outcome || 'OPEN';
-    let pnlEur = tradeData.pnlEur != null ? tradeData.pnlEur : 0;
-    let rMultiple = tradeData.rMultiple != null ? tradeData.rMultiple : 0;
-    let exitPrice = tradeData.exitPrice || tradeData.target1 || 102;
-    let status: 'OPEN' | 'CLOSED' = initialOutcome === 'OPEN' ? 'OPEN' : 'CLOSED';
-
-    if (initialOutcome === 'WIN') {
-      exitPrice = tradeData.target1 || tradeData.entryPrice * 1.02;
-      rMultiple = +(parameters.target1Multiplier || 1.6).toFixed(2);
-      pnlEur = tradeData.potentialGainT1Eur != null ? tradeData.potentialGainT1Eur : +(100 * rMultiple).toFixed(2);
-    } else if (initialOutcome === 'LOSS') {
-      exitPrice = tradeData.stopLoss || tradeData.entryPrice * 0.98;
-      rMultiple = -1.0;
-      pnlEur = -(tradeData.maxRiskEur != null ? tradeData.maxRiskEur : 100);
-    } else if (initialOutcome === 'EXPIRED') {
-      exitPrice = tradeData.entryPrice || 100;
-      rMultiple = 0;
-      pnlEur = -2.0; // fee friction
-    } else if (initialOutcome === 'BREAKEVEN') {
-      exitPrice = tradeData.entryPrice || 100;
-      rMultiple = 0;
-      pnlEur = -2.0;
+    let entry: TradeJournalEntry;
+    try {
+      entry = createJournalEntryFromSetup(tradeData, parameters);
+    } catch (err) {
+      console.error('Salvataggio trade nel diario fallito (nessun record creato):', err);
+      return;
     }
-
-    const entry: TradeJournalEntry = {
-      id: `trade-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      date: new Date().toLocaleDateString('it-IT'),
-      session: tradeData.session,
-      ticker: tradeData.ticker,
-      direction: tradeData.direction,
-      strategy: tradeData.strategy,
-      entryPrice: tradeData.entryPrice || 100,
-      exitPrice,
-      stopLoss: tradeData.stopLoss || 98,
-      target1: tradeData.target1 || 103,
-      pnlEur,
-      rMultiple,
-      outcome: initialOutcome === 'OPEN' ? 'BREAKEVEN' : initialOutcome,
-      status,
-      closedAt: status === 'CLOSED' ? new Date().toISOString() : undefined,
-      notes:
-        tradeData.notes ||
-        (initialOutcome === 'OPEN'
-          ? `KO Strike ${tradeData.barrierStrike} | Leva ${tradeData.leverage}x | ${tradeData.suggestedCertificates} quote. In monitoraggio attivo.`
-          : initialOutcome === 'WIN'
-          ? `Target 1 (+${rMultiple}R) raggiunto con successo. Guadagno netto +${pnlEur} €.`
-          : initialOutcome === 'LOSS'
-          ? `Stop loss eseguito a protezione del capitale. Perdita controllata ${pnlEur} €.`
-          : initialOutcome === 'EXPIRED'
-          ? `Setup scaduto al cutoff orario senza rottura trigger né stop.`
-          : `Chiuso a pareggio.`),
-      isPaper: tradeData.isPaper,
-    };
 
     setJournalEntries((prev) => {
       const updated = [entry, ...prev];

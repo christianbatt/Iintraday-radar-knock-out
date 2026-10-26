@@ -933,6 +933,11 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
                     <td className="py-2 px-3 font-bold text-white">
                       {trade.ticker}
                       <span className="ml-1 text-[10px] font-normal text-slate-400">({trade.session})</span>
+                      {trade.entryMode && (
+                        <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-sky-950/70 text-sky-300 border border-sky-800/60 font-mono font-normal">
+                          {trade.entryMode}
+                        </span>
+                      )}
                     </td>
                     <td className="py-2 px-3">
                       <span

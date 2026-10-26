@@ -7,6 +7,7 @@ import {
   MarketFreezeState,
 } from '../types/radar';
 import { calculateKnockOutSafety, createDefaultSafetyCheck } from '../utils/calculator';
+import { TRADING_PARAMS } from '../config/tradingParams';
 import { ImpliedVolatilityGauge } from './ImpliedVolatilityGauge';
 import { tradingAudio } from '../utils/audioAlert';
 import {
@@ -38,6 +39,10 @@ import {
   Check,
   Compass,
 } from 'lucide-react';
+
+export function getHeroMinScore(market: 'EU' | 'US'): number {
+  return market === 'EU' ? TRADING_PARAMS.MIN_SCORE_EU : TRADING_PARAMS.MIN_SCORE_US;
+}
 
 interface SingleMarketHeroCardProps {
   market: 'EU' | 'US';
@@ -165,6 +170,13 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
       investedEur: koSafety.totalInvestedEur,
       isPaper: isPaperMode,
       outcome: chosenOutcome,
+      entryMode: setup.entryMode,
+      triggerLevel: setup.triggerLevel,
+      entryLevel: setup.triggerLevel,
+      stopLossLevel: setup.stopLossLevel,
+      barrierRecommended: setup.barrierRecommended,
+      selectedLeverage: setup.selectedLeverage,
+      gateResults: setup.gateResults,
     });
 
     const label =
@@ -190,7 +202,7 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
   const atrPct = atrVal && refPrice > 0 ? ((atrVal / refPrice) * 100).toFixed(1) : null;
 
   const isEU = market === 'EU';
-  const minScore = isEU ? 48 : 58;
+  const minScore = getHeroMinScore(market);
   const minRvol = isEU ? 0.85 : 1.15;
   const minGap = isEU ? 0.5 : 0.8;
   const currentScore = candidate?.score?.total;

@@ -4,6 +4,7 @@ import {
   SystemParameters,
   TradeJournalEntry,
 } from '../types/radar';
+import { TRADING_PARAMS } from '../config/tradingParams';
 import {
   Sliders,
   Sparkles,
@@ -427,7 +428,7 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 font-mono text-xs">
               <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/80">
                 <span className="text-[10px] text-slate-500 block">Score Min EU / USA</span>
-                <span className="text-white font-bold">{currentParameters.minScoreEurope ?? 48} / {currentParameters.minScoreUSA ?? 58}</span>
+                <span className="text-white font-bold">{TRADING_PARAMS.MIN_SCORE_EU} / {TRADING_PARAMS.MIN_SCORE_US}</span>
               </div>
               <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/80">
                 <span className="text-[10px] text-slate-500 block">RVOL Min EU / USA</span>

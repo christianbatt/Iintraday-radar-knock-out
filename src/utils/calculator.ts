@@ -26,26 +26,398 @@ import {
   ExcludedCategoryAnalysis,
   ExcludedSetupsAutoAnalysis,
   ExcludedOutcomeStatus,
+  EntryMode,
 } from '../types/radar';
+import { TRADING_PARAMS } from '../config/tradingParams';
+import { getMarketTime, getExchangeDateStr } from './timezone';
 
-// Default Adaptive System Parameters
+export interface DailyBarInput {
+  date?: string;
+  timestamp?: number; // Unix seconds or ms
+  open?: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface IntradayCandleInput {
+  timestamp: number | string | Date; // Unix seconds, ms, ISO string, or Date
+  open?: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+}
+
+/**
+ * Filtra solo le barre giornaliere completate (escludendo la candela odierna nel fuso della borsa).
+ */
+export function filterCompletedBars(
+  bars: DailyBarInput[],
+  market: 'EU' | 'US',
+  referenceDate: Date = new Date()
+): DailyBarInput[] {
+  const todayStr = getExchangeDateStr(market, referenceDate);
+  return bars.filter((b) => {
+    let barDate = b.date;
+    if (!barDate && b.timestamp != null) {
+      const ms = b.timestamp > 1e11 ? b.timestamp : b.timestamp * 1000;
+      barDate = getExchangeDateStr(market, new Date(ms));
+    }
+    return barDate ? barDate < todayStr : true;
+  });
+}
+
+/**
+ * ATR14 = media semplice di 14 True Range completati.
+ * Richiede almeno 15 barre complete (serve il close precedente per il primo dei 14 TR).
+ */
+export function calculateAtr14FromBars(completedBars: DailyBarInput[]): number | null {
+  if (!completedBars || completedBars.length < TRADING_PARAMS.ATR_MIN_BARS) {
+    return null;
+  }
+  const period = TRADING_PARAMS.ATR_PERIOD;
+  let trSum = 0;
+  for (let i = completedBars.length - period; i < completedBars.length; i++) {
+    const cur = completedBars[i];
+    const prevClose = completedBars[i - 1].close;
+    if (
+      cur.high == null ||
+      cur.low == null ||
+      cur.close == null ||
+      prevClose == null ||
+      cur.high < cur.low
+    ) {
+      return null;
+    }
+    const tr = Math.max(
+      cur.high - cur.low,
+      Math.abs(cur.high - prevClose),
+      Math.abs(cur.low - prevClose)
+    );
+    trSum += tr;
+  }
+  return +(trSum / period).toFixed(4);
+}
+
+/**
+ * ADR14 = media semplice di 14 (massimo - minimo) completati.
+ * Richiede almeno 14 barre complete.
+ */
+export function calculateAdr14FromBars(completedBars: DailyBarInput[]): number | null {
+  if (!completedBars || completedBars.length < TRADING_PARAMS.ADR_PERIOD) {
+    return null;
+  }
+  const period = TRADING_PARAMS.ADR_PERIOD;
+  const sample = completedBars.slice(-period);
+  let rangeSum = 0;
+  for (const b of sample) {
+    if (b.high == null || b.low == null || b.high < b.low) {
+      return null;
+    }
+    rangeSum += b.high - b.low;
+  }
+  return +(rangeSum / period).toFixed(4);
+}
+
+/**
+ * Liq€ = media di Volume * Close su 20 sessioni complete.
+ * Richiede almeno 20 barre complete; se mancano restituisce null (-> G2 DATI INSUFFICIENTI).
+ */
+export function calculateLiqEurFromBars(
+  completedBars: DailyBarInput[],
+  fxDivisor: number = 1.0,
+  currency: string = 'EUR'
+): number | null {
+  if (!completedBars || completedBars.length < TRADING_PARAMS.LIQ_BARS_REQUIRED) {
+    return null;
+  }
+  const isEur = !currency || currency.toUpperCase() === 'EUR';
+  if (!isEur) {
+    if (fxDivisor == null || isNaN(fxDivisor) || fxDivisor <= 0) {
+      throw new Error(`Tasso FX mancante o non valido per valuta ${currency}: impossibile calcolare Liq€ reale.`);
+    }
+  }
+  const required = TRADING_PARAMS.LIQ_BARS_REQUIRED;
+  const sample = completedBars.slice(-required);
+  let turnoverSum = 0;
+  for (const b of sample) {
+    if (
+      b.volume == null ||
+      b.volume <= 0 ||
+      b.close == null ||
+      b.close <= 0
+    ) {
+      return null;
+    }
+    turnoverSum += b.volume * b.close;
+  }
+  const avgTurnover = turnoverSum / required;
+  const divisor = isEur ? (fxDivisor && fxDivisor > 0 ? fxDivisor : 1.0) : fxDivisor;
+  return Math.round(avgTurnover / divisor);
+}
+
+/**
+ * Calcola i livelli ORB (T, S, Tb) dalle candele intraday nel fuso ufficiale della borsa.
+ * Una candela appartiene alla finestra ORB se inizio >= apertura e inizio < chiusura ORB.
+ * T e Tb restano invariati dopo la prima rottura.
+ */
+export function calculateOrbFromIntradayBars(
+  bars: IntradayCandleInput[],
+  market: 'EU' | 'US',
+  referenceDate?: Date,
+  direction: 'LONG' | 'SHORT' = 'LONG'
+): {
+  orbHigh: number | null;
+  orbLow: number | null;
+  triggerLevel: number | null;
+  stopLossLevel: number | null;
+  firstBreakoutTime: string | null;
+} {
+  if (!bars || bars.length === 0) {
+    return { orbHigh: null, orbLow: null, triggerLevel: null, stopLossLevel: null, firstBreakoutTime: null };
+  }
+
+  const openM =
+    market === 'US'
+      ? TRADING_PARAMS.US_OPEN_HOUR * 60 + TRADING_PARAMS.US_OPEN_MINUTE
+      : TRADING_PARAMS.EU_OPEN_HOUR * 60 + TRADING_PARAMS.EU_OPEN_MINUTE;
+  const orbEndM = openM + TRADING_PARAMS.ORB_MINUTES;
+
+  const toDate = (ts: number | string | Date): Date => {
+    if (ts instanceof Date) return ts;
+    if (typeof ts === 'string') return new Date(ts);
+    return new Date(ts > 1e11 ? ts : ts * 1000);
+  };
+
+  const refDateObj = referenceDate || toDate(bars[0].timestamp);
+  const sessionDateStr = getExchangeDateStr(market, refDateObj);
+
+  const orbCandles: { high: number; low: number; close: number; dateObj: Date }[] = [];
+  const postOrbCandles: { high: number; low: number; close: number; dateObj: Date }[] = [];
+
+  for (const b of bars) {
+    if (b.high == null || b.low == null || b.high <= 0 || b.low <= 0) continue;
+    const d = toDate(b.timestamp);
+    const mt = getMarketTime(market, d);
+    if (mt.dateFormatted !== sessionDateStr) continue;
+    const startMin = mt.totalMinutes;
+    if (startMin >= openM && startMin < orbEndM) {
+      orbCandles.push({ high: b.high, low: b.low, close: b.close, dateObj: d });
+    } else if (startMin >= orbEndM) {
+      postOrbCandles.push({ high: b.high, low: b.low, close: b.close, dateObj: d });
+    }
+  }
+
+  if (orbCandles.length === 0) {
+    return { orbHigh: null, orbLow: null, triggerLevel: null, stopLossLevel: null, firstBreakoutTime: null };
+  }
+
+  const orbHigh = +Math.max(...orbCandles.map((c) => c.high)).toFixed(6);
+  const orbLow = +Math.min(...orbCandles.map((c) => c.low)).toFixed(6);
+  const triggerLevel = direction === 'LONG' ? orbHigh : orbLow;
+  const stopLossLevel = +(
+    direction === 'LONG'
+      ? orbLow * (1 - TRADING_PARAMS.STOP_BUF)
+      : orbHigh * (1 + TRADING_PARAMS.STOP_BUF)
+  ).toFixed(6);
+
+  let firstBreakoutTime: string | null = null;
+  for (const post of postOrbCandles) {
+    const brokeLong = post.high > orbHigh + TRADING_PARAMS.EPSILON;
+    const brokeShort = post.low < orbLow - TRADING_PARAMS.EPSILON;
+    const broke = direction === 'LONG' ? brokeLong : brokeShort;
+    if (broke || brokeLong || brokeShort) {
+      firstBreakoutTime = post.dateObj.toISOString();
+      break;
+    }
+  }
+
+  return {
+    orbHigh,
+    orbLow,
+    triggerLevel,
+    stopLossLevel,
+    firstBreakoutTime,
+  };
+}
+
+/**
+ * Freeze manuale: T e S calcolati sulle 15 candele da 1 minuto complete precedenti l'istante del freeze.
+ * Una candela da 1m è completa e appartiene ai 15m precedenti se inizio >= (t_freeze - 15m) e inizio < t_freeze.
+ */
+export function calculateManualFreezeLevels(
+  bars1m: IntradayCandleInput[],
+  freezeTime: Date,
+  direction: 'LONG' | 'SHORT' = 'LONG'
+): {
+  orbHigh: number | null;
+  orbLow: number | null;
+  triggerLevel: number | null;
+  stopLossLevel: number | null;
+  includedBarsCount: number;
+} {
+  const freezeMs = freezeTime.getTime();
+  const windowStartMs = freezeMs - TRADING_PARAMS.MANUAL_FREEZE_BARS_1M * 60_000;
+
+  const toDate = (ts: number | string | Date): Date => {
+    if (ts instanceof Date) return ts;
+    if (typeof ts === 'string') return new Date(ts);
+    return new Date(ts > 1e11 ? ts : ts * 1000);
+  };
+
+  const windowBars = bars1m.filter((b) => {
+    const ms = toDate(b.timestamp).getTime();
+    return ms >= windowStartMs - TRADING_PARAMS.EPSILON && ms < freezeMs - TRADING_PARAMS.EPSILON;
+  });
+
+  if (windowBars.length === 0) {
+    return { orbHigh: null, orbLow: null, triggerLevel: null, stopLossLevel: null, includedBarsCount: 0 };
+  }
+
+  const maxHigh = +Math.max(...windowBars.map((b) => b.high)).toFixed(6);
+  const minLow = +Math.min(...windowBars.map((b) => b.low)).toFixed(6);
+  const triggerLevel = direction === 'LONG' ? maxHigh : minLow;
+  const stopLossLevel = +(
+    direction === 'LONG'
+      ? minLow * (1 - TRADING_PARAMS.STOP_BUF)
+      : maxHigh * (1 + TRADING_PARAMS.STOP_BUF)
+  ).toFixed(6);
+
+  return {
+    orbHigh: maxHigh,
+    orbLow: minLow,
+    triggerLevel,
+    stopLossLevel,
+    includedBarsCount: windowBars.length,
+  };
+}
+
+/**
+ * Funzione pura di verifica sicurezza barriera KO (Gate G9):
+ * Long: S - B_rec >= BUF_BAR * E; Short: B_rec - S >= BUF_BAR * E.
+ */
+export function validateBarrierSafety(
+  direction: 'LONG' | 'SHORT',
+  entryLevel: number,
+  stopLossLevel: number,
+  barrierLevel: number,
+  bufBar: number = TRADING_PARAMS.BUF_BAR
+): { valid: boolean; message?: string } {
+  const minBuffer = bufBar * entryLevel;
+  const dist = direction === 'LONG' ? stopLossLevel - barrierLevel : barrierLevel - stopLossLevel;
+  if (dist + TRADING_PARAMS.EPSILON >= minBuffer) {
+    return { valid: true };
+  }
+  return { valid: false, message: 'BARRIERA NON VALIDA' };
+}
+
+/**
+ * Costruzione pura e deterministica del record TradeJournalEntry a partire dal setup (C7).
+ */
+export function createJournalEntryFromSetup(
+  tradeData: any,
+  parameters?: SystemParameters,
+  now: Date = new Date()
+): TradeJournalEntry {
+  if (!tradeData || !tradeData.entryMode) {
+    throw new Error('entryMode obbligatorio per salvare il trade nel diario: nessun valore fornito');
+  }
+  const t1Mult = parameters?.target1Multiplier ?? TRADING_PARAMS.T1_R;
+  const initialOutcome = tradeData.outcome || 'OPEN';
+  let pnlEur = tradeData.pnlEur != null ? tradeData.pnlEur : 0;
+  let rMultiple = tradeData.rMultiple != null ? tradeData.rMultiple : 0;
+  const baseEntry = tradeData.entryLevel ?? tradeData.triggerLevel ?? tradeData.entryPrice ?? null;
+  const baseStop = tradeData.stopLossLevel ?? tradeData.stopLoss ?? null;
+  const baseT1 = tradeData.target1Level ?? tradeData.target1 ?? null;
+  let exitPrice = tradeData.exitPrice ?? baseT1 ?? baseEntry ?? 0;
+  const status: 'OPEN' | 'CLOSED' = initialOutcome === 'OPEN' ? 'OPEN' : 'CLOSED';
+
+  if (initialOutcome === 'WIN') {
+    exitPrice = baseT1 ?? exitPrice;
+    rMultiple = +t1Mult.toFixed(2);
+    pnlEur = tradeData.potentialGainT1Eur != null ? tradeData.potentialGainT1Eur : +(100 * rMultiple).toFixed(2);
+  } else if (initialOutcome === 'LOSS') {
+    exitPrice = baseStop ?? exitPrice;
+    rMultiple = -1.0;
+    pnlEur = -(tradeData.maxRiskEur != null ? tradeData.maxRiskEur : 100);
+  } else if (initialOutcome === 'EXPIRED' || initialOutcome === 'BREAKEVEN') {
+    exitPrice = baseEntry ?? exitPrice;
+    rMultiple = 0;
+    pnlEur = -2.0;
+  }
+
+  const resolvedBarrier = tradeData.barrierRecommended ?? tradeData.barrierStrike ?? null;
+  const resolvedLeverage = tradeData.selectedLeverage ?? tradeData.leverage ?? null;
+
+  return {
+    id: tradeData.id || `trade-${now.getTime()}`,
+    timestamp: tradeData.timestamp || now.toISOString(),
+    date: tradeData.date || now.toLocaleDateString('it-IT'),
+    session: tradeData.session,
+    ticker: tradeData.ticker,
+    direction: tradeData.direction,
+    strategy: tradeData.strategy,
+    entryPrice: baseEntry ?? 0,
+    exitPrice,
+    stopLoss: baseStop ?? 0,
+    target1: baseT1 ?? 0,
+    pnlEur,
+    rMultiple,
+    outcome: initialOutcome === 'OPEN' ? 'BREAKEVEN' : initialOutcome,
+    status,
+    closedAt: status === 'CLOSED' ? now.toISOString() : undefined,
+    notes:
+      tradeData.notes ||
+      (initialOutcome === 'OPEN'
+        ? `KO Strike ${resolvedBarrier} | Leva ${resolvedLeverage}x | ${tradeData.suggestedCertificates ?? 0} quote. In monitoraggio attivo.`
+        : initialOutcome === 'WIN'
+        ? `Target 1 (+${rMultiple}R) raggiunto con successo. Guadagno netto +${pnlEur} €.`
+        : initialOutcome === 'LOSS'
+        ? `Stop loss eseguito a protezione del capitale. Perdita controllata ${pnlEur} €.`
+        : initialOutcome === 'EXPIRED'
+        ? `Setup scaduto al cutoff orario senza rottura trigger né stop.`
+        : `Chiuso a pareggio.`),
+    isPaper: Boolean(tradeData.isPaper),
+    barrierStrike: resolvedBarrier ?? undefined,
+    leverage: resolvedLeverage ?? undefined,
+    suggestedCertificates: tradeData.suggestedCertificates,
+    maxRiskEur: tradeData.maxRiskEur,
+    potentialGainT1Eur: tradeData.potentialGainT1Eur,
+    investedEur: tradeData.investedEur,
+    entryMode: tradeData.entryMode,
+    triggerLevel: tradeData.triggerLevel ?? baseEntry,
+    entryLevel: tradeData.entryLevel ?? baseEntry,
+    stopLossLevel: baseStop,
+    barrierRecommended: resolvedBarrier,
+    selectedLeverage: resolvedLeverage,
+    gateResults: tradeData.gateResults,
+  };
+}
+
+// Default Adaptive System Parameters (Sincronizzati dinamicamente con TRADING_PARAMS)
 export const DEFAULT_SYSTEM_PARAMETERS: SystemParameters = {
   version: 1,
-  lastUpdated: new Date().toISOString(),
-  minScore: 55, // Out of 100 (fallback globale)
-  minScoreEurope: 48, // Out of 100 (Europa: gap più contenuti ma affidabili)
-  minScoreUSA: 58, // Out of 100 (USA: richiesta maggiore spinta)
-  minGapEurope: 0.40, // % (Europa)
-  minGapUSA: 0.75, // % (USA)
-  minRvol: 1.0, // Relative volume ratio fallback
-  minRvolEurope: 0.85, // Relative volume ratio (Europa: compensa minore liquidità pre-apertura)
-  minRvolUSA: 1.15, // Relative volume ratio (USA)
-  minAvgVolume: 350000, // Shares daily average
-  normalRiskMultiplier: 0.50, // 0.50 of ATR
-  target1Multiplier: 1.60, // 1.60 of normal risk
-  target2Multiplier: 2.80, // 2.80 of normal risk
-  suggestedKoBarrierMultiplier: 2.65, // Knock-Out distance multiplier
-  triggerOffsetPercent: 0.20, // 0.20% offset from reference price
+  lastUpdated: TRADING_PARAMS.LAST_MODIFIED,
+  minScore: 55,
+  get minScoreEurope() {
+    return TRADING_PARAMS.MIN_SCORE_EU;
+  },
+  get minScoreUSA() {
+    return TRADING_PARAMS.MIN_SCORE_US;
+  },
+  minGapEurope: 0.40,
+  minGapUSA: 0.75,
+  minRvol: 1.0,
+  minRvolEurope: 0.85,
+  minRvolUSA: 1.15,
+  minAvgVolume: 350000,
+  normalRiskMultiplier: 0.50,
+  target1Multiplier: TRADING_PARAMS.T1_R,
+  target2Multiplier: TRADING_PARAMS.T2_R,
+  suggestedKoBarrierMultiplier: 2.65,
+  triggerOffsetPercent: 0.20,
   rsiFilterActive: false,
 };
 
@@ -60,7 +432,7 @@ export const MIN_QUALIFICATION_THRESHOLDS = {
 
 export function calculateCandidateScore(
   quote: RawQuoteData,
-  benchmarkFuturesChangePercent: number,
+  benchmarkFuturesChangePercent: number | null | undefined,
   newsOrCatalyst?: GeminiCatalystAnalysis | NewsItem[] | number | null
 ): ScoreBreakdown {
   const details: string[] = [];
@@ -69,10 +441,10 @@ export function calculateCandidateScore(
   let liquidityScore = 0;
   let futuresScore = 0;
   let levelScore = 0;
-  let rsiScore = 5;
+  let rsiScore = 0;
 
   // If essential price data is missing from exchange, candidate receives 0 score
-  const price = quote.preMarketPrice ?? quote.currentPrice;
+  const price = quote.currentPrice ?? quote.preMarketPrice;
   if (price == null || price <= 0) {
     return {
       gapScore: 0,
@@ -83,15 +455,13 @@ export function calculateCandidateScore(
       rsiScore: 0,
       newsScore: 0,
       trendScore: 0,
+      orderFlowScore: 0,
+      rawTotal: 0,
       total: 0,
       details: ['Prezzo di mercato non disponibile dal feed: candidato non qualificabile.'],
     };
   }
 
-  const isEurope = quote.market === 'EU';
-
-  // Direction determination for coherent confluence:
-  // If catalyst already specified explicit direction, align with it; otherwise follow opening gap direction.
   let isCandidateLong = (quote.gapPercent ?? 0) >= 0;
   if (newsOrCatalyst && typeof newsOrCatalyst === 'object' && 'direzione' in newsOrCatalyst) {
     const dir = (newsOrCatalyst as GeminiCatalystAnalysis).direzione;
@@ -99,154 +469,127 @@ export function calculateCandidateScore(
     else if (dir === 'SHORT') isCandidateLong = false;
   }
 
-  // 1. GAP SCORE (max 25) - Normalized by Volatility (ATR-scaled Gap)
-  if (quote.gapPercent != null) {
-    const absGap = Math.abs(quote.gapPercent);
-    const atr = quote.atr14;
-    const atrPct = (price != null && price > 0 && atr != null && atr > 0) ? (atr / price) * 100 : null;
+  const eps = TRADING_PARAMS.EPSILON;
 
-    if (atrPct != null && atrPct > 0) {
-      // Volatility-Normalized Gap Ratio: |gap%| / ATR%
-      const gapToAtrRatio = absGap / atrPct;
-      if (gapToAtrRatio >= 0.75) {
-        gapScore = 25;
-        details.push(`Gap elevato normalizzato per ATR (${gapToAtrRatio.toFixed(2)}x ATR | ${absGap.toFixed(2)}% vs ATR ${atrPct.toFixed(2)}%): +25pt`);
-      } else if (gapToAtrRatio >= 0.50) {
-        gapScore = 20;
-        details.push(`Gap significativo normalizzato per ATR (${gapToAtrRatio.toFixed(2)}x ATR | ${absGap.toFixed(2)}%): +20pt`);
-      } else if (gapToAtrRatio >= 0.30) {
-        gapScore = 12;
-        details.push(`Gap moderato normalizzato per ATR (${gapToAtrRatio.toFixed(2)}x ATR | ${absGap.toFixed(2)}%): +12pt`);
-      } else if (gapToAtrRatio >= 0.15) {
-        gapScore = 6;
-        details.push(`Gap ridotto (${gapToAtrRatio.toFixed(2)}x ATR | ${absGap.toFixed(2)}%): +6pt`);
-      } else {
-        gapScore = 2;
-        details.push(`Gap debole o piatto (<0.15x ATR | ${absGap.toFixed(2)}%): +2pt`);
-      }
-    } else {
-      const gapThreshold = isEurope ? 0.8 : 1.4;
-      if (absGap >= gapThreshold * 1.5) {
-        gapScore = 25;
-        details.push(`Gap elevato (${absGap.toFixed(2)}% vs soglia ${gapThreshold}%): +25pt`);
-      } else if (absGap >= gapThreshold) {
-        gapScore = 20;
-        details.push(`Gap significativo (${absGap.toFixed(2)}%): +20pt`);
-      } else if (absGap >= gapThreshold * 0.5) {
-        gapScore = 12;
-        details.push(`Gap moderato (${absGap.toFixed(2)}%): +12pt`);
-      } else if (absGap >= (isEurope ? 0.2 : 0.35)) {
-        gapScore = 6;
-        details.push(`Gap ridotto (${absGap.toFixed(2)}%): +6pt`);
-      } else {
-        gapScore = 2;
-        details.push(`Gap debole o piatto (${absGap.toFixed(2)}%): +2pt`);
+  // 1. GAP SCORE (max 25) - Normalized by Volatility (ATR-scaled Gap)
+  const cIeri = quote.prevClose;
+  const oOggi = quote.todayOpen ?? price;
+  if (quote.atr14 != null && quote.atr14 > 0 && cIeri != null && cIeri > 0) {
+    const atrPct = (quote.atr14 / cIeri) * 100;
+    const calcGapPct = quote.gapPercent != null ? quote.gapPercent : ((oOggi - cIeri) / cIeri) * 100;
+    const absGap = Math.abs(calcGapPct);
+    const gapToAtrRatio = absGap / atrPct;
+
+    let matchedTier = false;
+    for (const tier of TRADING_PARAMS.GAP_ATR_TIERS) {
+      if (gapToAtrRatio + eps >= tier.minRatio) {
+        gapScore = tier.points;
+        matchedTier = true;
+        break;
       }
     }
+    if (!matchedTier) {
+      gapScore = TRADING_PARAMS.GAP_ATR_MIN_POINTS;
+    }
+    details.push(
+      `Gap normalizzato per ATR (${gapToAtrRatio.toFixed(2)}x ATR | ${absGap.toFixed(2)}% vs ATR ${atrPct.toFixed(2)}%): +${gapScore}pt`
+    );
   } else {
     gapScore = 0;
-    details.push('Gap % non disponibile dal mercato: 0pt');
+    details.push('ATR(14) o Close ieri non disponibile dal feed: 0pt (nessun punteggio per dati mancanti)');
   }
 
   // 2. RVOL SCORE (max 25) - Only from real volume
   if (quote.rvol != null) {
     const rvol = quote.rvol;
-    if (rvol >= 2.0) {
-      rvolScore = 25;
-      details.push(`Relative Volume sostenuto (RVOL ${rvol.toFixed(2)}x): +25pt`);
-    } else if (rvol >= 1.4) {
-      rvolScore = 20;
-      details.push(`Relative Volume sopra media (RVOL ${rvol.toFixed(2)}x): +20pt`);
-    } else if (rvol >= 1.1) {
-      rvolScore = 14;
-      details.push(`Relative Volume nella media (RVOL ${rvol.toFixed(2)}x): +14pt`);
-    } else {
-      rvolScore = 5;
-      details.push(`Relative Volume debole (RVOL ${rvol.toFixed(2)}x): +5pt`);
+    let matchedRvol = false;
+    for (const tier of TRADING_PARAMS.RVOL_TIERS) {
+      if (rvol + eps >= tier.minRvol) {
+        rvolScore = tier.points;
+        matchedRvol = true;
+        break;
+      }
     }
+    if (!matchedRvol) {
+      rvolScore = TRADING_PARAMS.RVOL_MIN_POINTS;
+    }
+    details.push(`Relative Volume (RVOL ${rvol.toFixed(2)}x): +${rvolScore}pt`);
+
     if (quote.rvol20m != null) {
-      if (quote.rvol20m >= 1.5) {
-        if (rvolScore < 25) {
-          rvolScore = Math.min(25, rvolScore + 3);
-          details.push(`🔥 Spike Volumi ultimi 20m (${quote.rvol20m.toFixed(2)}x vs media 20m): +3pt spinta istituzionale in accelerazione.`);
+      if (quote.rvol20m + eps >= TRADING_PARAMS.RVOL_SPIKE_20M_THRESHOLD) {
+        if (rvolScore < TRADING_PARAMS.SCORE_MAX_COMPONENTS.RVOL) {
+          rvolScore = Math.min(
+            TRADING_PARAMS.SCORE_MAX_COMPONENTS.RVOL,
+            rvolScore + TRADING_PARAMS.RVOL_SPIKE_20M_BONUS
+          );
+          details.push(`🔥 Spike Volumi ultimi 20m (${quote.rvol20m.toFixed(2)}x vs media 20m): +${TRADING_PARAMS.RVOL_SPIKE_20M_BONUS}pt.`);
         } else {
-          details.push(`🔥 Spike Volumi ultimi 20m (${quote.rvol20m.toFixed(2)}x vs media mobile 20m): forte afflusso istituzionale in corso.`);
+          details.push(`🔥 Spike Volumi ultimi 20m (${quote.rvol20m.toFixed(2)}x vs media mobile 20m): forte afflusso istituzionale.`);
         }
-      } else if (quote.rvol20m >= 1.1) {
-        details.push(`⚡ Flusso Volumi 20m solido (${quote.rvol20m.toFixed(2)}x vs media mobile 20m).`);
-      } else if (quote.rvol20m < 0.7) {
-        details.push(`⚠️ Volumi ultimi 20m in contrazione (${quote.rvol20m.toFixed(2)}x vs media mobile 20m): possibile fase di pausa/consolidamento.`);
       }
     }
   } else {
     rvolScore = 0;
-    details.push('RVOL non disponibile (volume pre-market non scambiato o non comunicato): 0pt');
+    details.push('RVOL non disponibile: 0pt');
   }
 
-  // 3. LIQUIDITY SCORE (max 10) - From real 20d average volume
-  const avgVol = quote.avgVolume20d;
-  if (avgVol != null && avgVol > 0) {
-    if (avgVol >= 5000000) {
-      liquidityScore = 10;
-      details.push(`Alta liquidità giornaliera (vol medio ${formatCompactNumber(avgVol)}): +10pt`);
-    } else if (avgVol >= 1500000) {
-      liquidityScore = 8;
-      details.push(`Buona liquidità (vol medio ${formatCompactNumber(avgVol)}): +8pt`);
-    } else if (avgVol >= 500000) {
-      liquidityScore = 5;
-      details.push(`Liquidità discreta (vol medio ${formatCompactNumber(avgVol)}): +5pt`);
-    } else {
-      liquidityScore = 2;
-      details.push(`Liquidità ridotta (vol medio ${formatCompactNumber(avgVol)}): +2pt`);
-    }
-  } else {
-    liquidityScore = 0;
-    details.push('Volume medio 20gg non disponibile: 0pt');
-  }
+  // 3. LIQUIDITÀ GATE G1 (Esclusa dal calcolo punteggio, 0pt)
+  liquidityScore = TRADING_PARAMS.SCORE_MAX_COMPONENTS.LIQUIDITY;
+  details.push('Liquidità verificata come Gate G1 (esclusa dal calcolo del punteggio, 0pt).');
 
   // 4. FUTURES COHERENCE (max 20)
-  const isFuturesGreen = benchmarkFuturesChangePercent > 0.15;
-  const isFuturesRed = benchmarkFuturesChangePercent < -0.15;
-
-  if ((isCandidateLong && isFuturesGreen) || (!isCandidateLong && isFuturesRed)) {
-    futuresScore = 20;
-    details.push(`Allineamento totale titolo/futures indice (${benchmarkFuturesChangePercent > 0 ? '+' : ''}${benchmarkFuturesChangePercent.toFixed(2)}%): +20pt`);
-  } else if (Math.abs(benchmarkFuturesChangePercent) <= 0.15) {
-    futuresScore = 12;
-    details.push(`Futures indice neutrali (${benchmarkFuturesChangePercent.toFixed(2)}%): +12pt`);
+  if (benchmarkFuturesChangePercent == null || isNaN(benchmarkFuturesChangePercent)) {
+    futuresScore = TRADING_PARAMS.FUT_SCORE_MISSING;
+    details.push('Dati futures benchmark non disponibili: 0pt');
+  } else if (Math.abs(benchmarkFuturesChangePercent) <= TRADING_PARAMS.FUT_NEUTRAL_BAND + eps) {
+    futuresScore = TRADING_PARAMS.FUT_SCORE_NEUTRAL;
+    details.push(
+      `Futures indice neutrali (|chg| <= ${TRADING_PARAMS.FUT_NEUTRAL_BAND}% | ${benchmarkFuturesChangePercent.toFixed(2)}%): +${futuresScore}pt`
+    );
   } else {
-    futuresScore = 4;
-    details.push(`Divergenza con futures indice (${benchmarkFuturesChangePercent > 0 ? '+' : ''}${benchmarkFuturesChangePercent.toFixed(2)}%): +4pt (rischio fade)`);
+    const isFuturesGreen = benchmarkFuturesChangePercent > TRADING_PARAMS.FUT_NEUTRAL_BAND;
+    const isFuturesRed = benchmarkFuturesChangePercent < -TRADING_PARAMS.FUT_NEUTRAL_BAND;
+    if ((isCandidateLong && isFuturesGreen) || (!isCandidateLong && isFuturesRed)) {
+      futuresScore = TRADING_PARAMS.FUT_SCORE_ALIGNED;
+      details.push(
+        `Allineamento totale titolo/futures indice (${benchmarkFuturesChangePercent > 0 ? '+' : ''}${benchmarkFuturesChangePercent.toFixed(2)}%): +${futuresScore}pt`
+      );
+    } else {
+      futuresScore = TRADING_PARAMS.FUT_SCORE_DIVERGENT;
+      details.push(
+        `Divergenza con futures indice (${benchmarkFuturesChangePercent > 0 ? '+' : ''}${benchmarkFuturesChangePercent.toFixed(2)}%): +${futuresScore}pt`
+      );
+    }
   }
 
   // 5. KEY LEVELS PROXIMITY (max 10) - Real yesterday High / Low
   const prevHigh = quote.prevHigh;
   const prevLow = quote.prevLow;
+  const proxFactor = TRADING_PARAMS.LEVEL_PROXIMITY_FACTOR;
 
   if (price > 0 && prevHigh != null && prevLow != null) {
-    if (isCandidateLong && price >= prevHigh) {
+    if (isCandidateLong && price + eps >= prevHigh) {
       levelScore = 10;
       details.push(`Rottura/apertura sopra il Massimo reale di ieri (${prevHigh.toFixed(2)}): +10pt`);
-    } else if (!isCandidateLong && price <= prevLow) {
+    } else if (!isCandidateLong && price - eps <= prevLow) {
       levelScore = 10;
       details.push(`Rottura/apertura sotto il Minimo reale di ieri (${prevLow.toFixed(2)}): +10pt`);
-    } else if (isCandidateLong && price >= prevHigh * 0.995) {
+    } else if (isCandidateLong && price + eps >= prevHigh * (1 - proxFactor)) {
       levelScore = 7;
-      details.push(`Prezzo a ridosso del Massimo di ieri (${prevHigh.toFixed(2)}): +7pt (test di rottura imminente)`);
-    } else if (!isCandidateLong && price <= prevLow * 1.005) {
+      details.push(`Prezzo a ridosso del Massimo di ieri (${prevHigh.toFixed(2)}): +7pt`);
+    } else if (!isCandidateLong && price - eps <= prevLow * (1 + proxFactor)) {
       levelScore = 7;
-      details.push(`Prezzo a ridosso del Minimo di ieri (${prevLow.toFixed(2)}): +7pt (test di breakdown imminente)`);
+      details.push(`Prezzo a ridosso del Minimo di ieri (${prevLow.toFixed(2)}): +7pt`);
     } else {
       levelScore = 5;
       details.push(`Prezzo all'interno del range di ieri: +5pt`);
     }
   } else {
     levelScore = 0;
-    details.push('Livelli High/Low ieri non disponibili: 0pt (nessun punteggio per dati mancanti)');
+    details.push('Livelli High/Low ieri non disponibili: 0pt');
   }
 
   // 6. RSI MOMENTUM & TURBO KO QUALITY (max 10)
-  // Prioritizes 5m Intraday RSI (ideal tactical timeframe for intraday Turbo trading) and checks 1D confluence
   const activeRsi = quote.rsi5m ?? quote.rsi14;
   const rsiTimeframe = quote.rsi5m != null ? '5m Intraday' : '1D Daily';
 
@@ -254,60 +597,47 @@ export function calculateCandidateScore(
     if (isCandidateLong) {
       if (activeRsi >= 46 && activeRsi <= 66) {
         rsiScore = 10;
-        details.push(`RSI ${rsiTimeframe} (${activeRsi}) ottimale per Turbo Long: espansione sana senza saturazione (+10pt)`);
+        details.push(`RSI ${rsiTimeframe} (${activeRsi}) ottimale per Turbo Long (+10pt)`);
       } else if (activeRsi > 66 && activeRsi <= 72) {
         rsiScore = 6;
-        details.push(`RSI ${rsiTimeframe} (${activeRsi}) in accelerazione: forte momentum ma prossimo a ipercomprato (+6pt)`);
+        details.push(`RSI ${rsiTimeframe} (${activeRsi}) in accelerazione (+6pt)`);
       } else if (activeRsi >= 40 && activeRsi < 46) {
         rsiScore = 5;
-        details.push(`RSI ${rsiTimeframe} (${activeRsi}) neutrale: momentum rialzista in costruzione (+5pt)`);
+        details.push(`RSI ${rsiTimeframe} (${activeRsi}) neutrale (+5pt)`);
       } else if (activeRsi > 72) {
         rsiScore = 0;
-        details.push(`Allerta RSI ${rsiTimeframe} in Ipercomprato (${activeRsi}): rischio elevato di pullback/KO su Turbo Long (0pt)`);
+        details.push(`Allerta RSI ${rsiTimeframe} in Ipercomprato (${activeRsi}) (0pt)`);
       } else {
         rsiScore = 2;
-        details.push(`RSI ${rsiTimeframe} debole (${activeRsi}): spinta intraday insufficiente per Turbo Long (+2pt)`);
+        details.push(`RSI ${rsiTimeframe} debole (${activeRsi}) (+2pt)`);
       }
     } else {
-      // Short setup
       if (activeRsi >= 34 && activeRsi <= 54) {
         rsiScore = 10;
-        details.push(`RSI ${rsiTimeframe} (${activeRsi}) ottimale per Turbo Short: pressione ribassista solida (+10pt)`);
+        details.push(`RSI ${rsiTimeframe} (${activeRsi}) ottimale per Turbo Short (+10pt)`);
       } else if (activeRsi >= 28 && activeRsi < 34) {
         rsiScore = 6;
-        details.push(`RSI ${rsiTimeframe} (${activeRsi}) marcatamente ribassista: prossimo a ipervenduto (+6pt)`);
+        details.push(`RSI ${rsiTimeframe} (${activeRsi}) ribassista (+6pt)`);
       } else if (activeRsi > 54 && activeRsi <= 60) {
         rsiScore = 5;
-        details.push(`RSI ${rsiTimeframe} (${activeRsi}) neutrale: consolidamento pre-rottura (+5pt)`);
+        details.push(`RSI ${rsiTimeframe} (${activeRsi}) neutrale (+5pt)`);
       } else if (activeRsi < 28) {
         rsiScore = 0;
-        details.push(`Allerta RSI ${rsiTimeframe} in Ipervenduto (${activeRsi}): rischio elevato di short-squeeze/rimbalzo contro Turbo Short (0pt)`);
+        details.push(`Allerta RSI ${rsiTimeframe} in Ipervenduto (${activeRsi}) (0pt)`);
       } else {
         rsiScore = 2;
-        details.push(`RSI ${rsiTimeframe} rialzista (${activeRsi}): contrasto con setup short (+2pt)`);
-      }
-    }
-
-    // Dual-Timeframe Confluence bonus note
-    if (quote.rsi5m != null && quote.rsi14 != null) {
-      if (isCandidateLong && quote.rsi5m <= 68 && quote.rsi14 <= 70) {
-        details.push(`Conferma Multi-Timeframe (5m: ${quote.rsi5m} | 1D: ${quote.rsi14}): allineamento coerente tra respiro intraday e trend macro.`);
-      } else if (!isCandidateLong && quote.rsi5m >= 32 && quote.rsi14 >= 30) {
-        details.push(`Conferma Multi-Timeframe (5m: ${quote.rsi5m} | 1D: ${quote.rsi14}): allineamento coerente ribassista tra 5m e 1D.`);
+        details.push(`RSI ${rsiTimeframe} rialzista (${activeRsi}) (+2pt)`);
       }
     }
   } else {
     rsiScore = 0;
-    details.push('RSI non disponibile dal feed: 0pt (nessun punteggio per dati mancanti)');
+    details.push('RSI non disponibile dal feed: 0pt');
   }
 
   // 7. NEWS & CATALYST BONUS SCORE (+0 to +15pt)
-  // Regola fondamentale: l'assenza di notizie non è motivo di esclusione (+0pt bonus).
-  // La presenza di buone notizie o catalizzatore dà punti bonus in più allo score del ticket,
-  // MA viene convalidata contro l'azione di prezzo per evitare trappole "sell the news".
   let newsScore = 0;
   if (typeof newsOrCatalyst === 'number') {
-    newsScore = Math.max(0, Math.min(15, newsOrCatalyst));
+    newsScore = Math.max(0, Math.min(TRADING_PARAMS.SCORE_MAX_COMPONENTS.NEWS, newsOrCatalyst));
   } else if (newsOrCatalyst && typeof newsOrCatalyst === 'object') {
     if ('newsBonusScore' in newsOrCatalyst && typeof (newsOrCatalyst as any).newsBonusScore === 'number') {
       newsScore = (newsOrCatalyst as any).newsBonusScore;
@@ -345,101 +675,105 @@ export function calculateCandidateScore(
       }
       if (freshestHours <= 4) {
         newsScore = 15;
-        details.push(`🔥 Notizia Fresca (<4h): forte catalizzatore immediato (+15pt)`);
+        details.push(`🔥 Notizia Fresca (<4h): +15pt`);
       } else if (freshestHours <= 12) {
         newsScore = 10;
-        details.push(`📰 Notizia Recente (<12h): catalizzatore di sessione attivo (+10pt)`);
+        details.push(`📰 Notizia Recente (<12h): +10pt`);
       } else {
         newsScore = 6;
-        details.push(`📰 Notizia nota (>12h): catalizzatore parzialmente assorbito (+6pt)`);
+        details.push(`📰 Notizia nota (>12h): +6pt`);
       }
     }
   }
 
-  // Convalida Catalizzatore con Azione di Prezzo (Protezione Sell-the-News)
   if (newsScore > 0 && typeof newsOrCatalyst === 'object' && newsOrCatalyst !== null && 'direzione' in newsOrCatalyst) {
     const catDir = (newsOrCatalyst as GeminiCatalystAnalysis).direzione;
     const isContrarian =
-      (catDir === 'LONG' && ((quote.gapPercent ?? 0) < -0.3 || (quote.vwap != null && price != null && price < quote.vwap * 0.995))) ||
-      (catDir === 'SHORT' && ((quote.gapPercent ?? 0) > 0.3 || (quote.vwap != null && price != null && price > quote.vwap * 1.005)));
+      (catDir === 'LONG' && ((quote.gapPercent ?? 0) < -0.3 || (quote.vwap != null && price != null && price < quote.vwap * (1 - proxFactor)))) ||
+      (catDir === 'SHORT' && ((quote.gapPercent ?? 0) > 0.3 || (quote.vwap != null && price != null && price > quote.vwap * (1 + proxFactor))));
     if (isContrarian) {
       const reducedBonus = Math.min(3, Math.floor(newsScore * 0.25));
-      details.push(`⚠️ Notizia ${catDir} in contrasto con l'azione di prezzo/VWAP (possibile trappola sell-the-news): bonus ridotto da +${newsScore}pt a +${reducedBonus}pt`);
+      details.push(`⚠️ Notizia ${catDir} in contrasto con azione di prezzo: bonus ridotto a +${reducedBonus}pt`);
       newsScore = reducedBonus;
     }
   }
 
-  if (newsScore > 0 && !details.some((d) => d.includes('Notizia'))) {
-    details.push(`🔥 Bonus Notizie/Catalizzatore Attivo: +${newsScore}pt sullo score del titolo`);
-  } else if (newsScore === 0) {
-    details.push('Setup puramente Tecnico / Momentum (Assenza notizie straordinarie: 0pt bonus)');
+  if (newsScore === 0) {
+    details.push('Assenza notizie straordinarie: 0pt bonus');
   }
 
   // 8. CONFLUENZA TREND MACRO DAILY EMA(20) (+0 to +8pt)
   let trendScore = 0;
   if (quote.ema20Daily != null && quote.ema20Daily > 0) {
-    const isAboveEma = price >= quote.ema20Daily;
-    if (isCandidateLong && isAboveEma) {
-      trendScore = 8;
-      details.push(`Confluenza Trend Rialzista Macro: Prezzo (${price.toFixed(2)}) sopra EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +8pt`);
-    } else if (!isCandidateLong && !isAboveEma) {
-      trendScore = 8;
-      details.push(`Confluenza Trend Ribassista Macro: Prezzo (${price.toFixed(2)}) sotto EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +8pt`);
-    } else if (isCandidateLong && !isAboveEma) {
-      trendScore = 2;
-      details.push(`Controtendenza Macro: Setup Long con Prezzo sotto EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +2pt (cautela)`);
+    const isAboveEma = price + eps >= quote.ema20Daily;
+    if ((isCandidateLong && isAboveEma) || (!isCandidateLong && !isAboveEma)) {
+      trendScore = TRADING_PARAMS.SCORE_MAX_COMPONENTS.TREND;
+      details.push(`Confluenza Trend Macro EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +8pt`);
     } else {
       trendScore = 2;
-      details.push(`Controtendenza Macro: Setup Short con Prezzo sopra EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +2pt (cautela)`);
+      details.push(`Controtendenza Macro EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +2pt`);
     }
   } else {
     trendScore = 0;
-    details.push('Trend Macro EMA(20) daily non disponibile: 0pt (nessun punteggio per dati mancanti)');
+    details.push('Trend Macro EMA(20) daily non disponibile: 0pt');
   }
 
   // 9. CONVALIDA ORDER FLOW SYNTHETIC L2 & DELTA / VPOC (-10pt a +10pt)
   let orderFlowScore = 0;
   const of = quote.orderFlow;
+  const strongOfPct = TRADING_PARAMS.ORDER_FLOW_STRONG_PCT;
+  const modOfPct = TRADING_PARAMS.ORDER_FLOW_MOD_PCT;
   if (of) {
     if (of.flowQuality === 'ABSORPTION_TRAP' || of.cvdTrend === 'ABSORPTION_TRAP') {
       orderFlowScore = -10;
-      details.push(`⚠️ Trappola di Assorbimento Delta (-10pt): divergenza tra prezzo e CVD (rischio falso breakout)`);
+      details.push(`⚠️ Trappola di Assorbimento Delta (-10pt)`);
     } else if (isCandidateLong) {
-      if (of.buyerVolumePercent >= 58 && of.cvdTrend === 'EXPANDING_UP' && of.isPriceAboveVpoc) {
+      if (of.buyerVolumePercent >= strongOfPct && of.cvdTrend === 'EXPANDING_UP' && of.isPriceAboveVpoc) {
         orderFlowScore = 10;
-        details.push(`🔥 Order Flow Bullish Istituzionale (+10pt): Delta +${of.netDeltaPercent}%, CVD in espansione sopra VPOC (${of.vpocPrice ?? 'N/D'})`);
-      } else if (of.buyerVolumePercent >= 53 && of.cvdTrend !== 'EXPANDING_DOWN') {
+        details.push(`🔥 Order Flow Bullish Istituzionale (+10pt)`);
+      } else if (of.buyerVolumePercent >= modOfPct && of.cvdTrend !== 'EXPANDING_DOWN') {
         orderFlowScore = 6;
-        details.push(`Order Flow a Favore (+6pt): Pressione acquirente (${of.buyerVolumePercent}% Ask) con Delta positivo`);
-      } else if (of.sellerVolumePercent >= 58) {
+        details.push(`Order Flow a Favore (+6pt)`);
+      } else if (of.sellerVolumePercent >= strongOfPct) {
         orderFlowScore = -6;
-        details.push(`Allerta Delta Contrario (-6pt): Forte pressione venditrice (${of.sellerVolumePercent}% Bid) su setup Long`);
+        details.push(`Allerta Delta Contrario (-6pt)`);
       } else {
         orderFlowScore = 2;
-        details.push(`Order Flow Bilanciato (+2pt): ${of.buyerVolumePercent}% Ask vs ${of.sellerVolumePercent}% Bid`);
+        details.push(`Order Flow Bilanciato (+2pt)`);
       }
     } else {
-      // Short setup
-      if (of.sellerVolumePercent >= 58 && of.cvdTrend === 'EXPANDING_DOWN' && of.isPriceAboveVpoc === false) {
+      if (of.sellerVolumePercent >= strongOfPct && of.cvdTrend === 'EXPANDING_DOWN' && of.isPriceAboveVpoc === false) {
         orderFlowScore = 10;
-        details.push(`🔥 Order Flow Bearish Istituzionale (+10pt): Delta ${of.netDeltaPercent}%, CVD ribassista sotto VPOC (${of.vpocPrice ?? 'N/D'})`);
-      } else if (of.sellerVolumePercent >= 53 && of.cvdTrend !== 'EXPANDING_UP') {
+        details.push(`🔥 Order Flow Bearish Istituzionale (+10pt)`);
+      } else if (of.sellerVolumePercent >= modOfPct && of.cvdTrend !== 'EXPANDING_UP') {
         orderFlowScore = 6;
-        details.push(`Order Flow a Favore (+6pt): Pressione venditrice (${of.sellerVolumePercent}% Bid) con Delta negativo`);
-      } else if (of.buyerVolumePercent >= 58) {
+        details.push(`Order Flow a Favore (+6pt)`);
+      } else if (of.buyerVolumePercent >= strongOfPct) {
         orderFlowScore = -6;
-        details.push(`Allerta Delta Contrario (-6pt): Forte pressione compratrice (${of.buyerVolumePercent}% Ask) su setup Short`);
+        details.push(`Allerta Delta Contrario (-6pt)`);
       } else {
         orderFlowScore = 2;
-        details.push(`Order Flow Bilanciato (+2pt): ${of.buyerVolumePercent}% Ask vs ${of.sellerVolumePercent}% Bid`);
+        details.push(`Order Flow Bilanciato (+2pt)`);
       }
     }
   } else {
     orderFlowScore = 0;
   }
 
-  const rawTotal = gapScore + rvolScore + liquidityScore + futuresScore + levelScore + rsiScore + newsScore + trendScore + orderFlowScore;
-  const total = Math.max(0, Math.min(100, Math.round(rawTotal)));
+  const rawTotal =
+    gapScore +
+    rvolScore +
+    liquidityScore +
+    futuresScore +
+    levelScore +
+    rsiScore +
+    newsScore +
+    trendScore +
+    orderFlowScore;
+  const total = Math.max(
+    0,
+    Math.min(TRADING_PARAMS.SCORE_MAX_COMPONENTS.CAPPED_MAX, Math.round(rawTotal))
+  );
 
   return {
     gapScore,
@@ -504,19 +838,22 @@ export function isCandidateCompliantWithParameters(
   isRsiFilterActive: boolean
 ): { compliant: boolean; reasons: string[] } {
   const reasons: string[] = [];
-  const price = quote.preMarketPrice ?? quote.currentPrice;
+  const price = quote.currentPrice ?? quote.preMarketPrice;
   if (price == null || price <= 0) reasons.push('Prezzo non disponibile');
   if (quote.atr14 == null || quote.atr14 <= 0) reasons.push('ATR(14) non calcolabile');
+  if (quote.liqEur20d != null && quote.liqEur20d + TRADING_PARAMS.EPSILON < TRADING_PARAMS.LIQ_MIN_EUR) {
+    reasons.push('LIQUIDITÀ INSUFFICIENTE');
+  }
 
   const isEU = quote.market === 'EU';
-  const minScore = isEU ? (params.minScoreEurope ?? 48) : (params.minScoreUSA ?? 58);
+  const minScore = isEU ? TRADING_PARAMS.MIN_SCORE_EU : TRADING_PARAMS.MIN_SCORE_US;
   const minRvol = isEU ? (params.minRvolEurope ?? 0.85) : (params.minRvolUSA ?? 1.15);
   const minGap = isEU ? params.minGapEurope : params.minGapUSA;
 
-  if (score < minScore) {
+  if (score + TRADING_PARAMS.EPSILON < minScore) {
     reasons.push(`Score ${score}/100 < ${minScore}/100 (${isEU ? 'EU' : 'US'})`);
   }
-  const rvol = quote.rvol != null ? quote.rvol : (isEU ? 1.0 : 1.0);
+  const rvol = quote.rvol != null ? quote.rvol : 1.0;
   if (rvol < minRvol) {
     reasons.push(`RVOL ${rvol.toFixed(2)}x < ${minRvol}x (${isEU ? 'EU' : 'US'})`);
   }
@@ -674,93 +1011,46 @@ export function getDualTopCandidates(
   };
 }
 
-export function getOrbPhaseInfo(market: 'EU' | 'US'): {
+export function getOrbPhaseInfo(
+  market: 'EU' | 'US',
+  currentTime?: Date
+): {
   phase: 'PRE_MARKET_MONITORING' | 'ORB_15M_FORMATION' | 'ACTIVE_BREAKOUT' | 'CUTOFF_PASSED';
   label: string;
   description: string;
   isEntryAllowed: boolean;
 } {
-  const now = new Date();
-  const cetFormatter = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Europe/Rome',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-  const parts = cetFormatter.formatToParts(now);
-  const hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
-  const minute = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
-  const currentMinutes = hour * 60 + minute;
+  const mTime = getMarketTime(market, currentTime);
+  const cutoffMinutes = 11 * 60 + 30; // 11:30 local exchange time
 
-  if (market === 'EU') {
-    const openMinutes = 9 * 60; // 09:00 CET
-    const orbEndMinutes = 9 * 60 + 15; // 09:15 CET
-    const cutoffMinutes = 11 * 60 + 30; // 11:30 CET
-
-    if (currentMinutes < openMinutes) {
-      return {
-        phase: 'PRE_MARKET_MONITORING',
-        label: 'Fase 0: Pre-Market Monitoring',
-        description: 'Monitoraggio book e volumi pre-apertura europea. Attendere apertura 09:00 CET.',
-        isEntryAllowed: false,
-      };
-    } else if (currentMinutes < orbEndMinutes) {
-      return {
-        phase: 'ORB_15M_FORMATION',
-        label: 'Fase 1: Formazione Range 15m (09:00-09:15)',
-        description: 'Prime 3 candele 5m in formazione. Non anticipare: attendere range consolidato alle 09:15 CET.',
-        isEntryAllowed: false,
-      };
-    } else if (currentMinutes < cutoffMinutes) {
-      return {
-        phase: 'ACTIVE_BREAKOUT',
-        label: 'Fase 2: Finestra Operativa Attiva',
-        description: 'Range 15m consolidato. Esecuzione autorizzata alla rottura confermata del trigger con volumi.',
-        isEntryAllowed: true,
-      };
-    } else {
-      return {
-        phase: 'CUTOFF_PASSED',
-        label: 'Cutoff Raggiunto (11:30 CET)',
-        description: 'Finestra primaria europea conclusa. Rischio di contrazione volumi pomeridiana.',
-        isEntryAllowed: false,
-      };
-    }
+  if (mTime.isOrbWindow) {
+    return {
+      phase: 'ORB_15M_FORMATION',
+      label: `Fase 1: Formazione Range 15m (${mTime.orbCloseFormatted})`,
+      description: `Prime 3 candele 5m in formazione. Non anticipare: attendere range consolidato alle ${mTime.orbCloseFormatted}.`,
+      isEntryAllowed: false,
+    };
+  } else if (mTime.isBeforeOrb) {
+    return {
+      phase: 'PRE_MARKET_MONITORING',
+      label: `Fase 0: Pre-Market ${market}`,
+      description: `Monitoraggio book e volumi pre-apertura ${market}. Attendere apertura e consolidamento ORB.`,
+      isEntryAllowed: false,
+    };
+  } else if (mTime.totalMinutes < cutoffMinutes) {
+    return {
+      phase: 'ACTIVE_BREAKOUT',
+      label: 'Fase 2: Finestra Operativa Attiva',
+      description: 'Range 15m consolidato. Esecuzione autorizzata alla rottura confermata del trigger con volumi.',
+      isEntryAllowed: true,
+    };
   } else {
-    // US Market
-    const openMinutes = 15 * 60 + 30; // 15:30 CET
-    const orbEndMinutes = 15 * 60 + 45; // 15:45 CET
-    const cutoffMinutes = 17 * 60 + 30; // 17:30 CET
-
-    if (currentMinutes < openMinutes) {
-      return {
-        phase: 'PRE_MARKET_MONITORING',
-        label: 'Fase 0: Pre-Market USA',
-        description: 'Monitoraggio futures e pre-market USA. Apertura Wall Street ore 15:30 CET.',
-        isEntryAllowed: false,
-      };
-    } else if (currentMinutes < orbEndMinutes) {
-      return {
-        phase: 'ORB_15M_FORMATION',
-        label: 'Fase 1: Formazione Range 15m (15:30-15:45)',
-        description: 'Volatilità estrema d\'apertura. Attendere consolidamento range alle 15:45 CET prima dell\'entry.',
-        isEntryAllowed: false,
-      };
-    } else if (currentMinutes < cutoffMinutes) {
-      return {
-        phase: 'ACTIVE_BREAKOUT',
-        label: 'Fase 2: Finestra Operativa Attiva',
-        description: 'Range 15m USA consolidato. Esecuzione consentita al superamento del trigger.',
-        isEntryAllowed: true,
-      };
-    } else {
-      return {
-        phase: 'CUTOFF_PASSED',
-        label: 'Cutoff Raggiunto (17:30 CET)',
-        description: 'Finestra primaria d\'apertura USA conclusa. Preservare il capitale.',
-        isEntryAllowed: false,
-      };
-    }
+    return {
+      phase: 'CUTOFF_PASSED',
+      label: `Cutoff Raggiunto (11:30 ${market === 'US' ? 'NY' : 'Rome'})`,
+      description: 'Finestra primaria conclusa. Rischio di contrazione volumi pomeridiana.',
+      isEntryAllowed: false,
+    };
   }
 }
 
@@ -869,8 +1159,8 @@ export function calculateInitialBalance(quote: RawQuoteData, market: 'EU' | 'US'
 
   const isFormed = market === 'EU' ? currentMinutes >= 9 * 60 + 30 : currentMinutes >= 16 * 60;
   const price = quote.preMarketPrice ?? quote.currentPrice ?? 0;
-  const high = quote.todayHigh ?? +(price * 1.006).toFixed(2);
-  const low = quote.todayLow ?? +(price * 0.994).toFixed(2);
+  const high = quote.todayHigh ?? 0;
+  const low = quote.todayLow ?? 0;
 
   if (!isFormed) {
     return {
@@ -914,24 +1204,28 @@ export function calculateAdrInfo(quote: RawQuoteData): {
   remainingPct: number;
   status: 'OPTIMAL' | 'MODERATE' | 'EXHAUSTED';
   description: string;
-} {
-  const price = quote.preMarketPrice ?? quote.currentPrice ?? 0;
-  const atr = quote.atr14 ?? (price * 0.018);
-  const high = quote.todayHigh ?? price;
-  const low = quote.todayLow ?? price;
-  const sessionRange = high > low ? high - low : price * 0.007;
+} | null {
+  const adr = quote.adr14;
+  const high = quote.todayHigh;
+  const low = quote.todayLow;
 
-  const consumptionPct = atr > 0 ? +Math.min(100, (sessionRange / atr) * 100).toFixed(1) : 40;
-  const remainingPct = +(100 - consumptionPct).toFixed(1);
+  // Zero default su dati mancanti: se ADR14 o High/Low di oggi non sono disponibili, restituisce null
+  if (adr == null || adr <= 0 || high == null || low == null || high < low) {
+    return null;
+  }
 
-  if (remainingPct >= 45) {
+  const sessionRange = high - low;
+  const consumptionPct = +Math.min(100, (sessionRange / adr) * 100).toFixed(1);
+  const remainingPct = +Math.max(0, 100 - consumptionPct).toFixed(1);
+
+  if (consumptionPct <= TRADING_PARAMS.ADR_OPTIMAL_MAX_PCT) {
     return {
       consumptionPct,
       remainingPct,
       status: 'OPTIMAL',
       description: `Spazio ADR Residuo (${remainingPct}%): eccellente capacità di espansione verso i target.`,
     };
-  } else if (remainingPct >= 25) {
+  } else if (consumptionPct <= TRADING_PARAMS.ADR_MAX * 100) {
     return {
       consumptionPct,
       remainingPct,
@@ -952,18 +1246,23 @@ export function buildExecutionSetup(
   topCandidate: ScoredCandidate | null,
   catalyst: GeminiCatalystAnalysis | null,
   session: 'EU' | 'US' | 'GLOBAL',
-  params?: SystemParameters
+  params?: SystemParameters,
+  options?: {
+    entryMode?: EntryMode | null;
+    currentTime?: Date;
+    customLeve?: readonly number[];
+  }
 ): ExecutionSetup {
-  const activeParams = params || DEFAULT_SYSTEM_PARAMETERS;
+  const currentTime = options?.currentTime || new Date();
 
   const cutoffTime =
     topCandidate?.quote?.market === 'US'
-      ? '17:30 CET'
+      ? '11:30 NY'
       : topCandidate?.quote?.market === 'EU'
-      ? '11:30 CET'
+      ? '11:30 Rome'
       : session === 'US'
-      ? '17:30 CET'
-      : '11:30 CET';
+      ? '11:30 NY'
+      : '11:30 Rome';
 
   if (!topCandidate) {
     return {
@@ -973,6 +1272,7 @@ export function buildExecutionSetup(
       direction: 'NESSUNA',
       strategy: 'Nessun setup',
       triggerLevel: null,
+      entryLevel: null,
       vwapCondition: 'N/A',
       volumeCondition: 'N/A',
       stopLossLevel: null,
@@ -983,382 +1283,297 @@ export function buildExecutionSetup(
       cutoffTime,
       catalystAnalysis: null,
       dynamicBreakeven: null,
+      certificateNote: 'Certificato: scelta manuale',
+      calculatedAt: currentTime.toISOString(),
     };
   }
 
   const quote = topCandidate.quote;
   const score = topCandidate.score.total;
-
-  // Strict Data Completeness Check: Price and ATR must be real numbers
-  const price = quote.preMarketPrice ?? quote.currentPrice;
-  if (price == null || price <= 0) {
-    return {
-      candidate: quote,
-      decision: 'NESSUN_TRADE',
-      reasonNoTrade: `Prezzo di mercato non disponibile dal feed per ${quote.ticker}. Regola ferrea: nessun trade senza prezzo reale certificato.`,
-      direction: 'NESSUNA',
-      strategy: 'Nessun setup',
-      triggerLevel: null,
-      vwapCondition: 'N/A',
-      volumeCondition: 'N/A',
-      stopLossLevel: null,
-      target1Level: null,
-      target2Level: null,
-      riskRewardRatio: null,
-      invalidationConditions: ['Prezzo mancante'],
-      cutoffTime,
-      catalystAnalysis: catalyst,
-      dynamicBreakeven: null,
-    };
-  }
-
-  if (quote.atr14 == null || quote.atr14 <= 0) {
-    return {
-      candidate: quote,
-      decision: 'NESSUN_TRADE',
-      reasonNoTrade: `ATR(14) giornaliero non calcolabile per ${quote.ticker} (storico sedute insufficiente o non disponibile). Regola: nessun trade senza misura oggettiva della volatilità.`,
-      direction: 'NESSUNA',
-      strategy: 'Nessun setup',
-      triggerLevel: null,
-      vwapCondition: 'N/A',
-      volumeCondition: 'N/A',
-      stopLossLevel: null,
-      target1Level: null,
-      target2Level: null,
-      riskRewardRatio: null,
-      invalidationConditions: ['ATR non disponibile'],
-      cutoffTime,
-      catalystAnalysis: catalyst,
-      dynamicBreakeven: null,
-    };
-  }
-
-  const isGapLong = (quote.gapPercent ?? 0) >= 0;
-
-  const marketType = quote.market || (session === 'US' ? 'US' : 'EU');
+  const rawPrice = quote.currentPrice ?? quote.preMarketPrice ?? null;
+  const price = rawPrice ?? 0;
+  const marketType = (quote.market || (session === 'US' ? 'US' : 'EU')) as 'EU' | 'US';
   const isEU = marketType === 'EU';
-  const minScore = isEU ? (activeParams.minScoreEurope ?? 48) : (activeParams.minScoreUSA ?? 58);
-  const minRvol = isEU ? (activeParams.minRvolEurope ?? 0.85) : (activeParams.minRvolUSA ?? 1.15);
-  const minGap = isEU ? activeParams.minGapEurope : activeParams.minGapUSA;
+  const eps = TRADING_PARAMS.EPSILON;
 
-  const atr = quote.atr14;
-  const atrPercent = price > 0 ? +((atr / price) * 100).toFixed(2) : null;
-  const orbPhase = getOrbPhaseInfo(marketType as 'EU' | 'US');
+  const isGapLong = quote.gapPercent != null ? quote.gapPercent >= 0 : true;
+  const direction: 'LONG' | 'SHORT' =
+    catalyst?.direzione === 'SHORT'
+      ? 'SHORT'
+      : catalyst?.direzione === 'LONG'
+      ? 'LONG'
+      : isGapLong
+      ? 'LONG'
+      : 'SHORT';
+
+  // 1. Definition of Trigger T and Entry E
+  // Long: T = max ORB, Short: T = min ORB. E = T
+  const orbHigh = quote.orbHigh ?? null;
+  const orbLow = quote.orbLow ?? null;
+  const triggerLevel =
+    quote.T != null
+      ? quote.T
+      : orbHigh != null && orbLow != null
+      ? direction === 'LONG'
+        ? orbHigh
+        : orbLow
+      : price;
+  const entryLevel = quote.E != null ? quote.E : triggerLevel;
+
+  // 2. Stop Loss S
+  // Long: S = min ORB * (1 - STOP_BUF); Short: S = max ORB * (1 + STOP_BUF)
+  const stopLossLevel =
+    quote.S != null
+      ? quote.S
+      : orbHigh != null && orbLow != null
+      ? +(
+          direction === 'LONG'
+            ? orbLow * (1 - TRADING_PARAMS.STOP_BUF)
+            : orbHigh * (1 + TRADING_PARAMS.STOP_BUF)
+        ).toFixed(6)
+      : +(
+          direction === 'LONG'
+            ? price * (1 - TRADING_PARAMS.STOP_BUF)
+            : price * (1 + TRADING_PARAMS.STOP_BUF)
+        ).toFixed(6);
+
+  // 3. Stop Distance fraction dS = |E - S| / E
+  const dS = entryLevel > 0 ? Math.abs(entryLevel - stopLossLevel) / entryLevel : 0;
+  const stopDistancePct = +(dS * 100).toFixed(4);
+
+  // 4. Leverage Selection L_sel = max{ L ∈ LEVE : dS × L ≤ LMAX e 1/L ≥ dS + BUF_BAR }
+  const leveGrid = options?.customLeve ?? TRADING_PARAMS.LEVE;
+  const eligibleLevers = leveGrid.filter(
+    (l) => dS * l <= TRADING_PARAMS.LMAX + eps && 1 / l + eps >= dS + TRADING_PARAMS.BUF_BAR
+  );
+  const selectedLeverage = eligibleLevers.length > 0 ? Math.max(...eligibleLevers) : null;
+  const prudentLeverage = eligibleLevers.length > 0 ? Math.min(...eligibleLevers) : null;
+
+  // 5. Recommended KO Barrier B_rec & Prudent Barrier
+  // Long: B_rec = E × (1 − 1/L_sel). Short: B_rec = E × (1 + 1/L_sel).
+  const computedBarrierRec =
+    selectedLeverage != null
+      ? +(
+          direction === 'LONG'
+            ? entryLevel * (1 - 1 / selectedLeverage)
+            : entryLevel * (1 + 1 / selectedLeverage)
+        ).toFixed(2)
+      : null;
+  const barrierRecommended = computedBarrierRec;
+
+  const prudentBarrier =
+    prudentLeverage != null
+      ? +(
+          direction === 'LONG'
+            ? entryLevel * (1 - 1 / prudentLeverage)
+            : entryLevel * (1 + 1 / prudentLeverage)
+        ).toFixed(2)
+      : null;
+
+  const estimatedStopLossPct =
+    selectedLeverage != null ? +(dS * selectedLeverage * 100).toFixed(2) : null;
+
+  // 6. Targets T1 and T2
+  // R = |E - S|; T1 = E +/- T1_R * R; T2 = E +/- T2_R * R
+  const riskDist = Math.abs(entryLevel - stopLossLevel);
+  const target1Level = +(
+    direction === 'LONG'
+      ? entryLevel + TRADING_PARAMS.T1_R * riskDist
+      : entryLevel - TRADING_PARAMS.T1_R * riskDist
+  ).toFixed(4);
+  const target2Level = +(
+    direction === 'LONG'
+      ? entryLevel + TRADING_PARAMS.T2_R * riskDist
+      : entryLevel - TRADING_PARAMS.T2_R * riskDist
+  ).toFixed(4);
+
+  // 7. Consumo ADR and Estensione
+  const highToday = quote.todayHigh;
+  const lowToday = quote.todayLow;
+  const adrConsumptionFraction =
+    quote.adr14 != null &&
+    quote.adr14 > 0 &&
+    highToday != null &&
+    lowToday != null &&
+    highToday >= lowToday
+      ? (highToday - lowToday) / quote.adr14
+      : null;
+  const adrConsumptionPct =
+    adrConsumptionFraction != null ? +(adrConsumptionFraction * 100).toFixed(1) : null;
+
+  const extensionFraction =
+    entryLevel > 0
+      ? direction === 'LONG'
+        ? (price - entryLevel) / entryLevel
+        : (entryLevel - price) / entryLevel
+      : 0;
+  const extensionPct = +(extensionFraction * 100).toFixed(2);
+
+  const Tb = quote.orbBreakoutTime || null;
+  const marketTime = getMarketTime(marketType, currentTime);
+
+  // 8. Evaluation of Gates G1 to G11 in exact sequence
+  const gateResults: Record<string, { passed: boolean; label: string; message?: string }> = {};
+
+  // G1 Liquidità: Liq€ < LIQ_MIN_EUR → LIQUIDITÀ INSUFFICIENTE
+  // Se mancano le 20 barre complete o Liq€ è assente, cade in G2 (DATI INSUFFICIENTI), non in G1.
+  const liqEur = quote.liqEur20d ?? null;
+  const hasInsufficientBarsForLiq =
+    quote.completedBarsCount != null &&
+    quote.completedBarsCount < TRADING_PARAMS.LIQ_BARS_REQUIRED;
+  const g1Pass =
+    liqEur == null || hasInsufficientBarsForLiq
+      ? true
+      : liqEur + eps >= TRADING_PARAMS.LIQ_MIN_EUR;
+  gateResults['G1'] = {
+    passed: g1Pass,
+    label: 'Liquidità',
+    message: g1Pass ? undefined : 'LIQUIDITÀ INSUFFICIENTE',
+  };
+
+  // G2 Dati: manca ORB, ATR14, ADR14, C_ieri, volume, prezzo, gap, o barre complete insufficienti → DATI INSUFFICIENTI
+  const g2Pass =
+    !hasInsufficientBarsForLiq &&
+    orbHigh != null &&
+    orbLow != null &&
+    rawPrice != null &&
+    rawPrice > 0 &&
+    quote.gapPercent != null &&
+    quote.atr14 != null &&
+    quote.atr14 > 0 &&
+    quote.adr14 != null &&
+    quote.adr14 > 0 &&
+    quote.prevClose != null &&
+    quote.prevClose > 0 &&
+    quote.avgVolume20d != null &&
+    quote.avgVolume20d > 0 &&
+    liqEur != null &&
+    liqEur > 0;
+  gateResults['G2'] = {
+    passed: g2Pass,
+    label: 'Dati',
+    message: g2Pass ? undefined : 'DATI INSUFFICIENTI',
+  };
+
+  // G3 Orario: t < chiusura ORB → ATTENDERE CHIUSURA ORB
+  const g3Pass = !marketTime.isBeforeOrb;
+  gateResults['G3'] = {
+    passed: g3Pass,
+    label: 'Orario ORB',
+    message: g3Pass ? undefined : 'ATTENDERE CHIUSURA ORB',
+  };
+
+  // G4 Estensione: Estensione(t) > EST_MAX → TRIGGER GIÀ SUPERATO
+  const g4Pass = extensionFraction <= TRADING_PARAMS.EST_MAX + eps;
+  gateResults['G4'] = {
+    passed: g4Pass,
+    label: 'Estensione',
+    message: g4Pass ? undefined : 'TRIGGER GIÀ SUPERATO',
+  };
+
+  // G5 Freschezza: Tb esiste e (t − Tb) > FRESH_MIN minuti → TRIGGER SCADUTO
+  let g5Pass = true;
+  if (Tb != null) {
+    const diffMin = (currentTime.getTime() - new Date(Tb).getTime()) / 60000;
+    if (diffMin > TRADING_PARAMS.FRESH_MIN + eps) {
+      g5Pass = false;
+    }
+  }
+  gateResults['G5'] = {
+    passed: g5Pass,
+    label: 'Freschezza',
+    message: g5Pass ? undefined : 'TRIGGER SCADUTO',
+  };
+
+  // G6 Target: H_sess(t) >= T1 (long) o L_sess(t) <= T1 (short) → T1 RAGGIUNTO
+  const g6Pass =
+    direction === 'LONG'
+      ? !(highToday != null && highToday + eps >= target1Level)
+      : !(lowToday != null && lowToday - eps <= target1Level);
+  gateResults['G6'] = {
+    passed: g6Pass,
+    label: 'Target',
+    message: g6Pass ? undefined : 'T1 RAGGIUNTO',
+  };
+
+  // G7 ADR: Consumo_ADR(t) > ADR_MAX → RANGE ESAURITO
+  const g7Pass =
+    adrConsumptionFraction != null && adrConsumptionFraction <= TRADING_PARAMS.ADR_MAX + eps;
+  gateResults['G7'] = {
+    passed: g7Pass,
+    label: 'ADR',
+    message: g7Pass ? undefined : 'RANGE ESAURITO',
+  };
+
+  // G8 Stop distanza: dS > LMAX / min(LEVE) → STOP TROPPO LONTANO
+  const minLeva = Math.min(...TRADING_PARAMS.LEVE);
+  const g8Pass = dS <= TRADING_PARAMS.LMAX / minLeva + eps;
+  gateResults['G8'] = {
+    passed: g8Pass,
+    label: 'Stop distanza',
+    message: g8Pass ? undefined : 'STOP TROPPO LONTANO',
+  };
+
+  // G9 Leva e barriera:
+  // L_sel = max{ L in LEVE : dS × L <= LMAX e 1/L >= dS + BUF_BAR }. Se vuoto → LEVA NON COMPATIBILE.
+  // Controllo: long S − B_rec >= BUF_BAR × E; short B_rec − S >= BUF_BAR × E; altrimenti → BARRIERA NON VALIDA.
+  let g9Pass = false;
+  let g9Message: string | undefined = undefined;
+  if (selectedLeverage == null || barrierRecommended == null) {
+    g9Pass = false;
+    g9Message = 'LEVA NON COMPATIBILE';
+  } else {
+    const barrierCheck = validateBarrierSafety(
+      direction,
+      entryLevel,
+      stopLossLevel,
+      barrierRecommended,
+      TRADING_PARAMS.BUF_BAR
+    );
+    g9Pass = barrierCheck.valid;
+    g9Message = barrierCheck.message;
+  }
+  gateResults['G9'] = {
+    passed: g9Pass,
+    label: 'Leva e barriera',
+    message: g9Message,
+  };
+
+  // G10 Stop già toccato: P_t <= S (long) o P_t >= S (short) → STOP GIÀ RAGGIUNTO. Usa solo P_t.
+  const g10Pass =
+    direction === 'LONG' ? price > stopLossLevel + eps : price < stopLossLevel - eps;
+  gateResults['G10'] = {
+    passed: g10Pass,
+    label: 'Stop già toccato',
+    message: g10Pass ? undefined : 'STOP GIÀ RAGGIUNTO',
+  };
+
+  // G11 Score: score senza liquidità < minScore → PUNTEGGIO SOTTO SOGLIA
+  const minScore = isEU ? TRADING_PARAMS.MIN_SCORE_EU : TRADING_PARAMS.MIN_SCORE_US;
+  const g11Pass = score + eps >= minScore;
+  gateResults['G11'] = {
+    passed: g11Pass,
+    label: 'Score',
+    message: g11Pass ? undefined : 'PUNTEGGIO SOTTO SOGLIA',
+  };
+
+  const gateKeys = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'G9', 'G10', 'G11'];
+  const firstFailedKey = gateKeys.find((k) => !gateResults[k].passed);
+
+  const decision: 'TRADE' | 'NESSUN_TRADE' = firstFailedKey ? 'NESSUN_TRADE' : 'TRADE';
+  const reasonNoTrade = firstFailedKey ? gateResults[firstFailedKey].message : undefined;
+  const blockedGate = firstFailedKey || null;
+
+  const orbPhase = getOrbPhaseInfo(marketType, currentTime);
   const adrInfo = calculateAdrInfo(quote);
   const macroBlackout = getMacroBlackoutStatus();
-  const overnightWarning = getOvernightCountdownStatus(marketType as 'EU' | 'US');
-  const initialBalance = calculateInitialBalance(quote, marketType as 'EU' | 'US');
-
-  const hypotheticalDirection: 'LONG' | 'SHORT' = catalyst?.direzione === 'SHORT' ? 'SHORT' : isGapLong ? 'LONG' : 'SHORT';
-  const normalRiskMult = activeParams.normalRiskMultiplier;
-  const normalRisk = Math.max(+(atr * normalRiskMult).toFixed(2), +(price * 0.007).toFixed(2));
-  const triggerOffset = activeParams.triggerOffsetPercent / 100;
-  const theoTrigger = +(hypotheticalDirection === 'LONG' ? price * (1 + triggerOffset) : price * (1 - triggerOffset)).toFixed(2);
-  const theoStop = +(hypotheticalDirection === 'LONG' ? theoTrigger - normalRisk : theoTrigger + normalRisk).toFixed(2);
-  const theoTarget1 = +(hypotheticalDirection === 'LONG' ? theoTrigger + normalRisk * activeParams.target1Multiplier : theoTrigger - normalRisk * activeParams.target1Multiplier).toFixed(2);
-  const theoTarget2 = +(hypotheticalDirection === 'LONG' ? theoTrigger + normalRisk * activeParams.target2Multiplier : theoTrigger - normalRisk * activeParams.target2Multiplier).toFixed(2);
-  const theoKoBarrier = +(hypotheticalDirection === 'LONG' ? theoTrigger - normalRisk * activeParams.suggestedKoBarrierMultiplier : theoTrigger + normalRisk * activeParams.suggestedKoBarrierMultiplier).toFixed(2);
-
-  const ema20 = quote.ema20Daily;
-  const isAlignedWithEma20 =
-    ema20 != null ? (hypotheticalDirection === 'LONG' ? price >= ema20 : price <= ema20) : true;
-  const macroTrendAlignment = {
-    ema20Daily: ema20,
-    isAligned: isAlignedWithEma20,
-    label:
-      ema20 != null
-        ? isAlignedWithEma20
-          ? hypotheticalDirection === 'LONG'
-            ? `Allineato Rialzista (Sopra EMA20 daily ${ema20.toFixed(2)})`
-            : `Allineato Ribassista (Sotto EMA20 daily ${ema20.toFixed(2)})`
-          : hypotheticalDirection === 'LONG'
-          ? `Controtrend Macro (Sotto EMA20 daily ${ema20.toFixed(2)})`
-          : `Controtrend Macro (Sopra EMA20 daily ${ema20.toFixed(2)})`
-        : 'EMA(20) non calcolata (Trend neutro)',
-  };
-
-  // Filter 1: Minimum score requirement (differentiated by market)
-  if (score < minScore) {
-    return {
-      candidate: quote,
-      decision: 'NESSUN_TRADE',
-      reasonNoTrade: `Punteggio di candidatura (${score}/100) inferiore alla soglia minima attiva per ${isEU ? 'Europa' : 'USA'} (${minScore}/100). Preservazione del capitale: nessun trade con score sotto soglia.`,
-      direction: hypotheticalDirection,
-      strategy: 'Nessun setup',
-      triggerLevel: theoTrigger,
-      vwapCondition: hypotheticalDirection === 'LONG' ? 'Sopra VWAP Intraday' : 'Sotto VWAP Intraday',
-      volumeCondition: `Score ${score} < ${minScore}`,
-      stopLossLevel: theoStop,
-      target1Level: theoTarget1,
-      target2Level: theoTarget2,
-      suggestedKoBarrier: theoKoBarrier,
-      atrValue: atr,
-      atrPercent,
-      marketType: marketType as 'EU' | 'US',
-      riskRewardRatio: activeParams.target1Multiplier,
-      invalidationConditions: ['Punteggio algoritmico inferiore alla soglia minima di rigore'],
-      cutoffTime,
-      catalystAnalysis: catalyst,
-      dynamicBreakeven: null,
-      orbPhase,
-      macroTrendAlignment,
-      adrInfo,
-      initialBalance,
-      macroBlackout,
-      overnightWarning,
-      orderFlow: quote.orderFlow ?? null,
-    };
-  }
-
-  // Filter 1b: Minimum Relative Volume (RVOL) requirement
-  const rvol = quote.rvol != null ? quote.rvol : (isEU ? 1.0 : 1.0);
-  if (rvol < minRvol) {
-    return {
-      candidate: quote,
-      decision: 'NESSUN_TRADE',
-      reasonNoTrade: `Volume Relativo (${rvol.toFixed(2)}x) inferiore alla soglia minima attiva per ${isEU ? 'Europa' : 'USA'} (${minRvol}x). Protezione da trappole di liquidità e falsi breakout.`,
-      direction: hypotheticalDirection,
-      strategy: 'Nessun setup',
-      triggerLevel: theoTrigger,
-      vwapCondition: hypotheticalDirection === 'LONG' ? 'Sopra VWAP Intraday' : 'Sotto VWAP Intraday',
-      volumeCondition: `RVOL ${rvol.toFixed(2)}x < soglia minima ${minRvol}x`,
-      stopLossLevel: theoStop,
-      target1Level: theoTarget1,
-      target2Level: theoTarget2,
-      suggestedKoBarrier: theoKoBarrier,
-      atrValue: atr,
-      atrPercent,
-      marketType: marketType as 'EU' | 'US',
-      riskRewardRatio: activeParams.target1Multiplier,
-      invalidationConditions: ['Volume Relativo (RVOL) insufficiente per garantire continuazione'],
-      cutoffTime,
-      catalystAnalysis: catalyst,
-      dynamicBreakeven: null,
-      orbPhase,
-      macroTrendAlignment,
-      adrInfo,
-      initialBalance,
-      macroBlackout,
-      overnightWarning,
-      orderFlow: quote.orderFlow ?? null,
-    };
-  }
-
-  // Filter 1c: Minimum Opening Gap % requirement
-  const absGap = Math.abs(quote.gapPercent ?? 0);
-  if (absGap < minGap) {
-    return {
-      candidate: quote,
-      decision: 'NESSUN_TRADE',
-      reasonNoTrade: `Ampiezza Gap (${(quote.gapPercent ?? 0).toFixed(2)}%) inferiore alla soglia minima attiva per ${isEU ? 'Europa' : 'USA'} (±${minGap}%). Impulso direzionale d'apertura insufficiente per breakout orario.`,
-      direction: hypotheticalDirection,
-      strategy: 'Nessun setup',
-      triggerLevel: theoTrigger,
-      vwapCondition: hypotheticalDirection === 'LONG' ? 'Sopra VWAP Intraday' : 'Sotto VWAP Intraday',
-      volumeCondition: `Gap ${absGap.toFixed(2)}% < ${minGap}%`,
-      stopLossLevel: theoStop,
-      target1Level: theoTarget1,
-      target2Level: theoTarget2,
-      suggestedKoBarrier: theoKoBarrier,
-      atrValue: atr,
-      atrPercent,
-      marketType: marketType as 'EU' | 'US',
-      riskRewardRatio: activeParams.target1Multiplier,
-      invalidationConditions: ['Gap percentuale d\'apertura inferiore alla soglia minima richiesta'],
-      cutoffTime,
-      catalystAnalysis: catalyst,
-      dynamicBreakeven: null,
-      orbPhase,
-      macroTrendAlignment,
-      adrInfo,
-      initialBalance,
-      macroBlackout,
-      overnightWarning,
-      orderFlow: quote.orderFlow ?? null,
-    };
-  }
-
-  // Filter 1d: RSI Extremes if RSI filter active
-  const isRsiActive = activeParams.rsiFilterActive ?? false;
-  const rsi = quote.rsi5m ?? quote.rsi14;
-  if (isRsiActive && isRsiExtreme(rsi)) {
-    return {
-      candidate: quote,
-      decision: 'NESSUN_TRADE',
-      reasonNoTrade: `RSI a ${rsi}: territorio estremo (${rsi! >= 70 ? 'Ipercomprato' : 'Ipervenduto'}). Rischio elevato di ritracciamento violento e knock-out anticipato sul certificato.`,
-      direction: hypotheticalDirection,
-      strategy: 'Nessun setup',
-      triggerLevel: theoTrigger,
-      vwapCondition: hypotheticalDirection === 'LONG' ? 'Sopra VWAP Intraday' : 'Sotto VWAP Intraday',
-      volumeCondition: `RSI estremo ${rsi}`,
-      stopLossLevel: theoStop,
-      target1Level: theoTarget1,
-      target2Level: theoTarget2,
-      suggestedKoBarrier: theoKoBarrier,
-      atrValue: atr,
-      atrPercent,
-      marketType: marketType as 'EU' | 'US',
-      riskRewardRatio: activeParams.target1Multiplier,
-      invalidationConditions: ['RSI in territorio estremo (ipercomprato/ipervenduto)'],
-      cutoffTime,
-      catalystAnalysis: catalyst,
-      dynamicBreakeven: null,
-      orbPhase,
-      macroTrendAlignment,
-      adrInfo,
-      initialBalance,
-      macroBlackout,
-      overnightWarning,
-      orderFlow: quote.orderFlow ?? null,
-    };
-  }
-
-  // Filter 2: Fundamental / Catalyst disqualification check
-  if (catalyst && catalyst.decisione === 'NESSUN_TRADE') {
-    const isAbsenceOfNewsOnly =
-      catalyst.catalizzatore?.toLowerCase().includes('nessuna notizia') ||
-      catalyst.catalizzatore?.toLowerCase().includes('assenza di catalizzatore') ||
-      catalyst.catalizzatore?.toLowerCase().includes('assenza di notizie') ||
-      (catalyst.rischi?.length === 1 &&
-        (catalyst.rischi[0]?.toLowerCase().includes('mancanza di notizie') ||
-          catalyst.rischi[0]?.toLowerCase().includes('assenza di catalizzatore') ||
-          catalyst.rischi[0]?.toLowerCase().includes('assenza di notizie')));
-
-    if (!isAbsenceOfNewsOnly) {
-      return {
-        candidate: quote,
-        decision: 'NESSUN_TRADE',
-        reasonNoTrade: `Analisi fondamentale avversa: ${catalyst.catalizzatore}. Rischi: ${catalyst.rischi.join(', ')}.`,
-        direction: hypotheticalDirection,
-        strategy: 'Nessun setup',
-        triggerLevel: theoTrigger,
-        vwapCondition: hypotheticalDirection === 'LONG' ? 'Sopra VWAP Intraday' : 'Sotto VWAP Intraday',
-        volumeCondition: 'Catalizzatore sfavorevole',
-        stopLossLevel: theoStop,
-        target1Level: theoTarget1,
-        target2Level: theoTarget2,
-        suggestedKoBarrier: theoKoBarrier,
-        atrValue: atr,
-        atrPercent,
-        marketType: marketType as 'EU' | 'US',
-        riskRewardRatio: activeParams.target1Multiplier,
-        invalidationConditions: catalyst.condizioni_invalidazione,
-        cutoffTime,
-        catalystAnalysis: catalyst,
-        dynamicBreakeven: null,
-        orbPhase,
-        macroTrendAlignment,
-        adrInfo,
-        initialBalance,
-        macroBlackout,
-        overnightWarning,
-        orderFlow: quote.orderFlow ?? null,
-      };
-    }
-  }
-
-  const direction: 'LONG' | 'SHORT' = catalyst?.direzione === 'SHORT' ? 'SHORT' : isGapLong ? 'LONG' : 'SHORT';
-
-  // Determine Strategy based on real RVOL and real Gap
-  const isGapAndGo = (quote.rvol ?? 1) >= 1.6 && Math.abs(quote.gapPercent ?? 0) >= (session === 'EU' ? 0.9 : 1.5);
-  const strategy = isGapAndGo ? 'Gap and Go' : 'Opening Range Breakout (5m / 15m)';
-
-  let triggerLevel: number;
-  let stopLossLevel: number;
-  let target1Level: number;
-  let target2Level: number;
-
-  const tightRisk = Math.max(+(atr * (normalRiskMult * 0.8)).toFixed(2), +(price * 0.005).toFixed(2));
-  const conservativeRisk = Math.max(+(atr * (normalRiskMult * 1.5)).toFixed(2), +(price * 0.010).toFixed(2));
-
-  let stopLossTight: number;
-  let stopLossConservative: number;
-  let suggestedKoBarrier: number;
-
-  if (direction === 'LONG') {
-    triggerLevel = +(price * (1 + triggerOffset)).toFixed(2);
-    stopLossLevel = +(triggerLevel - normalRisk).toFixed(2);
-    stopLossTight = +(triggerLevel - tightRisk).toFixed(2);
-    stopLossConservative = +(triggerLevel - conservativeRisk).toFixed(2);
-  } else {
-    triggerLevel = +(price * (1 - triggerOffset)).toFixed(2);
-    stopLossLevel = +(triggerLevel + normalRisk).toFixed(2);
-    stopLossTight = +(triggerLevel + tightRisk).toFixed(2);
-    stopLossConservative = +(triggerLevel + conservativeRisk).toFixed(2);
-  }
-
-  // Structural Stop Loss Anchoring
-  let structuralLevels: ExecutionSetup['structuralLevels'] = {
-    stopType: 'VOLATILITY_ATR',
-    referencePrice: +(direction === 'LONG' ? triggerLevel - normalRisk : triggerLevel + normalRisk).toFixed(2),
-    explanation: 'Stop basato su 0.5x ATR(14) anti-rumore',
-  };
-
-  if (direction === 'LONG') {
-    if (quote.todayLow != null && quote.todayLow > 0 && quote.todayLow < triggerLevel) {
-      const distToLow = triggerLevel - quote.todayLow;
-      if (distToLow >= normalRisk * 0.3 && distToLow <= normalRisk * 1.8) {
-        stopLossLevel = +(quote.todayLow * 0.998).toFixed(2);
-        structuralLevels = {
-          stopType: 'STRUCTURAL_OPEN_LOW',
-          referencePrice: quote.todayLow,
-          explanation: `Ancorato sotto Minimo Odierno (${quote.todayLow.toFixed(2)} - 0.2% buffer anti-caccia)`,
-        };
-      } else if (quote.vwap != null && quote.vwap > 0 && quote.vwap < triggerLevel) {
-        const distToVwap = triggerLevel - quote.vwap;
-        if (distToVwap >= normalRisk * 0.3 && distToVwap <= normalRisk * 1.5) {
-          stopLossLevel = +(quote.vwap * 0.998).toFixed(2);
-          structuralLevels = {
-            stopType: 'STRUCTURAL_VWAP',
-            referencePrice: quote.vwap,
-            explanation: `Ancorato sotto il VWAP Intraday (${quote.vwap.toFixed(2)} - 0.2% buffer)`,
-          };
-        }
-      }
-    }
-  } else {
-    // SHORT direction
-    if (quote.todayHigh != null && quote.todayHigh > 0 && quote.todayHigh > triggerLevel) {
-      const distToHigh = quote.todayHigh - triggerLevel;
-      if (distToHigh >= normalRisk * 0.3 && distToHigh <= normalRisk * 1.8) {
-        stopLossLevel = +(quote.todayHigh * 1.002).toFixed(2);
-        structuralLevels = {
-          stopType: 'STRUCTURAL_OPEN_HIGH',
-          referencePrice: quote.todayHigh,
-          explanation: `Ancorato sopra Massimo Odierno (${quote.todayHigh.toFixed(2)} + 0.2% buffer anti-caccia)`,
-        };
-      } else if (quote.vwap != null && quote.vwap > 0 && quote.vwap > triggerLevel) {
-        const distToVwap = quote.vwap - triggerLevel;
-        if (distToVwap >= normalRisk * 0.3 && distToVwap <= normalRisk * 1.5) {
-          stopLossLevel = +(quote.vwap * 1.002).toFixed(2);
-          structuralLevels = {
-            stopType: 'STRUCTURAL_VWAP',
-            referencePrice: quote.vwap,
-            explanation: `Ancorato sopra il VWAP Intraday (${quote.vwap.toFixed(2)} + 0.2% buffer)`,
-          };
-        }
-      }
-    }
-  }
-
-  // Calculate targets & barriers proportional to the effective risk distance
-  const effectiveRisk = Math.max(Math.abs(triggerLevel - stopLossLevel), normalRisk);
-  if (direction === 'LONG') {
-    suggestedKoBarrier = +(triggerLevel - effectiveRisk * activeParams.suggestedKoBarrierMultiplier).toFixed(2);
-    target1Level = +(triggerLevel + effectiveRisk * activeParams.target1Multiplier).toFixed(2);
-    target2Level = +(triggerLevel + effectiveRisk * activeParams.target2Multiplier).toFixed(2);
-  } else {
-    suggestedKoBarrier = +(triggerLevel + effectiveRisk * activeParams.suggestedKoBarrierMultiplier).toFixed(2);
-    target1Level = +(triggerLevel - effectiveRisk * activeParams.target1Multiplier).toFixed(2);
-    target2Level = +(triggerLevel - effectiveRisk * activeParams.target2Multiplier).toFixed(2);
-  }
-
-  const riskRewardRatio = activeParams.target1Multiplier;
+  const overnightWarning = getOvernightCountdownStatus(marketType);
+  const initialBalance = calculateInitialBalance(quote, marketType);
 
   const vwapCondition =
     direction === 'LONG'
-      ? 'Prezzo stabilmente SOPRA il VWAP intraday dal minuto 5. Non entrare se il prezzo ritraccia sotto il VWAP.'
-      : 'Prezzo stabilmente SOTTO il VWAP intraday dal minuto 5. Non entrare se il prezzo risale sopra il VWAP.';
+      ? 'Prezzo stabilmente SOPRA il riferimento intraday dal minuto 5.'
+      : 'Prezzo stabilmente SOTTO il riferimento intraday dal minuto 5.';
 
   const volumeCondition =
     direction === 'LONG'
@@ -1366,8 +1581,7 @@ export function buildExecutionSetup(
       : 'Volume vendite in accelerazione al test del breakdown con spread bid/ask compatto.';
 
   const invalidationConditions = [
-    `Rottura e chiusura 5 min oltre lo Stop Loss sul sottostante a ${stopLossLevel} ${quote.currency}`,
-    `Inversione del VWAP intraday con candela di rigetto contraria`,
+    `Rottura e chiusura oltre lo Stop Loss sul sottostante a ${stopLossLevel} ${quote.currency}`,
     `Superamento dell'orario limite di permanenza (${cutoffTime}) senza raggiungimento del Target 1`,
     ...(quote.orderFlow?.flowQuality === 'ABSORPTION_TRAP'
       ? ['Allerta Order Flow: Trappola di Assorbimento Delta attiva (divergenza prezzo/CVD - rischio fakeout)']
@@ -1375,76 +1589,64 @@ export function buildExecutionSetup(
     ...(catalyst?.condizioni_invalidazione || []),
   ];
 
-  // Baseline Trade Republic Knock-Out Dynamic Breakeven (1€ broker fee each way + 0.02€ spread)
-  const defaultLeverage = 10;
-  const defaultBarrierDist = Math.abs(triggerLevel - suggestedKoBarrier);
-  const defaultStopDist = Math.abs(triggerLevel - stopLossLevel);
-  const defaultCertPrice = Math.max(+(defaultBarrierDist / defaultLeverage).toFixed(2), 1.5);
-  const defaultRiskEur = 100;
-  const lossRatioOnCert = triggerLevel > 0 ? defaultStopDist / triggerLevel : 0.01;
-  const estimatedLossPerCert = defaultCertPrice * lossRatioOnCert * defaultLeverage;
-  const defaultLossPerCert = Math.max(estimatedLossPerCert, 0.2);
-  const defaultSuggestedCerts = Math.max(1, Math.floor(defaultRiskEur / defaultLossPerCert));
-  const defaultInvestedEur = +(defaultSuggestedCerts * defaultCertPrice).toFixed(2);
-
-  const dynamicBreakeven = calculateDynamicBreakeven(
-    triggerLevel,
-    direction === 'LONG',
-    defaultLeverage,
-    defaultCertPrice,
-    defaultSuggestedCerts,
-    defaultInvestedEur,
-    atr,
-    0.02,
-    1.00
-  );
-
-  const tradeEmaAligned =
-    ema20 != null ? (direction === 'LONG' ? price >= ema20 : price <= ema20) : true;
-  const tradeTrendAlignment = {
-    ema20Daily: ema20,
-    isAligned: tradeEmaAligned,
-    label:
-      ema20 != null
-        ? tradeEmaAligned
-          ? direction === 'LONG'
-            ? `Allineato Rialzista (Sopra EMA20 daily ${ema20.toFixed(2)})`
-            : `Allineato Ribassista (Sotto EMA20 daily ${ema20.toFixed(2)})`
-          : direction === 'LONG'
-          ? `Controtrend Macro (Sotto EMA20 daily ${ema20.toFixed(2)})`
-          : `Controtrend Macro (Sopra EMA20 daily ${ema20.toFixed(2)})`
-        : 'EMA(20) non calcolata (Trend neutro)',
-  };
-
   return {
     candidate: quote,
-    decision: 'TRADE',
+    decision,
+    reasonNoTrade,
+    blockedGate,
+    gateResults,
     direction,
-    strategy,
+    strategy: 'Opening Range Breakout (5m / 15m)',
     triggerLevel,
+    entryLevel,
     vwapCondition,
     volumeCondition,
     stopLossLevel,
-    stopLossTight,
-    stopLossConservative,
-    suggestedKoBarrier,
-    atrValue: atr,
-    atrPercent,
-    marketType: quote.market,
+    stopLossTight: stopLossLevel,
+    stopLossConservative: stopLossLevel,
+    suggestedKoBarrier: barrierRecommended,
+    selectedLeverage,
+    barrierRecommended,
+    estimatedStopLossPct,
+    prudentLeverage,
+    prudentBarrier,
+    certificateNote: 'Certificato: scelta manuale',
+    calculatedAt: currentTime.toISOString(),
+    stopDistancePct,
+    extensionPct,
+    adrConsumptionPct,
+    entryMode: options?.entryMode ?? null,
+    firstBreakoutTime: Tb,
+    atrValue: quote.atr14,
+    atrPercent: quote.atr14 && price > 0 ? +((quote.atr14 / price) * 100).toFixed(2) : null,
+    marketType,
     target1Level,
     target2Level,
-    riskRewardRatio,
+    riskRewardRatio: TRADING_PARAMS.T1_R,
     invalidationConditions,
     cutoffTime,
     catalystAnalysis: catalyst,
-    dynamicBreakeven,
+    dynamicBreakeven: null,
     orbPhase,
-    structuralLevels,
-    macroTrendAlignment: tradeTrendAlignment,
+    macroTrendAlignment: {
+      ema20Daily: quote.ema20Daily,
+      isAligned:
+        quote.ema20Daily != null
+          ? direction === 'LONG'
+            ? price >= quote.ema20Daily
+            : price <= quote.ema20Daily
+          : true,
+      label:
+        quote.ema20Daily != null
+          ? (direction === 'LONG' ? price >= quote.ema20Daily : price <= quote.ema20Daily)
+            ? 'Allineato Macro Trend'
+            : 'Controtendenza Macro'
+          : 'Neutro',
+    },
     adrInfo,
+    initialBalance,
     macroBlackout,
     overnightWarning,
-    initialBalance,
     orderFlow: quote.orderFlow ?? null,
   };
 }
@@ -1573,8 +1775,8 @@ export function generatePnLScenarios(
     };
   };
 
-  const t2Price = setup.target2Level ?? (isLong ? entryPrice + stopDistance * 2.8 : entryPrice - stopDistance * 2.8);
-  const t1Price = setup.target1Level ?? (isLong ? entryPrice + stopDistance * 1.6 : entryPrice - stopDistance * 1.6);
+  const t2Price = setup.target2Level ?? (isLong ? entryPrice + stopDistance * TRADING_PARAMS.T2_R : entryPrice - stopDistance * TRADING_PARAMS.T2_R);
+  const t1Price = setup.target1Level ?? (isLong ? entryPrice + stopDistance * TRADING_PARAMS.T1_R : entryPrice - stopDistance * TRADING_PARAMS.T1_R);
   const tHalfPrice = isLong ? entryPrice + stopDistance * 0.8 : entryPrice - stopDistance * 0.8;
   const bePrice = isLong ? entryPrice + breakevenPoints : entryPrice - breakevenPoints;
   const pullbackPrice = isLong ? entryPrice - stopDistance * 0.5 : entryPrice + stopDistance * 0.5;
@@ -1582,8 +1784,8 @@ export function generatePnLScenarios(
   const koPrice = input.barrierStrike;
 
   return [
-    buildScenario('t2', 'Target 2 (+2.8R - Trend Esteso)', 2.8, t2Price, 'Massimo target intraday con trailing vwap'),
-    buildScenario('t1', 'Target 1 (+1.6R - Presa 70% Profitto)', 1.6, t1Price, 'Target primario: chiusura parziale e stop a BE'),
+    buildScenario('t2', 'Target 2 (Trend Esteso)', TRADING_PARAMS.T2_R, t2Price, 'Massimo target intraday'),
+    buildScenario('t1', 'Target 1 (Presa 70% Profitto)', TRADING_PARAMS.T1_R, t1Price, 'Target primario: chiusura parziale e stop a BE'),
     buildScenario('half', 'Pullback Favorevole (+0.8R)', 0.8, tHalfPrice, 'Scalping intermedio o gestione protettiva'),
     buildScenario('be', 'Breakeven Dinamico (0.0R Netto)', 0, bePrice, 'Sottostante necessario per assorbire spread e fee', { isBreakeven: true }),
     buildScenario('pullback', 'Drawdown Transitorio (-0.5R)', -0.5, pullbackPrice, 'Rintraccio fisiologico pre-breakout'),
@@ -1623,13 +1825,13 @@ export function calculateDerivativeStressReport(
   }
 
   // 2. Safety Ratio (Barrier vs Stop Distance)
-  if (safetyRatio < 1.6) {
+  if (safetyRatio < TRADING_PARAMS.KO_SAFETY_RATIO_CRITICAL) {
     criticalReasons.push(
-      `Distanza barriera critica (${safetyRatio}x vs min 1.6x stop): margine insufficiente contro spike di apertura.`
+      `Distanza barriera critica (${safetyRatio}x vs min ${TRADING_PARAMS.KO_SAFETY_RATIO_CRITICAL}x stop): margine insufficiente contro spike di apertura.`
     );
-  } else if (safetyRatio < 2.2) {
+  } else if (safetyRatio < TRADING_PARAMS.KO_SAFETY_RATIO_WARNING) {
     warningReasons.push(
-      `Distanza barriera moderata (${safetyRatio}x stop): raccomandato > 2.2x per evitare flash-crash.`
+      `Distanza barriera moderata (${safetyRatio}x stop): raccomandato > ${TRADING_PARAMS.KO_SAFETY_RATIO_WARNING}x per evitare flash-crash.`
     );
   } else {
     passReasons.push(`Barriera KO distante ${safetyRatio}x lo stop loss (ottimo buffer protettivo).`);
@@ -1707,7 +1909,7 @@ export function calculateKnockOutSafety(
   const stopLoss = setup.stopLossLevel ?? 0;
   const barrierStrike = input.barrierStrike;
   const isLong = setup.direction === 'LONG';
-  const atr = setup.atrValue ?? setup.candidate.atr14 ?? (entryPrice * 0.02);
+  const atr = setup.atrValue ?? setup.candidate.atr14 ?? 0;
   const spreadEur = input.spreadEur ?? 0.02;
   const brokerFeeEur = input.brokerFeeEur ?? 1.0;
 
@@ -1788,9 +1990,9 @@ export function calculateKnockOutSafety(
   const totalInvestedEur = +(suggestedCertificates * certPrice).toFixed(2);
   const potentialLossEur = Math.min(+(suggestedCertificates * validLossPerCert).toFixed(2), maxRiskEur);
 
-  const rewardRatioT1 = setup.riskRewardRatio || 1.6;
+  const rewardRatioT1 = setup.riskRewardRatio || TRADING_PARAMS.T1_R;
   const potentialGainT1Eur = +(potentialLossEur * rewardRatioT1).toFixed(2);
-  const potentialGainT2Eur = +(potentialLossEur * 2.8).toFixed(2);
+  const potentialGainT2Eur = +(potentialLossEur * TRADING_PARAMS.T2_R).toFixed(2);
 
   // Dynamic Breakeven calculation
   const breakeven = calculateDynamicBreakeven(
@@ -1933,13 +2135,12 @@ export function calculateImpliedVolatilityMetrics(
   }
 
   const p = quote.preMarketPrice ?? quote.currentPrice ?? quote.prevClose ?? 100;
-  const atr = quote.atr14 ?? (p > 0 ? p * 0.018 : 1.5);
+  const atr = quote.atr14 ?? null;
 
   // 1. Determine Historical 30d Average Volatility
   let avg30d = quote.historicalVolatility30d ?? null;
   if (avg30d == null || avg30d <= 0) {
-    // Statistically estimated 30d realized volatility from ATR(14)
-    avg30d = p > 0 ? +((atr / p) * Math.sqrt(252) * 100).toFixed(1) : 22.5;
+    avg30d = atr != null && p > 0 ? +((atr / p) * Math.sqrt(252) * 100).toFixed(1) : 22.5;
   }
   avg30d = Math.max(8.0, Math.min(avg30d, 120.0));
 
@@ -2161,7 +2362,7 @@ export function evaluateSystemOptimization(
       });
     }
 
-    // Propose widening normalRiskMultiplier to breathe (e.g. 0.50 -> 0.58)
+    // Propose widening normalRiskMultiplier to breathe
     if (currentParams.normalRiskMultiplier <= 0.50) {
       const newRisk = +(currentParams.normalRiskMultiplier + 0.08).toFixed(2);
       proposedChanges.push({
@@ -2335,7 +2536,7 @@ export function calculateIntradaySeasonality(
       marketSession: 'US' as const,
       description: 'Rilascio dei dati macroeconomici USA (CPI, NFP, PPI) e primi scambi istituzionali a New York.',
       tacticalAdvice: 'Verificare la reazione dei futures ES/NQ; non anticipare l\'apertura prima delle 15:30 CET.',
-      benchmarkWinRate: 58,
+      benchmarkWinRate: 57,
       benchmarkAvgR: 1.15,
     },
     {
@@ -2504,7 +2705,7 @@ export function calculateIntradaySeasonality(
     const lossCount = dayTrades.filter((t) => t.outcome === 'LOSS').length;
 
     // Benchmark base weights per day
-    const benchWR = dayNum === 2 ? 68 : dayNum === 3 ? 65 : dayNum === 1 ? 58 : dayNum === 4 ? 61 : 52;
+    const benchWR = dayNum === 2 ? 68 : dayNum === 3 ? 65 : dayNum === 1 ? 57 : dayNum === 4 ? 61 : 52;
     const benchR = dayNum === 2 ? 1.55 : dayNum === 3 ? 1.45 : dayNum === 1 ? 1.15 : dayNum === 4 ? 1.25 : 0.95;
 
     let winRate = benchWR;
@@ -2592,8 +2793,8 @@ export function generateFilteringAuditReport(
   const totalScanned = quotes.length;
   const qualifiedTickers = new Set<string>();
 
-  const minScoreEU = parameters.minScoreEurope ?? 48;
-  const minScoreUS = parameters.minScoreUSA ?? 58;
+  const minScoreEU = TRADING_PARAMS.MIN_SCORE_EU;
+  const minScoreUS = TRADING_PARAMS.MIN_SCORE_US;
   const minRvolEU = parameters.minRvolEurope ?? 0.85;
   const minRvolUS = parameters.minRvolUSA ?? 1.15;
 
@@ -2806,13 +3007,14 @@ export function buildTheoreticalSetupForExcluded(
   const isLong = gap >= 0;
   const direction: 'LONG' | 'SHORT' = isLong ? 'LONG' : 'SHORT';
 
-  const offsetPct = (parameters.triggerOffsetPercent || 0.15) / 100;
+  const offsetPct = (parameters.triggerOffsetPercent || TRADING_PARAMS.FUT_NEUTRAL_BAND) / 100;
   const entryTrigger = +(isLong ? price * (1 + offsetPct) : price * (1 - offsetPct)).toFixed(3);
 
-  const atr = quote.atr14 && quote.atr14 > 0 ? quote.atr14 : price * 0.015;
-  const riskDist = +(Math.max(price * 0.005, atr * (parameters.normalRiskMultiplier || 0.5))).toFixed(3);
+  if (!quote.atr14 || quote.atr14 <= 0) return null;
+  const atr = quote.atr14;
+  const riskDist = +(atr * (parameters.normalRiskMultiplier || 0.5)).toFixed(3);
 
-  const t1Mult = parameters.target1Multiplier || 1.6;
+  const t1Mult = parameters.target1Multiplier || TRADING_PARAMS.T1_R;
   const stopLoss = +(isLong ? entryTrigger - riskDist : entryTrigger + riskDist).toFixed(3);
   const target1 = +(isLong ? entryTrigger + riskDist * t1Mult : entryTrigger - riskDist * t1Mult).toFixed(3);
 

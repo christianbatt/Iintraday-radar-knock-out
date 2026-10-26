@@ -25,6 +25,16 @@ export interface RawQuoteData {
   avgVolume20d: number | null;
   preMarketVolume: number | null;
   atr14: number | null;
+  adr14?: number | null;
+  liqEur20d?: number | null;
+  fxRate?: number | null;
+  orbHigh?: number | null;
+  orbLow?: number | null;
+  orbBreakoutTime?: string | null;
+  completedBarsCount?: number | null;
+  T?: number | null;
+  E?: number | null;
+  S?: number | null;
   gapPercent: number | null;
   rvol: number | null;
   impliedVolatility?: number | null;
@@ -37,6 +47,8 @@ export interface RawQuoteData {
   timestamp: string;
   source: string;
 }
+
+export type EntryMode = 'SNAPSHOT_0915' | 'UNFROZEN_LATE' | 'MANUAL_FREEZE';
 
 export interface OrderFlowMetrics {
   buyerVolumePercent: number; // e.g. 64 (%)
@@ -114,12 +126,27 @@ export interface ExecutionSetup {
   direction: 'LONG' | 'SHORT' | 'NESSUNA';
   strategy: 'Opening Range Breakout (5m / 15m)' | 'Gap and Go' | 'Nessun setup';
   triggerLevel: number | null;
+  entryLevel?: number | null;
   vwapCondition: string;
   volumeCondition: string;
   stopLossLevel: number | null;
   stopLossTight?: number | null;
   stopLossConservative?: number | null;
   suggestedKoBarrier?: number | null;
+  selectedLeverage?: number | null;
+  barrierRecommended?: number | null;
+  estimatedStopLossPct?: number | null;
+  prudentLeverage?: number | null;
+  prudentBarrier?: number | null;
+  certificateNote?: string;
+  calculatedAt?: string;
+  stopDistancePct?: number | null;
+  extensionPct?: number | null;
+  adrConsumptionPct?: number | null;
+  entryMode?: EntryMode | null;
+  firstBreakoutTime?: string | null;
+  blockedGate?: string | null;
+  gateResults?: Record<string, { passed: boolean; label: string; message?: string }>;
   atrValue?: number | null;
   atrPercent?: number | null;
   marketType?: 'EU' | 'US';
@@ -153,7 +180,7 @@ export interface ExecutionSetup {
     remainingPct: number;
     status: 'OPTIMAL' | 'MODERATE' | 'EXHAUSTED';
     description: string;
-  };
+  } | null;
   macroBlackout?: {
     isBlackoutActive: boolean;
     label: string;
@@ -280,14 +307,21 @@ export interface TradeJournalEntry {
   maxRiskEur?: number;
   potentialGainT1Eur?: number;
   investedEur?: number;
+  entryMode?: EntryMode | null;
+  triggerLevel?: number | null; // T
+  entryLevel?: number | null; // E
+  stopLossLevel?: number | null; // S
+  barrierRecommended?: number | null; // B_rec
+  selectedLeverage?: number | null; // L_sel
+  gateResults?: Record<string, { passed: boolean; label: string; message?: string }>;
 }
 
 export interface SystemParameters {
   version: number;
   lastUpdated: string;
-  minScore: number; // e.g. 55 (fallback globale)
-  minScoreEurope: number; // e.g. 48 (Europa)
-  minScoreUSA: number; // e.g. 58 (USA)
+  minScore: number; // fallback globale
+  minScoreEurope: number; // soglia Europa
+  minScoreUSA: number; // soglia USA
   minGapEurope: number; // e.g. 0.40 (%)
   minGapUSA: number; // e.g. 0.75 (%)
   minRvol: number; // e.g. 1.0 (fallback globale)

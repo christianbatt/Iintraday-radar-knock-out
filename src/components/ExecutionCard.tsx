@@ -106,6 +106,13 @@ export const ExecutionCard: React.FC<ExecutionCardProps> = ({
       maxRiskEur: koSafety.maxRiskEur,
       investedEur: koSafety.totalInvestedEur,
       isPaper: isPaperMode,
+      entryMode: setup.entryMode,
+      triggerLevel: setup.triggerLevel,
+      entryLevel: setup.triggerLevel,
+      stopLossLevel: setup.stopLossLevel,
+      barrierRecommended: setup.barrierRecommended,
+      selectedLeverage: setup.selectedLeverage,
+      gateResults: setup.gateResults,
     });
     setTradeSaved(true);
     setTimeout(() => setTradeSaved(false), 4000);

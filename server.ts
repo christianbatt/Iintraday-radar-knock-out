@@ -4,6 +4,17 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
+import {
+  filterCompletedBars,
+  calculateAtr14FromBars,
+  calculateAdr14FromBars,
+  calculateLiqEurFromBars,
+  calculateOrbFromIntradayBars,
+  DailyBarInput,
+  IntradayCandleInput,
+} from './src/utils/calculator';
+import { getExchangeDateStr } from './src/utils/timezone';
+import { TRADING_PARAMS } from './src/config/tradingParams';
 
 dotenv.config();
 
@@ -69,7 +80,9 @@ const ai = new GoogleGenAI({
 // Helper for CET time calculations
 function getCETTime() {
   const now = new Date();
-  const cetFormatter = new Intl.DateTimeFormat('it-IT', {
+  
+  // Europe (Europe/Rome)
+  const euFormatter = new Intl.DateTimeFormat('it-IT', {
     timeZone: 'Europe/Rome',
     hour12: false,
     year: 'numeric',
@@ -79,25 +92,45 @@ function getCETTime() {
     minute: '2-digit',
     second: '2-digit',
   });
-  const parts = cetFormatter.formatToParts(now);
-  const partMap: Record<string, string> = {};
-  parts.forEach((p) => {
-    partMap[p.type] = p.value;
+  const euParts = euFormatter.formatToParts(now);
+  const euMap: Record<string, string> = {};
+  euParts.forEach((p) => {
+    euMap[p.type] = p.value;
   });
 
-  const hour = parseInt(partMap.hour || '0', 10);
-  const minute = parseInt(partMap.minute || '0', 10);
+  const hour = parseInt(euMap.hour || '0', 10);
+  const minute = parseInt(euMap.minute || '0', 10);
   const totalMinutes = hour * 60 + minute;
 
-  // Screening Europa: 07:30 (450m) to 08:55 (535m)
+  // Screening Europa: 07:30 (450m) to 08:55 (535m) Europe/Rome
   const isEuropeWindow = totalMinutes >= 450 && totalMinutes <= 535;
-  // Screening USA: 14:30 (870m) to 15:25 (925m)
-  const isUSAWindow = totalMinutes >= 870 && totalMinutes <= 925;
+  // Regular Trading Session Hours Europe: 09:00 (540m) to 17:35 (1055m) Europe/Rome
+  const isEuropeLive = totalMinutes >= 540 && totalMinutes <= 1055;
 
-  // Regular Trading Session Hours
-  const isEuropeLive = totalMinutes >= 540 && totalMinutes <= 1055; // 09:00 to 17:35 CET
-  const isUSAPreMarket = totalMinutes >= 600 && totalMinutes <= 929; // 10:00 to 15:29 CET
-  const isUSALive = totalMinutes >= 930 && totalMinutes <= 1325; // 15:30 to 22:05 CET
+  // USA (America/New_York) - 100% Dynamic with Intl
+  const usFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  const usParts = usFormatter.formatToParts(now);
+  const usMap: Record<string, string> = {};
+  usParts.forEach((p) => {
+    usMap[p.type] = p.value;
+  });
+
+  const usHour = parseInt(usMap.hour || '0', 10);
+  const usMinute = parseInt(usMap.minute || '0', 10);
+  const usTotalMinutes = usHour * 60 + usMinute;
+
+  // Screening USA: 08:30 (510m) to 09:25 (565m) America/New_York
+  const isUSAWindow = usTotalMinutes >= 510 && usTotalMinutes <= 565;
+  // Pre-Market USA: 04:00 (240m) to 09:29 (569m) America/New_York
+  const isUSAPreMarket = usTotalMinutes >= 240 && usTotalMinutes <= 569;
+  // Regular Live Session USA: 09:30 (570m) to 16:05 (965m) America/New_York
+  const isUSALive = usTotalMinutes >= 570 && usTotalMinutes <= 965;
 
   const marketStatusEU: 'PRE_MARKET' | 'OPEN_LIVE' | 'CLOSED' = isEuropeLive
     ? 'OPEN_LIVE'
@@ -112,8 +145,8 @@ function getCETTime() {
     : 'CLOSED';
 
   return {
-    formatted: `${partMap.hour}:${partMap.minute}:${partMap.second} CET`,
-    date: `${partMap.year}-${partMap.month}-${partMap.day}`,
+    formatted: `${euMap.hour}:${euMap.minute}:${euMap.second} CET`,
+    date: `${euMap.year}-${euMap.month}-${euMap.day}`,
     hour,
     minute,
     isEuropeWindow,
@@ -124,6 +157,7 @@ function getCETTime() {
     marketStatusEU,
     marketStatusUS,
     currentMinutes: totalMinutes,
+    usMinutes: usTotalMinutes,
   };
 }
 
@@ -147,6 +181,13 @@ export interface RawQuoteData {
   avgVolume20d: number | null;
   preMarketVolume: number | null;
   atr14: number | null;
+  adr14?: number | null;
+  liqEur20d?: number | null;
+  fxRate?: number | null;
+  completedBarsCount?: number | null;
+  orbHigh?: number | null;
+  orbLow?: number | null;
+  orbBreakoutTime?: string | null;
   gapPercent: number | null;
   rvol: number | null;
   impliedVolatility?: number | null;
@@ -206,17 +247,48 @@ function calculateWilderRsi(closes: number[], period: number = 14): number | nul
   return +(100 - 100 / (1 + rs)).toFixed(1);
 }
 
-// Fetch real 5-minute Intraday RSI, 20-minute RVOL & Synthetic Order Flow (Lee-Ready Volume Delta, CVD & VPOC)
-async function getIntraday5mMetrics(ticker: string): Promise<{
+// Fetch real live EUR/USD exchange rate from Yahoo Finance feed (no hardcoded fallback)
+async function getLiveEurUsdRate(): Promise<number> {
+  const cacheKey = 'fx:EURUSD';
+  const cached = cache.get<number>(cacheKey);
+  if (cached) return cached.data;
+
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X?interval=1d&range=1d&_=${Date.now()}`;
+  const resp = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', Accept: 'application/json' },
+  });
+  if (!resp.ok) {
+    throw new Error(`Impossibile recuperare tasso FX EUR/USD dal feed: HTTP ${resp.status}`);
+  }
+  const json = await resp.json();
+  const rate = json?.chart?.result?.[0]?.meta?.regularMarketPrice;
+  if (typeof rate !== 'number' || rate <= 0) {
+    throw new Error('Tasso FX EUR/USD non disponibile nel feed per conversione liquidità');
+  }
+  cache.set(cacheKey, rate, 300); // 5 min TTL
+  return rate;
+}
+
+// Fetch real 5-minute Intraday RSI, 20-minute RVOL, ORB levels & Synthetic Order Flow
+async function getIntraday5mMetrics(
+  ticker: string,
+  market: 'EU' | 'US' = 'EU'
+): Promise<{
   rsi5m: number | null;
   rvol20m: number | null;
   orderFlow: OrderFlowMetrics | null;
+  orbHigh: number | null;
+  orbLow: number | null;
+  orbBreakoutTime: string | null;
 }> {
-  const cacheKey = `metrics5m:${ticker}`;
+  const cacheKey = `metrics5m:${ticker}:${market}`;
   const cached = cache.get<{
     rsi5m: number | null;
     rvol20m: number | null;
     orderFlow: OrderFlowMetrics | null;
+    orbHigh: number | null;
+    orbLow: number | null;
+    orbBreakoutTime: string | null;
   }>(cacheKey);
   if (cached) return cached.data;
 
@@ -227,7 +299,7 @@ async function getIntraday5mMetrics(ticker: string): Promise<{
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
       signal: AbortSignal.timeout(4000),
     });
-    if (!resp.ok) return { rsi5m: null, rvol20m: null, orderFlow: null };
+    if (!resp.ok) return { rsi5m: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null };
     const json = await resp.json();
     const rawQuotes = json?.chart?.result?.[0]?.indicators?.quote?.[0];
     const closes: number[] = rawQuotes?.close?.filter(
@@ -407,11 +479,41 @@ async function getIntraday5mMetrics(ticker: string): Promise<{
       };
     }
 
-    const result = { rsi5m, rvol20m, orderFlow };
+    // Extract ORB levels for today's session based on local exchange time
+    let orbHigh: number | null = null;
+    let orbLow: number | null = null;
+    let orbBreakoutTime: string | null = null;
+
+    try {
+      const timestamps5m: number[] = json?.chart?.result?.[0]?.timestamp || [];
+      const highs5m: number[] = rawQuotes?.high || [];
+      const lows5m: number[] = rawQuotes?.low || [];
+      const candles5m: IntradayCandleInput[] = [];
+      for (let i = 0; i < timestamps5m.length; i++) {
+        const ts = timestamps5m[i];
+        const h = highs5m[i];
+        const l = lows5m[i];
+        const c = rawQuotes?.close?.[i];
+        if (typeof h === 'number' && typeof l === 'number' && typeof c === 'number' && h > 0 && l > 0) {
+          candles5m.push({ timestamp: ts, high: h, low: l, close: c });
+        }
+      }
+      if (candles5m.length > 0) {
+        const latestCandleDate = new Date(timestamps5m[timestamps5m.length - 1] * 1000);
+        const orbRes = calculateOrbFromIntradayBars(candles5m, market, latestCandleDate);
+        orbHigh = orbRes.orbHigh != null ? +orbRes.orbHigh.toFixed(2) : null;
+        orbLow = orbRes.orbLow != null ? +orbRes.orbLow.toFixed(2) : null;
+        orbBreakoutTime = orbRes.firstBreakoutTime;
+      }
+    } catch {
+      // ignore
+    }
+
+    const result = { rsi5m, rvol20m, orderFlow, orbHigh, orbLow, orbBreakoutTime };
     cache.set(cacheKey, result, 25);
     return result;
   } catch {
-    return { rsi5m: null, rvol20m: null, orderFlow: null };
+    return { rsi5m: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null };
   }
 }
 
@@ -434,8 +536,8 @@ async function fetchQuoteForTicker(
   const isSpaceX = ticker.toUpperCase() === 'SPACEX';
   const queryTicker = isSpaceX ? 'DXYZ' : ticker;
 
-  // Launch 5m intraday metrics fetch (RSI 5m + RVOL 20m) in parallel for zero added latency
-  const intraday5mPromise = getIntraday5mMetrics(queryTicker);
+  // Launch 5m intraday metrics fetch (RSI 5m + RVOL 20m + ORB) in parallel for zero added latency
+  const intraday5mPromise = getIntraday5mMetrics(queryTicker, market);
 
   let quoteData: Partial<RawQuoteData> = {};
   let source = 'Exchange Feed (Real-Time)';
@@ -484,12 +586,13 @@ async function fetchQuoteForTicker(
         const timestamps: number[] = result.timestamp || [];
         const quotes = result.indicators?.quote?.[0];
 
-        // Extract valid daily candles with timestamp, close, high, low, volume
-        const validBars: { date: string; close: number; high: number; low: number; volume: number }[] = [];
+        // Extract valid daily candles with timestamp, close, high, low, volume in exchange timezone
+        const validBars: DailyBarInput[] = [];
         for (let i = 0; i < timestamps.length; i++) {
           if (typeof quotes?.close?.[i] === 'number') {
             validBars.push({
-              date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
+              date: getExchangeDateStr(market, new Date(timestamps[i] * 1000)),
+              timestamp: timestamps[i],
               close: quotes.close[i],
               high: quotes.high?.[i] ?? quotes.close[i],
               low: quotes.low?.[i] ?? quotes.close[i],
@@ -498,26 +601,22 @@ async function fetchQuoteForTicker(
           }
         }
 
-        const todayStr = new Date().toISOString().split('T')[0];
+        const todayStr = getExchangeDateStr(market, new Date());
         const lastBar = validBars.length > 0 ? validBars[validBars.length - 1] : null;
         const isTodayBar = lastBar?.date === todayStr;
 
-        // When today's bar already exists (e.g. EU markets open today),
-        // yesterday's close is validBars[length - 2].
-        // When today's bar is not yet opened (e.g. US market in pre-market),
-        // yesterday's close is the last closed daily bar validBars[length - 1].
+        // Zero lookahead: completed sessions strictly exclude today's incomplete candle
+        const completedBars = filterCompletedBars(validBars, market, new Date());
+
         let prevC: number | null = null;
         let yHigh: number | null = null;
         let yLow: number | null = null;
 
-        if (isTodayBar && validBars.length > 1) {
-          prevC = validBars[validBars.length - 2].close;
-          yHigh = validBars[validBars.length - 2].high;
-          yLow = validBars[validBars.length - 2].low;
-        } else if (lastBar) {
-          prevC = lastBar.close;
-          yHigh = lastBar.high;
-          yLow = lastBar.low;
+        if (completedBars.length > 0) {
+          const lastCompleted = completedBars[completedBars.length - 1];
+          prevC = lastCompleted.close;
+          yHigh = lastCompleted.high;
+          yLow = lastCompleted.low;
         }
 
         // Live prices: capture real-time regular, pre-market, or post-market price
@@ -560,29 +659,23 @@ async function fetchQuoteForTicker(
           preMarketP = currentP;
         }
 
-        // Real 20-day average volume
+        // Real 20-day average volume on completed days
         let avgVol: number | null = null;
-        if (validBars.length > 0) {
-          const sample = validBars.slice(-20);
+        if (completedBars.length > 0) {
+          const sample = completedBars.slice(-20);
           avgVol = Math.round(sample.reduce((a, b) => a + b.volume, 0) / sample.length);
         }
 
-        // Real ATR(14) calculation from daily True Range
-        let calcAtr: number | null = null;
-        if (validBars.length >= 14) {
-          let trSum = 0;
-          const count = Math.min(14, validBars.length - 1);
-          for (let i = validBars.length - count; i < validBars.length; i++) {
-            const prevCloseBar = validBars[i - 1].close;
-            const tr = Math.max(
-              validBars[i].high - validBars[i].low,
-              Math.abs(validBars[i].high - prevCloseBar),
-              Math.abs(validBars[i].low - prevCloseBar)
-            );
-            trSum += tr;
-          }
-          calcAtr = +(trSum / count).toFixed(2);
-        }
+        // Real ATR(14) calculation: SMA of 14 True Range values on completed days
+        const calcAtr = calculateAtr14FromBars(completedBars);
+
+        // Real ADR(14) calculation: average of 14 (High - Low) on completed days
+        const calcAdr = calculateAdr14FromBars(completedBars);
+
+        // Liq€ (media 20 sessioni complete di Volume × Close, in Euro)
+        const isUsd = (meta.currency || currency || (market === 'US' ? 'USD' : 'EUR')).toUpperCase() === 'USD';
+        const liveFx = isUsd ? await getLiveEurUsdRate() : 1.0;
+        const calcLiqEur = calculateLiqEurFromBars(completedBars, liveFx, isUsd ? 'USD' : 'EUR');
 
         // Volume & Real-Time RVOL calculation
         let calcRvol: number | null = null;
@@ -640,7 +733,11 @@ async function fetchQuoteForTicker(
 
             // Compute IV Rank against the 30d observed variance bounds
             const estimatedLow = Math.max(calcHv30 * 0.7, 10);
-            const estimatedHigh = Math.max(calcHv30 * 1.6, calcIv * 1.15, 35);
+            const estimatedHigh = Math.max(
+              calcHv30 * TRADING_PARAMS.IV_ESTIMATED_HIGH_HV_MULT,
+              calcIv * TRADING_PARAMS.IV_ESTIMATED_HIGH_IV_MULT,
+              TRADING_PARAMS.IV_ESTIMATED_HIGH_MIN_FLOOR
+            );
             calcIvRank = Math.min(
               100,
               Math.max(0, Math.round(((calcIv - estimatedLow) / (estimatedHigh - estimatedLow)) * 100))
@@ -732,6 +829,10 @@ async function fetchQuoteForTicker(
           avgVolume20d: avgVol,
           preMarketVolume: pmVol ?? regVol ?? null,
           atr14: calcAtr,
+          adr14: calcAdr,
+          liqEur20d: calcLiqEur,
+          fxRate: isUsd ? liveFx : 1.0,
+          completedBarsCount: completedBars.length,
           rvol: calcRvol,
           rvol20m: calcRvol20m,
           impliedVolatility: calcIv,
@@ -750,7 +851,7 @@ async function fetchQuoteForTicker(
 
   // Calculate real gap / intraday move % vs yesterday's real close
   let gapPercent: number | null = null;
-  const activePrice = quoteData.currentPrice ?? quoteData.preMarketPrice;
+  const activePrice = quoteData.todayOpen ?? quoteData.currentPrice ?? quoteData.preMarketPrice;
   if (
     typeof quoteData.prevClose === 'number' &&
     quoteData.prevClose > 0 &&
@@ -779,6 +880,12 @@ async function fetchQuoteForTicker(
     avgVolume20d: quoteData.avgVolume20d ?? null,
     preMarketVolume: quoteData.preMarketVolume ?? null,
     atr14: quoteData.atr14 ?? null,
+    adr14: quoteData.adr14 ?? null,
+    liqEur20d: quoteData.liqEur20d ?? null,
+    completedBarsCount: quoteData.completedBarsCount ?? null,
+    orbHigh: (await intraday5mPromise).orbHigh ?? null,
+    orbLow: (await intraday5mPromise).orbLow ?? null,
+    orbBreakoutTime: (await intraday5mPromise).orbBreakoutTime ?? null,
     gapPercent,
     rvol: quoteData.rvol ?? null,
     rvol20m: quoteData.rvol20m ?? (await intraday5mPromise).rvol20m,
