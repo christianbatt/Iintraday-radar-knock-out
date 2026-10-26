@@ -286,6 +286,7 @@ export interface TradeJournalEntry {
   timestamp: string;
   date: string;
   session: 'EU' | 'US' | 'GLOBAL';
+  market?: 'EU' | 'US';
   ticker: string;
   direction: 'LONG' | 'SHORT';
   strategy: string;
@@ -374,6 +375,12 @@ export interface OptimizationProposal {
   identifiedWeaknesses: string[];
   proposedChanges: ProposedParameterChange[];
   appliedAt?: string;
+  market?: 'EU' | 'US' | 'GLOBAL';
+}
+
+export interface DualOptimizationProposals {
+  eu: OptimizationProposal | null;
+  us: OptimizationProposal | null;
 }
 
 export interface SessionInfo {

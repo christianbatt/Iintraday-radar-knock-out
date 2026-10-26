@@ -1,69 +1,116 @@
-# Resoconto Tecnico: Integrazione Synthetic Level-2 Order Flow & CVD Delta (100% Dati Reali)
+# Ottimizzazione Sistemica Duale: Separazione Analitica Sessione Europa e Sessione USA
 
-Implementazione completata nel radar intraday per stimare con rigore quantitativo la microstruttura del book di negoziazione e la pressione degli ordini a mercato (Ask vs Bid), elevando la qualità e l'affidabilità dei setup sia **LONG** che **SHORT** al livello target **9/10**.
-
----
-
-## 1. Modello Matematico di Microstruttura (100% Dati Reali)
-
-Poiché i flussi Level-2 completi (Depth of Market completo su decine di livelli) richiedono abbonamenti professionali da migliaia di euro al mese non compatibili con un'infrastruttura gratuita, abbiamo implementato un motore analitico basato sull'algoritmo accademico standard **Lee-Ready & Close Location Value (CLV)** applicato a serie storiche reali di candele a 5 minuti provenienti dal feed ufficiale di borsa:
-
-1. **Decomposizione Intra-Candela Lee-Ready & CLV**:
-   - Per ogni candela 5m:
-     $$\text{CLV} = \frac{(Close - Low) - (High - Close)}{High - Low}$$
-   - Frazione Compratrice (Ask Aggression): $\text{BuyerFrac} = 0.50 + 0.45 \times \text{CLV}$
-   - Frazione Venditrice (Bid Aggression): $\text{SellerFrac} = 1.0 - \text{BuyerFrac}$
-   - Stima reale dei contratti scambiati al rialzo contro quelli scambiati in liquidazione.
-
-2. **Delta Netto di Sessione**:
-   - Calcolato sui volumi cumulati degli ultimi 30 minuti (ultime 6 candele a 5 minuti).
-   - $\text{Net Delta \%} = \text{BuyerVolume \%} - \text{SellerVolume \%}$.
-
-3. **Cumulative Volume Delta (CVD) & Trappola di Assorbimento (Absorption Trap)**:
-   - Serie progressiva del Delta cumulato nel tempo.
-   - **Rilevamento Divergenze / False Breakout**:
-     - *Bearish Absorption Trap*: Il prezzo fa nuovi massimi, ma il CVD cala drasticamente (gli operatori istituzionali stanno vendendo a mercato assorbendo gli ordini retail).
-     - *Bullish Absorption Trap*: Il prezzo fa nuovi minimi, ma il CVD sale (istituzionali accumulano in acquisto).
-
-4. **Micro Volume Profile & VPOC (Volume Point of Control a 30m)**:
-   - Discretizzazione del range di prezzo a 10 bin di volume.
-   - Individuazione del livello di prezzo esatto a cui sono passati i maggiori volumi istituzionali degli ultimi 30 minuti (**VPOC**).
-   - Convalida: il prezzo per un setup Long deve trovarsi sopra il VPOC; per uno Short sotto il VPOC.
+Implementazione della segmentazione quantitativa per mercato (Europa vs USA) all'interno del motore di auto-miglioramento algoritmico, dell'audit dei filtri e del modal di ricalibrazione parametri, preservando il rigore deterministico dei gate G1–G11 (zero mock, zero dati sintetici, 100% feed reale).
 
 ---
 
-## 2. Impatto Simmetrico sullo Score dei Titoli (-10pt a +10pt)
+## User Review & Critical Decisions
 
-L'Order Flow influenza in modo determinante e simmetrico il ranking e la selezione del Top Setup:
-
-### Setup LONG:
-- **Pressione Istituzionale Compratrice** (Buyer % $\ge 58\%$, CVD in espansione rialzista, Prezzo $\ge$ VPOC): **+10pt**
-- **Order Flow Moderatamente a Favore** (Buyer % $\ge 53\%$): **+6pt**
-- **Order Flow Bilanciato**: **+2pt**
-- **Delta Contrario** (Seller % $\ge 58\%$ su setup Long): **-6pt** (penalità per contrasto volumetrico)
-- **Trappola di Assorbimento Rilevata**: **-10pt** (disincentivo drastico alla candidatura)
-
-### Setup SHORT:
-- **Pressione Istituzionale Venditrice** (Seller % $\ge 58\%$, CVD in espansione ribassista, Prezzo $\le$ VPOC): **+10pt**
-- **Order Flow Moderatamente a Favore** (Seller % $\ge 53\%$): **+6pt**
-- **Order Flow Bilanciato**: **+2pt**
-- **Delta Contrario** (Buyer % $\ge 58\%$ su setup Short): **-6pt**
-- **Trappola di Assorbimento Rilevata**: **-10pt**
+> [!IMPORTANT]
+> **Decisioni confermate nella fase di chiarimento**:
+> - **Visualizzazione Modal**: Navigazione a **Schede Separate** (`Tab Europa` e `Tab USA`) all'interno di `SystemOptimizerModal`, per consentire all'operatore di esaminare la diagnosi e accettare/rifiutare le proposte di calibrazione in modo selettivo e indipendente per ciascun mercato.
+> - **Soglia di Attivazione Storica**: **Almeno 5 trade chiusi** registrati nel diario per quello specifico mercato (`market === 'EU'` o `market === 'US'`). Se un mercato conta meno di 5 trade risolti, il motore non genera stime fittizie ma espone lo stato trasparente `DATI_INSUFFICIENTI`, mantenendo inalterati i parametri di base (`TRADING_PARAMS`).
 
 ---
 
-## 3. Visualizzazione nell'Interfaccia Utente
+## 1. Overview & Core Concept
 
-1. **Card Operativa Principale (`DualExecutionHero`)**:
-   - Barra bicolore interattiva con % di volumi aggrediti all'Ask (verde) vs al Bid (rosso).
-   - Badge di stato: `PRESSIONE BUYER`, `PRESSIONE SELLER`, `FLUSSO BILANCIATO`, o `TRAPPOLA ASSORBIMENTO` lampeggiante.
-   - Livello esatto del **VPOC** a 30m con convalida `Prezzo > VPOC` o `Prezzo < VPOC`.
-   - Indicatore di Pendenza del CVD (`↗ Espansione Rialzista`, `↘ Espansione Ribassista`, `⚠️ Divergenza/Trappola`).
-   - Riassunto in linguaggio naturale dell'analisi volumetrica.
-   - Condizione di invalidazione automatica del trade se si forma una trappola di assorbimento.
+- **Problema**: L'attuale motore di auto-miglioramento aggrega tutti i trade eseguiti in un unico paniere indistinto. Questa commistione causa distorsioni: stop loss subiti a Wall Street rischiano di inasprire inutilmente i parametri europei della mattina, mentre trade scaduti (Expired) per scarsa estensione europea rischiano di ridurre il target di profitto dei trend americani.
+- **Soluzione**: Separare in modo simmetrico l'analisi quantitativa e la generazione delle proposte di ricalibrazione tra **Mercato Europa (EU)** e **Mercato USA (US)**. Ciascuna sessione calcola metriche autonome (Win Rate, Profit Factor, Tasso Expired, P&L netto) e propone modifiche ai soli parametri di competenza (`minScoreEurope` vs `minScoreUSA`, `minGapEurope` vs `minGapUSA`, `minRvolEurope` vs `minRvolUSA`, `target1MultiplierEU` vs `target1MultiplierUS`).
+- **Valore per l'Operatore**: Diagnosi chirurgica dei punti deboli specifici per orario e asset class, senza inquinamento incrociato tra le due borse.
 
-2. **Tabella Radar (`TopCandidatesTable`)**:
-   - Badge compatto `L2 Delta: +28% Ask` o `-34% Bid` con alert `⚠️` per trappole rilevate, permettendo all'operatore di confrontare a colpo d'occhio l'aggressione volumetrica di tutti i titoli del paniere.
+---
 
-3. **Modale Catalizzatore (`CatalystModal`)**:
-   - Scheda di controllo dell'Order Flow 30m con barra dei volumi e descrizione di conformità.
+## 2. User Experience & Visual Design
+
+### Navigazione a Schede nel Modal (`SystemOptimizerModal.tsx`)
+1. **Selettore di Mercato Superiore**:
+   - Tab **Sessione Europa (09:00 - 11:30 CET)** con badge di stato metriche (es. `5 Trade Analizzati • Win Rate 60%`).
+   - Tab **Sessione USA (15:30 - 17:30 CET)** con badge di stato metriche (es. `3 Trade Analizzati • Dati Insufficienti`).
+2. **Card Diagnostica Indipendente**:
+   - Per ciascuna scheda: riassunto del ciclo (P&L netto in Euro, Profit Factor, % Win, % Loss, % Expired).
+   - Elenco dei punti di forza riscontrati e dei colli di bottiglia specifici per quel mercato.
+   - Tabella delle variazioni proposte con confronto chiaro: `Valore Attuale` $\rightarrow$ `Nuovo Valore Proposto`, motivazione del trade-off e beneficio atteso.
+3. **Pulsante di Approvazione Indipendente**:
+   - `Applica Parametri Europa`: aggiorna selettivamente la configurazione europea e ricomputa `DualExecutionHero` EU e tabella EU.
+   - `Applica Parametri USA`: aggiorna la configurazione americana e ricomputa `DualExecutionHero` US e tabella US.
+   - Nessun'azione incrociata: l'approvazione di una calibrazione europea lascia inalterati i parametri statunitensi.
+
+---
+
+## 3. Key Product Decisions & Trade-Offs
+
+- **Decisione 1: Soglia minima di 5 trade per mercato**:
+  - *Scelta*: Per formulare una proposta di calibrazione statistica, il diario deve contenere almeno 5 trade completati per quel mercato specifico.
+  - *Perché*: 5 trade è il compromesso ideale tra reattività empirica e affidabilità statistica minima, evitando over-fitting su 1 o 2 trade isolati.
+  - *Alternativa scartata*: Valutazione cumulativa (scartata perché generava inquinamento incrociato).
+- **Decisione 2: Integrità dei Gate G1–G11**:
+  - *Scelta*: I gate G1–G11 continuano a leggere le soglie specifiche dal rispettivo mercato (`minScoreEurope` / `minScoreUSA`).
+  - *Perché*: Garantisce che l'ordine sequenziale, la precisione e la conformità al 100% della specifica Fase 1 rimangano inalterati e che tutti i 48 test passino senza modifiche alla logica core.
+
+---
+
+## 4. Technical Architecture & Data Strategy
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        TradeJournal (Diario Reale)                     │
+│               [Trade 1: EU]  [Trade 2: US]  [Trade 3: EU] ...          │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Filtro per market ('EU' | 'US')
+                  ┌─────────────────┴─────────────────┐
+                  ▼                                   ▼
+   ┌──────────────────────────────┐    ┌──────────────────────────────┐
+   │    Filtro Trade Europa       │    │      Filtro Trade USA        │
+   │    (market === 'EU')         │    │      (market === 'US')       │
+   └──────────────┬───────────────┘    └──────────────┬───────────────┘
+                  │                                   │
+                  ▼                                   ▼
+   ┌──────────────────────────────┐    ┌──────────────────────────────┐
+   │ evaluateSessionOptimization  │    │ evaluateSessionOptimization  │
+   │        (Sessione EU)         │    │        (Sessione US)         │
+   │  - Conteggio >= 5 trade      │    │  - Conteggio >= 5 trade      │
+   │  - Analisi Win/Loss/Expired  │    │  - Analisi Win/Loss/Expired  │
+   │  - Proposte: minScoreEurope, │    │  - Proposte: minScoreUSA,    │
+   │    minGapEurope, minRvolEU   │    │    minGapUSA, minRvolUSA     │
+   └──────────────┬───────────────┘    └──────────────┬───────────────┘
+                  │                                   │
+                  └─────────────────┬─────────────────┘
+                                    │
+                                    ▼
+       ┌─────────────────────────────────────────────────────────┐
+       │                SystemOptimizerModal (UI)                │
+       │    [Tab: Sessione Europa]     [Tab: Sessione USA]       │
+       │    [Applica Parametri EU]     [Applica Parametri US]    │
+       └────────────────────────────┬────────────────────────────┘
+                                    │ handleAcceptProposal(market)
+                                    ▼
+       ┌─────────────────────────────────────────────────────────┐
+       │                    SystemParameters                     │
+       │    minScoreEurope, minGapEurope, minRvolEurope          │
+       │    minScoreUSA,    minGapUSA,    minRvolUSA             │
+       └────────────────────────────┬────────────────────────────┘
+                                    │
+                  ┌─────────────────┴─────────────────┐
+                  ▼                                   ▼
+   ┌──────────────────────────────┐    ┌──────────────────────────────┐
+   │  buildExecutionSetup('EU')   │    │  buildExecutionSetup('US')   │
+   │   Gate G11 -> minScoreEurope │    │   Gate G11 -> minScoreUSA    │
+   └──────────────────────────────┘    └──────────────────────────────┘
+```
+
+### Componenti e File Interessati
+1. `src/types/radar.ts`:
+   - Definizione di `SessionOptimizationProposal` (proposta legata a uno specifico `market: 'EU' | 'US'`).
+   - Aggiunta della struttura `DualOptimizationProposals { eu: SessionOptimizationProposal | null; us: SessionOptimizationProposal | null; }`.
+2. `src/utils/calculator.ts`:
+   - Implementazione di `evaluateSessionOptimization(trades, market, currentParams, minRequiredTrades = 5)`.
+   - Aggiornamento di `evaluateSystemOptimization` per restituire le due diagnosi distinte `eu` e `us`.
+3. `src/components/SystemOptimizerModal.tsx`:
+   - Aggiunta dello switcher a due tab: `Europa` e `USA`.
+   - Sezione diagnostica dedicata con badge `DATI INSUFFICIENTI (< 5 trade)` se il campione è ridotto.
+   - Pulsanti di azione dedicati per mercato (`Applica modifiche Europa` / `Applica modifiche USA`).
+4. `src/App.tsx`:
+   - Aggiornamento di `handleAcceptProposal` per accettare il mercato di riferimento e aggiornare in modo atomico le proprietà corrispondenti in `SystemParameters`.
+5. `src/utils/__tests__/phase1.test.ts`:
+   - Aggiunta di verifiche T49 e T50 per collaudare l'isolamento delle proposte Europa vs USA (zero mock).

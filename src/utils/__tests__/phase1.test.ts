@@ -11,13 +11,15 @@ import {
   createJournalEntryFromSetup,
   isCandidateCompliantWithParameters,
   DEFAULT_SYSTEM_PARAMETERS,
+  evaluateSessionOptimization,
+  evaluateDualSystemOptimization,
   DailyBarInput,
   IntradayCandleInput,
 } from '../calculator';
 import { getUsOrbCloseTimeInfo, getMarketTime } from '../timezone';
 import { getHeroMinScore } from '../../components/DualExecutionHero';
 import { TRADING_PARAMS } from '../../config/tradingParams';
-import { RawQuoteData, ScoredCandidate, EntryMode } from '../../types/radar';
+import { RawQuoteData, ScoredCandidate, EntryMode, TradeJournalEntry } from '../../types/radar';
 
 /**
  * FIXTURE BASE LONG EU (Specifica Fase D)
@@ -122,7 +124,7 @@ function recordTest(
 
 function runAllTests() {
   console.log('================================================================');
-  console.log('ESECUZIONE SUITE TEST FASE D (T01–T48)');
+  console.log('ESECUZIONE SUITE TEST FASE D (T01–T50)');
   console.log('================================================================');
   console.log('FIXTURE BASE JSON:');
   console.log(JSON.stringify(createBaseFixtureQuote(), null, 2));
@@ -1479,6 +1481,179 @@ function runAllTests() {
         acceptedDecision: setupWithAccepted.decision,
         acceptedBlockedGate: setupWithAccepted.blockedGate,
         acceptedCompliant: compliantWithAccepted,
+      },
+      passed
+    );
+  }
+
+  // -------------------------------------------------------------
+  // T49: Ottimizzazione Sessione - Soglia minima di 5 trade per mercato
+  // Con 3 trade chiusi per l'Europa (< 5 minimi), evaluateSessionOptimization
+  // restituisce 'Dati Insufficienti' con zero proposte e zero stime fittizie.
+  // -------------------------------------------------------------
+  {
+    const sampleTradeEU: TradeJournalEntry = {
+      id: 'trade-eu-1',
+      date: '2026-10-26',
+      session: 'EU',
+      ticker: 'ENI.MI',
+      direction: 'LONG',
+      strategy: 'Opening Range Breakout (5m / 15m)',
+      market: 'EU',
+      timestamp: new Date().toISOString(),
+      entryPrice: 14.50,
+      stopLoss: 14.30,
+      target1: 14.82,
+      status: 'CLOSED',
+      outcome: 'WIN',
+      exitPrice: 14.82,
+      pnlEur: 160.0,
+      rMultiple: 1.6,
+      entryMode: 'SNAPSHOT_0915',
+      notes: 'EU test trade',
+      isPaper: true,
+    };
+    const trades3 = [
+      { ...sampleTradeEU, id: 't1' },
+      { ...sampleTradeEU, id: 't2' },
+      { ...sampleTradeEU, id: 't3' },
+    ];
+
+    const prop = evaluateSessionOptimization(trades3, 'EU', DEFAULT_SYSTEM_PARAMETERS, 5);
+
+    const passed =
+      prop.market === 'EU' &&
+      prop.evaluatedTradesCount === 3 &&
+      prop.status === 'NO_CHANGES_NEEDED' &&
+      prop.proposedChanges.length === 0 &&
+      prop.summaryTitle.includes('Dati Insufficienti');
+
+    recordTest(
+      'T49',
+      'Ottimizzazione Sessione: 3 trade EU (< 5 minimi) -> Dati Insufficienti, 0 proposte fittizie',
+      { market: 'EU', tradeCount: 3, minRequired: 5 },
+      {
+        market: 'EU',
+        evaluatedCount: 3,
+        status: 'NO_CHANGES_NEEDED',
+        proposedChangesCount: 0,
+        titleContainsInsufficient: true,
+      },
+      {
+        market: prop.market,
+        evaluatedCount: prop.evaluatedTradesCount,
+        status: prop.status,
+        proposedChangesCount: prop.proposedChanges.length,
+        titleContainsInsufficient: prop.summaryTitle.includes('Dati Insufficienti'),
+      },
+      passed
+    );
+  }
+
+  // -------------------------------------------------------------
+  // T50: Ottimizzazione Duale - Isolamento perfetto Europa vs USA
+  // 6 trade EU (2 WIN, 4 LOSS) e 2 trade USA (2 WIN):
+  // Europa genera proposta PENDING con inasprimento minScoreEurope/minRvolEurope;
+  // USA restituisce Dati Insufficienti con zero modifiche (nessuna contaminazione incrociata).
+  // -------------------------------------------------------------
+  {
+    const makeEUTrade = (id: string, outcome: 'WIN' | 'LOSS'): TradeJournalEntry => ({
+      id,
+      date: '2026-10-26',
+      session: 'EU',
+      ticker: 'STM.MI',
+      direction: 'LONG',
+      strategy: 'Opening Range Breakout (5m / 15m)',
+      market: 'EU',
+      timestamp: new Date().toISOString(),
+      entryPrice: 25.0,
+      stopLoss: 24.6,
+      target1: 25.64,
+      status: 'CLOSED',
+      outcome,
+      exitPrice: outcome === 'WIN' ? 25.64 : 24.60,
+      pnlEur: outcome === 'WIN' ? 160.0 : -100.0,
+      rMultiple: outcome === 'WIN' ? 1.6 : -1.0,
+      entryMode: 'SNAPSHOT_0915',
+      notes: 'EU test trade',
+      isPaper: true,
+    });
+
+    const makeUSTrade = (id: string): TradeJournalEntry => ({
+      id,
+      date: '2026-10-26',
+      session: 'US',
+      ticker: 'NVDA',
+      direction: 'LONG',
+      strategy: 'Opening Range Breakout (5m / 15m)',
+      market: 'US',
+      timestamp: new Date().toISOString(),
+      entryPrice: 120.0,
+      stopLoss: 118.5,
+      target1: 122.4,
+      status: 'CLOSED',
+      outcome: 'WIN',
+      exitPrice: 122.4,
+      pnlEur: 160.0,
+      rMultiple: 1.6,
+      entryMode: 'SNAPSHOT_0915',
+      notes: 'US test trade',
+      isPaper: true,
+    });
+
+    const mixedTrades: TradeJournalEntry[] = [
+      makeEUTrade('eu1', 'WIN'),
+      makeEUTrade('eu2', 'WIN'),
+      makeEUTrade('eu3', 'LOSS'),
+      makeEUTrade('eu4', 'LOSS'),
+      makeEUTrade('eu5', 'LOSS'),
+      makeEUTrade('eu6', 'LOSS'),
+      makeUSTrade('us1'),
+      makeUSTrade('us2'),
+    ];
+
+    const dual = evaluateDualSystemOptimization(mixedTrades, DEFAULT_SYSTEM_PARAMETERS, 5);
+
+    const euValid = dual.eu !== null;
+    const usValid = dual.us !== null;
+
+    const euHasScoreOrRvolChange = euValid && dual.eu!.proposedChanges.some(
+      (c) => c.parameterKey === 'minScoreEurope' || c.parameterKey === 'minRvolEurope'
+    );
+    const usIsInsufficient =
+      usValid &&
+      dual.us!.status === 'NO_CHANGES_NEEDED' &&
+      dual.us!.proposedChanges.length === 0 &&
+      dual.us!.summaryTitle.includes('Dati Insufficienti');
+
+    const passed =
+      euValid &&
+      usValid &&
+      dual.eu!.market === 'EU' &&
+      dual.eu!.evaluatedTradesCount === 6 &&
+      dual.eu!.status === 'PENDING' &&
+      euHasScoreOrRvolChange &&
+      dual.us!.market === 'US' &&
+      dual.us!.evaluatedTradesCount === 2 &&
+      usIsInsufficient;
+
+    recordTest(
+      'T50',
+      'Ottimizzazione Duale: 6 trade EU -> proposta minScoreEurope; 2 trade US -> Dati Insufficienti isolati',
+      { euTradeCount: 6, usTradeCount: 2, minRequired: 5 },
+      {
+        euStatus: 'PENDING',
+        euHasTargetedChange: true,
+        usStatus: 'NO_CHANGES_NEEDED',
+        usProposedCount: 0,
+        usTitleContainsInsufficient: true,
+      },
+      {
+        euStatus: dual.eu ? dual.eu.status : 'null',
+        euHasTargetedChange: euHasScoreOrRvolChange,
+        usStatus: dual.us ? dual.us.status : 'null',
+        usProposedCount: dual.us ? dual.us.proposedChanges.length : -1,
+        usTitleContainsInsufficient: dual.us ? dual.us.summaryTitle.includes('Dati Insufficienti') : false,
       },
       passed
     );

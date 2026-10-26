@@ -10,6 +10,7 @@ import {
   TradeJournalEntry,
   SystemParameters,
   OptimizationProposal,
+  DualOptimizationProposals,
   FilteringAuditReport,
   ExcludedSetupRecord,
   ExcludedSetupsAutoAnalysis,
@@ -24,6 +25,7 @@ import {
   buildExecutionSetup,
   DEFAULT_SYSTEM_PARAMETERS,
   evaluateSystemOptimization,
+  evaluateDualSystemOptimization,
   generateFilteringAuditReport,
   buildTheoreticalSetupForExcluded,
   updateExcludedSetupsWithLiveQuotes,
@@ -274,6 +276,10 @@ export default function App() {
       // fallback
     }
     return null;
+  });
+
+  const [dualProposals, setDualProposals] = useState<DualOptimizationProposals | null>(() => {
+    return evaluateDualSystemOptimization(journalEntries, parameters, 5);
   });
 
   const [isOptimizerModalOpen, setIsOptimizerModalOpen] = useState<boolean>(false);
@@ -1078,6 +1084,8 @@ export default function App() {
     setJournalEntries((prev) => {
       const updated = [entry, ...prev];
       const completedCount = updated.filter((t) => t.status !== 'OPEN').length;
+      const dual = evaluateDualSystemOptimization(updated, parameters, 5);
+      setDualProposals(dual);
       if (completedCount > 0 && completedCount % 20 === 0) {
         const cycleNum = Math.floor(completedCount / 20);
         const prop = evaluateSystemOptimization(updated, parameters, cycleNum);
@@ -1099,6 +1107,8 @@ export default function App() {
     setJournalEntries((prev) => {
       const newList = prev.map((t) => (t.id === updated.id ? updated : t));
       const completedCount = newList.filter((t) => t.status !== 'OPEN').length;
+      const dual = evaluateDualSystemOptimization(newList, parameters, 5);
+      setDualProposals(dual);
       if (completedCount > 0 && completedCount % 20 === 0) {
         const cycleNum = Math.floor(completedCount / 20);
         const prop = evaluateSystemOptimization(newList, parameters, cycleNum);
@@ -1166,8 +1176,15 @@ export default function App() {
   };
 
   // 7. System Optimization Proposal Execution (Accept / Reject / Audit)
-  const handleAcceptProposal = () => {
-    if (!pendingProposal || pendingProposal.proposedChanges.length === 0) return;
+  const handleAcceptProposal = (market?: 'EU' | 'US' | 'GLOBAL') => {
+    const targetProposal =
+      market === 'EU'
+        ? dualProposals?.eu
+        : market === 'US'
+        ? dualProposals?.us
+        : (pendingProposal || dualProposals?.eu || dualProposals?.us);
+
+    if (!targetProposal || targetProposal.proposedChanges.length === 0) return;
 
     const newParams: SystemParameters = {
       ...parameters,
@@ -1175,31 +1192,58 @@ export default function App() {
       lastUpdated: new Date().toISOString(),
     };
 
-    pendingProposal.proposedChanges.forEach((change) => {
+    targetProposal.proposedChanges.forEach((change) => {
+      const numVal =
+        typeof change.proposedValue === 'number'
+          ? change.proposedValue
+          : parseFloat(String(change.proposedValue).replace(/[^0-9.-]/g, ''));
+
       if (change.parameterKey === 'minScore') {
-        newParams.minScore = typeof change.proposedValue === 'number' ? change.proposedValue : parseInt(String(change.proposedValue)) || newParams.minScore;
+        const val = !isNaN(numVal) ? Math.round(numVal) : newParams.minScore;
+        newParams.minScore = val;
+        if (market === 'EU') newParams.minScoreEurope = val;
+        else if (market === 'US') newParams.minScoreUSA = val;
+        else {
+          newParams.minScoreEurope = val;
+          newParams.minScoreUSA = Math.round(val * (TRADING_PARAMS.MIN_SCORE_US / TRADING_PARAMS.MIN_SCORE_EU));
+        }
+      } else if (change.parameterKey === 'minScoreEurope') {
+        newParams.minScoreEurope = !isNaN(numVal) ? Math.round(numVal) : newParams.minScoreEurope;
+      } else if (change.parameterKey === 'minScoreUSA') {
+        newParams.minScoreUSA = !isNaN(numVal) ? Math.round(numVal) : newParams.minScoreUSA;
       } else if (change.parameterKey === 'minRvol') {
-        newParams.minRvol = typeof change.proposedValue === 'number' ? change.proposedValue : parseFloat(String(change.proposedValue)) || newParams.minRvol;
+        const val = !isNaN(numVal) ? numVal : newParams.minRvol;
+        newParams.minRvol = val;
+        if (market === 'EU') newParams.minRvolEurope = val;
+        else if (market === 'US') newParams.minRvolUSA = val;
+        else {
+          newParams.minRvolEurope = val;
+          newParams.minRvolUSA = +(val * 1.35).toFixed(2);
+        }
+      } else if (change.parameterKey === 'minRvolEurope') {
+        newParams.minRvolEurope = !isNaN(numVal) ? numVal : newParams.minRvolEurope;
+      } else if (change.parameterKey === 'minRvolUSA') {
+        newParams.minRvolUSA = !isNaN(numVal) ? numVal : newParams.minRvolUSA;
       } else if (change.parameterKey === 'target1Multiplier') {
-        newParams.target1Multiplier = typeof change.proposedValue === 'number' ? change.proposedValue : parseFloat(String(change.proposedValue)) || newParams.target1Multiplier;
+        newParams.target1Multiplier = !isNaN(numVal) ? numVal : newParams.target1Multiplier;
       } else if (change.parameterKey === 'target2Multiplier') {
-        newParams.target2Multiplier = typeof change.proposedValue === 'number' ? change.proposedValue : parseFloat(String(change.proposedValue)) || newParams.target2Multiplier;
+        newParams.target2Multiplier = !isNaN(numVal) ? numVal : newParams.target2Multiplier;
       } else if (change.parameterKey === 'triggerOffsetPercent') {
-        newParams.triggerOffsetPercent = typeof change.proposedValue === 'number' ? change.proposedValue : parseFloat(String(change.proposedValue)) || newParams.triggerOffsetPercent;
+        newParams.triggerOffsetPercent = !isNaN(numVal) ? numVal : newParams.triggerOffsetPercent;
       } else if (change.parameterKey === 'normalRiskMultiplier') {
-        newParams.normalRiskMultiplier = typeof change.proposedValue === 'number' ? change.proposedValue : parseFloat(String(change.proposedValue)) || newParams.normalRiskMultiplier;
+        newParams.normalRiskMultiplier = !isNaN(numVal) ? numVal : newParams.normalRiskMultiplier;
       } else if (change.parameterKey === 'rsiFilterActive') {
         newParams.rsiFilterActive = change.proposedValue === true || change.proposedValue === 'Attivo';
         setRsiFilterActive(newParams.rsiFilterActive);
       } else if (change.parameterKey === 'minGapEurope') {
-        newParams.minGapEurope = typeof change.proposedValue === 'number' ? change.proposedValue : parseFloat(String(change.proposedValue)) || newParams.minGapEurope;
+        newParams.minGapEurope = !isNaN(numVal) ? numVal : newParams.minGapEurope;
       } else if (change.parameterKey === 'minGapUSA') {
-        newParams.minGapUSA = typeof change.proposedValue === 'number' ? change.proposedValue : parseFloat(String(change.proposedValue)) || newParams.minGapUSA;
+        newParams.minGapUSA = !isNaN(numVal) ? numVal : newParams.minGapUSA;
       }
     });
 
     const acceptedProposal: OptimizationProposal = {
-      ...pendingProposal,
+      ...targetProposal,
       status: 'ACCEPTED',
       appliedAt: new Date().toISOString(),
     };
@@ -1207,8 +1251,15 @@ export default function App() {
     setParameters(newParams);
     localStorage.setItem('intraday_radar_parameters', JSON.stringify(newParams));
     setPendingProposal(acceptedProposal);
+    if (dualProposals) {
+      setDualProposals({
+        eu: market === 'EU' ? acceptedProposal : dualProposals.eu,
+        us: market === 'US' ? acceptedProposal : dualProposals.us,
+      });
+    }
     setIsOptimizerModalOpen(false);
-    setOptimizationNotification(`Parametri aggiornati alla Versione V${newParams.version}! Nuovi calcoli attivi.`);
+    const mLabel = market === 'EU' ? 'Sessione Europa' : market === 'US' ? 'Sessione USA' : 'Sistema';
+    setOptimizationNotification(`Parametri ${mLabel} aggiornati alla Versione V${newParams.version}! Nuovi calcoli attivi.`);
     setTimeout(() => setOptimizationNotification(null), 6000);
 
     // Sync accepted parameters & proposal to Cloud
@@ -1257,15 +1308,28 @@ export default function App() {
     }
   };
 
-  const handleRejectProposal = () => {
-    if (!pendingProposal) return;
+  const handleRejectProposal = (market?: 'EU' | 'US' | 'GLOBAL') => {
+    const targetProposal =
+      market === 'EU'
+        ? dualProposals?.eu
+        : market === 'US'
+        ? dualProposals?.us
+        : (pendingProposal || dualProposals?.eu || dualProposals?.us);
+    if (!targetProposal) return;
     const rejectedProposal: OptimizationProposal = {
-      ...pendingProposal,
+      ...targetProposal,
       status: 'REJECTED',
     };
     setPendingProposal(rejectedProposal);
+    if (dualProposals) {
+      setDualProposals({
+        eu: market === 'EU' ? rejectedProposal : dualProposals.eu,
+        us: market === 'US' ? rejectedProposal : dualProposals.us,
+      });
+    }
     setIsOptimizerModalOpen(false);
-    setOptimizationNotification(`Proposta di ottimizzazione rifiutata. Parametri V${parameters.version} mantenuti invariati.`);
+    const mLabel = market === 'EU' ? 'Sessione Europa' : market === 'US' ? 'Sessione USA' : 'Sistema';
+    setOptimizationNotification(`Proposta ${mLabel} rifiutata. Parametri V${parameters.version} mantenuti invariati.`);
     setTimeout(() => setOptimizationNotification(null), 5000);
 
     // Sync rejected status to Cloud
@@ -1285,10 +1349,14 @@ export default function App() {
       setTimeout(() => setOptimizationNotification(null), 5000);
       return;
     }
+    const dual = evaluateDualSystemOptimization(journalEntries, parameters, 5);
+    setDualProposals(dual);
     const cycleNum = Math.max(1, Math.floor(journalEntries.length / 20));
     const prop = evaluateSystemOptimization(journalEntries, parameters, cycleNum);
     setPendingProposal(prop);
-    setOptimizationNotification(`Audit calcolato sui ${Math.min(20, journalEntries.length)} setup reali del ciclo.`);
+    const euCount = journalEntries.filter((t) => t.market === 'EU').length;
+    const usCount = journalEntries.filter((t) => t.market === 'US').length;
+    setOptimizationNotification(`Audit calcolato: ${euCount} trade Europa, ${usCount} trade USA.`);
     setTimeout(() => setOptimizationNotification(null), 5000);
   };
 
@@ -1686,6 +1754,7 @@ export default function App() {
         isOpen={isOptimizerModalOpen}
         onClose={() => setIsOptimizerModalOpen(false)}
         proposal={pendingProposal}
+        dualProposals={dualProposals}
         currentParameters={parameters}
         onAcceptProposal={handleAcceptProposal}
         onRejectProposal={handleRejectProposal}

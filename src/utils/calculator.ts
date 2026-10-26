@@ -14,6 +14,7 @@ import {
   TradeJournalEntry,
   SystemParameters,
   OptimizationProposal,
+  DualOptimizationProposals,
   ProposedParameterChange,
   OptimizationMetrics,
   HourlySeasonalitySlot,
@@ -356,6 +357,7 @@ export function createJournalEntryFromSetup(
     timestamp: tradeData.timestamp || now.toISOString(),
     date: tradeData.date || now.toLocaleDateString('it-IT'),
     session: tradeData.session,
+    market: tradeData.market || (tradeData.session === 'US' ? 'US' : 'EU'),
     ticker: tradeData.ticker,
     direction: tradeData.direction,
     strategy: tradeData.strategy,
@@ -847,9 +849,11 @@ export function isCandidateCompliantWithParameters(
 
   const isEU = quote.market === 'EU';
   const minScore = isEU
-    ? (params?.minScoreEurope ?? TRADING_PARAMS.MIN_SCORE_EU)
-    : (params?.minScoreUSA ?? TRADING_PARAMS.MIN_SCORE_US);
-  const minRvol = isEU ? (params.minRvolEurope ?? 0.85) : (params.minRvolUSA ?? 1.15);
+    ? (params?.minScoreEurope ?? params?.minScore ?? TRADING_PARAMS.MIN_SCORE_EU)
+    : (params?.minScoreUSA ?? params?.minScore ?? TRADING_PARAMS.MIN_SCORE_US);
+  const minRvol = isEU
+    ? (params?.minRvolEurope ?? params?.minRvol ?? 0.85)
+    : (params?.minRvolUSA ?? params?.minRvol ?? 1.15);
   const minGap = isEU ? params.minGapEurope : params.minGapUSA;
 
   if (score + TRADING_PARAMS.EPSILON < minScore) {
@@ -1554,8 +1558,8 @@ export function buildExecutionSetup(
 
   // G11 Score: score senza liquidità < minScore → PUNTEGGIO SOTTO SOGLIA
   const minScore = isEU
-    ? (params?.minScoreEurope ?? TRADING_PARAMS.MIN_SCORE_EU)
-    : (params?.minScoreUSA ?? TRADING_PARAMS.MIN_SCORE_US);
+    ? (params?.minScoreEurope ?? params?.minScore ?? TRADING_PARAMS.MIN_SCORE_EU)
+    : (params?.minScoreUSA ?? params?.minScore ?? TRADING_PARAMS.MIN_SCORE_US);
   const g11Pass = score + eps >= minScore;
   gateResults['G11'] = {
     passed: g11Pass,
@@ -2458,6 +2462,298 @@ export function evaluateSystemOptimization(
     identifiedStrengths,
     identifiedWeaknesses,
     proposedChanges,
+    market: 'GLOBAL',
+  };
+}
+
+/**
+ * Evaluates systemic performance specifically for one market session ('EU' or 'US').
+ * Requires at least `minRequiredTrades` (default 5) closed trades for that market before generating proposals.
+ * If insufficient data, returns a clear status with zero mock or synthetic proposals.
+ */
+export function evaluateSessionOptimization(
+  trades: TradeJournalEntry[],
+  market: 'EU' | 'US',
+  currentParams: SystemParameters = DEFAULT_SYSTEM_PARAMETERS,
+  minRequiredTrades = 5
+): OptimizationProposal {
+  const marketTrades = trades.filter((t) => (t.market || (t.session === 'US' ? 'US' : 'EU')) === market);
+  const sorted = [...marketTrades].sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  );
+  const evaluatedBatch = sorted.slice(0, 20);
+  const total = evaluatedBatch.length;
+  const cycle = Math.max(1, Math.floor(marketTrades.length / 20));
+  const marketName = market === 'EU' ? 'Europa' : 'USA';
+
+  if (total < minRequiredTrades) {
+    return {
+      id: `prop-${market.toLowerCase()}-insufficient-${Date.now()}`,
+      cycleNumber: cycle,
+      evaluatedTradesCount: total,
+      date: new Date().toLocaleDateString('it-IT'),
+      market,
+      metrics: {
+        totalSetups: total,
+        wins: evaluatedBatch.filter((t) => t.outcome === 'WIN').length,
+        losses: evaluatedBatch.filter((t) => t.outcome === 'LOSS').length,
+        breakevens: evaluatedBatch.filter((t) => t.outcome === 'BREAKEVEN').length,
+        expired: evaluatedBatch.filter((t) => t.outcome === 'EXPIRED').length,
+        winRate: 0,
+        expiredRate: 0,
+        lossRate: 0,
+        netPnlEur: +(evaluatedBatch.reduce((acc, t) => acc + (t.pnlEur || 0), 0)).toFixed(2),
+        profitFactor: 0,
+        avgR: 0,
+      },
+      status: 'NO_CHANGES_NEEDED',
+      performanceRating: 'GOOD',
+      summaryTitle: `Sessione ${marketName}: Dati Insufficienti (${total}/${minRequiredTrades} Trade)`,
+      summaryExplanation: `Sono stati registrati ${total} trade chiusi per il mercato ${marketName}. La soglia minima di affidabilità statistica richiede almeno ${minRequiredTrades} trade per formulare proposte di ricalibrazione. Il sistema mantiene attivi i parametri correnti senza generare stime fittizie.`,
+      identifiedStrengths: [],
+      identifiedWeaknesses: [
+        `Campione statistico ridotto (${total}/${minRequiredTrades} trade chiusi): registra ulteriori trade in questa sessione per sbloccare l'auto-ottimizzazione.`,
+      ],
+      proposedChanges: [],
+    };
+  }
+
+  const wins = evaluatedBatch.filter((t) => t.outcome === 'WIN');
+  const losses = evaluatedBatch.filter((t) => t.outcome === 'LOSS');
+  const breakevens = evaluatedBatch.filter((t) => t.outcome === 'BREAKEVEN');
+  const expired = evaluatedBatch.filter((t) => t.outcome === 'EXPIRED');
+
+  const winCount = wins.length;
+  const lossCount = losses.length;
+  const beCount = breakevens.length;
+  const expiredCount = expired.length;
+
+  const winRate = total > 0 ? +((winCount / total) * 100).toFixed(1) : 0;
+  const expiredRate = total > 0 ? +((expiredCount / total) * 100).toFixed(1) : 0;
+  const lossRate = total > 0 ? +((lossCount / total) * 100).toFixed(1) : 0;
+
+  const netPnlEur = +(evaluatedBatch.reduce((acc, t) => acc + t.pnlEur, 0)).toFixed(2);
+  const totalGains = wins.reduce((acc, t) => acc + t.pnlEur, 0);
+  const totalLosses = Math.abs(losses.reduce((acc, t) => acc + t.pnlEur, 0));
+  const profitFactor =
+    totalLosses > 0 ? +(totalGains / totalLosses).toFixed(2) : totalGains > 0 ? 99.0 : 0;
+  const avgR =
+    total > 0
+      ? +(evaluatedBatch.reduce((acc, t) => acc + t.rMultiple, 0) / total).toFixed(2)
+      : 0;
+
+  const metrics: OptimizationMetrics = {
+    totalSetups: total,
+    wins: winCount,
+    losses: lossCount,
+    breakevens: beCount,
+    expired: expiredCount,
+    winRate,
+    expiredRate,
+    lossRate,
+    netPnlEur,
+    profitFactor,
+    avgR,
+  };
+
+  const identifiedStrengths: string[] = [];
+  const identifiedWeaknesses: string[] = [];
+  const proposedChanges: ProposedParameterChange[] = [];
+
+  if (winRate >= 55) {
+    identifiedStrengths.push(`Tasso di successo solido: Win Rate ${winRate}% sui setup ${marketName}.`);
+  }
+  if (profitFactor >= 1.5) {
+    identifiedStrengths.push(`Profit Factor elevato (${profitFactor.toFixed(2)}) con forte asimmetria tra guadagni e perdite.`);
+  }
+  if (netPnlEur > 0) {
+    identifiedStrengths.push(`P&L netto positivo (+${netPnlEur.toFixed(2)} €) nei ${total} setup ${marketName} del ciclo.`);
+  }
+  if (expiredRate < 15 && total >= 5) {
+    identifiedStrengths.push(`Tasso di setup scaduti contenuto (${expiredRate}%), a conferma di target realistici.`);
+  }
+
+  // 1. Check EXPIRED weakness
+  const isHighExpired = expiredRate >= 20 || expiredCount >= (total >= 10 ? 4 : 2);
+  if (isHighExpired) {
+    identifiedWeaknesses.push(
+      `Tasso di setup scaduti (EXPIRED) critico in sessione ${marketName} (${expiredRate}%: ${expiredCount} su ${total}). I trade non raggiungono Target 1 prima del cutoff (${market === 'EU' ? '11:30' : '17:30'} CET) o non scattano.`
+    );
+
+    if (currentParams.target1Multiplier > 1.35) {
+      const newT1 = +(Math.max(1.30, currentParams.target1Multiplier - 0.25)).toFixed(2);
+      proposedChanges.push({
+        parameterKey: 'target1Multiplier',
+        label: `Moltiplicatore Target 1 (${marketName})`,
+        currentValue: `${currentParams.target1Multiplier}x R`,
+        proposedValue: `${newT1}x R`,
+        unit: 'x R',
+        reason: `Target 1 attuale (${currentParams.target1Multiplier}x R) troppo ambizioso per l'espansione media della sessione ${marketName}, provocando ${expiredCount} setup scaduti senza presa di profitto prima del cutoff.`,
+        expectedBenefit: `Abbassando Target 1 a ${newT1}x R, il profitto viene incassato più rapidamente nella prima ora post-ORB con riduzione del tasso di Expired del ~35-45%.`,
+      });
+    }
+
+    if (currentParams.triggerOffsetPercent > 0.10) {
+      const newOffset = +(Math.max(0.08, currentParams.triggerOffsetPercent - 0.10)).toFixed(2);
+      proposedChanges.push({
+        parameterKey: 'triggerOffsetPercent',
+        label: `Offset Trigger di Ingresso (${marketName})`,
+        currentValue: `${currentParams.triggerOffsetPercent}%`,
+        proposedValue: `${newOffset}%`,
+        unit: '%',
+        reason: `L'offset del trigger allo ${currentParams.triggerOffsetPercent}% ritarda l'attivazione dell'ordine sul breakout.`,
+        expectedBenefit: `Avvicinando il trigger allo ${newOffset}%, i breakout vengono agganciati con immediatezza alla rottura del range senza restare ineseguiti.`,
+      });
+    }
+  }
+
+  // 2. Check WIN RATE & LOSS RATE weakness
+  const isLowWinRate = winRate < 50;
+  const isHighLossRate = lossRate >= 35 || lossCount >= (total >= 10 ? 4 : 2);
+  if (isLowWinRate || isHighLossRate) {
+    identifiedWeaknesses.push(
+      `Win Rate insufficiente in sessione ${marketName} (${winRate}%) con ${lossCount} stop loss subiti (${lossRate}%). I titoli selezionati subiscono falsi breakout.`
+    );
+
+    if (market === 'EU') {
+      const curScore = currentParams.minScoreEurope ?? TRADING_PARAMS.MIN_SCORE_EU;
+      if (curScore < 60) {
+        const newScore = Math.min(65, curScore + 6);
+        proposedChanges.push({
+          parameterKey: 'minScoreEurope',
+          label: 'Soglia Minima Punteggio Europa (Gate G11)',
+          currentValue: `${curScore}/100`,
+          proposedValue: `${newScore}/100`,
+          unit: 'pt',
+          reason: `La soglia europea attuale (${curScore}/100) ammette titoli con confluenza debole in apertura.`,
+          expectedBenefit: `Inasprendo il filtro a ${newScore}/100 per l'Europa si eliminano i falsi segnali aumentando il Win Rate medio.`,
+        });
+      }
+
+      const curRvol = currentParams.minRvolEurope ?? 0.85;
+      if (curRvol < 1.10) {
+        const newRvol = +(curRvol + 0.15).toFixed(2);
+        proposedChanges.push({
+          parameterKey: 'minRvolEurope',
+          label: 'RVOL Minimo Europa',
+          currentValue: `${curRvol}x`,
+          proposedValue: `${newRvol}x`,
+          unit: 'x',
+          reason: `Volume relativo europeo attuale (${curRvol}x) permissivo, rischio trappole di liquidità.`,
+          expectedBenefit: `Richiedendo RVOL >= ${newRvol}x si assicura vera partecipazione istituzionale sulle borse europee.`,
+        });
+      }
+    } else {
+      const curScore = currentParams.minScoreUSA ?? TRADING_PARAMS.MIN_SCORE_US;
+      if (curScore < 70) {
+        const newScore = Math.min(75, curScore + 6);
+        proposedChanges.push({
+          parameterKey: 'minScoreUSA',
+          label: 'Soglia Minima Punteggio USA (Gate G11)',
+          currentValue: `${curScore}/100`,
+          proposedValue: `${newScore}/100`,
+          unit: 'pt',
+          reason: `La volatilità di Wall Street richiede maggior selettività rispetto alla soglia attuale di ${curScore}/100.`,
+          expectedBenefit: `Elevando la soglia USA a ${newScore}/100 si selezionano solo titoli con forte spinta direzionale.`,
+        });
+      }
+
+      const curRvol = currentParams.minRvolUSA ?? 1.15;
+      if (curRvol < 1.40) {
+        const newRvol = +(curRvol + 0.20).toFixed(2);
+        proposedChanges.push({
+          parameterKey: 'minRvolUSA',
+          label: 'RVOL Minimo USA',
+          currentValue: `${curRvol}x`,
+          proposedValue: `${newRvol}x`,
+          unit: 'x',
+          reason: `A Wall Street il volume relativo minimo di ${curRvol}x è troppo basso per confermare l'intraday trend.`,
+          expectedBenefit: `Richiedendo RVOL >= ${newRvol}x si garantisce presenza massiccia di ordini istituzionali.`,
+        });
+      }
+    }
+  }
+
+  // 3. Check BREAKEVEN / FRICTION weakness
+  const isHighBreakeven = beCount >= (total >= 10 ? 4 : 2) && netPnlEur <= 50;
+  if (isHighBreakeven && proposedChanges.length === 0) {
+    identifiedWeaknesses.push(
+      `Troppi trade chiusi a pareggio (${beCount}/${total}) in sessione ${marketName}.`
+    );
+    if (market === 'EU' && currentParams.minGapEurope < 0.6) {
+      proposedChanges.push({
+        parameterKey: 'minGapEurope',
+        label: 'Gap Minimo Europa',
+        currentValue: `${currentParams.minGapEurope}%`,
+        proposedValue: `0.60%`,
+        unit: '%',
+        reason: 'Gap europeo modesto non garantisce espansione sufficiente.',
+        expectedBenefit: 'Focalizzazione su gap più ampi con maggior potenziale direzionale.',
+      });
+    } else if (market === 'US' && currentParams.minGapUSA < 0.90) {
+      proposedChanges.push({
+        parameterKey: 'minGapUSA',
+        label: 'Gap Minimo USA',
+        currentValue: `${currentParams.minGapUSA}%`,
+        proposedValue: `0.95%`,
+        unit: '%',
+        reason: 'Gap USA troppo compatto per assorbire la volatilità di apertura.',
+        expectedBenefit: 'Selezione di titoli con catalizzatore più marcato.',
+      });
+    }
+  }
+
+  let performanceRating: OptimizationProposal['performanceRating'] = 'NEEDS_IMPROVEMENT';
+  let status: OptimizationProposal['status'] = 'PENDING';
+  let summaryTitle = '';
+  let summaryExplanation = '';
+
+  const isFlawless = winRate >= 60 && expiredRate <= 15 && netPnlEur > 0 && profitFactor >= 1.5;
+
+  if (isFlawless && proposedChanges.length === 0) {
+    performanceRating = 'EXCELLENT';
+    status = 'NO_CHANGES_NEEDED';
+    summaryTitle = `Sessione ${marketName} (Ciclo #${cycle}): Prestazioni Eccellenti`;
+    summaryExplanation = `Il ciclo di ${total} setup ${marketName} ha registrato un Win Rate del ${winRate}% e PnL netto di +${netPnlEur.toFixed(2)} €. Parametri confermati senza modifiche.`;
+  } else if (proposedChanges.length === 0) {
+    performanceRating = 'GOOD';
+    status = 'NO_CHANGES_NEEDED';
+    summaryTitle = `Sessione ${marketName} (Ciclo #${cycle}): Parametri Stabili`;
+    summaryExplanation = `I dati degli ultimi ${total} setup ${marketName} rientrano nella tolleranza statistica. Parametri confermati.`;
+  } else {
+    performanceRating = (expiredRate >= 25 || winRate < 40) ? 'CRITICAL' : 'NEEDS_IMPROVEMENT';
+    status = 'PENDING';
+    summaryTitle = isHighExpired
+      ? `Sessione ${marketName}: Calibrazione Anti-Scadenza (Expired ${expiredRate}%)`
+      : `Sessione ${marketName}: Inasprimento Filtri e Selettività (Win Rate ${winRate}%)`;
+    summaryExplanation = `Rilevate inefficienze nei ${total} setup ${marketName}: ${identifiedWeaknesses[0] || 'Variazione parametri consigliata.'}`;
+  }
+
+  return {
+    id: `prop-${market.toLowerCase()}-${cycle}-${Date.now()}`,
+    cycleNumber: cycle,
+    evaluatedTradesCount: total,
+    date: new Date().toLocaleDateString('it-IT'),
+    market,
+    metrics,
+    status,
+    performanceRating,
+    summaryTitle,
+    summaryExplanation,
+    identifiedStrengths,
+    identifiedWeaknesses,
+    proposedChanges,
+  };
+}
+
+export function evaluateDualSystemOptimization(
+  trades: TradeJournalEntry[],
+  currentParams: SystemParameters = DEFAULT_SYSTEM_PARAMETERS,
+  minRequiredTrades = 5
+): DualOptimizationProposals {
+  return {
+    eu: evaluateSessionOptimization(trades, 'EU', currentParams, minRequiredTrades),
+    us: evaluateSessionOptimization(trades, 'US', currentParams, minRequiredTrades),
   };
 }
 
@@ -2799,10 +3095,10 @@ export function generateFilteringAuditReport(
   const totalScanned = quotes.length;
   const qualifiedTickers = new Set<string>();
 
-  const minScoreEU = TRADING_PARAMS.MIN_SCORE_EU;
-  const minScoreUS = TRADING_PARAMS.MIN_SCORE_US;
-  const minRvolEU = parameters.minRvolEurope ?? 0.85;
-  const minRvolUS = parameters.minRvolUSA ?? 1.15;
+  const minScoreEU = parameters?.minScoreEurope ?? parameters?.minScore ?? TRADING_PARAMS.MIN_SCORE_EU;
+  const minScoreUS = parameters?.minScoreUSA ?? parameters?.minScore ?? TRADING_PARAMS.MIN_SCORE_US;
+  const minRvolEU = parameters?.minRvolEurope ?? parameters?.minRvol ?? 0.85;
+  const minRvolUS = parameters?.minRvolUSA ?? parameters?.minRvol ?? 1.15;
 
   if (dualTop.topEU && dualTop.topEU.score.total >= minScoreEU) {
     const cat = catalystCache[dualTop.topEU.quote.ticker];
