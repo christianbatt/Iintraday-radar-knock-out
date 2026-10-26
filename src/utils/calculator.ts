@@ -846,7 +846,9 @@ export function isCandidateCompliantWithParameters(
   }
 
   const isEU = quote.market === 'EU';
-  const minScore = isEU ? TRADING_PARAMS.MIN_SCORE_EU : TRADING_PARAMS.MIN_SCORE_US;
+  const minScore = isEU
+    ? (params?.minScoreEurope ?? TRADING_PARAMS.MIN_SCORE_EU)
+    : (params?.minScoreUSA ?? TRADING_PARAMS.MIN_SCORE_US);
   const minRvol = isEU ? (params.minRvolEurope ?? 0.85) : (params.minRvolUSA ?? 1.15);
   const minGap = isEU ? params.minGapEurope : params.minGapUSA;
 
@@ -1376,15 +1378,17 @@ export function buildExecutionSetup(
   // 6. Targets T1 and T2
   // R = |E - S|; T1 = E +/- T1_R * R; T2 = E +/- T2_R * R
   const riskDist = Math.abs(entryLevel - stopLossLevel);
+  const t1Multiplier = params?.target1Multiplier ?? TRADING_PARAMS.T1_R;
+  const t2Multiplier = params?.target2Multiplier ?? TRADING_PARAMS.T2_R;
   const target1Level = +(
     direction === 'LONG'
-      ? entryLevel + TRADING_PARAMS.T1_R * riskDist
-      : entryLevel - TRADING_PARAMS.T1_R * riskDist
+      ? entryLevel + t1Multiplier * riskDist
+      : entryLevel - t1Multiplier * riskDist
   ).toFixed(4);
   const target2Level = +(
     direction === 'LONG'
-      ? entryLevel + TRADING_PARAMS.T2_R * riskDist
-      : entryLevel - TRADING_PARAMS.T2_R * riskDist
+      ? entryLevel + t2Multiplier * riskDist
+      : entryLevel - t2Multiplier * riskDist
   ).toFixed(4);
 
   // 7. Consumo ADR and Estensione
@@ -1549,7 +1553,9 @@ export function buildExecutionSetup(
   };
 
   // G11 Score: score senza liquidità < minScore → PUNTEGGIO SOTTO SOGLIA
-  const minScore = isEU ? TRADING_PARAMS.MIN_SCORE_EU : TRADING_PARAMS.MIN_SCORE_US;
+  const minScore = isEU
+    ? (params?.minScoreEurope ?? TRADING_PARAMS.MIN_SCORE_EU)
+    : (params?.minScoreUSA ?? TRADING_PARAMS.MIN_SCORE_US);
   const g11Pass = score + eps >= minScore;
   gateResults['G11'] = {
     passed: g11Pass,
@@ -1622,7 +1628,7 @@ export function buildExecutionSetup(
     marketType,
     target1Level,
     target2Level,
-    riskRewardRatio: TRADING_PARAMS.T1_R,
+    riskRewardRatio: t1Multiplier,
     invalidationConditions,
     cutoffTime,
     catalystAnalysis: catalyst,
@@ -3007,15 +3013,28 @@ export function buildTheoreticalSetupForExcluded(
   const isLong = gap >= 0;
   const direction: 'LONG' | 'SHORT' = isLong ? 'LONG' : 'SHORT';
 
-  const offsetPct = (parameters.triggerOffsetPercent || TRADING_PARAMS.FUT_NEUTRAL_BAND) / 100;
-  const entryTrigger = +(isLong ? price * (1 + offsetPct) : price * (1 - offsetPct)).toFixed(3);
+  let entryTrigger: number;
+  let stopLoss: number;
+  let riskDist: number;
 
-  if (!quote.atr14 || quote.atr14 <= 0) return null;
-  const atr = quote.atr14;
-  const riskDist = +(atr * (parameters.normalRiskMultiplier || 0.5)).toFixed(3);
+  if (quote.orbHigh != null && quote.orbLow != null && quote.orbHigh > quote.orbLow) {
+    entryTrigger = isLong ? quote.orbHigh : quote.orbLow;
+    stopLoss = +(isLong
+      ? quote.orbLow * (1 - TRADING_PARAMS.STOP_BUF)
+      : quote.orbHigh * (1 + TRADING_PARAMS.STOP_BUF)
+    ).toFixed(3);
+    riskDist = Math.abs(entryTrigger - stopLoss);
+  } else {
+    const offsetPct = (parameters.triggerOffsetPercent || TRADING_PARAMS.FUT_NEUTRAL_BAND) / 100;
+    entryTrigger = +(isLong ? price * (1 + offsetPct) : price * (1 - offsetPct)).toFixed(3);
+
+    if (!quote.atr14 || quote.atr14 <= 0) return null;
+    const atr = quote.atr14;
+    riskDist = +(atr * (parameters.normalRiskMultiplier || 0.5)).toFixed(3);
+    stopLoss = +(isLong ? entryTrigger - riskDist : entryTrigger + riskDist).toFixed(3);
+  }
 
   const t1Mult = parameters.target1Multiplier || TRADING_PARAMS.T1_R;
-  const stopLoss = +(isLong ? entryTrigger - riskDist : entryTrigger + riskDist).toFixed(3);
   const target1 = +(isLong ? entryTrigger + riskDist * t1Mult : entryTrigger - riskDist * t1Mult).toFixed(3);
 
   const dateStr = new Date().toLocaleDateString('it-IT');

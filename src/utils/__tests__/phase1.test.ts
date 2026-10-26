@@ -9,6 +9,8 @@ import {
   calculateManualFreezeLevels,
   validateBarrierSafety,
   createJournalEntryFromSetup,
+  isCandidateCompliantWithParameters,
+  DEFAULT_SYSTEM_PARAMETERS,
   DailyBarInput,
   IntradayCandleInput,
 } from '../calculator';
@@ -120,7 +122,7 @@ function recordTest(
 
 function runAllTests() {
   console.log('================================================================');
-  console.log('ESECUZIONE SUITE TEST FASE D (T01–T46)');
+  console.log('ESECUZIONE SUITE TEST FASE D (T01–T48)');
   console.log('================================================================');
   console.log('FIXTURE BASE JSON:');
   console.log(JSON.stringify(createBaseFixtureQuote(), null, 2));
@@ -1358,6 +1360,128 @@ function runAllTests() {
     } finally {
       TRADING_PARAMS.MIN_SCORE_EU = originalMinEU;
     }
+  }
+
+  // -------------------------------------------------------------
+  // T47: Sistema Ottimizzazione - target1Multiplier dinamico in buildExecutionSetup
+  // Quando l'utente accetta la proposta del motore di ottimizzazione (es. target1Multiplier = 1.35),
+  // buildExecutionSetup calcola Target 1 = E + 1.35 * R e riskRewardRatio = 1.35 (invece del default 1.60)
+  // -------------------------------------------------------------
+  {
+    const cand = buildCandidateFromQuote(createBaseFixtureQuote());
+    const setupDefault = buildExecutionSetup(cand, null, 'EU', undefined, {
+      currentTime: BASE_NOW_ROME,
+    });
+
+    const acceptedParams = {
+      ...DEFAULT_SYSTEM_PARAMETERS,
+      target1Multiplier: 1.35,
+    };
+    const setupOptimized = buildExecutionSetup(cand, null, 'EU', acceptedParams, {
+      currentTime: BASE_NOW_ROME,
+    });
+
+    const passed =
+      setupDefault.target1Level === 100.64 &&
+      setupDefault.riskRewardRatio === 1.6 &&
+      setupOptimized.target1Level === 100.54 &&
+      setupOptimized.riskRewardRatio === 1.35;
+
+    recordTest(
+      'T47',
+      'Ottimizzazione parametri: target1Multiplier dinamico applicato a Target 1 e Risk/Reward',
+      { defaultTarget1Mult: 1.6, acceptedTarget1Mult: 1.35 },
+      {
+        defaultT1: 100.64,
+        defaultRR: 1.6,
+        optimizedT1: 100.54,
+        optimizedRR: 1.35,
+      },
+      {
+        defaultT1: setupDefault.target1Level,
+        defaultRR: setupDefault.riskRewardRatio,
+        optimizedT1: setupOptimized.target1Level,
+        optimizedRR: setupOptimized.riskRewardRatio,
+      },
+      passed
+    );
+  }
+
+  // -------------------------------------------------------------
+  // T48: Sistema Ottimizzazione - minScore dinamico in Gate G11 e isCandidateCompliantWithParameters
+  // Quando i parametri accettati alzano minScoreEurope a 52, un candidato con punteggio 49
+  // viene bloccato da Gate G11 e isCandidateCompliantWithParameters restituisce false
+  // -------------------------------------------------------------
+  {
+    const q49 = createBaseFixtureQuote({
+      prevClose: 100.00,
+      todayOpen: 100.60,
+      gapPercent: 0.60,
+      atr14: 1.00,
+      rvol: 1.20,
+      rvol20m: null,
+      prevHigh: 100.20,
+      prevLow: 99.00,
+      rsi5m: 35,
+      rsi14: 35,
+      ema20Daily: 101.00,
+      orderFlow: null,
+    });
+    const cand49 = buildCandidateFromQuote(q49, -0.30, null);
+
+    const setupDefault = buildExecutionSetup(cand49, null, 'EU', DEFAULT_SYSTEM_PARAMETERS, {
+      currentTime: BASE_NOW_ROME,
+    });
+    const compliantDefault = isCandidateCompliantWithParameters(
+      cand49.quote,
+      cand49.score.total,
+      DEFAULT_SYSTEM_PARAMETERS,
+      false
+    ).compliant;
+
+    const acceptedParams = {
+      ...DEFAULT_SYSTEM_PARAMETERS,
+      minScoreEurope: 52,
+    };
+    const setupWithAccepted = buildExecutionSetup(cand49, null, 'EU', acceptedParams, {
+      currentTime: BASE_NOW_ROME,
+    });
+    const compliantWithAccepted = isCandidateCompliantWithParameters(
+      cand49.quote,
+      cand49.score.total,
+      acceptedParams,
+      false
+    ).compliant;
+
+    const passed =
+      cand49.score.total === 49 &&
+      setupDefault.decision === 'TRADE' &&
+      compliantDefault === true &&
+      setupWithAccepted.decision === 'NESSUN_TRADE' &&
+      setupWithAccepted.blockedGate === 'G11' &&
+      setupWithAccepted.reasonNoTrade === 'PUNTEGGIO SOTTO SOGLIA' &&
+      compliantWithAccepted === false;
+
+    recordTest(
+      'T48',
+      'Ottimizzazione parametri: minScoreEurope dinamico blocca Gate G11 e compliance',
+      { candidateScore: cand49.score.total, defaultMin: 48, acceptedMin: 52 },
+      {
+        defaultDecision: 'TRADE',
+        defaultCompliant: true,
+        acceptedDecision: 'NESSUN_TRADE',
+        acceptedBlockedGate: 'G11',
+        acceptedCompliant: false,
+      },
+      {
+        defaultDecision: setupDefault.decision,
+        defaultCompliant: compliantDefault,
+        acceptedDecision: setupWithAccepted.decision,
+        acceptedBlockedGate: setupWithAccepted.blockedGate,
+        acceptedCompliant: compliantWithAccepted,
+      },
+      passed
+    );
   }
 
   const passedCount = results.filter((r) => r.passed).length;
