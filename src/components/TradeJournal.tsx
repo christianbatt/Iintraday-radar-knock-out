@@ -153,6 +153,7 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
       timestamp: new Date().toISOString(),
       date: new Date().toLocaleDateString('it-IT'),
       session,
+      market: session === 'US' ? 'US' : 'EU',
       ticker: ticker.trim().toUpperCase(),
       direction,
       strategy,
@@ -167,6 +168,7 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
       isPaper: isPaperMode,
       status: 'CLOSED',
       closedAt: new Date().toISOString(),
+      entryMode: 'MANUAL_FREEZE',
     };
 
     onAddEntry(newEntry);

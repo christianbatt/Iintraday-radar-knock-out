@@ -165,6 +165,17 @@ export default function App() {
     localStorage.setItem(`intraday_radar_freeze_US_${today}`, JSON.stringify(freezeStateUS));
   }, [freezeStateUS]);
 
+  const getActiveEntryMode = useCallback((market: 'EU' | 'US'): EntryMode => {
+    const freeze = market === 'EU' ? freezeStateEURef.current : freezeStateUSRef.current;
+    return freeze.isAutoFrozen
+      ? 'SNAPSHOT_0915'
+      : freeze.unlockedByUser
+      ? 'UNFROZEN_LATE'
+      : freeze.isFrozen
+      ? 'MANUAL_FREEZE'
+      : 'UNFROZEN_LATE';
+  }, []);
+
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [cachedAt, setCachedAt] = useState<string | undefined>(undefined);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -901,10 +912,10 @@ export default function App() {
 
       // Update setups if active candidate is either top EU or top US
       if (topCandidateEU?.quote.ticker === ticker) {
-        setSetupEU(buildExecutionSetup(cand, res, 'EU', parameters));
+        setSetupEU(buildExecutionSetup(cand, res, 'EU', parameters, { entryMode: getActiveEntryMode('EU') }));
       }
       if (topCandidateUS?.quote.ticker === ticker) {
-        setSetupUS(buildExecutionSetup(cand, res, 'US', parameters));
+        setSetupUS(buildExecutionSetup(cand, res, 'US', parameters, { entryMode: getActiveEntryMode('US') }));
       }
     } catch (err) {
       console.error('Errore rianalisi:', err);
@@ -924,7 +935,9 @@ export default function App() {
       existingCat = await resolveCandidateCatalyst(cand, activeFut);
     }
 
-    const newSetup = buildExecutionSetup(cand, existingCat, market, parameters);
+    const newSetup = buildExecutionSetup(cand, existingCat, market, parameters, {
+      entryMode: getActiveEntryMode(market),
+    });
 
     if (market === 'EU') {
       setTopCandidateEU(cand);
@@ -1075,9 +1088,16 @@ export default function App() {
   const handleAddJournalTrade = (tradeData: any) => {
     let entry: TradeJournalEntry;
     try {
-      entry = createJournalEntryFromSetup(tradeData, parameters);
-    } catch (err) {
+      const market: 'EU' | 'US' = tradeData.market || (tradeData.session === 'US' ? 'US' : 'EU');
+      const resolvedMode: EntryMode =
+        tradeData.entryMode ||
+        (tradeData.status === 'CLOSED' || !tradeData.triggerLevel ? 'MANUAL_FREEZE' : getActiveEntryMode(market));
+
+      entry = createJournalEntryFromSetup({ ...tradeData, entryMode: resolvedMode, market }, parameters);
+    } catch (err: any) {
       console.error('Salvataggio trade nel diario fallito (nessun record creato):', err);
+      setOptimizationNotification(`Errore salvataggio trade: ${err?.message || 'Dati non validi'}`);
+      setTimeout(() => setOptimizationNotification(null), 5000);
       return;
     }
 
@@ -1283,10 +1303,10 @@ export default function App() {
       setTopCandidateUS(dual.topUS);
       setTopCandidates(dual.allRanked);
       if (dual.topEU) {
-        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', newParams));
+        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', newParams, { entryMode: getActiveEntryMode('EU') }));
       }
       if (dual.topUS) {
-        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', newParams));
+        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', newParams, { entryMode: getActiveEntryMode('US') }));
       }
       const audit = generateFilteringAuditReport(
         quotes,
@@ -1300,10 +1320,10 @@ export default function App() {
       setAuditReport(audit);
     } else {
       if (topCandidateEU) {
-        setSetupEU(buildExecutionSetup(topCandidateEU, catalystCache[topCandidateEU.quote.ticker] || null, 'EU', newParams));
+        setSetupEU(buildExecutionSetup(topCandidateEU, catalystCache[topCandidateEU.quote.ticker] || null, 'EU', newParams, { entryMode: getActiveEntryMode('EU') }));
       }
       if (topCandidateUS) {
-        setSetupUS(buildExecutionSetup(topCandidateUS, catalystCache[topCandidateUS.quote.ticker] || null, 'US', newParams));
+        setSetupUS(buildExecutionSetup(topCandidateUS, catalystCache[topCandidateUS.quote.ticker] || null, 'US', newParams, { entryMode: getActiveEntryMode('US') }));
       }
     }
   };
@@ -1425,10 +1445,10 @@ export default function App() {
       }
 
       if (dual.topEU) {
-        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', updated));
+        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', updated, { entryMode: getActiveEntryMode('EU') }));
       }
       if (dual.topUS) {
-        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', updated));
+        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', updated, { entryMode: getActiveEntryMode('US') }));
       }
 
       const audit = generateFilteringAuditReport(
@@ -1514,10 +1534,10 @@ export default function App() {
       }
 
       if (dual.topEU) {
-        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', updated));
+        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', updated, { entryMode: getActiveEntryMode('EU') }));
       }
       if (dual.topUS) {
-        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', updated));
+        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', updated, { entryMode: getActiveEntryMode('US') }));
       }
 
       const audit = generateFilteringAuditReport(

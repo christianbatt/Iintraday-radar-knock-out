@@ -335,7 +335,11 @@ export function createJournalEntryFromSetup(
   let exitPrice = tradeData.exitPrice ?? baseT1 ?? baseEntry ?? 0;
   const status: 'OPEN' | 'CLOSED' = initialOutcome === 'OPEN' ? 'OPEN' : 'CLOSED';
 
-  if (initialOutcome === 'WIN') {
+  if (tradeData.status === 'CLOSED' && tradeData.exitPrice != null && tradeData.pnlEur != null && tradeData.rMultiple != null) {
+    exitPrice = tradeData.exitPrice;
+    rMultiple = tradeData.rMultiple;
+    pnlEur = tradeData.pnlEur;
+  } else if (initialOutcome === 'WIN') {
     exitPrice = baseT1 ?? exitPrice;
     rMultiple = +t1Mult.toFixed(2);
     pnlEur = tradeData.potentialGainT1Eur != null ? tradeData.potentialGainT1Eur : +(100 * rMultiple).toFixed(2);
