@@ -449,11 +449,17 @@ export default function App() {
     try {
       // 1. Fetch live quotes and fresh futures simultaneously
       // Ensure all open journal positions are also fetched so their live prices stay up to date
-      const openTickers = journalEntries.filter((t) => t.status === 'OPEN').map((t) => t.ticker);
+      const openTradesList = journalEntries.filter((t) => t.status === 'OPEN');
       const scanBasket = [...underlyings];
-      openTickers.forEach((ticker) => {
-        if (!scanBasket.some((u) => u.ticker === ticker)) {
-          scanBasket.push({ ticker, nome: ticker, mercato: 'US', valuta: 'USD' });
+      openTradesList.forEach((ot) => {
+        if (!scanBasket.some((u) => u.ticker === ot.ticker)) {
+          const isEu = ot.session === 'EU' || ot.market === 'EU' || ot.ticker.endsWith('.MI');
+          scanBasket.push({
+            ticker: ot.ticker,
+            nome: ot.ticker,
+            mercato: isEu ? 'EU' : 'US',
+            valuta: isEu ? 'EUR' : 'USD',
+          });
         }
       });
 

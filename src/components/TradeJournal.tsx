@@ -61,7 +61,7 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
 }) => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [filterMode, setFilterMode] = useState<'ALL' | 'PAPER' | 'REAL'>('ALL');
-  const [outcomeFilter, setOutcomeFilter] = useState<'ALL' | 'WIN' | 'LOSS' | 'BREAKEVEN' | 'EXPIRED'>('ALL');
+  const [outcomeFilter, setOutcomeFilter] = useState<'ALL' | 'OPEN' | 'WIN' | 'LOSS' | 'BREAKEVEN' | 'EXPIRED'>('ALL');
   const [viewMode, setViewMode] = useState<'EQUITY' | 'SUMMARY' | 'TABLE' | 'BOTH'>('BOTH');
 
   // New trade manual entry state
@@ -80,6 +80,7 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
   const filteredEntries = entries.filter((e) => {
     if (filterMode === 'PAPER' && !e.isPaper) return false;
     if (filterMode === 'REAL' && e.isPaper) return false;
+    if (outcomeFilter === 'OPEN') return e.status === 'OPEN';
     if (outcomeFilter !== 'ALL' && e.outcome !== outcomeFilter) return false;
     return true;
   });
@@ -485,6 +486,14 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
               }`}
             >
               Tutti
+            </button>
+            <button
+              onClick={() => setOutcomeFilter('OPEN')}
+              className={`px-2 py-1 rounded-md transition-colors cursor-pointer ${
+                outcomeFilter === 'OPEN' ? 'bg-sky-950 text-sky-300 font-bold border border-sky-600' : 'text-slate-400 hover:text-sky-300'
+              }`}
+            >
+              ⚡ In Corso ({entries.filter(e => e.status === 'OPEN').length})
             </button>
             <button
               onClick={() => setOutcomeFilter('WIN')}
@@ -920,12 +929,31 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-mono">
               {filteredEntries.map((trade) => {
+                const isOpen = trade.status === 'OPEN';
                 const isWin = trade.outcome === 'WIN';
                 const isLoss = trade.outcome === 'LOSS';
                 const isExpired = trade.outcome === 'EXPIRED';
 
+                const liveQ = isOpen ? quotes.find((q) => q.ticker === trade.ticker) : null;
+                const livePrice = liveQ?.currentPrice ?? liveQ?.preMarketPrice;
+                const isLong = trade.direction === 'LONG';
+                const riskDist = Math.abs(trade.entryPrice - trade.stopLoss);
+
+                let floatingR = trade.rMultiple;
+                let floatingPnlEur = trade.pnlEur;
+                let distToTarget = 0;
+                let distToStop = 0;
+
+                if (isOpen && livePrice != null && riskDist > 0) {
+                  const diff = isLong ? livePrice - trade.entryPrice : trade.entryPrice - livePrice;
+                  floatingR = +(diff / riskDist).toFixed(2);
+                  floatingPnlEur = +(floatingR * (accountCapital * 0.01)).toFixed(2);
+                  distToTarget = +(Math.abs(trade.target1 - livePrice)).toFixed(2);
+                  distToStop = +(Math.abs(livePrice - trade.stopLoss)).toFixed(2);
+                }
+
                 return (
-                  <tr key={trade.id} className="hover:bg-slate-800/40 transition-colors">
+                  <tr key={trade.id} className={`hover:bg-slate-800/40 transition-colors ${isOpen ? 'bg-sky-950/20' : ''}`}>
                     <td className="py-2 px-3 text-slate-400 text-[11px]">
                       <div>{trade.date}</div>
                       <div className="text-[10px] text-slate-500">
@@ -958,35 +986,63 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
                     <td className="py-2 px-3 text-right text-slate-300">
                       {trade.entryPrice.toFixed(2)}
                     </td>
-                    <td className="py-2 px-3 text-right text-white font-bold">
-                      {trade.exitPrice.toFixed(2)}
+                    <td className="py-2 px-3 text-right">
+                      {isOpen ? (
+                        <div>
+                          <span className="text-sky-400 font-bold font-mono">
+                            {livePrice != null ? livePrice.toFixed(2) : '---'}
+                          </span>
+                          <span className="text-[9px] block text-sky-400/90 font-sans font-semibold">TICK LIVE</span>
+                        </div>
+                      ) : (
+                        <span className="text-white font-bold">{trade.exitPrice.toFixed(2)}</span>
+                      )}
                     </td>
                     <td
                       className={`py-2 px-3 text-right font-bold ${
-                        trade.pnlEur > 0
+                        (isOpen ? floatingPnlEur : trade.pnlEur) > 0
                           ? 'text-emerald-400'
-                          : trade.pnlEur < 0
+                          : (isOpen ? floatingPnlEur : trade.pnlEur) < 0
                           ? 'text-rose-400'
                           : 'text-slate-300'
                       }`}
                     >
-                      {trade.pnlEur > 0 ? `+${trade.pnlEur.toFixed(2)}` : trade.pnlEur.toFixed(2)} €
+                      <div>
+                        <span>
+                          {(isOpen ? floatingPnlEur : trade.pnlEur) > 0
+                            ? `+${(isOpen ? floatingPnlEur : trade.pnlEur).toFixed(2)}`
+                            : (isOpen ? floatingPnlEur : trade.pnlEur).toFixed(2)}{' '}
+                          €
+                        </span>
+                        {isOpen && (
+                          <span className="text-[9px] block text-slate-500 font-sans font-normal">
+                            Non Realizzato
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="py-2 px-3 text-right font-bold">
                       <span
                         className={
-                          trade.rMultiple > 0
+                          (isOpen ? floatingR : trade.rMultiple) > 0
                             ? 'text-emerald-400'
-                            : trade.rMultiple < 0
+                            : (isOpen ? floatingR : trade.rMultiple) < 0
                             ? 'text-rose-400'
                             : 'text-slate-400'
                         }
                       >
-                        {trade.rMultiple > 0 ? `+${trade.rMultiple.toFixed(2)}R` : `${trade.rMultiple.toFixed(2)}R`}
+                        {(isOpen ? floatingR : trade.rMultiple) > 0
+                          ? `+${(isOpen ? floatingR : trade.rMultiple).toFixed(2)}R`
+                          : `${(isOpen ? floatingR : trade.rMultiple).toFixed(2)}R`}
                       </span>
                     </td>
                     <td className="py-2 px-3 text-center">
-                      {isWin ? (
+                      {isOpen ? (
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-sky-950 text-sky-300 border border-sky-500 text-[10px] font-bold shadow-sm">
+                          <span className="inline-block w-2 h-2 rounded-full bg-sky-400 animate-ping" />
+                          IN CORSO
+                        </span>
+                      ) : isWin ? (
                         <span className="inline-flex items-center gap-1 text-emerald-400 font-bold text-[11px]">
                           <CheckCircle2 className="w-3.5 h-3.5" /> WIN
                         </span>
@@ -1067,7 +1123,13 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
                       </span>
                     </td>
                     <td className="py-2 px-3 text-slate-400 font-sans text-[11px] truncate max-w-[150px]" title={trade.notes}>
-                      {trade.notes || '—'}
+                      {isOpen && livePrice != null ? (
+                        <span className="text-sky-300 font-mono text-[10px]">
+                          Target -{distToTarget} | Stop -{distToStop}
+                        </span>
+                      ) : (
+                        trade.notes || '—'
+                      )}
                     </td>
                     <td className="py-2 px-3 text-right">
                       <button

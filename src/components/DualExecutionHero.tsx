@@ -151,7 +151,7 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
     if (circuitBreakerActive || isBlockedByStress) {
       return;
     }
-    if (!setup || isNoTrade) return;
+    if (!setup) return;
 
     onSaveToJournal({
       session: market,
@@ -168,7 +168,7 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
       maxRiskEur: koSafety.maxRiskEur,
       potentialGainT1Eur: koSafety.potentialGainT1Eur,
       investedEur: koSafety.totalInvestedEur,
-      isPaper: isPaperMode,
+      isPaper: isNoTrade ? true : isPaperMode,
       outcome: chosenOutcome,
       entryMode: setup.entryMode,
       triggerLevel: setup.triggerLevel,
@@ -177,6 +177,9 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
       barrierRecommended: setup.barrierRecommended,
       selectedLeverage: setup.selectedLeverage,
       gateResults: setup.gateResults,
+      notes: isNoTrade
+        ? `Setup NESSUN_TRADE (${setup.reasonNoTrade || 'Non conforme'}). Registrato a scopo didattico / osservazione.`
+        : undefined,
     });
 
     const label =
@@ -1435,118 +1438,127 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
             </button>
           )}
 
-          {!isNoTrade && (
-            <div className="flex-1 relative flex items-center">
-              <button
-                type="button"
-                onClick={() => handleLogTrade('OPEN')}
-                disabled={circuitBreakerActive || isBlockedByStress}
-                className={`flex-1 py-2.5 px-3 rounded-l-xl text-xs font-bold font-mono flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer ${
-                  isBlockedByStress
-                    ? 'bg-rose-950/60 text-rose-300 border border-rose-800/80 cursor-not-allowed opacity-80'
-                    : circuitBreakerActive
-                    ? 'bg-slate-800/80 text-amber-300 border border-amber-800/60 cursor-not-allowed'
-                    : tradeSaved
-                    ? 'bg-emerald-500 text-slate-950'
-                    : 'bg-emerald-600 hover:bg-emerald-500 text-white active:scale-95'
-                }`}
-              >
-                {isBlockedByStress ? (
-                  <>
-                    <Lock className="w-4 h-4 text-rose-400" />
-                    <span className="truncate">Bloccato da Stress Test</span>
-                  </>
-                ) : circuitBreakerActive ? (
-                  <>
-                    <Lock className="w-4 h-4 text-amber-400" />
-                    <span className="truncate">2/2 Trade Oggi (Solo Osservazione)</span>
-                  </>
-                ) : tradeSaved ? (
-                  <>
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span className="truncate">{tradeSavedLabel}</span>
-                  </>
-                ) : (
-                  <>
-                    <Target className="w-4 h-4" />
-                    <span>Registra a Giornale</span>
-                  </>
-                )}
-              </button>
-
-              {/* Outcome dropdown toggle */}
-              <button
-                type="button"
-                disabled={circuitBreakerActive || isBlockedByStress}
-                onClick={() => setShowLogMenu(!showLogMenu)}
-                className="py-2.5 px-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-r-xl border-l border-emerald-800 transition-colors text-xs font-bold cursor-pointer"
-                title="Scegli esito rapido (Target 1, Stop, Scaduto)"
-              >
-                ▼
-              </button>
-
-              {/* Outcome Dropdown Menu */}
-              {showLogMenu && (
-                <div className="absolute right-0 bottom-full mb-2 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 z-50 text-xs font-mono space-y-1 animate-fadeIn">
-                  <div className="text-[10px] text-slate-400 uppercase font-semibold px-2 py-1 border-b border-slate-800">
-                    Scegli Esito da Registrare a Giornale:
-                  </div>
-
-                  <button
-                    onClick={() => handleLogTrade('OPEN')}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200 flex items-center justify-between transition-colors cursor-pointer"
-                  >
-                    <span className="flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-sky-400" />
-                      <span>In Monitoraggio (Aperto)</span>
-                    </span>
-                    <span className="text-[10px] text-slate-400">Risolvi dopo</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleLogTrade('WIN')}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-emerald-950/60 text-emerald-300 flex items-center justify-between transition-colors cursor-pointer"
-                  >
-                    <span className="flex items-center gap-1.5 font-bold">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Target 1 (+1.6R WIN)</span>
-                    </span>
-                    <span className="text-emerald-400 font-bold">+{koSafety.potentialGainT1Eur} €</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleLogTrade('LOSS')}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-950/60 text-rose-300 flex items-center justify-between transition-colors cursor-pointer"
-                  >
-                    <span className="flex items-center gap-1.5 font-bold">
-                      <Lock className="w-3.5 h-3.5 text-rose-400" />
-                      <span>Stop Loss (-1.0R LOSS)</span>
-                    </span>
-                    <span className="text-rose-400 font-bold">-{koSafety.maxRiskEur} €</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleLogTrade('EXPIRED')}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-amber-950/60 text-amber-300 flex items-center justify-between transition-colors cursor-pointer"
-                  >
-                    <span className="flex items-center gap-1.5 font-bold">
-                      <Clock className="w-3.5 h-3.5 text-amber-400" />
-                      <span>Scaduto al Cutoff (EXPIRED)</span>
-                    </span>
-                    <span className="text-amber-400 font-bold">-2.00 €</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleLogTrade('BREAKEVEN')}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-300 flex items-center justify-between transition-colors cursor-pointer"
-                  >
-                    <span>⚖️ Pareggio / Breakeven</span>
-                    <span className="text-slate-400">-2.00 €</span>
-                  </button>
-                </div>
+          <div className="flex-1 relative flex items-center">
+            <button
+              type="button"
+              onClick={() => handleLogTrade('OPEN')}
+              disabled={circuitBreakerActive || isBlockedByStress}
+              className={`flex-1 py-2.5 px-3 rounded-l-xl text-xs font-bold font-mono flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer ${
+                isBlockedByStress
+                  ? 'bg-rose-950/60 text-rose-300 border border-rose-800/80 cursor-not-allowed opacity-80'
+                  : circuitBreakerActive
+                  ? 'bg-slate-800/80 text-amber-300 border border-amber-800/60 cursor-not-allowed'
+                  : tradeSaved
+                  ? 'bg-emerald-500 text-slate-950'
+                  : isNoTrade
+                  ? 'bg-amber-600 hover:bg-amber-500 text-white active:scale-95'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white active:scale-95'
+              }`}
+            >
+              {isBlockedByStress ? (
+                <>
+                  <Lock className="w-4 h-4 text-rose-400" />
+                  <span className="truncate">Bloccato da Stress Test</span>
+                </>
+              ) : circuitBreakerActive ? (
+                <>
+                  <Lock className="w-4 h-4 text-amber-400" />
+                  <span className="truncate">2/2 Trade Oggi (Solo Osservazione)</span>
+                </>
+              ) : tradeSaved ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span className="truncate">{tradeSavedLabel}</span>
+                </>
+              ) : isNoTrade ? (
+                <>
+                  <AlertTriangle className="w-4 h-4" />
+                  <span>Registra a Giornale (Paper / Test)</span>
+                </>
+              ) : (
+                <>
+                  <Target className="w-4 h-4" />
+                  <span>Registra a Giornale</span>
+                </>
               )}
-            </div>
-          )}
+            </button>
+
+            {/* Outcome dropdown toggle */}
+            <button
+              type="button"
+              disabled={circuitBreakerActive || isBlockedByStress}
+              onClick={() => setShowLogMenu(!showLogMenu)}
+              className={`py-2.5 px-2 text-white rounded-r-xl border-l transition-colors text-xs font-bold cursor-pointer ${
+                isNoTrade
+                  ? 'bg-amber-700 hover:bg-amber-600 border-amber-800'
+                  : 'bg-emerald-700 hover:bg-emerald-600 border-emerald-800'
+              }`}
+              title="Scegli esito rapido (Target 1, Stop, Scaduto)"
+            >
+              ▼
+            </button>
+
+            {/* Outcome Dropdown Menu */}
+            {showLogMenu && (
+              <div className="absolute right-0 bottom-full mb-2 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 z-50 text-xs font-mono space-y-1 animate-fadeIn">
+                <div className="text-[10px] text-slate-400 uppercase font-semibold px-2 py-1 border-b border-slate-800">
+                  Scegli Esito da Registrare a Giornale:
+                </div>
+
+                <button
+                  onClick={() => handleLogTrade('OPEN')}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-200 flex items-center justify-between transition-colors cursor-pointer"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-sky-400" />
+                    <span>In Monitoraggio (Aperto)</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400">Risolvi dopo</span>
+                </button>
+
+                <button
+                  onClick={() => handleLogTrade('WIN')}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-emerald-950/60 text-emerald-300 flex items-center justify-between transition-colors cursor-pointer"
+                >
+                  <span className="flex items-center gap-1.5 font-bold">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Target 1 (+1.6R WIN)</span>
+                  </span>
+                  <span className="text-emerald-400 font-bold">+{koSafety.potentialGainT1Eur} €</span>
+                </button>
+
+                <button
+                  onClick={() => handleLogTrade('LOSS')}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-950/60 text-rose-300 flex items-center justify-between transition-colors cursor-pointer"
+                >
+                  <span className="flex items-center gap-1.5 font-bold">
+                    <Lock className="w-3.5 h-3.5 text-rose-400" />
+                    <span>Stop Loss (-1.0R LOSS)</span>
+                  </span>
+                  <span className="text-rose-400 font-bold">-{koSafety.maxRiskEur} €</span>
+                </button>
+
+                <button
+                  onClick={() => handleLogTrade('EXPIRED')}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-amber-950/60 text-amber-300 flex items-center justify-between transition-colors cursor-pointer"
+                >
+                  <span className="flex items-center gap-1.5 font-bold">
+                    <Clock className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Scaduto al Cutoff (EXPIRED)</span>
+                  </span>
+                  <span className="text-amber-400 font-bold">-2.00 €</span>
+                </button>
+
+                <button
+                  onClick={() => handleLogTrade('BREAKEVEN')}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-300 flex items-center justify-between transition-colors cursor-pointer"
+                >
+                  <span>⚖️ Pareggio / Breakeven</span>
+                  <span className="text-slate-400">-2.00 €</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
