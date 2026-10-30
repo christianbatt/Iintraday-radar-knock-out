@@ -27,16 +27,26 @@ import {
   UnderlyingItem,
 } from '../types/radar';
 
-// Initialize Firebase App
-const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+// Safe Firebase Config resolution (priority: VITE_ environment variables > config file)
+const resolvedFirebaseConfig = {
+  ...firebaseConfig,
+  apiKey:
+    import.meta.env.VITE_FIREBASE_API_KEY ||
+    (firebaseConfig.apiKey && firebaseConfig.apiKey !== 'YOUR_FIREBASE_API_KEY'
+      ? firebaseConfig.apiKey
+      : ''),
+};
+
+// Initialize Firebase App safely
+const app = getApps().length > 0 ? getApp() : initializeApp(resolvedFirebaseConfig);
 
 // Initialize Auth
 export const auth = getAuth(app);
 
 // Initialize Firestore with robust long-polling auto-detection for cloud iframes & web sandboxes
 const databaseId =
-  firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
-    ? firebaseConfig.firestoreDatabaseId
+  resolvedFirebaseConfig.firestoreDatabaseId && resolvedFirebaseConfig.firestoreDatabaseId !== '(default)'
+    ? resolvedFirebaseConfig.firestoreDatabaseId
     : '(default)';
 
 let firestoreInstance;
