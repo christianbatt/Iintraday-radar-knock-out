@@ -315,11 +315,18 @@ export default function App() {
 
   // Real-time Cloud Sync with Firebase across PC, Mobile, and Tablet
   useEffect(() => {
+    let unsubData: (() => void) | null = null;
+
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
+      if (unsubData) {
+        unsubData();
+        unsubData = null;
+      }
+
       setCurrentUser(user);
       if (user) {
         setCloudSyncStatus('SYNCING');
-        const unsubData = subscribeToUserCloudData(
+        unsubData = subscribeToUserCloudData(
           user.uid,
           (cloudSettings) => {
             if (cloudSettings.parameters) {
@@ -360,13 +367,15 @@ export default function App() {
             setCloudSyncStatus('SYNCED');
           }
         );
-        return () => unsubData();
       } else {
         setCloudSyncStatus('LOCAL_ONLY');
       }
     });
 
-    return () => unsubAuth();
+    return () => {
+      if (unsubData) unsubData();
+      unsubAuth();
+    };
   }, []);
 
   // Compute Daily Risk Tracker & Circuit Breaker

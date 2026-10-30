@@ -237,7 +237,13 @@ export function subscribeToUserCloudData(
         });
       }
     },
-    (err) => console.error('[Firebase] Settings listener error:', err)
+    (err) => {
+      if (err.code === 'permission-denied') {
+        console.info('[Firebase] Accesso impostazioni utente completato/distaccato.');
+      } else {
+        console.warn('[Firebase] Settings listener notice:', err.message || err);
+      }
+    }
   );
 
   // 2. Trades collection listener
@@ -273,7 +279,13 @@ export function subscribeToUserCloudData(
       list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       onTrades(list);
     },
-    (err) => console.error('[Firebase] Trades listener error:', err)
+    (err) => {
+      if (err.code === 'permission-denied') {
+        console.info('[Firebase] Accesso lista trade completato o in attesa di autorizzazione per utente:', userId);
+      } else {
+        console.warn('[Firebase] Trades listener notice:', err.message || err);
+      }
+    }
   );
 
   return () => {

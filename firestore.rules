@@ -1,6 +1,11 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
     function isSignedIn() {
       return request.auth != null;
     }
@@ -14,14 +19,19 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read, write: if isOwner(userId);
+      allow get: if isOwner(userId);
+      allow list: if false;
+      allow write: if isOwner(userId);
 
       match /settings/system {
-        allow read, write: if isOwner(userId);
+        allow get, write: if isOwner(userId);
+        allow list: if false;
       }
 
       match /trades/{tradeId} {
-        allow read, write: if isOwner(userId) && isValidId(tradeId);
+        allow get: if isOwner(userId) && isValidId(tradeId);
+        allow list: if isOwner(userId);
+        allow write: if isOwner(userId) && isValidId(tradeId);
       }
     }
   }

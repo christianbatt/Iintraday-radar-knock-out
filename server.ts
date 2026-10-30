@@ -1246,7 +1246,174 @@ app.get('/api/news/:ticker', async (req: Request, res: Response) => {
   }
 });
 
-// Analyze Catalyst with Gemini (STRICT RULES - 100% REAL DATA)
+// Helper: Invoca OpenRouter con timeout, parse JSON e gestione errori/crediti
+async function callOpenRouterModel(
+  modelOrModels: string | string[],
+  systemInstruction: string,
+  userPrompt: string,
+  apiKey: string
+): Promise<{ data: any; keyInvalid?: boolean; creditsExhausted?: boolean } | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 35000); // 35s timeout resiliente
+  const modelDesc = Array.isArray(modelOrModels) ? modelOrModels.join(' -> ') : modelOrModels;
+
+  try {
+    const payload: any = {
+      messages: [
+        { role: 'system', content: systemInstruction },
+        { role: 'user', content: userPrompt },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.1,
+    };
+
+    if (Array.isArray(modelOrModels)) {
+      payload.models = modelOrModels;
+    } else {
+      payload.model = modelOrModels;
+    }
+
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey.trim()}`,
+        'HTTP-Referer': process.env.APP_URL || 'https://aistudio.google.com',
+        'X-Title': 'Intraday Radar Knock-out',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (res.status === 401) {
+      console.info(`[OpenRouter] 401 Unauthorized per ${modelDesc} - Chiave non valida.`);
+      return { data: null, keyInvalid: true };
+    }
+
+    if (res.status === 402) {
+      console.info(`[OpenRouter] 402 Crediti esauriti per ${modelDesc}.`);
+      return { data: null, creditsExhausted: true };
+    }
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      console.info(`[OpenRouter] HTTP ${res.status} per ${modelDesc}: ${errText.slice(0, 150)}`);
+      return null;
+    }
+
+    const json = await res.json();
+    const rawContent = json.choices?.[0]?.message?.content;
+    if (!rawContent) return null;
+
+    const cleaned = rawContent
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+
+    const parsed = JSON.parse(cleaned);
+    if (parsed && typeof parsed === 'object' && parsed.decisione) {
+      // Coerce required fields
+      const usedModel = json.model || (Array.isArray(modelOrModels) ? modelOrModels[0] : modelOrModels);
+      parsed.aiProvider = `openrouter:${usedModel}`;
+      if (!Array.isArray(parsed.punti_a_favore)) parsed.punti_a_favore = [];
+      if (!Array.isArray(parsed.rischi)) parsed.rischi = [];
+      if (!Array.isArray(parsed.condizioni_invalidazione)) parsed.condizioni_invalidazione = [];
+      if (!Array.isArray(parsed.fonti)) parsed.fonti = [];
+      if (typeof parsed.newsBonusScore !== 'number') parsed.newsBonusScore = 0;
+      return { data: parsed };
+    }
+    return null;
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    const isAbort = err?.name === 'AbortError' || err?.cause?.name === 'AbortError';
+    console.info(`[OpenRouter] ${modelDesc} temporaneamente non disponibile (${isAbort ? 'timeout 35s' : err?.message || 'connessione'}), transizione a fallback.`);
+    return null;
+  }
+}
+
+// Endpoint diagnostico per verificare la chiave OpenRouter
+app.post('/api/test-openrouter', async (req: Request, res: Response) => {
+  try {
+    const rawKey = (req.body?.apiKey || process.env.OPENROUTER_API_KEY || '').trim();
+    if (!rawKey) {
+      return res.status(400).json({
+        success: false,
+        error: 'Nessuna API Key fornita. Inseriscila nel corpo { "apiKey": "..." } o nel file .env (OPENROUTER_API_KEY).',
+      });
+    }
+
+    const masked = rawKey.length > 14
+      ? `${rawKey.slice(0, 10)}...${rawKey.slice(-4)}`
+      : '***';
+
+    const testPrompt = 'Rispondi solo con questo JSON: {"status": "ok", "message": "connessione riuscita"}';
+    const modelsToTest = [
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
+      'deepseek/deepseek-chat:free',
+    ];
+
+    const modelResults: any[] = [];
+    for (const model of modelsToTest) {
+      const t0 = Date.now();
+      try {
+        const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${rawKey}`,
+            'HTTP-Referer': process.env.APP_URL || 'https://aistudio.google.com',
+            'X-Title': 'Intraday Radar Test',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model,
+            messages: [{ role: 'user', content: testPrompt }],
+            response_format: { type: 'json_object' },
+            temperature: 0.1,
+          }),
+        });
+
+        const elapsed = Date.now() - t0;
+        if (!resp.ok) {
+          const errBody = await resp.text().catch(() => '');
+          modelResults.push({
+            model,
+            status: 'error',
+            httpCode: resp.status,
+            latencyMs: elapsed,
+            error: errBody.slice(0, 200),
+          });
+        } else {
+          const data = await resp.json();
+          modelResults.push({
+            model,
+            status: 'ok',
+            latencyMs: elapsed,
+            reply: data.choices?.[0]?.message?.content?.slice(0, 100),
+          });
+        }
+      } catch (e: any) {
+        modelResults.push({
+          model,
+          status: 'network_error',
+          error: e?.message || String(e),
+        });
+      }
+    }
+
+    const anyOk = modelResults.some((m) => m.status === 'ok');
+    return res.json({
+      success: anyOk,
+      apiKeyMasked: masked,
+      models: modelResults,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || String(err) });
+  }
+});
+
+// Analyze Catalyst (Gerarchia: OpenRouter Nemotron 3 Ultra -> DeepSeek Free -> Fallback Gemini -> Regole Determistiche)
 app.post('/api/analyze-catalyst', async (req: Request, res: Response) => {
   try {
     const { candidate, news, futures } = req.body;
@@ -1323,9 +1490,29 @@ fonti: array di oggetti { title, url, source, time }
 newsBonusScore: numero intero da 0 a 15 (punti bonus aggiuntivi per forza del catalizzatore: 15 per upgrade/contratti/catalizzatori forti, 8-10 per news ordinarie, 0 per news assenti/neutre)`;
 
     let parsed: any = null;
-    const isQuotaCoolingDown = Date.now() < geminiQuotaExhaustedUntil;
+    const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
 
-    if (process.env.GEMINI_API_KEY && !isQuotaCoolingDown) {
+    // 1. TIER 1 & 2: OpenRouter (Primario: NVIDIA Nemotron 3 Ultra Free, Fallback automatico: DeepSeek / Free)
+    if (openRouterKey) {
+      const openRouterRes = await callOpenRouterModel(
+        [
+          'nvidia/nemotron-3-ultra-550b-a55b:free',
+          'deepseek/deepseek-chat',
+          'openrouter/free',
+        ],
+        systemInstruction,
+        userPrompt,
+        openRouterKey
+      );
+
+      if (openRouterRes?.data?.decisione) {
+        parsed = openRouterRes.data;
+      }
+    }
+
+    // 3. TIER 3: Fallback Gemini (se OpenRouter non ha chiave, crediti esauriti, o tutti i modelli gratuiti falliscono)
+    const isQuotaCoolingDown = Date.now() < geminiQuotaExhaustedUntil;
+    if ((!parsed || !parsed.decisione) && process.env.GEMINI_API_KEY && !isQuotaCoolingDown) {
       try {
         const response = await ai.models.generateContent({
           model: 'gemini-3.8-flash',
@@ -1395,6 +1582,9 @@ newsBonusScore: numero intero da 0 a 15 (punti bonus aggiuntivi per forza del ca
         });
 
         parsed = JSON.parse(response.text || '{}');
+        if (parsed && parsed.decisione) {
+          parsed.aiProvider = 'gemini:gemini-3.8-flash';
+        }
       } catch (aiErr: any) {
         const errText = `${aiErr?.message || ''} ${aiErr?.status || ''}`;
         if (
