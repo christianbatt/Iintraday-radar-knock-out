@@ -10,10 +10,11 @@ import {
   calculateAdr14FromBars,
   calculateLiqEurFromBars,
   calculateOrbFromIntradayBars,
+  calculateOrbRvolFromBars,
   DailyBarInput,
   IntradayCandleInput,
 } from './src/utils/calculator';
-import { getExchangeDateStr } from './src/utils/timezone';
+import { getExchangeDateStr, getMarketTime } from './src/utils/timezone';
 import { TRADING_PARAMS } from './src/config/tradingParams';
 
 dotenv.config();
@@ -275,6 +276,7 @@ async function getIntraday5mMetrics(
   market: 'EU' | 'US' = 'EU'
 ): Promise<{
   rsi5m: number | null;
+  rvol: number | null;
   rvol20m: number | null;
   orderFlow: OrderFlowMetrics | null;
   orbHigh: number | null;
@@ -284,6 +286,7 @@ async function getIntraday5mMetrics(
   const cacheKey = `metrics5m:${ticker}:${market}`;
   const cached = cache.get<{
     rsi5m: number | null;
+    rvol: number | null;
     rvol20m: number | null;
     orderFlow: OrderFlowMetrics | null;
     orbHigh: number | null;
@@ -294,12 +297,12 @@ async function getIntraday5mMetrics(
 
   try {
     const ySymbol = ticker.includes('.') ? ticker : `${ticker}`;
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}?interval=5m&range=2d&includePrePost=true&_=${Date.now()}`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}?interval=5m&range=60d&includePrePost=true&_=${Date.now()}`;
     const resp = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-      signal: AbortSignal.timeout(4000),
+      signal: AbortSignal.timeout(6000),
     });
-    if (!resp.ok) return { rsi5m: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null };
+    if (!resp.ok) return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null };
     const json = await resp.json();
     const rawQuotes = json?.chart?.result?.[0]?.indicators?.quote?.[0];
     const closes: number[] = rawQuotes?.close?.filter(
@@ -479,41 +482,76 @@ async function getIntraday5mMetrics(
       };
     }
 
-    // Extract ORB levels for today's session based on local exchange time
+    // Extract ORB levels for today's session based on local exchange time and calculate ORB RVOL
     let orbHigh: number | null = null;
     let orbLow: number | null = null;
     let orbBreakoutTime: string | null = null;
+    let orbRvol: number | null = null;
 
     try {
       const timestamps5m: number[] = json?.chart?.result?.[0]?.timestamp || [];
       const highs5m: number[] = rawQuotes?.high || [];
       const lows5m: number[] = rawQuotes?.low || [];
       const candles5m: IntradayCandleInput[] = [];
+
+      const openM =
+        market === 'US'
+          ? TRADING_PARAMS.US_OPEN_HOUR * 60 + TRADING_PARAMS.US_OPEN_MINUTE
+          : TRADING_PARAMS.EU_OPEN_HOUR * 60 + TRADING_PARAMS.EU_OPEN_MINUTE;
+      const orbEndM = openM + TRADING_PARAMS.ORB_MINUTES;
+
+      const sessionOrbMap = new Map<string, number>();
+      const sessionCandles = new Map<string, Array<{ volume?: number | null }>>();
+
       for (let i = 0; i < timestamps5m.length; i++) {
         const ts = timestamps5m[i];
         const h = highs5m[i];
         const l = lows5m[i];
         const c = rawQuotes?.close?.[i];
+        const v = typeof rawQuotes?.volume?.[i] === 'number' && rawQuotes.volume[i] > 0 ? rawQuotes.volume[i] : 0;
+
         if (typeof h === 'number' && typeof l === 'number' && typeof c === 'number' && h > 0 && l > 0) {
           candles5m.push({ timestamp: ts, high: h, low: l, close: c });
         }
+
+        const d = new Date(ts * 1000);
+        const mt = getMarketTime(market, d);
+        if (mt.totalMinutes >= openM && mt.totalMinutes < orbEndM) {
+          if (!sessionOrbMap.has(mt.dateFormatted)) {
+            sessionOrbMap.set(mt.dateFormatted, 0);
+            sessionCandles.set(mt.dateFormatted, []);
+          }
+          sessionOrbMap.set(mt.dateFormatted, sessionOrbMap.get(mt.dateFormatted)! + v);
+          sessionCandles.get(mt.dateFormatted)!.push({ volume: v });
+        }
       }
+
       if (candles5m.length > 0) {
         const latestCandleDate = new Date(timestamps5m[timestamps5m.length - 1] * 1000);
         const orbRes = calculateOrbFromIntradayBars(candles5m, market, latestCandleDate);
         orbHigh = orbRes.orbHigh != null ? +orbRes.orbHigh.toFixed(2) : null;
         orbLow = orbRes.orbLow != null ? +orbRes.orbLow.toFixed(2) : null;
         orbBreakoutTime = orbRes.firstBreakoutTime;
+
+        const allDates = Array.from(sessionOrbMap.keys()).sort();
+        if (allDates.length > 0) {
+          const latestDate = getExchangeDateStr(market, latestCandleDate);
+          const histDates = allDates.filter((d) => d < latestDate);
+          const histVolumes = histDates.map((d) => sessionOrbMap.get(d)!);
+          const currentBars = sessionCandles.get(latestDate) || [];
+
+          orbRvol = calculateOrbRvolFromBars(currentBars, histVolumes.slice(-20));
+        }
       }
     } catch {
       // ignore
     }
 
-    const result = { rsi5m, rvol20m, orderFlow, orbHigh, orbLow, orbBreakoutTime };
+    const result = { rsi5m, rvol: orbRvol, rvol20m, orderFlow, orbHigh, orbLow, orbBreakoutTime };
     cache.set(cacheKey, result, 25);
     return result;
   } catch {
-    return { rsi5m: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null };
+    return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null };
   }
 }
 
@@ -677,23 +715,9 @@ async function fetchQuoteForTicker(
         const liveFx = isUsd ? await getLiveEurUsdRate() : 1.0;
         const calcLiqEur = calculateLiqEurFromBars(completedBars, liveFx, isUsd ? 'USD' : 'EUR');
 
-        // Volume & Real-Time RVOL calculation
-        let calcRvol: number | null = null;
-        if (avgVol && avgVol > 0) {
-          if (regVol && regVol > 0 && isTodayBar) {
-            // Regular Cash Trading Session: pace vs elapsed portion of trading day
-            const sessionMins = market === 'EU' ? cet.currentMinutes - 540 : cet.currentMinutes - 930;
-            const totalMins = market === 'EU' ? 510 : 390;
-            const elapsedFraction = Math.min(Math.max(sessionMins / totalMins, 0.05), 1.0);
-            calcRvol = +(regVol / (avgVol * elapsedFraction)).toFixed(2);
-          } else if (pmVol && pmVol > 0) {
-            // Pre-Market Session: typical pre-market expected fraction ~4% of full day volume
-            calcRvol = +(pmVol / (avgVol * 0.04)).toFixed(2);
-          } else if (regVol && regVol > 0) {
-            // Last active trading session volume pace vs 20-day average
-            calcRvol = +(regVol / avgVol).toFixed(2);
-          }
-        }
+        // Real-Time ORB RVOL from calculateOrbRvolFromBars (strictly null if <20 historical sessions)
+        const intradayMetrics = await intraday5mPromise;
+        const calcRvol: number | null = intradayMetrics.rvol ?? null;
 
         // Real 30-Day Historical Realized Volatility (HV30) & Derivative Implied Volatility (IV)
         let calcHv30: number | null = null;
@@ -787,7 +811,7 @@ async function fetchQuoteForTicker(
           }
         }
 
-        const { rsi5m: calcRsi5m, rvol20m: calcRvol20m, orderFlow: calcOrderFlow } = await intraday5mPromise;
+        const { rsi5m: calcRsi5m, rvol20m: calcRvol20m, orderFlow: calcOrderFlow } = intradayMetrics;
 
         // Real 20-day Exponential Moving Average (EMA20 Daily) from official historical closes
         let calcEma20: number | null = null;
@@ -887,7 +911,7 @@ async function fetchQuoteForTicker(
     orbLow: (await intraday5mPromise).orbLow ?? null,
     orbBreakoutTime: (await intraday5mPromise).orbBreakoutTime ?? null,
     gapPercent,
-    rvol: quoteData.rvol ?? null,
+    rvol: quoteData.rvol ?? (await intraday5mPromise).rvol ?? null,
     rvol20m: quoteData.rvol20m ?? (await intraday5mPromise).rvol20m,
     impliedVolatility: quoteData.impliedVolatility ?? null,
     historicalVolatility30d: quoteData.historicalVolatility30d ?? null,

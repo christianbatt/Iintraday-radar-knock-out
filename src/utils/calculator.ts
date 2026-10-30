@@ -160,6 +160,51 @@ export function calculateLiqEurFromBars(
 }
 
 /**
+ * RVOL ORB 15m = volume cumulato delle barre 5m della finestra ORB 15m /
+ * media storica del volume cumulato della stessa finestra (ultime 20 sessioni).
+ * - Una barra a volume 0 contribuisce 0 al cumulato e non produce rvol = 0 (se altre barre hanno volume > 0).
+ * - Se il volume cumulato o la media storica non sono disponibili: rvol = null (mai 0).
+ */
+export function calculateOrbRvolFromBars(
+  currentOrbBars: Array<{ volume?: number | null }>,
+  historicalOrbVolumes20d: number[]
+): number | null {
+  if (!currentOrbBars || currentOrbBars.length === 0) {
+    return null;
+  }
+  let currentCumVolume = 0;
+  let hasValidBar = false;
+  for (const bar of currentOrbBars) {
+    if (bar.volume != null && !isNaN(bar.volume)) {
+      currentCumVolume += Math.max(0, bar.volume);
+      hasValidBar = true;
+    }
+  }
+  if (!hasValidBar || currentCumVolume <= 0) {
+    return null;
+  }
+
+  if (
+    !historicalOrbVolumes20d ||
+    historicalOrbVolumes20d.length === 0 ||
+    historicalOrbVolumes20d.length < 20
+  ) {
+    return null;
+  }
+
+  const sample = historicalOrbVolumes20d.slice(-20);
+  const sumHist = sample.reduce((acc, v) => acc + (v > 0 ? v : 0), 0);
+  const avgHist = sumHist / sample.length;
+
+  if (avgHist <= 0) {
+    return null;
+  }
+
+  const rvol = +(currentCumVolume / avgHist).toFixed(2);
+  return rvol > 0 ? rvol : null;
+}
+
+/**
  * Calcola i livelli ORB (T, S, Tb) dalle candele intraday nel fuso ufficiale della borsa.
  * Una candela appartiene alla finestra ORB se inizio >= apertura e inizio < chiusura ORB.
  * T e Tb restano invariati dopo la prima rottura.
@@ -416,8 +461,8 @@ export const DEFAULT_SYSTEM_PARAMETERS: SystemParameters = {
   minGapEurope: 0.40,
   minGapUSA: 0.75,
   minRvol: 1.0,
-  minRvolEurope: 0.85,
-  minRvolUSA: 1.15,
+  minRvolEurope: TRADING_PARAMS.MIN_RVOL_EU,
+  minRvolUSA: TRADING_PARAMS.MIN_RVOL_US,
   minAvgVolume: 350000,
   normalRiskMultiplier: 0.50,
   target1Multiplier: TRADING_PARAMS.T1_R,
@@ -536,7 +581,7 @@ export function calculateCandidateScore(
     }
   } else {
     rvolScore = 0;
-    details.push('RVOL non disponibile: 0pt');
+    details.push('Relative Volume (RVOL N/D): +0pt (punteggio neutro)');
   }
 
   // 3. LIQUIDITÀ GATE G1 (Esclusa dal calcolo punteggio, 0pt)
@@ -856,8 +901,8 @@ export function isCandidateCompliantWithParameters(
     ? (params?.minScoreEurope ?? params?.minScore ?? TRADING_PARAMS.MIN_SCORE_EU)
     : (params?.minScoreUSA ?? params?.minScore ?? TRADING_PARAMS.MIN_SCORE_US);
   const minRvol = isEU
-    ? (params?.minRvolEurope ?? params?.minRvol ?? 0.85)
-    : (params?.minRvolUSA ?? params?.minRvol ?? 1.15);
+    ? (params?.minRvolEurope ?? params?.minRvol ?? TRADING_PARAMS.MIN_RVOL_EU)
+    : (params?.minRvolUSA ?? params?.minRvol ?? TRADING_PARAMS.MIN_RVOL_US);
   const minGap = isEU ? params.minGapEurope : params.minGapUSA;
 
   if (score + TRADING_PARAMS.EPSILON < minScore) {
@@ -1673,8 +1718,8 @@ export function calculateDynamicBreakeven(
   suggestedCertificates: number,
   totalInvestedEur: number,
   atr: number,
-  spreadEur: number = 0.02,
-  brokerFeeEur: number = 1.0
+  spreadEur: number = TRADING_PARAMS.SPREAD_EUR,
+  brokerFeeEur: number = TRADING_PARAMS.BROKER_FEE_PER_SIDE_EUR
 ): DynamicBreakevenInfo {
   // Roundtrip broker fees (buy + sell, e.g. 1€ + 1€ in Trade Republic)
   const brokerRoundtrip = brokerFeeEur * 2;
@@ -1924,8 +1969,8 @@ export function calculateKnockOutSafety(
   const barrierStrike = input.barrierStrike;
   const isLong = setup.direction === 'LONG';
   const atr = setup.atrValue ?? setup.candidate.atr14 ?? 0;
-  const spreadEur = input.spreadEur ?? 0.02;
-  const brokerFeeEur = input.brokerFeeEur ?? 1.0;
+  const spreadEur = input.spreadEur ?? TRADING_PARAMS.SPREAD_EUR;
+  const brokerFeeEur = input.brokerFeeEur ?? TRADING_PARAMS.BROKER_FEE_PER_SIDE_EUR;
 
   if (entryPrice <= 0 || stopLoss <= 0 || barrierStrike <= 0) {
     const emptyBreakeven: DynamicBreakevenInfo = {
@@ -2101,8 +2146,8 @@ export function createDefaultSafetyCheck(
     potentialGainT1Eur: 0,
     potentialGainT2Eur: 0,
     breakeven: {
-      spreadEur: 0.02,
-      brokerFeeEur: 1.0,
+      spreadEur: TRADING_PARAMS.SPREAD_EUR,
+      brokerFeeEur: TRADING_PARAMS.BROKER_FEE_PER_SIDE_EUR,
       totalFrictionEur: 0,
       underlyingBreakevenPrice: 0,
       pointsToBreakeven: 0,
@@ -2634,7 +2679,7 @@ export function evaluateSessionOptimization(
         });
       }
 
-      const curRvol = currentParams.minRvolEurope ?? 0.85;
+      const curRvol = currentParams.minRvolEurope ?? TRADING_PARAMS.MIN_RVOL_EU;
       if (curRvol < 1.10) {
         const newRvol = +(curRvol + 0.15).toFixed(2);
         proposedChanges.push({
@@ -2662,7 +2707,7 @@ export function evaluateSessionOptimization(
         });
       }
 
-      const curRvol = currentParams.minRvolUSA ?? 1.15;
+      const curRvol = currentParams.minRvolUSA ?? TRADING_PARAMS.MIN_RVOL_US;
       if (curRvol < 1.40) {
         const newRvol = +(curRvol + 0.20).toFixed(2);
         proposedChanges.push({
@@ -3101,8 +3146,8 @@ export function generateFilteringAuditReport(
 
   const minScoreEU = parameters?.minScoreEurope ?? parameters?.minScore ?? TRADING_PARAMS.MIN_SCORE_EU;
   const minScoreUS = parameters?.minScoreUSA ?? parameters?.minScore ?? TRADING_PARAMS.MIN_SCORE_US;
-  const minRvolEU = parameters?.minRvolEurope ?? parameters?.minRvol ?? 0.85;
-  const minRvolUS = parameters?.minRvolUSA ?? parameters?.minRvol ?? 1.15;
+  const minRvolEU = parameters?.minRvolEurope ?? parameters?.minRvol ?? TRADING_PARAMS.MIN_RVOL_EU;
+  const minRvolUS = parameters?.minRvolUSA ?? parameters?.minRvol ?? TRADING_PARAMS.MIN_RVOL_US;
 
   if (dualTop.topEU && dualTop.topEU.score.total >= minScoreEU) {
     const cat = catalystCache[dualTop.topEU.quote.ticker];

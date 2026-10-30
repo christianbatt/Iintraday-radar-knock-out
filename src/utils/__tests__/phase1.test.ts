@@ -6,6 +6,7 @@ import {
   calculateAdr14FromBars,
   calculateLiqEurFromBars,
   calculateOrbFromIntradayBars,
+  calculateOrbRvolFromBars,
   calculateManualFreezeLevels,
   validateBarrierSafety,
   createJournalEntryFromSetup,
@@ -1655,6 +1656,167 @@ function runAllTests() {
         usProposedCount: dual.us ? dual.us.proposedChanges.length : -1,
         usTitleContainsInsufficient: dual.us ? dual.us.summaryTitle.includes('Dati Insufficienti') : false,
       },
+      passed
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // TEST T51: Barra iniziale a volume 0 non azzera RVOL
+  // --------------------------------------------------------------------------
+  {
+    const orbBarsWithZeroStart = [{ volume: 0 }, { volume: 10000 }, { volume: 15000 }];
+    const histVolumes20d = Array(20).fill(20000); // media storica = 20000
+    const rvol = calculateOrbRvolFromBars(orbBarsWithZeroStart, histVolumes20d);
+    // Cumulato = 25000, media = 20000 -> rvol = 1.25x (non azzera)
+    const passed = rvol === 1.25;
+
+    recordTest(
+      'T51',
+      'Barra iniziale a volume 0: contribuisce 0 al cumulato (25.000) e non produce rvol = 0 (rvol = 1.25x)',
+      { orbVolumes: [0, 10000, 15000], histAvg: 20000 },
+      { expectedRvol: 1.25, nonZero: true },
+      { actualRvol: rvol, nonZero: rvol !== 0 },
+      passed
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // TEST T52: Cumulato corretto delle 3 barre ORB 15m / media storica 20 sessioni
+  // --------------------------------------------------------------------------
+  {
+    const orbBars = [{ volume: 20000 }, { volume: 30000 }, { volume: 50000 }];
+    const histVolumes20d = Array(20).fill(50000); // cumulato = 100000, media = 50000 -> rvol = 2.00x
+    const rvol = calculateOrbRvolFromBars(orbBars, histVolumes20d);
+    const passed = rvol === 2.0;
+
+    recordTest(
+      'T52',
+      'Cumulato corretto: 3 barre 5m (100.000) / media storica ORB 20 sessioni (50.000) -> rvol = 2.00x',
+      { orbVolumes: [20000, 30000, 50000], histAvg: 50000 },
+      { expectedRvol: 2.0 },
+      { actualRvol: rvol },
+      passed
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // TEST T53: Dati non disponibili -> rvol = null (mai 0) e punteggio neutro (0pt)
+  // --------------------------------------------------------------------------
+  {
+    const orbBars = [{ volume: 10000 }];
+    const incompleteHist = Array(10).fill(50000); // meno di 20 sessioni
+    const rvolNull = calculateOrbRvolFromBars(orbBars, incompleteHist);
+    const qWithNullRvol = createBaseFixtureQuote({ rvol: null, rvol20m: null });
+    const score = calculateCandidateScore(qWithNullRvol, 0.30, null);
+    const hasNeutralMsg = score.details.some((d) => d.includes('N/D') && d.includes('0pt'));
+    const passed = rvolNull === null && score.rvolScore === 0 && hasNeutralMsg;
+
+    recordTest(
+      'T53',
+      'RVOL non disponibile: restituisce null (mai 0), tier mostra N/D e applica punteggio neutro (0pt)',
+      { histBarsCount: 10, quoteRvol: null },
+      { rvolIsNull: true, rvolScore: 0, detailHasNd: true },
+      { rvolIsNull: rvolNull === null, rvolScore: score.rvolScore, detailHasNd: hasNeutralMsg },
+      passed
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // TEST T54: Soglia effettiva RVOL Europa di pre-screening pari a 0.85
+  // --------------------------------------------------------------------------
+  {
+    const paramVal = TRADING_PARAMS.MIN_RVOL_EU;
+
+    // Candidato EU con RVOL = 0.84 (sotto soglia 0.85) -> respinto per RVOL
+    const quoteEuBelow = createBaseFixtureQuote({
+      market: 'EU',
+      rvol: 0.84,
+    });
+    const checkBelow = isCandidateCompliantWithParameters(
+      quoteEuBelow,
+      60,
+      DEFAULT_SYSTEM_PARAMETERS,
+      false
+    );
+    const belowBlocked = !checkBelow.compliant && checkBelow.reasons.some((r) => r.includes('RVOL 0.84x < 0.85x (EU)'));
+
+    // Candidato EU con RVOL = 0.85 (alla soglia 0.85) -> ammesso (nessun motivo RVOL)
+    const quoteEuPass = createBaseFixtureQuote({
+      market: 'EU',
+      rvol: 0.85,
+    });
+    const checkPass = isCandidateCompliantWithParameters(
+      quoteEuPass,
+      60,
+      DEFAULT_SYSTEM_PARAMETERS,
+      false
+    );
+    const passAllowed = !checkPass.reasons.some((r) => r.includes('RVOL'));
+
+    const passed = paramVal === 0.85 && belowBlocked && passAllowed;
+    recordTest(
+      'T54',
+      'Verifica soglia EU effettiva RVOL di pre-screening pari a 0.85 (0.84x respinto, 0.85x ammesso)',
+      { expectedThreshold: 0.85, belowRvol: 0.84, passRvol: 0.85 },
+      { paramVal: 0.85, belowBlocked: true, passAllowed: true },
+      { paramVal, belowBlocked, passAllowed },
+      passed
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // TEST T55: Costruzione Quote Live con barre reali SAP.DE (sessione 28/10/2026)
+  // --------------------------------------------------------------------------
+  {
+    // Barre reali 5m ORB di SAP.DE del 2026-10-28 (barra 1 a volume 0)
+    const realOrbBars20261028 = [
+      { volume: 0 },
+      { volume: 9567 },
+      { volume: 9394 },
+    ];
+    // Storico reale dei 20 volumi ORB precedenti di SAP.DE (media = 39.294)
+    const realHistOrb20d = [
+      67347, 19740, 31765, 57129, 14574,
+      20514, 30369, 29626, 12658, 107971,
+      31367, 31478, 23840, 128961, 28098,
+      22953, 40376, 14288, 84719, 32948,
+    ];
+
+    // Con storico completo a 20 sessioni -> rvol calcolato esattamente (18.961 / 41.536 = 0.46x)
+    const rvolFull = calculateOrbRvolFromBars(realOrbBars20261028, realHistOrb20d);
+
+    // Con storico insufficiente (< 20 sessioni, es. 10 sessioni) -> rvol = null (MAI fallback 1.0 né 0)
+    const insufficientHist = realHistOrb20d.slice(-10);
+    const rvolInsufficient = calculateOrbRvolFromBars(realOrbBars20261028, insufficientHist);
+
+    // Costruzione quote live con rvol calcolato da calculateOrbRvolFromBars
+    const liveQuote = createBaseFixtureQuote({
+      ticker: 'SAP.DE',
+      market: 'EU',
+      rvol: rvolFull,
+    });
+
+    const liveQuoteInsufficient = createBaseFixtureQuote({
+      ticker: 'SAP.DE',
+      market: 'EU',
+      rvol: rvolInsufficient,
+    });
+
+    const scoreInsufficient = calculateCandidateScore(liveQuoteInsufficient, 0.20, null);
+
+    const passed =
+      rvolFull === 0.46 &&
+      rvolInsufficient === null &&
+      liveQuote.rvol === 0.46 &&
+      liveQuoteInsufficient.rvol === null &&
+      scoreInsufficient.rvolScore === 0;
+
+    recordTest(
+      'T55',
+      'Costruzione quote live da barre reali SAP.DE (28/10/2026): rvol = 0.46x; storico <20 sessioni -> rvol = null (mai fallback)',
+      { fullHistCount: 20, partialHistCount: 10, cumVol: 18961, histAvg: 41536 },
+      { expectedRvolFull: 0.46, expectedRvolPartial: null, rvolScorePartial: 0 },
+      { rvolFull, rvolInsufficient, rvolScorePartial: scoreInsufficient.rvolScore },
       passed
     );
   }

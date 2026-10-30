@@ -51,6 +51,14 @@ export interface TradingParamsConfig {
   KO_SAFETY_RATIO_CRITICAL: number;
   KO_SAFETY_RATIO_WARNING: number;
 
+  // Parametri di Costo Operativo e Commissioni
+  SPREAD_EUR: number;
+  BROKER_FEE_PER_SIDE_EUR: number;
+
+  // Soglie Minime di RVOL per Mercato
+  MIN_RVOL_EU: number;
+  MIN_RVOL_US: number;
+
   // Soglie Minime di Punteggio per Mercato (Unica Fonte di Verità)
   MIN_SCORE_EU: number;
   MIN_SCORE_US: number;
@@ -136,6 +144,14 @@ export const TRADING_PARAMS: TradingParamsConfig = {
   // Soglie Safety Ratio Barriera KO vs Stop Distance
   KO_SAFETY_RATIO_CRITICAL: 1.6, // Ratio minimo barriera/stop al di sotto del quale il margine è critico
   KO_SAFETY_RATIO_WARNING: 2.2, // Ratio prudente consigliato
+
+  // Parametri di Costo Operativo e Commissioni
+  SPREAD_EUR: 0.02, // Spread tipico Knock-Out Turbo per certificato (0.02 €)
+  BROKER_FEE_PER_SIDE_EUR: 1.00, // Commissione Trade Republic per lato (1.00 € entrata + 1.00 € uscita)
+
+  // Soglie Minime di RVOL per Mercato
+  MIN_RVOL_EU: 0.85, // Soglia minima RVOL per Europa (0.85x)
+  MIN_RVOL_US: 1.15, // Soglia minima RVOL per USA (1.15x)
 
   // Soglie Minime di Punteggio per Mercato (Unica Fonte di Verità)
   MIN_SCORE_EU: 48, // Punteggio minimo qualificazione Top Pick Europa (senza punti liquidità)
