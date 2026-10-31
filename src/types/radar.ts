@@ -301,7 +301,10 @@ export interface TradeJournalEntry {
   notes: string;
   isPaper: boolean;
   closedAt?: string;
-  closeReason?: 'TARGET_HIT' | 'STOP_HIT' | 'BREAKEVEN' | 'CUTOFF_EXPIRED' | 'MANUAL';
+  closeReason?: 'TARGET_HIT' | 'STOP_HIT' | 'BREAKEVEN' | 'CUTOFF_EXPIRED' | 'SOFT_CUTOFF_HARD_EXIT' | 'MANUAL';
+  softCutoffActive?: boolean;
+  softCutoffExtendedAt?: string;
+  isBreakevenLocked?: boolean;
   barrierStrike?: number;
   leverage?: number;
   suggestedCertificates?: number;
@@ -534,6 +537,8 @@ export interface ExcludedSetupRecord {
   theoreticalPnlEur?: number;
   resolvedAt?: string;
   notes?: string;
+  softCutoffExtended?: boolean;
+  isBreakevenLocked?: boolean;
 }
 
 export interface ExcludedCategoryAnalysis {

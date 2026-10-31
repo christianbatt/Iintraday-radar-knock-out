@@ -573,9 +573,15 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
                                 </span>
                               )}
                               {r.outcomeStatus === 'MONITORING' && (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-950 text-indigo-300 border border-indigo-800 flex items-center gap-1 w-max">
-                                  <Clock className="w-3 h-3 animate-spin text-indigo-400" />
-                                  <span>IN MONITORAGGIO</span>
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 w-max ${
+                                    r.softCutoffExtended
+                                      ? 'bg-amber-950/90 text-amber-300 border border-amber-700 shadow-sm'
+                                      : 'bg-indigo-950 text-indigo-300 border border-indigo-800'
+                                  }`}
+                                >
+                                  <Clock className={`w-3 h-3 ${r.softCutoffExtended ? 'text-amber-400' : 'animate-spin text-indigo-400'}`} />
+                                  <span>{r.softCutoffExtended ? 'SOFT CUTOFF (BE LOCK)' : 'IN MONITORAGGIO'}</span>
                                 </span>
                               )}
                               {r.outcomeStatus === 'THEORETICAL_EXPIRED' && (

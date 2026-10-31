@@ -968,6 +968,11 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
                           {trade.entryMode}
                         </span>
                       )}
+                      {trade.softCutoffActive && (
+                        <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-800/80 font-mono font-bold" title="In estensione controllata post-cutoff con Stop protetto a Pareggio (BE)">
+                          🛡️ SOFT CUTOFF (BE LOCK)
+                        </span>
+                      )}
                     </td>
                     <td className="py-2 px-3">
                       <span

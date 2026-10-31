@@ -3474,15 +3474,76 @@ export function updateExcludedSetupsWithLiveQuotes(
       };
     }
 
-    // 3. Cutoff Time Expiration
+    // 3. Cutoff Time Expiration with Adaptive Soft Cutoff Logic
     if (currentCetMinutes != null) {
       const isEuCutoff = record.market === 'EU' && currentCetMinutes >= 690; // 11:30 CET
       const isUsCutoff = record.market === 'US' && currentCetMinutes >= 1050; // 17:30 CET
+      const isEuHardCeiling = record.market === 'EU' && currentCetMinutes >= 855; // 14:15 CET (pre-macro USA)
+      const isUsHardCeiling = record.market === 'US' && currentCetMinutes >= 1290; // 21:30 CET (15:30 NY)
+
+      const diff = isLong ? livePrice - entry : entry - livePrice;
+      const rMultiple = riskDist > 0 ? +(diff / riskDist).toFixed(2) : 0;
+      const pnlEur = +(rMultiple * (accountCapital * 0.01)).toFixed(2);
+
+      // Scenario A: Trade is ALREADY in Soft Cutoff Extension
+      if (record.softCutoffExtended) {
+        // Condition 1: Check Breakeven Protection (if price falls back to entry level)
+        const isBreakevenHit = isLong ? livePrice <= entry : livePrice >= entry;
+        if (isBreakevenHit) {
+          newlyResolvedCount++;
+          return {
+            ...record,
+            currentPrice: livePrice,
+            outcomeStatus: 'THEORETICAL_EXPIRED' as const,
+            theoreticalRMultiple: 0.0,
+            theoreticalPnlEur: 0,
+            resolvedAt: new Date().toISOString(),
+            notes: `🛡️ Soft Cutoff Breakeven: ritracciamento al prezzo di carico (${entry.toFixed(2)} ${record.currency}). Capitale protetto a pareggio (0.0R).`,
+          };
+        }
+
+        // Condition 2: Hard Exit Ceiling reached (14:15 CET EU pre-macro / 21:30 CET US)
+        if (isEuHardCeiling || isUsHardCeiling) {
+          newlyResolvedCount++;
+          const outcomeStatus = rMultiple >= 0.5 ? ('THEORETICAL_PROFIT' as const) : ('THEORETICAL_EXPIRED' as const);
+          return {
+            ...record,
+            currentPrice: livePrice,
+            outcomeStatus,
+            theoreticalRMultiple: rMultiple,
+            theoreticalPnlEur: pnlEur,
+            resolvedAt: new Date().toISOString(),
+            notes: `⏰ Soft Cutoff Hard Ceiling raggiunto (${record.market === 'EU' ? '14:15' : '21:30'} CET). Chiusura protetta in profitto a +${rMultiple}R.`,
+          };
+        }
+
+        // Still healthy in extension, let it continue towards Target 1!
+        return {
+          ...record,
+          currentPrice: livePrice,
+        };
+      }
+
+      // Scenario B: First crossing of standard cutoff (11:30 EU / 17:30 US)
       if (isEuCutoff || isUsCutoff) {
+        // Soft Cutoff Criteria:
+        // C1: Latent profit >= +0.35R
+        // C2: Not already past Hard Ceiling
+        const canSoftExtend = rMultiple >= 0.35 && !(isEuHardCeiling || isUsHardCeiling);
+
+        if (canSoftExtend) {
+          return {
+            ...record,
+            currentPrice: livePrice,
+            softCutoffExtended: true,
+            isBreakevenLocked: true,
+            stopLoss: entry, // lock Breakeven
+            notes: `🛡️ Soft Cutoff Attivato: +${rMultiple}R al cutoff standard. Stop protetto a Pareggio (${entry.toFixed(2)}). Estensione attiva verso Target 1 fino al Ceiling (${record.market === 'EU' ? '14:15' : '21:30'} CET).`,
+          };
+        }
+
+        // Standard Hard Close: setup had insufficient momentum (< +0.35R) or was negative
         newlyResolvedCount++;
-        const diff = isLong ? livePrice - entry : entry - livePrice;
-        const rMultiple = riskDist > 0 ? +(diff / riskDist).toFixed(2) : 0;
-        const pnlEur = +(rMultiple * (accountCapital * 0.01)).toFixed(2);
         return {
           ...record,
           currentPrice: livePrice,
@@ -3490,7 +3551,7 @@ export function updateExcludedSetupsWithLiveQuotes(
           theoreticalRMultiple: rMultiple,
           theoreticalPnlEur: pnlEur,
           resolvedAt: new Date().toISOString(),
-          notes: `Cutoff superato senza target né stop. Chiusura temporale a ${livePrice.toFixed(2)} ${record.currency}.`,
+          notes: `Cutoff superato senza momentum sufficiente (+${rMultiple}R < +0.35R). Chiusura temporale a ${livePrice.toFixed(2)} ${record.currency}.`,
         };
       }
     }
