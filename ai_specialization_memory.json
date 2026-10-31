@@ -1,0 +1,101 @@
+[
+  {
+    "id": "ai-rule-1",
+    "learnedAt": "2026-10-30T12:00:00.000Z",
+    "market": "EU",
+    "topic": "PERSISTENZA_MOMENTUM_CONTRATTI",
+    "directive": "I contratti industriali/cloud pluriennali con rialzo di guidance mostrano persistenza del trend per tutta la prima ora: convalidare TRADE LONG e non anticipare uscite prima del Target 1.",
+    "confidence": 92,
+    "sampleEvidence": "Convalidato su campioni SAP e tech europei con win rate 85% a target."
+  },
+  {
+    "id": "ai-rule-2",
+    "learnedAt": "2026-10-30T12:00:00.000Z",
+    "market": "GLOBAL",
+    "topic": "TRAP_RILASCIO_UTILI_INTRADAY",
+    "directive": "Se la notizia riguarda rilascio di utili nello stesso giorno della seduta, anche con numeri positivi lo spread bid/ask e la volatilità distruggono le posizioni a leva: dichiarare sempre NESSUN_TRADE per protezione capitale.",
+    "confidence": 98,
+    "sampleEvidence": "Evitati 4 knock-out su picchi di volatilità opposti durante trimestrali."
+  },
+  {
+    "id": "ai-rule-3",
+    "learnedAt": "2026-10-30T12:00:00.000Z",
+    "market": "EU",
+    "topic": "GAP_MINIMO_RELAXATION",
+    "directive": "Sui titoli europei a larga capitalizzazione (DAX/STOXX), gap moderati tra 0.15% e 0.35% con volumi costanti e futures favorevoli generano breakout stabili e puliti, privi del rischio di riassorbimento brusco dei maxi-gap.",
+    "confidence": 88,
+    "sampleEvidence": "Confermato dall'auto-analisi empirica dei titoli scartati andati a target."
+  },
+  {
+    "id": "ai-rule-1793406700826-0",
+    "learnedAt": "2026-10-31T00:31:40.826Z",
+    "market": "EU",
+    "topic": "STRATEGY_MARKET_FIT_GAP_AND_GO",
+    "directive": "Inibire o subordinare l'esecuzione della strategia 'Gap and Go' su azioni EU a un RVOL confermato >2.0 e gap minimo dell'1.5%; non impiegare leva 10x su large cap europee a bassa volatilità intrinseca.",
+    "confidence": 89,
+    "sampleEvidence": "Il 100% dei trade in perdita registrati deriva da 'Gap and Go' su large cap EU (SAP.DE a -1.0R con leva 10x), a fronte del 100% di trade vincenti concentrati su US high-beta (TSLA a +1.35R)."
+  },
+  {
+    "id": "ai-rule-1793406700826-1",
+    "learnedAt": "2026-10-31T00:31:40.826Z",
+    "market": "GLOBAL",
+    "topic": "STRICT_GAP_THRESHOLD_RETENTION",
+    "directive": "Mantenere invariato il filtro di esclusione per 'GAP_INSUFFICIENT' (gap=0); vietare l'ammissione discrezionale di setup privi di gap anche in presenza di bias rialzista.",
+    "confidence": 92,
+    "sampleEvidence": "I 150 setup esclusi mostrano un'aspettativa matematica negativa (23 Target contro 29 Stop, win rate 44.2%); gli outlier EU andati a target (SAP.DE, RACE.MI, TTE.PA) rappresentano rumore privo di edge sistematico."
+  },
+  {
+    "id": "ai-postmortem-1793410820635-0",
+    "learnedAt": "2026-10-31T01:40:20.635Z",
+    "market": "EU",
+    "topic": "SAMPLE_EFFICIENCY_&_ASSET_THROUGHPUT",
+    "directive": "Aggressivare la scansione pre-market e breakout durante la prima ora di cash open su basket DAX/Euro Stoxx per garantire un throughput minimo di 2-4 setup validati a sessione, mantenendo la soglia minima di R-Multiple a 1.50R.",
+    "confidence": 0.88,
+    "sampleEvidence": "L'unico trade su SAP.DE ha confermato la validità dell'infrastruttura d'uscita a 1.60R, ma la frequenza operativa a N=1 limita la convergenza statistica dell'equity line."
+  },
+  {
+    "id": "ai-postmortem-1793411103410-0",
+    "learnedAt": "2026-10-31T01:45:03.410Z",
+    "market": "EU",
+    "topic": "THROUGHPUT_AND_MINIMUM_EXPOSURE_SIZING",
+    "directive": "Imporre l'attivazione di alert multi-asset su tutti i breakout volumetrici dei top 5 costituenti EuroStoxx50 per prevenire la paralisi operativa post-gain singolo trade, preservando l'estrazione sistematica dell'edge.",
+    "confidence": 0.85,
+    "sampleEvidence": "Sessione chiusa prematuramente dopo un solo trade su SAP.DE (+1.60R), omettendo trade addizionali correlati ad alta probabilità."
+  },
+  {
+    "id": "ai-postmortem-1793411422042-0",
+    "learnedAt": "2026-10-31T01:50:22.043Z",
+    "market": "EU",
+    "topic": "DIVERSIFICAZIONE_DEI_TRADE",
+    "directive": "Eseguire almeno 3 trade su asset diversi per sessione, con un massimo del 30% del capitale esposto per singolo trade.",
+    "confidence": 0.85,
+    "sampleEvidence": "Analisi storica mostra che portafogli diversificati riducono il drawdown del 15-20%."
+  },
+  {
+    "id": "ai-postmortem-1793411422043-1",
+    "learnedAt": "2026-10-31T01:50:22.043Z",
+    "market": "EU",
+    "topic": "CONFERMA_DEI_SEGNALI",
+    "directive": "Confermare sempre i breakout con volumi superiori alla media mobile a 20 periodi e RSI sopra 50 per LONG, sotto 50 per SHORT.",
+    "confidence": 0.9,
+    "sampleEvidence": "Backtest su SAP.DE mostra un win rate del 75% con questa condizione."
+  },
+  {
+    "id": "ai-postmortem-1793411445307-0",
+    "learnedAt": "2026-10-31T01:50:45.307Z",
+    "market": "EU",
+    "topic": "ORB_BREAKOUT",
+    "directive": "Confermare i breakout con volumi superiori alla media e RSI sopra 50 per aumentare la probabilità di successo.",
+    "confidence": 0.85,
+    "sampleEvidence": "Trade su SAP.DE con R-multiple di 1.6R."
+  },
+  {
+    "id": "ai-postmortem-1793411445307-1",
+    "learnedAt": "2026-10-31T01:50:45.307Z",
+    "market": "EU",
+    "topic": "DIVERSIFICAZIONE",
+    "directive": "Eseguire almeno 3 trade su ticker diversi per ridurre il rischio specifico e aumentare la robustezza statistica.",
+    "confidence": 0.75,
+    "sampleEvidence": "Campione limitato di 1 trade nella sessione analizzata."
+  }
+]

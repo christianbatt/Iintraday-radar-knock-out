@@ -57,14 +57,16 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
   const [postMortemDirectivesAdded, setPostMortemDirectivesAdded] = useState<number>(0);
   const [postMortemError, setPostMortemError] = useState<string | null>(null);
 
-  const euTrades = trades.filter((t) => t.market === 'EU');
-  const usTrades = trades.filter((t) => t.market === 'US');
-  const activeSessionTrades = activeTab === 'EU' ? euTrades : usTrades;
+  const euTrades = trades.filter((t) => t.market === 'EU' || t.session === 'EU' || (!t.market && !t.session));
+  const usTrades = trades.filter((t) => t.market === 'US' || t.session === 'US');
+  const sessionTrades = activeTab === 'EU' ? euTrades : usTrades;
+  // If specific session has no trades but journal has trades, fall back to all available trades
+  const activeSessionTrades = sessionTrades.length > 0 ? sessionTrades : trades;
   const activeSessionTradesCount = activeSessionTrades.length;
 
   const handleGeneratePostMortem = async () => {
-    if (activeSessionTradesCount === 0) {
-      setPostMortemError(`Nessun trade registrato a diario per la sessione ${marketName}. Registra almeno un trade per redigere il post-mortem.`);
+    if (trades.length === 0) {
+      setPostMortemError('Nessun trade registrato a diario. Per redigere il Post-Mortem del Desk, registra almeno un trade concluso nel Diario di Trading.');
       return;
     }
     setIsLoadingPostMortem(true);
@@ -593,16 +595,22 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
               <button
                 type="button"
                 onClick={handleGeneratePostMortem}
-                disabled={isLoadingPostMortem || activeSessionTradesCount === 0}
+                disabled={isLoadingPostMortem || trades.length === 0}
                 className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-purple-900/40 cursor-pointer transition-all disabled:opacity-50 shrink-0"
+                title={trades.length === 0 ? 'Registra almeno un trade a diario per sbloccare il Post-Mortem' : `Analizza i trade a diario (${activeSessionTradesCount} disponibili)`}
               >
                 <Sparkles className={`w-3.5 h-3.5 ${isLoadingPostMortem ? 'animate-spin' : ''}`} />
-                <span>{isLoadingPostMortem ? 'Redazione in corso...' : 'Genera Post-Mortem del Desk'}</span>
+                <span>{isLoadingPostMortem ? 'Redazione in corso...' : `Genera Post-Mortem del Desk (${activeSessionTradesCount})`}</span>
               </button>
             </div>
 
             <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
               L'AI (OpenRouter / DeepSeek / Gemini) esamina il diario di trading delle ultime sessioni per redigere una retrospettiva qualitativa. Le lezioni apprese vengono convertite automaticamente in direttive vincolanti per le future valutazioni dei catalizzatori.
+              {trades.length === 0 && (
+                <span className="block mt-1 text-amber-400 font-mono text-[10px]">
+                  ⚠️ Nessun trade a diario: per generare il Post-Mortem, registra almeno un'operazione nel Diario di Trading.
+                </span>
+              )}
             </p>
 
             {postMortemError && (

@@ -155,6 +155,7 @@ export default function App() {
 
   const isRemoteSyncingRef = React.useRef(false);
   const sharedStateVersionRef = React.useRef(0);
+  const hasInitialSyncCompletedRef = React.useRef(false);
 
   const freezeStateEURef = React.useRef(freezeStateEU);
   const freezeStateUSRef = React.useRef(freezeStateUS);
@@ -162,7 +163,7 @@ export default function App() {
     freezeStateEURef.current = freezeStateEU;
     const today = new Date().toISOString().slice(0, 10);
     localStorage.setItem(`intraday_radar_freeze_EU_${today}`, JSON.stringify(freezeStateEU));
-    if (!isRemoteSyncingRef.current) {
+    if (!isRemoteSyncingRef.current && hasInitialSyncCompletedRef.current) {
       pushSharedAppState({ freezeStateEU });
     }
   }, [freezeStateEU]);
@@ -171,7 +172,7 @@ export default function App() {
     freezeStateUSRef.current = freezeStateUS;
     const today = new Date().toISOString().slice(0, 10);
     localStorage.setItem(`intraday_radar_freeze_US_${today}`, JSON.stringify(freezeStateUS));
-    if (!isRemoteSyncingRef.current) {
+    if (!isRemoteSyncingRef.current && hasInitialSyncCompletedRef.current) {
       pushSharedAppState({ freezeStateUS });
     }
   }, [freezeStateUS]);
@@ -317,7 +318,7 @@ export default function App() {
   useEffect(() => {
     parametersRef.current = parameters;
     localStorage.setItem('intraday_radar_parameters', JSON.stringify(parameters));
-    if (!isRemoteSyncingRef.current) {
+    if (!isRemoteSyncingRef.current && hasInitialSyncCompletedRef.current) {
       pushSharedAppState({ parameters });
     }
   }, [parameters]);
@@ -328,21 +329,21 @@ export default function App() {
     } else {
       localStorage.removeItem('intraday_radar_pending_proposal');
     }
-    if (!isRemoteSyncingRef.current) {
+    if (!isRemoteSyncingRef.current && hasInitialSyncCompletedRef.current) {
       pushSharedAppState({ pendingProposal });
     }
   }, [pendingProposal]);
 
   useEffect(() => {
     localStorage.setItem('intraday_radar_journal_trades', JSON.stringify(journalEntries));
-    if (!isRemoteSyncingRef.current) {
+    if (!isRemoteSyncingRef.current && hasInitialSyncCompletedRef.current) {
       pushSharedAppState({ journalEntries });
     }
   }, [journalEntries]);
 
   useEffect(() => {
     localStorage.setItem('intraday_radar_excluded_records', JSON.stringify(excludedRecords));
-    if (!isRemoteSyncingRef.current) {
+    if (!isRemoteSyncingRef.current && hasInitialSyncCompletedRef.current) {
       pushSharedAppState({ excludedRecords });
     }
   }, [excludedRecords]);
@@ -354,20 +355,35 @@ export default function App() {
     const performSync = async () => {
       try {
         const res = await fetchSharedAppState(sharedStateVersionRef.current);
-        if (!isMounted || !res || !res.hasUpdates || !res.state) return;
+        if (!isMounted || !res || !res.hasUpdates || !res.state) {
+          if (isMounted) hasInitialSyncCompletedRef.current = true;
+          return;
+        }
 
         const s = res.state;
         if (res.version) sharedStateVersionRef.current = res.version;
 
         isRemoteSyncingRef.current = true;
 
-        // 1. Parametri (se versione remota >= locale, applica subito)
+        // 1. Parametri (se versione remota >= locale, applica subito e sanifica)
         if (s.parameters && typeof s.parameters.version === 'number') {
+          const sanitizedParams: SystemParameters = {
+            ...s.parameters,
+            minScore: typeof s.parameters.minScore === 'number' && s.parameters.minScore > 100
+              ? (s.parameters.minScore > 1000 ? Math.round(s.parameters.minScore / 1000) : 90)
+              : s.parameters.minScore,
+            minScoreEurope: typeof s.parameters.minScoreEurope === 'number' && s.parameters.minScoreEurope > 100
+              ? (s.parameters.minScoreEurope > 1000 ? Math.round(s.parameters.minScoreEurope / 1000) : 90)
+              : s.parameters.minScoreEurope,
+            minScoreUSA: typeof s.parameters.minScoreUSA === 'number' && s.parameters.minScoreUSA > 100
+              ? (s.parameters.minScoreUSA > 1000 ? Math.round(s.parameters.minScoreUSA / 1000) : 92)
+              : s.parameters.minScoreUSA,
+          };
           const currentVer = parametersRef.current?.version || 0;
-          if (s.parameters.version >= currentVer) {
-            setParameters(s.parameters);
-            parametersRef.current = s.parameters;
-            localStorage.setItem('intraday_radar_parameters', JSON.stringify(s.parameters));
+          if (sanitizedParams.version >= currentVer) {
+            setParameters(sanitizedParams);
+            parametersRef.current = sanitizedParams;
+            localStorage.setItem('intraday_radar_parameters', JSON.stringify(sanitizedParams));
           }
         }
 
@@ -427,10 +443,16 @@ export default function App() {
         }
 
         setTimeout(() => {
-          if (isMounted) isRemoteSyncingRef.current = false;
+          if (isMounted) {
+            isRemoteSyncingRef.current = false;
+            hasInitialSyncCompletedRef.current = true;
+          }
         }, 300);
       } catch (err) {
-        if (isMounted) isRemoteSyncingRef.current = false;
+        if (isMounted) {
+          isRemoteSyncingRef.current = false;
+          hasInitialSyncCompletedRef.current = true;
+        }
       }
     };
 
@@ -1432,10 +1454,16 @@ export default function App() {
     };
 
     targetProposal.proposedChanges.forEach((change) => {
-      const numVal =
-        typeof change.proposedValue === 'number'
-          ? change.proposedValue
-          : parseFloat(String(change.proposedValue).replace(/[^0-9.-]/g, ''));
+      let numVal: number;
+      if (typeof change.proposedValue === 'number') {
+        numVal = change.proposedValue;
+      } else {
+        const rawStr = String(change.proposedValue ?? '').split('/')[0].trim();
+        numVal = parseFloat(rawStr.replace(/[^0-9.-]/g, ''));
+      }
+      if (change.parameterKey.includes('minScore') && numVal > 100) {
+        numVal = numVal > 1000 ? Math.round(numVal / 1000) : 90;
+      }
 
       if (change.parameterKey === 'minScore') {
         const val = !isNaN(numVal) ? Math.round(numVal) : newParams.minScore;
@@ -1487,14 +1515,16 @@ export default function App() {
       appliedAt: new Date().toISOString(),
     };
 
+    const updatedDual = dualProposals ? {
+      eu: market === 'EU' ? acceptedProposal : dualProposals.eu,
+      us: market === 'US' ? acceptedProposal : dualProposals.us,
+    } : null;
+
     setParameters(newParams);
     localStorage.setItem('intraday_radar_parameters', JSON.stringify(newParams));
     setPendingProposal(acceptedProposal);
-    if (dualProposals) {
-      setDualProposals({
-        eu: market === 'EU' ? acceptedProposal : dualProposals.eu,
-        us: market === 'US' ? acceptedProposal : dualProposals.us,
-      });
+    if (updatedDual) {
+      setDualProposals(updatedDual);
     }
     setIsOptimizerModalOpen(false);
     const mLabel = market === 'EU' ? 'Sessione Europa' : market === 'US' ? 'Sessione USA' : 'Sistema';
@@ -1510,7 +1540,11 @@ export default function App() {
         isPaperMode,
       });
     }
-    pushSharedAppState({ parameters: newParams, pendingProposal: acceptedProposal });
+    pushSharedAppState({
+      parameters: newParams,
+      pendingProposal: acceptedProposal,
+      dualProposals: updatedDual,
+    });
 
     // Refresh setups immediately
     if (quotes.length > 0) {
@@ -1560,19 +1594,20 @@ export default function App() {
       ...targetProposal,
       status: 'REJECTED',
     };
+    const updatedDual = dualProposals ? {
+      eu: market === 'EU' ? rejectedProposal : dualProposals.eu,
+      us: market === 'US' ? rejectedProposal : dualProposals.us,
+    } : null;
     setPendingProposal(rejectedProposal);
-    if (dualProposals) {
-      setDualProposals({
-        eu: market === 'EU' ? rejectedProposal : dualProposals.eu,
-        us: market === 'US' ? rejectedProposal : dualProposals.us,
-      });
+    if (updatedDual) {
+      setDualProposals(updatedDual);
     }
     setIsOptimizerModalOpen(false);
     const mLabel = market === 'EU' ? 'Sessione Europa' : market === 'US' ? 'Sessione USA' : 'Sistema';
     setOptimizationNotification(`Proposta ${mLabel} rifiutata. Parametri V${parameters.version} mantenuti invariati.`);
     setTimeout(() => setOptimizationNotification(null), 5000);
 
-    // Sync rejected status to Cloud
+    // Sync rejected status to Cloud and Gateway
     if (currentUser) {
       syncSystemSettingsToCloud(currentUser.uid, {
         parameters,
@@ -1581,6 +1616,10 @@ export default function App() {
         isPaperMode,
       });
     }
+    pushSharedAppState({
+      pendingProposal: rejectedProposal,
+      dualProposals: updatedDual,
+    });
   };
 
   const handleRunAuditOnDemand = () => {
@@ -1591,13 +1630,9 @@ export default function App() {
     }
     const dual = evaluateDualSystemOptimization(journalEntries, parameters, 5);
     setDualProposals(dual);
-    const cycleNum = Math.max(1, Math.floor(journalEntries.length / 20));
-    const prop = evaluateSystemOptimization(journalEntries, parameters, cycleNum);
-    setPendingProposal(prop);
-    const euCount = journalEntries.filter((t) => t.market === 'EU').length;
-    const usCount = journalEntries.filter((t) => t.market === 'US').length;
-    setOptimizationNotification(`Audit calcolato: ${euCount} trade Europa, ${usCount} trade USA.`);
-    setTimeout(() => setOptimizationNotification(null), 5000);
+    pushSharedAppState({ dualProposals: dual });
+    setOptimizationNotification('Audit del sistema ricalcolato sui trade presenti nel diario!');
+    setTimeout(() => setOptimizationNotification(null), 4000);
   };
 
   // 7b. Excluded Setups Calibration Handlers (Next Session Improvement)

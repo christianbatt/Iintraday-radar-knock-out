@@ -41,6 +41,21 @@ interface SharedAppState {
   version: number;
 }
 
+function sanitizeParameters(params: any): any {
+  if (!params || typeof params !== 'object') return params;
+  const p = { ...params };
+  if (typeof p.minScoreEurope === 'number' && p.minScoreEurope > 100) {
+    p.minScoreEurope = Math.round(p.minScoreEurope / 1000);
+  }
+  if (typeof p.minScoreUSA === 'number' && p.minScoreUSA > 100) {
+    p.minScoreUSA = Math.round(p.minScoreUSA / 1000);
+  }
+  if (typeof p.minScore === 'number' && p.minScore > 100) {
+    p.minScore = Math.round(p.minScore / 1000);
+  }
+  return p;
+}
+
 let sharedAppState: SharedAppState = {
   version: 1,
   updatedAt: new Date().toISOString(),
@@ -52,6 +67,9 @@ try {
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object') {
       sharedAppState = { ...sharedAppState, ...parsed };
+      if (sharedAppState.parameters) {
+        sharedAppState.parameters = sanitizeParameters(sharedAppState.parameters);
+      }
     }
   }
 } catch (e) {
@@ -176,6 +194,7 @@ class CacheStore {
 
 const cache = new CacheStore();
 let geminiQuotaExhaustedUntil: number = 0;
+let openRouterRateLimitedUntil: number = 0;
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({
@@ -1375,9 +1394,16 @@ app.post('/api/sync/state', (req: Request, res: Response) => {
     const patch = req.body || {};
     let hasChanged = false;
 
-    if (patch.parameters) {
-      sharedAppState.parameters = patch.parameters;
-      hasChanged = true;
+    if (patch.parameters && typeof patch.parameters === 'object') {
+      const sanitized = sanitizeParameters(patch.parameters);
+      const incomingVer = typeof sanitized.version === 'number' ? sanitized.version : 0;
+      const currentVer = typeof sharedAppState.parameters?.version === 'number' ? sharedAppState.parameters.version : 0;
+      if (incomingVer >= currentVer) {
+        sharedAppState.parameters = sanitized;
+        hasChanged = true;
+      } else {
+        console.info(`[Sync] Rifiutato downgrade parametri server da V${currentVer} a V${incomingVer}`);
+      }
     }
     if (patch.freezeStateEU) {
       sharedAppState.freezeStateEU = patch.freezeStateEU;
@@ -1572,14 +1598,19 @@ app.post('/api/ai/desk-post-mortem', async (req: Request, res: Response) => {
     const rawTrades: any[] = Array.isArray(req.body?.trades) ? req.body.trades : (sharedAppState.journalEntries || []);
     const market = req.body?.market || 'GLOBAL';
 
-    const sessionTrades = market === 'GLOBAL'
+    let sessionTrades = market === 'GLOBAL'
       ? rawTrades
       : rawTrades.filter((t) => (t.market || (t.session === 'US' ? 'US' : 'EU')) === market);
+
+    // If no trades for this specific market, but journal has trades, fall back to analyzing available journal trades
+    if (sessionTrades.length === 0 && rawTrades.length > 0) {
+      sessionTrades = rawTrades;
+    }
 
     if (sessionTrades.length === 0) {
       return res.status(400).json({
         success: false,
-        error: 'Nessun trade a diario disponibile per generare il Post-Mortem del Desk.',
+        error: 'Nessun trade a diario disponibile per generare il Post-Mortem del Desk. Registra almeno un trade per avviare l\'analisi.',
       });
     }
 
@@ -1644,7 +1675,11 @@ Restituisci un JSON rigoroso con questi campi:
             responseMimeType: 'application/json',
           },
         });
-        generated = JSON.parse(response.text || '{}');
+        const clean = (response.text || '')
+          .replace(/^```(?:json)?\s*/i, '')
+          .replace(/\s*```$/i, '')
+          .trim();
+        generated = JSON.parse(clean || '{}');
       } catch (gemErr) {
         console.warn('[AI Desk Post-Mortem] Fallback Gemini:', gemErr);
       }
@@ -1716,8 +1751,12 @@ async function callOpenRouterModel(
   userPrompt: string,
   apiKey: string
 ): Promise<{ data: any; keyInvalid?: boolean; creditsExhausted?: boolean } | null> {
+  if (Date.now() < openRouterRateLimitedUntil) {
+    return null;
+  }
+
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 35000); // 35s timeout resiliente
+  const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout rapido
   const modelDesc = Array.isArray(modelOrModels) ? modelOrModels.join(' -> ') : modelOrModels;
 
   try {
@@ -1727,6 +1766,7 @@ async function callOpenRouterModel(
         { role: 'user', content: userPrompt },
       ],
       response_format: { type: 'json_object' },
+      max_tokens: 1500,
       temperature: 0.1,
     };
 
@@ -1755,8 +1795,9 @@ async function callOpenRouterModel(
       return { data: null, keyInvalid: true };
     }
 
-    if (res.status === 402) {
-      console.info(`[OpenRouter] 402 Crediti esauriti per ${modelDesc}.`);
+    if (res.status === 402 || res.status === 429) {
+      openRouterRateLimitedUntil = Date.now() + 10 * 60 * 1000; // Cooldown 10 minuti
+      console.info(`[OpenRouter] HTTP ${res.status} per ${modelDesc} (crediti esauriti o rate limit). Attivato cooldown 10m e transizione a fallback immediato.`);
       return { data: null, creditsExhausted: true };
     }
 
@@ -1776,22 +1817,24 @@ async function callOpenRouterModel(
       .trim();
 
     const parsed = JSON.parse(cleaned);
-    if (parsed && typeof parsed === 'object' && parsed.decisione) {
-      // Coerce required fields
+    if (parsed && typeof parsed === 'object') {
       const usedModel = json.model || (Array.isArray(modelOrModels) ? modelOrModels[0] : modelOrModels);
-      parsed.aiProvider = `openrouter:${usedModel}`;
-      if (!Array.isArray(parsed.punti_a_favore)) parsed.punti_a_favore = [];
-      if (!Array.isArray(parsed.rischi)) parsed.rischi = [];
-      if (!Array.isArray(parsed.condizioni_invalidazione)) parsed.condizioni_invalidazione = [];
-      if (!Array.isArray(parsed.fonti)) parsed.fonti = [];
-      if (typeof parsed.newsBonusScore !== 'number') parsed.newsBonusScore = 0;
+      // Coerce required fields if this is a trading signal evaluation
+      if (parsed.decisione) {
+        parsed.aiProvider = `openrouter:${usedModel}`;
+        if (!Array.isArray(parsed.punti_a_favore)) parsed.punti_a_favore = [];
+        if (!Array.isArray(parsed.rischi)) parsed.rischi = [];
+        if (!Array.isArray(parsed.condizioni_invalidazione)) parsed.condizioni_invalidazione = [];
+        if (!Array.isArray(parsed.fonti)) parsed.fonti = [];
+        if (typeof parsed.newsBonusScore !== 'number') parsed.newsBonusScore = 0;
+      }
       return { data: parsed };
     }
     return null;
   } catch (err: any) {
     clearTimeout(timeoutId);
     const isAbort = err?.name === 'AbortError' || err?.cause?.name === 'AbortError';
-    console.info(`[OpenRouter] ${modelDesc} temporaneamente non disponibile (${isAbort ? 'timeout 35s' : err?.message || 'connessione'}), transizione a fallback.`);
+    console.info(`[OpenRouter] ${modelDesc} temporaneamente non disponibile (${isAbort ? 'timeout 5s' : err?.message || 'connessione'}), transizione a fallback.`);
     return null;
   }
 }
