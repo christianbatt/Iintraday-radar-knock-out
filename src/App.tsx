@@ -1501,7 +1501,7 @@ export default function App() {
     setOptimizationNotification(`Parametri ${mLabel} aggiornati alla Versione V${newParams.version}! Nuovi calcoli attivi.`);
     setTimeout(() => setOptimizationNotification(null), 6000);
 
-    // Sync accepted parameters & proposal to Cloud
+    // Sync accepted parameters & proposal to Cloud and Multi-Device Gateway
     if (currentUser) {
       syncSystemSettingsToCloud(currentUser.uid, {
         parameters: newParams,
@@ -1510,6 +1510,7 @@ export default function App() {
         isPaperMode,
       });
     }
+    pushSharedAppState({ parameters: newParams, pendingProposal: acceptedProposal });
 
     // Refresh setups immediately
     if (quotes.length > 0) {
@@ -1640,6 +1641,7 @@ export default function App() {
         isPaperMode,
       });
     }
+    pushSharedAppState({ parameters: updated });
 
     // 3. Immediately re-evaluate setups, candidates and audit with newly applied filters
     const activeFut = futures;
@@ -1729,6 +1731,7 @@ export default function App() {
         isPaperMode,
       });
     }
+    pushSharedAppState({ parameters: updated });
 
     // 3. Immediately re-evaluate setups, candidates and audit with newly applied filters
     const activeFut = futures;

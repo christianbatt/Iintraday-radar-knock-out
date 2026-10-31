@@ -143,3 +143,52 @@ export async function triggerAISpecialization(
   }
 }
 
+export interface DeskPostMortemReport {
+  executiveSummary: string;
+  strengths: string[];
+  failurePatterns: string[];
+  tacticalAdvice: string;
+  generatedAt: string;
+}
+
+export async function fetchDeskPostMortem(
+  trades: any[],
+  market: 'EU' | 'US' | 'GLOBAL'
+): Promise<{
+  success: boolean;
+  market: string;
+  postMortem: DeskPostMortemReport;
+  newDirectivesAdded: number;
+  totalRules: number;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/ai/desk-post-mortem', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trades, market }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Errore durante la generazione del post-mortem');
+    }
+    return res.json();
+  } catch (err: any) {
+    return {
+      success: false,
+      market,
+      postMortem: {
+        executiveSummary: '',
+        strengths: [],
+        failurePatterns: [],
+        tacticalAdvice: '',
+        generatedAt: '',
+      },
+      newDirectivesAdded: 0,
+      totalRules: 0,
+      error: err?.message || 'Errore di connessione',
+    };
+  }
+}
+
+

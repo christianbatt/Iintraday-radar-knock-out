@@ -20,7 +20,11 @@ import {
   RefreshCw,
   Info,
   Globe2,
+  Brain,
+  Lightbulb,
+  FileText,
 } from 'lucide-react';
+import { fetchDeskPostMortem, DeskPostMortemReport } from '../services/api';
 
 interface SystemOptimizerModalProps {
   isOpen: boolean;
@@ -48,11 +52,37 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
   if (!isOpen) return null;
 
   const [activeTab, setActiveTab] = useState<'EU' | 'US'>('EU');
+  const [postMortemReport, setPostMortemReport] = useState<DeskPostMortemReport | null>(null);
+  const [isLoadingPostMortem, setIsLoadingPostMortem] = useState<boolean>(false);
+  const [postMortemDirectivesAdded, setPostMortemDirectivesAdded] = useState<number>(0);
+  const [postMortemError, setPostMortemError] = useState<string | null>(null);
 
   const euTrades = trades.filter((t) => t.market === 'EU');
   const usTrades = trades.filter((t) => t.market === 'US');
   const activeSessionTrades = activeTab === 'EU' ? euTrades : usTrades;
   const activeSessionTradesCount = activeSessionTrades.length;
+
+  const handleGeneratePostMortem = async () => {
+    if (activeSessionTradesCount === 0) {
+      setPostMortemError(`Nessun trade registrato a diario per la sessione ${marketName}. Registra almeno un trade per redigere il post-mortem.`);
+      return;
+    }
+    setIsLoadingPostMortem(true);
+    setPostMortemError(null);
+    try {
+      const res = await fetchDeskPostMortem(activeSessionTrades, activeTab);
+      if (res.success && res.postMortem) {
+        setPostMortemReport(res.postMortem);
+        setPostMortemDirectivesAdded(res.newDirectivesAdded);
+      } else {
+        setPostMortemError(res.error || 'Impossibile generare il report');
+      }
+    } catch (e: any) {
+      setPostMortemError(`Errore di connessione: ${e.message}`);
+    } finally {
+      setIsLoadingPostMortem(false);
+    }
+  };
 
   const currentProposal: OptimizationProposal | null = dualProposals
     ? (activeTab === 'EU' ? dualProposals.eu : dualProposals.us)
@@ -545,6 +575,106 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
                 </span>
               </div>
             </div>
+          </div>
+
+          {/* AI Desk Post-Mortem & Qualitative Specialization */}
+          <div className="border border-purple-900/50 rounded-xl bg-purple-950/20 p-4 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Brain className="w-4 h-4 text-purple-400" />
+                <h5 className="font-bold text-xs uppercase tracking-wider text-purple-200 font-mono">
+                  Relazione Post-Mortem del Desk (Sintesi AI & Specializzazione Continua)
+                </h5>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-900/60 text-purple-300 font-mono">
+                  {marketFlag} {marketName}
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleGeneratePostMortem}
+                disabled={isLoadingPostMortem || activeSessionTradesCount === 0}
+                className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-purple-900/40 cursor-pointer transition-all disabled:opacity-50 shrink-0"
+              >
+                <Sparkles className={`w-3.5 h-3.5 ${isLoadingPostMortem ? 'animate-spin' : ''}`} />
+                <span>{isLoadingPostMortem ? 'Redazione in corso...' : 'Genera Post-Mortem del Desk'}</span>
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
+              L'AI (OpenRouter / DeepSeek / Gemini) esamina il diario di trading delle ultime sessioni per redigere una retrospettiva qualitativa. Le lezioni apprese vengono convertite automaticamente in direttive vincolanti per le future valutazioni dei catalizzatori.
+            </p>
+
+            {postMortemError && (
+              <div className="p-3 rounded-lg bg-rose-950/50 border border-rose-800 text-rose-300 text-xs font-sans">
+                {postMortemError}
+              </div>
+            )}
+
+            {postMortemReport && (
+              <div className="space-y-3 pt-2 text-xs animate-in fade-in">
+                {/* Executive Summary */}
+                <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-purple-300 block font-mono">
+                    Sintesi Esecutiva del Risk Officer
+                  </span>
+                  <p className="text-slate-200 font-sans leading-relaxed">
+                    {postMortemReport.executiveSummary}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* Strengths */}
+                  <div className="p-3 rounded-xl bg-emerald-950/30 border border-emerald-800/40 space-y-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 block font-mono flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Punti di Forza dell'Esecuzione</span>
+                    </span>
+                    <ul className="space-y-1 text-[11px] text-slate-300 font-sans list-disc list-inside">
+                      {postMortemReport.strengths.map((s, i) => (
+                        <li key={i}>{s}</li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {/* Failure Patterns */}
+                  <div className="p-3 rounded-xl bg-rose-950/30 border border-rose-800/40 space-y-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-rose-400 block font-mono flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      <span>Pattern di Errore & Falsi Breakout</span>
+                    </span>
+                    <ul className="space-y-1 text-[11px] text-slate-300 font-sans list-disc list-inside">
+                      {postMortemReport.failurePatterns.map((f, i) => (
+                        <li key={i}>{f}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+
+                {/* Tactical Advice */}
+                <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-800/40 flex items-start gap-2.5">
+                  <Lightbulb className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-300 block font-mono">
+                      Raccomandazione Tattica per la Prossima Sessione:
+                    </span>
+                    <p className="text-[11px] text-slate-200 font-sans mt-0.5 leading-relaxed">
+                      {postMortemReport.tacticalAdvice}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Directives Saved Feedback */}
+                {postMortemDirectivesAdded > 0 && (
+                  <div className="p-2.5 rounded-lg bg-purple-950/80 border border-purple-700 text-purple-200 text-[11px] flex items-center gap-2 font-mono">
+                    <CheckCircle2 className="w-4 h-4 text-purple-300 shrink-0" />
+                    <span>
+                      {postMortemDirectivesAdded} nuove direttive qualitative salvate nella Memoria Continua! Ora attive per filtrare trappole o convalidare catalizzatori.
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
