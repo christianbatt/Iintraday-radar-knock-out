@@ -1,6 +1,6 @@
 {
-  "summary":  "Piano d'intervento per la separazione analitica e l'ottimizzazione mirata delle sessioni Europa (EU) e USA (US) nel motore di automiglioramento sistemico e nel diario di trading. Include architettura dati, soglie minime di attivazione (>= 5 trade completati per mercato), navigazione a schede separate nel modal e diagramma di flusso.",
-  "updatedAt":  "2026-10-26T23:07:50.457391915Z",
+  "summary":  "Aggiornamento del piano di implementazione con la risoluzione completa del problema di scorrimento e reattività mobile (touch scrolling, overscroll, shrink-0, min-h-0) per tutti i modali di Autoanalisi, Audit del Filtraggio e Ottimizzatore Sistemico.",
+  "updatedAt":  "2026-10-31T01:26:49.125164804Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

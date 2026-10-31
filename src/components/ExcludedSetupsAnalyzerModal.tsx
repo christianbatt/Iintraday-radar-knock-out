@@ -128,39 +128,39 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-5xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden text-slate-100 font-mono">
+    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md overflow-y-auto overscroll-contain animate-in fade-in duration-200">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-5xl w-full h-[95dvh] sm:h-auto sm:max-h-[92vh] flex flex-col shadow-2xl overflow-hidden text-slate-100 font-mono my-auto min-h-0">
         
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400">
-              <Sparkles className="w-5 h-5 animate-pulse" />
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-800 bg-slate-950 shrink-0">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0">
+              <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 animate-pulse" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-white uppercase tracking-wider">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-wider">
                   Autoanalisi Setup Esclusi & Counterfactual Tracking
                 </h3>
                 <span className="text-[10px] px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800 font-bold">
                   {analysis.totalTracked} Monitorati
                 </span>
               </div>
-              <p className="text-xs text-slate-400 font-sans mt-0.5">
+              <p className="text-[11px] sm:text-xs text-slate-400 font-sans mt-0.5 line-clamp-2 sm:line-clamp-none">
                 Verifica se i titoli esclusi dai filtri sono poi andati a profitto e calibra i parametri per la prossima sessione
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Global KPI Summary Banner */}
-        <div className="p-5 border-b border-slate-800 bg-slate-950/70 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+        <div className="p-3 sm:p-5 border-b border-slate-800 bg-slate-950/70 grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 text-xs shrink-0">
           <div className="bg-slate-900/90 p-3 rounded-xl border border-slate-800">
             <span className="text-slate-400 block text-[10px] uppercase">Esclusi a Profitto 🎯</span>
             <div className="flex items-baseline gap-2 mt-0.5">
@@ -217,7 +217,7 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
 
         {/* Urgent Corrections Notification & One-Click Apply */}
         {analysis.urgentCorrections.length > 0 && (
-          <div className="mx-6 mt-4 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200">
+          <div className="shrink-0 mx-3 sm:mx-6 mt-3 sm:mt-4 p-3 sm:p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <div className="flex items-start gap-2.5">
                 <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
@@ -236,7 +236,7 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
                   onApplyAllUrgentCorrections();
                   onClose();
                 }}
-                className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-amber-500/20 shrink-0 cursor-pointer transition-all"
+                className="w-full sm:w-auto justify-center px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-amber-500/20 shrink-0 cursor-pointer transition-all"
               >
                 <Sliders className="w-3.5 h-3.5" />
                 <span>Applica Tutte le Correzioni</span>
@@ -246,41 +246,41 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
         )}
 
         {/* Tab Selector */}
-        <div className="flex items-center justify-between px-6 pt-4 pb-2 border-b border-slate-800">
-          <div className="flex items-center gap-2">
+        <div className="shrink-0 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 px-3 sm:px-6 pt-3 sm:pt-4 pb-2 border-b border-slate-800">
+          <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto max-w-full pb-1 sm:pb-0">
             <button
               type="button"
               onClick={() => setActiveTab('CATEGORIES')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+              className={`shrink-0 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                 activeTab === 'CATEGORIES'
                   ? 'bg-purple-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-white hover:bg-slate-800'
               }`}
             >
-              Matrice di Efficacia per Categoria ({analysis.categories.length})
+              Matrice per Categoria ({analysis.categories.length})
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('CANDIDATES')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+              className={`shrink-0 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                 activeTab === 'CANDIDATES'
                   ? 'bg-purple-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-white hover:bg-slate-800'
               }`}
             >
-              Registro Setup Esclusi ({records.length})
+              Registro Setup ({records.length})
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('AI_SPECIALIZATION')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
+              className={`shrink-0 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
                 activeTab === 'AI_SPECIALIZATION'
                   ? 'bg-purple-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-white hover:bg-slate-800'
               }`}
             >
               <Brain className="w-3.5 h-3.5 text-purple-300" />
-              <span>Specializzazione AI Continua ({aiMemory.length})</span>
+              <span>Specializzazione AI ({aiMemory.length})</span>
             </button>
           </div>
 
@@ -288,7 +288,7 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
             <button
               type="button"
               onClick={onClearRecords}
-              className="text-[11px] text-slate-400 hover:text-rose-400 flex items-center gap-1 cursor-pointer transition-colors"
+              className="text-[11px] text-slate-400 hover:text-rose-400 flex items-center gap-1 cursor-pointer transition-colors ml-auto sm:ml-0"
               title="Azzera storico esclusioni"
             >
               <Trash2 className="w-3 h-3" />
@@ -298,7 +298,7 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
         </div>
 
         {/* Content Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-6 space-y-4 overscroll-contain touch-pan-y">
           
           {/* TAB 1: Matrice per Categoria di Esclusione */}
           {activeTab === 'CATEGORIES' && (
@@ -494,8 +494,8 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
               </div>
 
               {/* Records Table */}
-              <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950">
-                <table className="w-full text-left text-xs">
+              <div className="border border-slate-800 rounded-xl overflow-x-auto bg-slate-950">
+                <table className="w-full min-w-[700px] text-left text-xs">
                   <thead className="bg-slate-900/90 text-slate-400 uppercase text-[10px] border-b border-slate-800">
                     <tr>
                       <th className="p-3">Ticker & Mercato</th>
@@ -760,10 +760,10 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-slate-800 bg-slate-950 text-xs">
-          <div className="flex items-center gap-2 text-slate-400">
-            <HelpCircle className="w-4 h-4 text-slate-500" />
-            <span>
+        <div className="shrink-0 flex flex-col sm:flex-row items-center justify-between gap-3 px-3 sm:px-6 py-3 sm:py-4 border-t border-slate-800 bg-slate-950 text-xs">
+          <div className="flex items-center gap-2 text-slate-400 text-center sm:text-left">
+            <HelpCircle className="w-4 h-4 text-slate-500 shrink-0" />
+            <span className="text-[11px]">
               L'autoanalisi converte i falsi negativi in apprendimento continuo, allentando i filtri solo quando i dati reali confermano profitti persi.
             </span>
           </div>
@@ -771,7 +771,7 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold cursor-pointer transition-colors"
+            className="w-full sm:w-auto justify-center px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold cursor-pointer transition-colors"
           >
             Chiudi
           </button>

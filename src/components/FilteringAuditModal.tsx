@@ -48,67 +48,67 @@ export const FilteringAuditModal: React.FC<FilteringAuditModalProps> = ({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden text-slate-100 font-mono">
+    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md overflow-y-auto overscroll-contain">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-4xl w-full h-[94dvh] sm:h-auto sm:max-h-[90vh] flex flex-col shadow-2xl overflow-hidden text-slate-100 font-mono my-auto min-h-0">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-              <Filter className="w-5 h-5" />
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-800 bg-slate-950 shrink-0">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+              <Filter className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-white uppercase tracking-wider">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-wider">
                   Visual Audit del Filtraggio • Analisi Rigore
                 </h3>
                 <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
                   {report.totalScanned} Sottostanti
                 </span>
               </div>
-              <p className="text-xs text-slate-400 font-sans mt-0.5">
+              <p className="text-[11px] sm:text-xs text-slate-400 font-sans mt-0.5 line-clamp-2 sm:line-clamp-none">
                 Trasparenza al 100%: visualizza esattamente quanti titoli sono stati esclusi e quale regola di preservazione del capitale li ha scartati
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Breakdown Stats Grid */}
-        <div className="p-5 border-b border-slate-800 bg-slate-950/60 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-          <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+        <div className="p-3 sm:p-5 border-b border-slate-800 bg-slate-950/60 grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 text-xs shrink-0">
+          <div className="bg-slate-900/80 p-2.5 sm:p-3 rounded-xl border border-slate-800">
             <span className="text-slate-400 block text-[10px] uppercase">Titoli Scansionati</span>
-            <span className="text-lg font-bold text-white">{report.totalScanned}</span>
+            <span className="text-base sm:text-lg font-bold text-white">{report.totalScanned}</span>
             <span className="text-[10px] text-slate-500 block mt-0.5">Paniere attivo</span>
           </div>
 
-          <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+          <div className="bg-slate-900/80 p-2.5 sm:p-3 rounded-xl border border-slate-800">
             <span className="text-slate-400 block text-[10px] uppercase">Idonei a Setup</span>
-            <span className="text-lg font-bold text-emerald-400">{report.qualifiedCount}</span>
-            <span className="text-[10px] text-emerald-500/80 block mt-0.5">Hanno passato tutti i filtri</span>
+            <span className="text-base sm:text-lg font-bold text-emerald-400">{report.qualifiedCount}</span>
+            <span className="text-[10px] text-emerald-500/80 block mt-0.5">Passati filtri</span>
           </div>
 
-          <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+          <div className="bg-slate-900/80 p-2.5 sm:p-3 rounded-xl border border-slate-800">
             <span className="text-slate-400 block text-[10px] uppercase">Scartati / Esclusi</span>
-            <span className="text-lg font-bold text-rose-400">{report.excludedCount}</span>
-            <span className="text-[10px] text-rose-500/80 block mt-0.5">Protezione del capitale</span>
+            <span className="text-base sm:text-lg font-bold text-rose-400">{report.excludedCount}</span>
+            <span className="text-[10px] text-rose-500/80 block mt-0.5">Capitale protetto</span>
           </div>
 
-          <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
-            <span className="text-slate-400 block text-[10px] uppercase">Tasso di Selettività</span>
-            <span className="text-lg font-bold text-amber-400">
+          <div className="bg-slate-900/80 p-2.5 sm:p-3 rounded-xl border border-slate-800">
+            <span className="text-slate-400 block text-[10px] uppercase">Selettività</span>
+            <span className="text-base sm:text-lg font-bold text-amber-400">
               {report.totalScanned > 0 ? +((report.excludedCount / report.totalScanned) * 100).toFixed(1) : 0}%
             </span>
-            <span className="text-[10px] text-slate-500 block mt-0.5">Filtri di rigore attivi</span>
+            <span className="text-[10px] text-slate-500 block mt-0.5">Filtri di rigore</span>
           </div>
         </div>
 
         {/* Filter Categories Toolbar */}
-        <div className="px-6 py-3 bg-slate-950/40 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+        <div className="px-3 sm:px-6 py-2.5 sm:py-3 bg-slate-950/40 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 shrink-0">
           <div className="flex flex-wrap items-center gap-1.5 text-xs">
             <button
               onClick={() => setFilterCategory('ALL')}
@@ -195,7 +195,7 @@ export const FilteringAuditModal: React.FC<FilteringAuditModalProps> = ({
         </div>
 
         {/* Scrollable List of Excluded Candidates */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-3">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-6 space-y-3 overscroll-contain touch-pan-y">
           {filteredList.length === 0 ? (
             <div className="text-center py-12 text-slate-500 text-xs">
               Nessun titolo corrisponde ai criteri di filtro selezionati.
@@ -204,7 +204,7 @@ export const FilteringAuditModal: React.FC<FilteringAuditModalProps> = ({
             filteredList.map((item) => (
               <div
                 key={item.ticker}
-                className="p-3.5 rounded-xl bg-slate-950 border border-slate-800/80 hover:border-slate-700 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                className="p-3 sm:p-3.5 rounded-xl bg-slate-950 border border-slate-800/80 hover:border-slate-700 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -255,7 +255,7 @@ export const FilteringAuditModal: React.FC<FilteringAuditModalProps> = ({
         </div>
 
         {/* Footer with Optimizer CTA */}
-        <div className="p-4 border-t border-slate-800 bg-slate-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+        <div className="p-3 sm:p-4 border-t border-slate-800 bg-slate-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 text-xs shrink-0">
           <div className="flex items-center gap-2 text-slate-400 text-[11px] font-sans">
             <Info className="w-4 h-4 text-sky-400 shrink-0" />
             <span>

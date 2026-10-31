@@ -95,25 +95,25 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
   const isInsufficient = activeSessionTradesCount < 5;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
-      <div className="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2 sm:p-5 bg-slate-950/80 backdrop-blur-md overflow-y-auto overscroll-contain">
+      <div className="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden my-auto h-[95dvh] sm:h-auto sm:max-h-[92vh] min-h-0 flex flex-col">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-800 bg-slate-950 flex items-center justify-between gap-3 shrink-0">
+        <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-800 bg-slate-950 flex items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
               <Sparkles className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-white uppercase tracking-wider font-mono">
-                  Motore di Automiglioramento Sistemico
+                <h2 className="text-sm sm:text-base font-bold text-white uppercase tracking-wider font-mono">
+                  Motore di Automiglioramento
                 </h2>
                 <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 font-mono font-bold">
-                  Versione V{currentParameters.version}
+                  V{currentParameters.version}
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
-                Audit quantitativo separato per mercato (EU vs USA) • Diagnosi e ricalibrazione basata su trade reali
+              <p className="text-[11px] sm:text-xs text-slate-400">
+                Audit quantitativo separato (EU vs USA) • Ricalibrazione su trade reali
               </p>
             </div>
           </div>
@@ -138,7 +138,7 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
         </div>
 
         {/* Modal Scrollable Body */}
-        <div className="p-6 overflow-y-auto space-y-6 text-xs text-slate-200">
+        <div className="flex-1 min-h-0 p-3 sm:p-6 overflow-y-auto space-y-6 text-xs text-slate-200 overscroll-contain touch-pan-y">
           {/* Market Tab Switcher (Europa vs USA) */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
             <div className="flex items-center gap-2">
@@ -679,15 +679,15 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3.5 border-t border-slate-800 bg-slate-950 flex items-center justify-between gap-3 shrink-0">
-          <div className="text-[11px] text-slate-400 flex items-center gap-1.5 font-sans">
+        <div className="px-4 sm:px-6 py-3 sm:py-3.5 border-t border-slate-800 bg-slate-950 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+          <div className="text-[11px] text-slate-400 flex items-center gap-1.5 font-sans text-center sm:text-left">
             <Info className="w-3.5 h-3.5 text-slate-500 shrink-0" />
             <span>I parametri vengono aggiornati solo su tua esplicita conferma e salvati nel browser.</span>
           </div>
 
           <button
             onClick={onClose}
-            className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors"
+            className="w-full sm:w-auto justify-center px-4 py-2 sm:py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors cursor-pointer"
           >
             Chiudi
           </button>
