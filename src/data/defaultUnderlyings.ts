@@ -19,6 +19,9 @@ export const DEFAULT_TRADE_REPUBLIC_UNDERLYINGS: UnderlyingItem[] = [
   { ticker: 'MBG.DE', nome: 'Mercedes-Benz Group AG', mercato: 'EU', valuta: 'EUR' },
   { ticker: 'TTE.PA', nome: 'TotalEnergies SE', mercato: 'EU', valuta: 'EUR' },
   { ticker: 'ALV.DE', nome: 'Allianz SE', mercato: 'EU', valuta: 'EUR' },
+  { ticker: 'NOV.DE', nome: 'Novo Nordisk A/S', mercato: 'EU', valuta: 'EUR' },
+  { ticker: 'BAMI.MI', nome: 'Banco BPM S.p.A.', mercato: 'EU', valuta: 'EUR' },
+  { ticker: 'BAYN.DE', nome: 'Bayer AG', mercato: 'EU', valuta: 'EUR' },
 
   // USA (Nasdaq, NYSE) - Sottostanti tipici Knock-Out Trade Republic
   { ticker: 'NVDA', nome: 'NVIDIA Corporation', mercato: 'US', valuta: 'USD' },
@@ -37,6 +40,10 @@ export const DEFAULT_TRADE_REPUBLIC_UNDERLYINGS: UnderlyingItem[] = [
   { ticker: 'PLTR', nome: 'Palantir Technologies', mercato: 'US', valuta: 'USD' },
   { ticker: 'COIN', nome: 'Coinbase Global Inc.', mercato: 'US', valuta: 'USD' },
   { ticker: 'SPCX', nome: 'SpaceX (Space Exploration Tech)', mercato: 'US', valuta: 'USD' },
+  { ticker: 'AVGO', nome: 'Broadcom Inc.', mercato: 'US', valuta: 'USD' },
+  { ticker: 'SMCI', nome: 'Super Micro Computer Inc.', mercato: 'US', valuta: 'USD' },
+  { ticker: 'HOOD', nome: 'Robinhood Markets Inc.', mercato: 'US', valuta: 'USD' },
+  { ticker: 'NFLX', nome: 'Netflix Inc.', mercato: 'US', valuta: 'USD' },
 ];
 
 export function parseUnderlyingsCsv(csvText: string): { items: UnderlyingItem[]; errors: string[] } {
