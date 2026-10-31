@@ -75,6 +75,34 @@ import { FilteringAuditBanner } from './components/FilteringAuditBanner';
 import { FilteringAuditModal } from './components/FilteringAuditModal';
 import { ExcludedSetupsAnalyzerModal } from './components/ExcludedSetupsAnalyzerModal';
 
+function migrateUnderlyings(items: UnderlyingItem[]): UnderlyingItem[] {
+  const seen = new Set<string>();
+  const res: UnderlyingItem[] = [];
+  for (const item of items) {
+    let t = item.ticker;
+    let n = item.nome;
+    let m = item.mercato;
+    let v = item.valuta;
+    if (t === 'LEO.MI' || t === 'LEO' || t === 'LDO') {
+      t = 'LDO.MI';
+      n = 'Leonardo S.p.A.';
+      m = 'EU';
+      v = 'EUR';
+    }
+    if (t === 'SPACEX') {
+      t = 'SPCX';
+      n = 'SpaceX (Space Exploration Tech)';
+      m = 'US';
+      v = 'USD';
+    }
+    if (!seen.has(t)) {
+      seen.add(t);
+      res.push({ ticker: t, nome: n, mercato: m, valuta: v });
+    }
+  }
+  return res;
+}
+
 export default function App() {
   // 1. Underlyings State (strictly Trade Republic KO list)
   const [underlyings, setUnderlyings] = useState<UnderlyingItem[]>(() => {
@@ -83,14 +111,15 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const existingTickers = new Set(parsed.map((p: UnderlyingItem) => p.ticker));
+          const migrated = migrateUnderlyings(parsed);
+          const existingTickers = new Set(migrated.map((p: UnderlyingItem) => p.ticker));
           const missingDefaults = DEFAULT_TRADE_REPUBLIC_UNDERLYINGS.filter(
             (d) => !existingTickers.has(d.ticker)
           );
           if (missingDefaults.length > 0) {
-            return [...parsed, ...missingDefaults];
+            return [...migrated, ...missingDefaults];
           }
-          return parsed;
+          return migrated;
         }
       }
     } catch {
@@ -442,6 +471,10 @@ export default function App() {
           setDualProposals(s.dualProposals);
         }
 
+        if (Array.isArray(s.underlyings) && s.underlyings.length > 0) {
+          setUnderlyings(migrateUnderlyings(s.underlyings));
+        }
+
         setTimeout(() => {
           if (isMounted) {
             isRemoteSyncingRef.current = false;
@@ -475,6 +508,11 @@ export default function App() {
 
   // Real-time Cloud Sync with Firebase across PC, Mobile, and Tablet
   useEffect(() => {
+    if (!auth) {
+      setCloudSyncStatus('LOCAL_ONLY');
+      return;
+    }
+
     let unsubData: (() => void) | null = null;
 
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
@@ -502,7 +540,7 @@ export default function App() {
               setIsPaperMode(cloudSettings.isPaperMode);
             }
             if (cloudSettings.underlyings && cloudSettings.underlyings.length > 0) {
-              setUnderlyings(cloudSettings.underlyings);
+              setUnderlyings(migrateUnderlyings(cloudSettings.underlyings));
             }
             setCloudSyncStatus('SYNCED');
           },

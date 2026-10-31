@@ -5,8 +5,8 @@ import {
   signInWithPopup,
   signInAnonymously,
   signOut,
-  onAuthStateChanged,
   User,
+  Auth,
 } from 'firebase/auth';
 import {
   initializeFirestore,
@@ -18,6 +18,7 @@ import {
   deleteDoc,
   writeBatch,
   getDocs,
+  Firestore,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import {
@@ -28,41 +29,59 @@ import {
 } from '../types/radar';
 
 // Safe Firebase Config resolution (priority: VITE_ environment variables > config file)
-const resolvedFirebaseConfig = {
-  ...firebaseConfig,
-  apiKey:
-    import.meta.env.VITE_FIREBASE_API_KEY ||
-    (firebaseConfig.apiKey && firebaseConfig.apiKey !== 'YOUR_FIREBASE_API_KEY'
-      ? firebaseConfig.apiKey
-      : ''),
-};
+const rawConfig = (firebaseConfig || {}) as Record<string, any>;
+const apiKey =
+  import.meta.env.VITE_FIREBASE_API_KEY ||
+  (rawConfig.apiKey && rawConfig.apiKey !== 'YOUR_FIREBASE_API_KEY'
+    ? rawConfig.apiKey
+    : '');
+const projectId =
+  import.meta.env.VITE_FIREBASE_PROJECT_ID ||
+  (rawConfig.projectId && rawConfig.projectId !== 'YOUR_FIREBASE_PROJECT_ID'
+    ? rawConfig.projectId
+    : '');
 
-// Initialize Firebase App safely
-const app = getApps().length > 0 ? getApp() : initializeApp(resolvedFirebaseConfig);
+export const isFirebaseConfigured = Boolean(apiKey && projectId);
 
-// Initialize Auth
-export const auth = getAuth(app);
+let appInstance: any = null;
+let authInstance: Auth | null = null;
+let firestoreInstance: Firestore | null = null;
 
-// Initialize Firestore with robust long-polling auto-detection for cloud iframes & web sandboxes
-const databaseId =
-  resolvedFirebaseConfig.firestoreDatabaseId && resolvedFirebaseConfig.firestoreDatabaseId !== '(default)'
-    ? resolvedFirebaseConfig.firestoreDatabaseId
-    : '(default)';
+if (isFirebaseConfigured) {
+  try {
+    const resolvedFirebaseConfig: Record<string, any> = {
+      ...rawConfig,
+      apiKey,
+      projectId,
+    };
+    appInstance = getApps().length > 0 ? getApp() : initializeApp(resolvedFirebaseConfig as any);
+    authInstance = getAuth(appInstance);
 
-let firestoreInstance;
-try {
-  firestoreInstance = initializeFirestore(
-    app,
-    {
-      experimentalAutoDetectLongPolling: true,
-    },
-    databaseId
-  );
-} catch {
-  firestoreInstance = getFirestore(app, databaseId);
+    const databaseId =
+      resolvedFirebaseConfig.firestoreDatabaseId && resolvedFirebaseConfig.firestoreDatabaseId !== '(default)'
+        ? resolvedFirebaseConfig.firestoreDatabaseId
+        : '(default)';
+
+    try {
+      firestoreInstance = initializeFirestore(
+        appInstance,
+        {
+          experimentalAutoDetectLongPolling: true,
+        },
+        databaseId
+      );
+    } catch {
+      firestoreInstance = getFirestore(appInstance, databaseId);
+    }
+  } catch (err) {
+    console.warn('[Firebase] Inizializzazione saltata o non riuscita:', err);
+    authInstance = null;
+    firestoreInstance = null;
+  }
 }
 
-export const db = firestoreInstance;
+export const auth: Auth | null = authInstance;
+export const db: Firestore | null = firestoreInstance;
 
 const googleProvider = new GoogleAuthProvider();
 
@@ -79,6 +98,9 @@ export interface CloudSystemSettings {
  * Sign in using Google popup (for cross-device synchronization on PC, Mobile, Tablet)
  */
 export async function signInWithGoogle(): Promise<User> {
+  if (!auth) {
+    throw new Error('Firebase non è ancora configurato con chiavi attive. Il sistema usa la sincronizzazione universale integrata.');
+  }
   const result = await signInWithPopup(auth, googleProvider);
   return result.user;
 }
@@ -87,6 +109,9 @@ export async function signInWithGoogle(): Promise<User> {
  * Sign in anonymously if user does not want to log in immediately
  */
 export async function signInGuest(): Promise<User> {
+  if (!auth) {
+    throw new Error('Firebase non è configurato.');
+  }
   const result = await signInAnonymously(auth);
   return result.user;
 }
@@ -95,6 +120,7 @@ export async function signInGuest(): Promise<User> {
  * Sign out
  */
 export async function logoutUser(): Promise<void> {
+  if (!auth) return;
   await signOut(auth);
 }
 
@@ -111,6 +137,7 @@ export async function syncSystemSettingsToCloud(
     underlyings?: UnderlyingItem[];
   }
 ): Promise<void> {
+  if (!db) return;
   try {
     const ref = doc(db, 'users', userId, 'settings', 'system');
     await setDoc(
@@ -138,6 +165,7 @@ export async function syncTradeToCloud(
   userId: string,
   trade: TradeJournalEntry
 ): Promise<void> {
+  if (!db) return;
   try {
     const ref = doc(db, 'users', userId, 'trades', trade.id);
     await setDoc(
@@ -161,6 +189,7 @@ export async function deleteTradeFromCloud(
   userId: string,
   tradeId: string
 ): Promise<void> {
+  if (!db) return;
   try {
     const ref = doc(db, 'users', userId, 'trades', tradeId);
     await deleteDoc(ref);
@@ -173,6 +202,7 @@ export async function deleteTradeFromCloud(
  * Clear all user trades from Firestore
  */
 export async function clearAllTradesFromCloud(userId: string): Promise<void> {
+  if (!db) return;
   try {
     const tradesRef = collection(db, 'users', userId, 'trades');
     const snapshot = await getDocs(tradesRef);
@@ -191,7 +221,7 @@ export async function batchUploadTradesToCloud(
   userId: string,
   trades: TradeJournalEntry[]
 ): Promise<void> {
-  if (trades.length === 0) return;
+  if (!db || trades.length === 0) return;
   try {
     const batch = writeBatch(db);
     trades.forEach((trade) => {
@@ -220,6 +250,10 @@ export function subscribeToUserCloudData(
   onSettings: (data: CloudSystemSettings) => void,
   onTrades: (trades: TradeJournalEntry[]) => void
 ): () => void {
+  if (!db) {
+    return () => {};
+  }
+
   // 1. Settings listener
   const settingsRef = doc(db, 'users', userId, 'settings', 'system');
   const unsubSettings = onSnapshot(

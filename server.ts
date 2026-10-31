@@ -699,8 +699,11 @@ async function fetchQuoteForTicker(
     }
   }
 
-  const isSpaceX = ticker.toUpperCase() === 'SPACEX';
-  const queryTicker = isSpaceX ? 'DXYZ' : ticker;
+  const upper = ticker.toUpperCase();
+  const isSpaceX = upper === 'SPACEX' || upper === 'SPCX';
+  let queryTicker = upper;
+  if (upper === 'SPACEX') queryTicker = 'SPCX';
+  if (upper === 'LEO.MI' || upper === 'LEO' || upper === 'LDO') queryTicker = 'LDO.MI';
 
   // Launch 5m intraday metrics fetch (RSI 5m + RVOL 20m + ORB) in parallel for zero added latency
   const intraday5mPromise = getIntraday5mMetrics(queryTicker, market);
@@ -1128,9 +1131,12 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
   const cached = cache.get<NewsItem[]>(cacheKey);
   if (cached) return cached.data;
 
-  const isSpaceX = ticker.toUpperCase() === 'SPACEX';
-  const queryTicker = isSpaceX ? 'DXYZ' : ticker;
-  const searchName = isSpaceX ? 'SpaceX' : name;
+  const upper = ticker.toUpperCase();
+  const isSpaceX = upper === 'SPACEX' || upper === 'SPCX';
+  let queryTicker = upper;
+  if (upper === 'SPACEX') queryTicker = 'SPCX';
+  if (upper === 'LEO.MI' || upper === 'LEO' || upper === 'LDO') queryTicker = 'LDO.MI';
+  const searchName = isSpaceX ? 'SpaceX Space Exploration' : (queryTicker === 'LDO.MI' ? 'Leonardo' : name);
 
   const newsList: NewsItem[] = [];
 
