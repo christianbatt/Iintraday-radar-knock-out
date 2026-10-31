@@ -40,6 +40,8 @@ import {
   fetchTickerNews,
   analyzeCatalystWithGemini,
   clearServerCache,
+  fetchSharedAppState,
+  pushSharedAppState,
 } from './services/api';
 import {
   auth,
@@ -151,18 +153,27 @@ export default function App() {
     };
   });
 
+  const isRemoteSyncingRef = React.useRef(false);
+  const sharedStateVersionRef = React.useRef(0);
+
   const freezeStateEURef = React.useRef(freezeStateEU);
   const freezeStateUSRef = React.useRef(freezeStateUS);
   useEffect(() => {
     freezeStateEURef.current = freezeStateEU;
     const today = new Date().toISOString().slice(0, 10);
     localStorage.setItem(`intraday_radar_freeze_EU_${today}`, JSON.stringify(freezeStateEU));
+    if (!isRemoteSyncingRef.current) {
+      pushSharedAppState({ freezeStateEU });
+    }
   }, [freezeStateEU]);
 
   useEffect(() => {
     freezeStateUSRef.current = freezeStateUS;
     const today = new Date().toISOString().slice(0, 10);
     localStorage.setItem(`intraday_radar_freeze_US_${today}`, JSON.stringify(freezeStateUS));
+    if (!isRemoteSyncingRef.current) {
+      pushSharedAppState({ freezeStateUS });
+    }
   }, [freezeStateUS]);
 
   const getActiveEntryMode = useCallback((market: 'EU' | 'US'): EntryMode => {
@@ -300,9 +311,15 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'LOCAL_ONLY' | 'SYNCED' | 'SYNCING'>('LOCAL_ONLY');
 
-  // Sync parameters & proposal to localStorage
+  const parametersRef = React.useRef(parameters);
+
+  // Sync parameters & proposal to localStorage & Shared Server
   useEffect(() => {
+    parametersRef.current = parameters;
     localStorage.setItem('intraday_radar_parameters', JSON.stringify(parameters));
+    if (!isRemoteSyncingRef.current) {
+      pushSharedAppState({ parameters });
+    }
   }, [parameters]);
 
   useEffect(() => {
@@ -311,7 +328,128 @@ export default function App() {
     } else {
       localStorage.removeItem('intraday_radar_pending_proposal');
     }
+    if (!isRemoteSyncingRef.current) {
+      pushSharedAppState({ pendingProposal });
+    }
   }, [pendingProposal]);
+
+  useEffect(() => {
+    localStorage.setItem('intraday_radar_journal_trades', JSON.stringify(journalEntries));
+    if (!isRemoteSyncingRef.current) {
+      pushSharedAppState({ journalEntries });
+    }
+  }, [journalEntries]);
+
+  useEffect(() => {
+    localStorage.setItem('intraday_radar_excluded_records', JSON.stringify(excludedRecords));
+    if (!isRemoteSyncingRef.current) {
+      pushSharedAppState({ excludedRecords });
+    }
+  }, [excludedRecords]);
+
+  // 100% Universal Synchronization across all devices (Desktop, Mobile PWA, Dev preview)
+  useEffect(() => {
+    let isMounted = true;
+
+    const performSync = async () => {
+      try {
+        const res = await fetchSharedAppState(sharedStateVersionRef.current);
+        if (!isMounted || !res || !res.hasUpdates || !res.state) return;
+
+        const s = res.state;
+        if (res.version) sharedStateVersionRef.current = res.version;
+
+        isRemoteSyncingRef.current = true;
+
+        // 1. Parametri (se versione remota >= locale, applica subito)
+        if (s.parameters && typeof s.parameters.version === 'number') {
+          const currentVer = parametersRef.current?.version || 0;
+          if (s.parameters.version >= currentVer) {
+            setParameters(s.parameters);
+            parametersRef.current = s.parameters;
+            localStorage.setItem('intraday_radar_parameters', JSON.stringify(s.parameters));
+          }
+        }
+
+        // 2. Setup monitorati e congelati di oggi (EU / US)
+        const today = new Date().toISOString().slice(0, 10);
+        if (s.freezeStateEU && s.freezeStateEU.frozenAt && s.freezeStateEU.frozenAt.startsWith(today)) {
+          setFreezeStateEU(s.freezeStateEU);
+          freezeStateEURef.current = s.freezeStateEU;
+          localStorage.setItem(`intraday_radar_freeze_EU_${today}`, JSON.stringify(s.freezeStateEU));
+        }
+        if (s.freezeStateUS && s.freezeStateUS.frozenAt && s.freezeStateUS.frozenAt.startsWith(today)) {
+          setFreezeStateUS(s.freezeStateUS);
+          freezeStateUSRef.current = s.freezeStateUS;
+          localStorage.setItem(`intraday_radar_freeze_US_${today}`, JSON.stringify(s.freezeStateUS));
+        }
+
+        // 3. Diario di trading
+        if (Array.isArray(s.journalEntries) && s.journalEntries.length > 0) {
+          setJournalEntries((prevLocal) => {
+            const map = new Map<string, TradeJournalEntry>();
+            prevLocal.forEach((t) => map.set(t.id, t));
+            s.journalEntries.forEach((t: TradeJournalEntry) => map.set(t.id, t));
+            const merged = Array.from(map.values());
+            merged.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+            localStorage.setItem('intraday_radar_journal_trades', JSON.stringify(merged));
+            return merged;
+          });
+        }
+
+        // 4. Setup esclusi (Autoanalisi scartati)
+        if (Array.isArray(s.excludedRecords) && s.excludedRecords.length > 0) {
+          setExcludedRecords((prevLocal) => {
+            const map = new Map<string, ExcludedSetupRecord>();
+            prevLocal.forEach((r) => map.set(r.id || `${r.ticker}_${r.timestamp}`, r));
+            s.excludedRecords.forEach((r: ExcludedSetupRecord) => map.set(r.id || `${r.ticker}_${r.timestamp}`, r));
+            const merged = Array.from(map.values()).slice(-500);
+            localStorage.setItem('intraday_radar_excluded_records', JSON.stringify(merged));
+            return merged;
+          });
+        }
+
+        // 5. Account Capital & Paper Mode
+        if (typeof s.accountCapital === 'number') {
+          setAccountCapital(s.accountCapital);
+          localStorage.setItem('intraday_radar_account_capital', JSON.stringify(s.accountCapital));
+        }
+        if (typeof s.isPaperMode === 'boolean') {
+          setIsPaperMode(s.isPaperMode);
+          localStorage.setItem('intraday_radar_paper_mode', JSON.stringify(s.isPaperMode));
+        }
+
+        if (s.pendingProposal !== undefined) {
+          setPendingProposal(s.pendingProposal);
+        }
+        if (s.dualProposals !== undefined) {
+          setDualProposals(s.dualProposals);
+        }
+
+        setTimeout(() => {
+          if (isMounted) isRemoteSyncingRef.current = false;
+        }, 300);
+      } catch (err) {
+        if (isMounted) isRemoteSyncingRef.current = false;
+      }
+    };
+
+    performSync();
+    const pollTimer = setInterval(performSync, 6000);
+
+    const handleFocusOrVis = () => {
+      if (document.visibilityState === 'visible') performSync();
+    };
+    window.addEventListener('visibilitychange', handleFocusOrVis);
+    window.addEventListener('focus', handleFocusOrVis);
+
+    return () => {
+      isMounted = false;
+      clearInterval(pollTimer);
+      window.removeEventListener('visibilitychange', handleFocusOrVis);
+      window.removeEventListener('focus', handleFocusOrVis);
+    };
+  }, []);
 
   // Real-time Cloud Sync with Firebase across PC, Mobile, and Tablet
   useEffect(() => {
@@ -1813,6 +1951,7 @@ export default function App() {
         onApplyAllUrgentCorrections={handleApplyAllUrgentCorrections}
         onClearRecords={handleClearExcludedRecords}
         accountCapital={accountCapital}
+        trades={journalEntries}
       />
       <CsvManagerModal
         isOpen={isCsvModalOpen}

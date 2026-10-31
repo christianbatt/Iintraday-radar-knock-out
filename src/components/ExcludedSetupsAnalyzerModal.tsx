@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Target,
@@ -17,6 +17,10 @@ import {
   ArrowRight,
   HelpCircle,
   Trash2,
+  Brain,
+  Bot,
+  Cpu,
+  Lightbulb,
 } from 'lucide-react';
 import {
   ExcludedSetupRecord,
@@ -25,6 +29,11 @@ import {
   SystemParameters,
   ExclusionCategory,
 } from '../types/radar';
+import {
+  fetchAIMemory,
+  triggerAISpecialization,
+  AILearnedInsight,
+} from '../services/api';
 
 interface ExcludedSetupsAnalyzerModalProps {
   isOpen: boolean;
@@ -36,6 +45,7 @@ interface ExcludedSetupsAnalyzerModalProps {
   onApplyAllUrgentCorrections: () => void;
   onClearRecords: () => void;
   accountCapital: number;
+  trades?: any[];
 }
 
 export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalProps> = ({
@@ -48,11 +58,58 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
   onApplyAllUrgentCorrections,
   onClearRecords,
   accountCapital,
+  trades = [],
 }) => {
-  const [activeTab, setActiveTab] = useState<'CATEGORIES' | 'CANDIDATES'>('CATEGORIES');
+  const [activeTab, setActiveTab] = useState<'CATEGORIES' | 'CANDIDATES' | 'AI_SPECIALIZATION'>('CATEGORIES');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('ALL');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // AI Specialization state
+  const [aiMemory, setAiMemory] = useState<AILearnedInsight[]>([]);
+  const [isLoadingAIMemory, setIsLoadingAIMemory] = useState<boolean>(false);
+  const [isSpecializeRunning, setIsSpecializeRunning] = useState<boolean>(false);
+  const [specializeFeedback, setSpecializeFeedback] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      loadAIMemory();
+    }
+  }, [isOpen]);
+
+  const loadAIMemory = async () => {
+    setIsLoadingAIMemory(true);
+    try {
+      const memory = await fetchAIMemory();
+      setAiMemory(memory);
+    } catch {
+      // ignore
+    } finally {
+      setIsLoadingAIMemory(false);
+    }
+  };
+
+  const handleRunAISpecialization = async () => {
+    setIsSpecializeRunning(true);
+    setSpecializeFeedback(null);
+    try {
+      const res = await triggerAISpecialization(trades, records);
+      if (res.success && res.memory) {
+        setAiMemory(res.memory);
+        setSpecializeFeedback(
+          res.newInsightsCount > 0
+            ? `Specializzazione completata con successo! ${res.newInsightsCount} nuove direttive operative integrate nella memoria continua.`
+            : `Specializzazione eseguita: i parametri e le direttive qualitative correnti sono già ottimali e allineati con i dati storici.`
+        );
+      } else {
+        setSpecializeFeedback(res.message || 'Operazione completata.');
+      }
+    } catch (e: any) {
+      setSpecializeFeedback(`Errore durante la sintesi AI: ${e.message}`);
+    } finally {
+      setIsSpecializeRunning(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -213,6 +270,18 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
             >
               Registro Setup Esclusi ({records.length})
             </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('AI_SPECIALIZATION')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'AI_SPECIALIZATION'
+                  ? 'bg-purple-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Brain className="w-3.5 h-3.5 text-purple-300" />
+              <span>Specializzazione AI Continua ({aiMemory.length})</span>
+            </button>
           </div>
 
           {records.length > 0 && (
@@ -267,6 +336,12 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
 
                         {/* Verdict Badge */}
                         <div className="shrink-0">
+                          {cat.verdict === 'CALIBRATED' && (
+                            <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-cyan-950/80 text-cyan-300 border border-cyan-800 flex items-center gap-1.5">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-cyan-400" />
+                              <span>Filtro Calibrato & A Regime</span>
+                            </span>
+                          )}
                           {cat.verdict === 'TOO_RESTRICTIVE' && (
                             <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-950/80 text-amber-300 border border-amber-800 flex items-center gap-1.5">
                               <AlertTriangle className="w-3.5 h-3.5" />
@@ -328,6 +403,21 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
                           />
                         </div>
                       </div>
+
+                      {/* Calibrated Notice if already optimal */}
+                      {cat.verdict === 'CALIBRATED' && (
+                        <div className="p-3 rounded-lg bg-cyan-950/40 border border-cyan-800/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
+                          <div className="flex items-center gap-2">
+                            <CheckCircle2 className="w-4 h-4 text-cyan-400 shrink-0" />
+                            <span className="text-cyan-200 font-sans">
+                              La correzione per questo filtro è già attiva nei parametri del sistema ({cat.currentParamValue}). Il sistema opera al regime ottimale e manterrà questi parametri finché non emergeranno nuove discrepanze dai dati storici.
+                            </span>
+                          </div>
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-900/60 text-cyan-300 font-mono shrink-0">
+                            Stato: OTTIMIZZATO
+                          </span>
+                        </div>
+                      )}
 
                       {/* Proposal Action Box if TOO_RESTRICTIVE */}
                       {cat.correctionProposal && (
@@ -528,6 +618,135 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
                     )}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: Auto-Specializzazione AI Continua (OpenRouter / DeepSeek / Gemini) */}
+          {activeTab === 'AI_SPECIALIZATION' && (
+            <div className="space-y-4">
+              {/* Architecture & Feedback Loop Info Banner */}
+              <div className="p-4 rounded-xl bg-purple-950/40 border border-purple-800/60 text-xs space-y-2">
+                <div className="flex items-center gap-2">
+                  <Brain className="w-4 h-4 text-purple-400" />
+                  <span className="font-bold text-white uppercase tracking-wider text-xs">
+                    Ciclo di Auto-Miglioramento & Specializzazione Continua delle AI
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-purple-900/60 text-purple-300 font-mono">
+                    Loop Quantitativo Attivo (100% Reale)
+                  </span>
+                </div>
+                <p className="text-slate-300 font-sans leading-relaxed">
+                  Le AI del sistema (OpenRouter con NVIDIA Nemotron 3 Ultra 550B, DeepSeek Chat e Gemini Flash) non operano a compartimenti stagni: analizzano regolarmente l'intero storico di esecuzione (trade a profitto, trade a stop loss e falsi negativi dei titoli scartati dal counterfactual tracking). Da questi dati reali sintetizzano direttive qualitative che vengono salvate nella memoria persistente del server (<code className="text-purple-300">ai_specialization_memory.json</code>) e iniettate in ogni futura analisi di catalizzatore.
+                </p>
+              </div>
+
+              {/* Action & Stats Control Bar */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="grid grid-cols-3 gap-3 text-xs w-full sm:w-auto">
+                  <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+                    <span className="text-[10px] text-slate-400 uppercase block">Direttive Attive</span>
+                    <span className="text-lg font-bold text-purple-400">{aiMemory.length}</span>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+                    <span className="text-[10px] text-slate-400 uppercase block">Trade a Diario</span>
+                    <span className="text-lg font-bold text-emerald-400">{trades.length}</span>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+                    <span className="text-[10px] text-slate-400 uppercase block">Setup Esclusi</span>
+                    <span className="text-lg font-bold text-amber-400">{records.length}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                  <button
+                    type="button"
+                    onClick={loadAIMemory}
+                    disabled={isLoadingAIMemory}
+                    className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                    title="Ricarica memoria"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoadingAIMemory ? 'animate-spin' : ''}`} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRunAISpecialization}
+                    disabled={isSpecializeRunning}
+                    className="px-3.5 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-purple-600/30 cursor-pointer transition-all disabled:opacity-50"
+                  >
+                    <Sparkles className={`w-3.5 h-3.5 ${isSpecializeRunning ? 'animate-spin' : ''}`} />
+                    <span>{isSpecializeRunning ? 'Sintesi AI in corso...' : 'Esegui Auto-Specializzazione AI'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Feedback Alert if present */}
+              {specializeFeedback && (
+                <div className="p-3.5 rounded-xl bg-purple-950/60 border border-purple-800/80 text-xs text-purple-200 flex items-start gap-2.5 animate-in fade-in">
+                  <Lightbulb className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+                  <span className="font-sans leading-relaxed">{specializeFeedback}</span>
+                </div>
+              )}
+
+              {/* Directives List */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span className="font-bold text-slate-300 uppercase tracking-wide">
+                    Direttive di Specializzazione Attualmente Iniettate nell'Analisi
+                  </span>
+                  <span>{aiMemory.length} regole registrate</span>
+                </div>
+
+                {aiMemory.length === 0 ? (
+                  <div className="p-8 text-center text-slate-500 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+                    Nessuna direttiva registrata al momento. Clicca su &quot;Esegui Auto-Specializzazione AI&quot; per distillare le prime regole dai trade chiusi.
+                  </div>
+                ) : (
+                  aiMemory.map((d, idx) => (
+                    <div
+                      key={d.id || idx}
+                      className="p-4 rounded-xl bg-slate-950/90 border border-slate-800/90 hover:border-purple-800/50 transition-all space-y-2 text-xs"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded bg-purple-950 text-purple-300 font-bold border border-purple-800 text-[10px]">
+                            {d.topic}
+                          </span>
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                              d.market === 'EU'
+                                ? 'bg-blue-950 text-blue-300 border border-blue-800'
+                                : d.market === 'US'
+                                ? 'bg-amber-950 text-amber-300 border border-amber-800'
+                                : 'bg-slate-800 text-slate-300 border border-slate-700'
+                            }`}
+                          >
+                            {d.market === 'GLOBAL' ? 'MERCATO GLOBALE' : `SESSIONE ${d.market}`}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            {new Date(d.learnedAt).toLocaleDateString('it-IT')}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-[11px]">
+                          <span className="text-slate-400">Indice di Confidenza:</span>
+                          <span className="font-bold text-emerald-400 font-mono">{d.confidence}%</span>
+                        </div>
+                      </div>
+
+                      <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800/60 font-sans text-slate-200 leading-relaxed">
+                        <span className="text-purple-400 font-bold block mb-1 font-mono text-[11px] uppercase tracking-wider">
+                          Direttiva Operativa:
+                        </span>
+                        {d.directive}
+                      </div>
+
+                      <div className="flex items-start gap-2 text-[11px] text-slate-400 font-sans">
+                        <span className="text-slate-500 font-mono shrink-0">Evidenza Empirica:</span>
+                        <span className="text-slate-400">{d.sampleEvidence}</span>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           )}

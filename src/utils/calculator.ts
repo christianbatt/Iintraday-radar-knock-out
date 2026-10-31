@@ -3583,93 +3583,138 @@ export function runExcludedSetupsAutoAnalysis(
     const isEffectiveShield = lossCount >= 2 && lossCount > profitCount;
 
     if (isTooRestrictive) {
-      verdict = 'TOO_RESTRICTIVE';
-      verdictTitle = '⚠️ Filtro Troppo Severo (Troppi Profitti Persi)';
-      verdictDescription = `${profitCount} setup su ${resolved} risolti (${winRate}%) sono andati a target con successo nonostante l'esclusione. Il filtro è eccessivamente restrittivo e sta frenando le performance della strategia.`;
-
       if (cat === 'RVOL_INSUFFICIENT') {
         const profitableRvols = catRecords
           .filter((r) => r.outcomeStatus === 'THEORETICAL_PROFIT' && typeof r.rvol === 'number' && r.rvol > 0)
           .map((r) => r.rvol as number);
-        const minProfitableRvol = profitableRvols.length > 0 ? Math.min(...profitableRvols) : currentParams.minRvol - 0.20;
-        const proposed = Math.max(0.65, +Math.min(currentParams.minRvol - 0.15, minProfitableRvol).toFixed(2));
-        correctionProposal = {
-          parameterKey: 'minRvol',
-          label: 'Soglia Minima Volume Relativo (RVOL)',
-          currentValue: `${currentParams.minRvol}x`,
-          proposedValue: `${proposed}x`,
-          actionType: 'REDUCE_PARAM',
-          explanation: `Riduci la soglia minima di RVOL da ${currentParams.minRvol}x a ${proposed}x per includere nella prossima sessione titoli con volume relativo a partire da ${proposed}x che sono andati a target con successo.`,
-        };
-        urgentCorrections.push({
-          category: cat,
-          title: 'Allentamento Soglia RVOL',
-          description: correctionProposal.explanation,
-          parameterKey: 'minRvol',
-          currentValue: currentParams.minRvol,
-          proposedValue: proposed,
-        });
+        const minProfitableRvol = profitableRvols.length > 0 ? Math.min(...profitableRvols) : 0.65;
+        const proposed = Math.max(0.65, +Math.min(currentParams.minRvol - 0.05, minProfitableRvol).toFixed(2));
+
+        const isAlreadyCalibrated = currentParams.minRvol <= proposed + 0.01;
+
+        if (isAlreadyCalibrated) {
+          verdict = 'CALIBRATED';
+          verdictTitle = '✅ Filtro Calibrato & Ottimizzato';
+          verdictDescription = `La soglia attuale di Volume Relativo (${currentParams.minRvol}x) è già stata allineata al valore ottimale. I setup precedentemente scartati sono ora inclusi.`;
+          correctionProposal = undefined;
+        } else {
+          verdict = 'TOO_RESTRICTIVE';
+          verdictTitle = '⚠️ Filtro Troppo Severo (Troppi Profitti Persi)';
+          verdictDescription = `${profitCount} setup su ${resolved} risolti (${winRate}%) sono andati a target con successo nonostante l'esclusione. Il filtro è eccessivamente restrittivo e sta frenando le performance della strategia.`;
+          correctionProposal = {
+            parameterKey: 'minRvol',
+            label: 'Soglia Minima Volume Relativo (RVOL)',
+            currentValue: `${currentParams.minRvol}x`,
+            proposedValue: `${proposed}x`,
+            actionType: 'REDUCE_PARAM',
+            explanation: `Micro-ottimizzazione: riduci la soglia minima di RVOL da ${currentParams.minRvol}x a ${proposed}x per includere nella prossima sessione titoli con volume relativo a partire da ${proposed}x che sono andati a target.`,
+          };
+          urgentCorrections.push({
+            category: cat,
+            title: 'Allentamento Soglia RVOL',
+            description: correctionProposal.explanation,
+            parameterKey: 'minRvol',
+            currentValue: currentParams.minRvol,
+            proposedValue: proposed,
+          });
+        }
       } else if (cat === 'GAP_INSUFFICIENT') {
         const profitableGaps = catRecords
           .filter((r) => r.outcomeStatus === 'THEORETICAL_PROFIT' && typeof r.gapPercent === 'number')
           .map((r) => Math.abs(r.gapPercent as number));
-        const minProfitableGap = profitableGaps.length > 0 ? Math.min(...profitableGaps) : currentParams.minGapEurope - 0.15;
-        const proposedEU = Math.max(0.15, +Math.min(currentParams.minGapEurope - 0.10, minProfitableGap).toFixed(2));
-        correctionProposal = {
-          parameterKey: 'minGapEurope',
-          label: 'Soglia Minima Gap % Europa',
-          currentValue: `${currentParams.minGapEurope}%`,
-          proposedValue: `${proposedEU}%`,
-          actionType: 'REDUCE_PARAM',
-          explanation: `Abbassa il gap minimo europeo a ${proposedEU}% (e USA a ${(currentParams.minGapUSA * 0.8).toFixed(2)}%) per intercettare continuazioni di trend con gap a partire da ±${proposedEU}%.`,
-        };
-        urgentCorrections.push({
-          category: cat,
-          title: 'Riduzione Soglia Gap Minimo',
-          description: correctionProposal.explanation,
-          parameterKey: 'minGapEurope',
-          currentValue: currentParams.minGapEurope,
-          proposedValue: proposedEU,
-        });
+        const minProfitableGap = profitableGaps.length > 0 ? Math.min(...profitableGaps) : 0.15;
+        const proposedEU = Math.max(0.15, +Math.min(currentParams.minGapEurope - 0.05, minProfitableGap).toFixed(2));
+
+        const isAlreadyCalibrated = currentParams.minGapEurope <= proposedEU + 0.01;
+
+        if (isAlreadyCalibrated) {
+          verdict = 'CALIBRATED';
+          verdictTitle = '✅ Filtro Calibrato & Ottimizzato';
+          verdictDescription = `Il Gap % minimo attuale (${currentParams.minGapEurope}%) è già stato calibrato per ammettere i setup profittevoli. Nessuna ulteriore riduzione necessaria.`;
+          correctionProposal = undefined;
+        } else {
+          verdict = 'TOO_RESTRICTIVE';
+          verdictTitle = '⚠️ Filtro Troppo Severo (Troppi Profitti Persi)';
+          verdictDescription = `${profitCount} setup su ${resolved} risolti (${winRate}%) sono andati a target con successo nonostante l'esclusione. Il filtro è eccessivamente restrittivo e sta frenando le performance della strategia.`;
+          correctionProposal = {
+            parameterKey: 'minGapEurope',
+            label: 'Soglia Minima Gap % Europa',
+            currentValue: `${currentParams.minGapEurope}%`,
+            proposedValue: `${proposedEU}%`,
+            actionType: 'REDUCE_PARAM',
+            explanation: `Micro-calibrazione: abbassa il gap minimo europeo da ${currentParams.minGapEurope}% a ${proposedEU}% per intercettare continuazioni di trend con gap a partire da ±${proposedEU}%.`,
+          };
+          urgentCorrections.push({
+            category: cat,
+            title: 'Riduzione Soglia Gap Minimo',
+            description: correctionProposal.explanation,
+            parameterKey: 'minGapEurope',
+            currentValue: currentParams.minGapEurope,
+            proposedValue: proposedEU,
+          });
+        }
       } else if (cat === 'SCORE_BELOW_MIN') {
         const profitableScores = catRecords
           .filter((r) => r.outcomeStatus === 'THEORETICAL_PROFIT' && typeof r.score === 'number')
           .map((r) => r.score);
-        const minProfitableScore = profitableScores.length > 0 ? Math.min(...profitableScores) : currentParams.minScore - 5;
-        const proposedScore = Math.max(40, Math.min(currentParams.minScore - 5, minProfitableScore));
-        correctionProposal = {
-          parameterKey: 'minScore',
-          label: 'Punteggio Minimo Algoritmico (minScore)',
-          currentValue: `${currentParams.minScore}/100`,
-          proposedValue: `${proposedScore}/100`,
-          actionType: 'REDUCE_PARAM',
-          explanation: `Riduci la soglia di sblocco setup da ${currentParams.minScore} a ${proposedScore}/100 per ammettere i setup con punteggio da ${proposedScore} in su che hanno dimostrato win rate del ${winRate}%.`,
-        };
-        urgentCorrections.push({
-          category: cat,
-          title: 'Abbassamento Soglia Punteggio',
-          description: correctionProposal.explanation,
-          parameterKey: 'minScore',
-          currentValue: currentParams.minScore,
-          proposedValue: proposedScore,
-        });
+        const minProfitableScore = profitableScores.length > 0 ? Math.min(...profitableScores) : currentParams.minScore - 2;
+        const proposedScore = Math.max(40, Math.min(currentParams.minScore - 1, minProfitableScore));
+
+        const isAlreadyCalibrated = currentParams.minScore <= proposedScore;
+
+        if (isAlreadyCalibrated) {
+          verdict = 'CALIBRATED';
+          verdictTitle = '✅ Filtro Calibrato & Ottimizzato';
+          verdictDescription = `La soglia di punteggio minima (${currentParams.minScore}/100) è già al livello ottimale per ammettere i setup di qualità.`;
+          correctionProposal = undefined;
+        } else {
+          verdict = 'TOO_RESTRICTIVE';
+          verdictTitle = '⚠️ Filtro Troppo Severo (Troppi Profitti Persi)';
+          verdictDescription = `${profitCount} setup su ${resolved} risolti (${winRate}%) sono andati a target con successo nonostante l'esclusione.`;
+          correctionProposal = {
+            parameterKey: 'minScore',
+            label: 'Punteggio Minimo Algoritmico (minScore)',
+            currentValue: `${currentParams.minScore}/100`,
+            proposedValue: `${proposedScore}/100`,
+            actionType: 'REDUCE_PARAM',
+            explanation: `Micro-ottimizzazione: riduci la soglia di sblocco da ${currentParams.minScore} a ${proposedScore}/100 per ammettere setup con punteggio da ${proposedScore} in su.`,
+          };
+          urgentCorrections.push({
+            category: cat,
+            title: 'Abbassamento Soglia Punteggio',
+            description: correctionProposal.explanation,
+            parameterKey: 'minScore',
+            currentValue: currentParams.minScore,
+            proposedValue: proposedScore,
+          });
+        }
       } else if (cat === 'RSI_EXTREME') {
-        correctionProposal = {
-          parameterKey: 'rsiFilterActive',
-          label: 'Filtro Ipercomprato/Ipervenduto RSI (30/70)',
-          currentValue: currentParams.rsiFilterActive ? 'Attivo' : 'Disattivo',
-          proposedValue: 'Disattivo',
-          actionType: 'TOGGLE_RSI',
-          explanation: `In sessioni con forte spinta istituzionale, l'RSI estremo ha prodotto un win rate del ${winRate}% a profitto. Disattivando il blocco rigido RSI, i setup ad alto momentum non vengono scartati.`,
-        };
-        urgentCorrections.push({
-          category: cat,
-          title: 'Disattivazione Filtro RSI per Momentum',
-          description: correctionProposal.explanation,
-          parameterKey: 'rsiFilterActive',
-          currentValue: currentParams.rsiFilterActive,
-          proposedValue: false,
-        });
+        if (!currentParams.rsiFilterActive) {
+          verdict = 'CALIBRATED';
+          verdictTitle = '✅ Filtro Calibrato (RSI Momentum Disattivato)';
+          verdictDescription = 'Il blocco RSI rigido è già stato disattivato per consentire al radar di catturare setup ad alto momentum.';
+          correctionProposal = undefined;
+        } else {
+          verdict = 'TOO_RESTRICTIVE';
+          verdictTitle = '⚠️ Filtro Troppo Severo (Troppi Profitti Persi)';
+          verdictDescription = `In sessioni con forte spinta istituzionale, l'RSI estremo ha prodotto un win rate del ${winRate}% a profitto. Disattivando il blocco rigido RSI, i setup ad alto momentum non vengono scartati.`;
+          correctionProposal = {
+            parameterKey: 'rsiFilterActive',
+            label: 'Filtro Ipercomprato/Ipervenduto RSI (30/70)',
+            currentValue: 'Attivo',
+            proposedValue: 'Disattivo',
+            actionType: 'TOGGLE_RSI',
+            explanation: `Disattivando il blocco rigido RSI, i setup ad alto momentum non vengono scartati.`,
+          };
+          urgentCorrections.push({
+            category: cat,
+            title: 'Disattivazione Filtro RSI per Momentum',
+            description: correctionProposal.explanation,
+            parameterKey: 'rsiFilterActive',
+            currentValue: true,
+            proposedValue: false,
+          });
+        }
       }
     } else if (isEffectiveShield) {
       verdict = 'EFFECTIVE_SHIELD';

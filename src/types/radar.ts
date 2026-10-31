@@ -547,9 +547,10 @@ export interface ExcludedCategoryAnalysis {
   winRate: number; // 0-100%
   missedPnlEur: number;
   savedPnlEur: number;
-  verdict: 'TOO_RESTRICTIVE' | 'EFFECTIVE_SHIELD' | 'BALANCED' | 'INSUFFICIENT_SAMPLE';
+  verdict: 'TOO_RESTRICTIVE' | 'EFFECTIVE_SHIELD' | 'BALANCED' | 'INSUFFICIENT_SAMPLE' | 'CALIBRATED';
   verdictTitle: string;
   verdictDescription: string;
+  currentParamValue?: string | number;
   correctionProposal?: {
     parameterKey: keyof SystemParameters;
     label: string;

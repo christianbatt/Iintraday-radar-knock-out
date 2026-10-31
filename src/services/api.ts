@@ -71,3 +71,75 @@ export async function analyzeCatalystWithGemini(
 export async function clearServerCache(): Promise<void> {
   await fetch('/api/cache/clear', { method: 'POST' });
 }
+
+export async function fetchSharedAppState(sinceVersion?: number): Promise<{
+  hasUpdates: boolean;
+  version?: number;
+  updatedAt?: string;
+  state?: any;
+}> {
+  try {
+    const url = sinceVersion ? `/api/sync/state?sinceVersion=${sinceVersion}` : '/api/sync/state';
+    const res = await fetch(url);
+    if (!res.ok) return { hasUpdates: false };
+    return res.json();
+  } catch {
+    return { hasUpdates: false };
+  }
+}
+
+export async function pushSharedAppState(patch: any): Promise<{ success: boolean; version?: number }> {
+  try {
+    const res = await fetch('/api/sync/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) return { success: false };
+    return res.json();
+  } catch {
+    return { success: false };
+  }
+}
+
+export interface AILearnedInsight {
+  id: string;
+  learnedAt: string;
+  market: 'EU' | 'US' | 'GLOBAL';
+  topic: string;
+  directive: string;
+  confidence: number;
+  sampleEvidence: string;
+}
+
+export async function fetchAIMemory(): Promise<AILearnedInsight[]> {
+  try {
+    const res = await fetch('/api/ai/memory');
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.memory) ? data.memory : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function triggerAISpecialization(
+  trades: any[],
+  excludedSetups: any[]
+): Promise<{ success: boolean; newInsightsCount: number; memory: AILearnedInsight[]; message?: string }> {
+  try {
+    const res = await fetch('/api/ai/specialize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trades, excludedSetups }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return { success: false, newInsightsCount: 0, memory: [], message: err.error || 'Errore server' };
+    }
+    return res.json();
+  } catch (err: any) {
+    return { success: false, newInsightsCount: 0, memory: [], message: err?.message || 'Errore di connessione' };
+  }
+}
+
