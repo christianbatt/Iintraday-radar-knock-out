@@ -16,6 +16,7 @@ import {
   ExcludedSetupsAutoAnalysis,
   MarketFreezeState,
   EntryMode,
+  MacroCalendarState,
 } from './types/radar';
 import { TRADING_PARAMS } from './config/tradingParams';
 import { getMarketTime } from './utils/timezone';
@@ -42,6 +43,7 @@ import {
   clearServerCache,
   fetchSharedAppState,
   pushSharedAppState,
+  fetchMacroCalendar,
 } from './services/api';
 import {
   auth,
@@ -59,6 +61,7 @@ import { User, onAuthStateChanged } from 'firebase/auth';
 import { RiskBanner } from './components/RiskBanner';
 import { Header } from './components/Header';
 import { ScreeningControls } from './components/ScreeningControls';
+import { MacroCalendarBanner } from './components/MacroCalendarBanner';
 import { DailyCircuitBreakerBanner } from './components/DailyCircuitBreakerBanner';
 import { SystemOptimizationBanner } from './components/SystemOptimizationBanner';
 import { DualExecutionHero } from './components/DualExecutionHero';
@@ -135,6 +138,7 @@ export default function App() {
 
   // 2. Session & Clock State
   const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
+  const [macroCalendar, setMacroCalendar] = useState<MacroCalendarState | null>(null);
   const [currentSession, setCurrentSession] = useState<'EU' | 'US' | 'GLOBAL'>('GLOBAL');
   const [futures, setFutures] = useState<any>(null);
   const [isAutoRefresh, setIsAutoRefresh] = useState<boolean>(true);
@@ -331,7 +335,7 @@ export default function App() {
   });
 
   const [dualProposals, setDualProposals] = useState<DualOptimizationProposals | null>(() => {
-    return evaluateDualSystemOptimization(journalEntries, parameters, 5);
+    return evaluateDualSystemOptimization(journalEntries, parameters, 15);
   });
 
   const [isOptimizerModalOpen, setIsOptimizerModalOpen] = useState<boolean>(false);
@@ -593,16 +597,18 @@ export default function App() {
     ? `Raggiunto il limite massimo di 2 trade al giorno (${tradesTodayCount}/2 eseguiti). Per disciplina operativa, non sono ammesse nuove aperture fino a domani.`
     : '';
 
-  // Initial load: session clock, futures, auto-screening
+  // Initial load: session clock, futures, auto-screening, macro calendar
   useEffect(() => {
     const initApp = async () => {
       try {
-        const [sess, futs] = await Promise.all([
+        const [sess, futs, macro] = await Promise.all([
           fetchSessionInfo(),
           fetchBenchmarkFutures(),
+          fetchMacroCalendar(),
         ]);
         setSessionInfo(sess);
         setFutures(futs);
+        setMacroCalendar(macro);
       } catch (err) {
         console.error('Errore inizializzazione sessione:', err);
       }
@@ -678,6 +684,7 @@ export default function App() {
       if (freshFutures) {
         setFutures(freshFutures);
       }
+      fetchMacroCalendar().then((m) => { if (m) setMacroCalendar(m); }).catch(() => {});
       setQuotes(rawQuotes);
       setCachedAt(new Date().toISOString());
 
@@ -1383,7 +1390,7 @@ export default function App() {
     setJournalEntries((prev) => {
       const updated = [entry, ...prev];
       const completedCount = updated.filter((t) => t.status !== 'OPEN').length;
-      const dual = evaluateDualSystemOptimization(updated, parameters, 5);
+      const dual = evaluateDualSystemOptimization(updated, parameters, 15);
       setDualProposals(dual);
       if (completedCount > 0 && completedCount % 20 === 0) {
         const cycleNum = Math.floor(completedCount / 20);
@@ -1406,7 +1413,7 @@ export default function App() {
     setJournalEntries((prev) => {
       const newList = prev.map((t) => (t.id === updated.id ? updated : t));
       const completedCount = newList.filter((t) => t.status !== 'OPEN').length;
-      const dual = evaluateDualSystemOptimization(newList, parameters, 5);
+      const dual = evaluateDualSystemOptimization(newList, parameters, 15);
       setDualProposals(dual);
       if (completedCount > 0 && completedCount % 20 === 0) {
         const cycleNum = Math.floor(completedCount / 20);
@@ -1666,7 +1673,7 @@ export default function App() {
       setTimeout(() => setOptimizationNotification(null), 5000);
       return;
     }
-    const dual = evaluateDualSystemOptimization(journalEntries, parameters, 5);
+    const dual = evaluateDualSystemOptimization(journalEntries, parameters, 15);
     setDualProposals(dual);
     pushSharedAppState({ dualProposals: dual });
     setOptimizationNotification('Audit del sistema ricalcolato sui trade presenti nel diario!');
@@ -1958,6 +1965,9 @@ export default function App() {
             onDismiss={() => setShowAuditBanner(false)}
           />
         )}
+
+        {/* 2.8. Macroeconomic High-Impact Event & Knock-Out Spread Guard Banner */}
+        <MacroCalendarBanner macroCalendar={macroCalendar} />
 
         {/* 3. Daily Circuit Breaker Alert (Blocking Rule) */}
         <DailyCircuitBreakerBanner

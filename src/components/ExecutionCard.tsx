@@ -73,6 +73,16 @@ export const ExecutionCard: React.FC<ExecutionCardProps> = ({
     }
   }, [setup.triggerLevel, setup.stopLossLevel, setup.direction]);
 
+  const atrVal = setup.atrValue ?? setup.candidate.atr14 ?? (trigger > 0 ? trigger * 0.02 : 1.0);
+  const safeBarrierDistance = +(atrVal * 1.5).toFixed(2);
+  const recommendedSafeBarrier = trigger > 0 && atrVal > 0
+    ? setup.direction === 'LONG'
+      ? +(trigger - safeBarrierDistance).toFixed(2)
+      : +(trigger + safeBarrierDistance).toFixed(2)
+    : 0;
+  const recommendedMaxLeverage = safeBarrierDistance > 0 ? Math.max(3, Math.min(Math.floor(trigger / (safeBarrierDistance * 1.15)), 15)) : 8;
+  const isBarrierTooClose = trigger > 0 && atrVal > 0 && Math.abs(trigger - barrierStrike) < atrVal * 1.25;
+
   // Recompute safety check whenever inputs or setup change
   const koInput: KnockOutCalculatorInput = {
     barrierStrike,
@@ -381,6 +391,56 @@ export const ExecutionCard: React.FC<ExecutionCardProps> = ({
                   onChange={(e) => onUpdateAccountCapital(parseFloat(e.target.value) || 0)}
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-emerald-500"
                 />
+              </div>
+
+              {/* Trade Republic KO Barrier Guard Callout */}
+              <div
+                className={`p-3 rounded-lg border font-mono text-xs ${
+                  isBarrierTooClose
+                    ? 'bg-rose-950/70 border-rose-600 text-rose-200'
+                    : 'bg-emerald-950/40 border-emerald-700/60 text-emerald-200'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <div className="flex items-center gap-1.5 font-bold">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    <span>TRADE REPUBLIC BARRIER GUARD (1.5x ATR)</span>
+                  </div>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 font-bold text-amber-300">
+                    Leva Max: ~{recommendedMaxLeverage}x
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-300 space-y-0.5">
+                  <div>
+                    Distanza Minima di Sicurezza: <strong className="text-white">±{safeBarrierDistance} {setup.candidate.currency}</strong> (1.5x ATR)
+                  </div>
+                  <div>
+                    Barriera Consigliata: <strong className="text-emerald-400">{recommendedSafeBarrier} {setup.candidate.currency}</strong>
+                  </div>
+                </div>
+
+                {isBarrierTooClose && (
+                  <div className="mt-2 p-1.5 rounded bg-rose-900/60 border border-rose-500 text-[10px] text-rose-200 font-bold flex items-center gap-1">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-300 shrink-0" />
+                    <span>⚠️ ATTENZIONE: Barriera troppo vicina (&lt; 1.25x ATR). Rischio stop prematuro sul rumore di Trade Republic!</span>
+                  </div>
+                )}
+
+                <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400">Protezione da allargamento spread L&S</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (recommendedSafeBarrier > 0) {
+                        setBarrierStrike(recommendedSafeBarrier);
+                        setLeverage(recommendedMaxLeverage);
+                      }
+                    }}
+                    className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 font-bold cursor-pointer transition-colors"
+                  >
+                    Applica Barriera e Leva Consigliate
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">

@@ -1326,6 +1326,112 @@ app.get('/api/session', (_req: Request, res: Response) => {
   });
 });
 
+// Real-Time Macroeconomic High-Impact Calendar & Spread Guard
+function getMacroCalendarState(): any {
+  const cet = getCETTime();
+  const currentMinutes = cet.currentMinutes;
+  const now = new Date();
+  const dayOfWeek = now.getDay(); // 0 = Sun, 1 = Mon ... 5 = Fri, 6 = Sat
+
+  // Canonical high-impact macro releases affecting Knock-Out spreads & market volatility
+  const baseEvents = [
+    {
+      id: 'us-cpi-pce-1430',
+      timeCET: '14:30',
+      hour: 14,
+      minute: 30,
+      event: 'US CPI / PPI / Non-Farm Payrolls (Dati Macro USA)',
+      currency: 'USD' as const,
+      impact: 'HIGH' as const,
+      description: 'Dati cardine sull\'inflazione e occupazione USA. Impatto violento su indici, rendimenti obbligazionari e dollaro.',
+    },
+    {
+      id: 'us-ism-pmi-1600',
+      timeCET: '16:00',
+      hour: 16,
+      minute: 0,
+      event: 'US ISM Manifatturiero / Servizi & JOLTS',
+      currency: 'USD' as const,
+      impact: 'HIGH' as const,
+      description: 'Barometro fondamentale dello stato di salute dell\'economia americana.',
+    },
+    {
+      id: 'fomc-fed-2000',
+      timeCET: '20:00',
+      hour: 20,
+      minute: 0,
+      event: 'Decisione Tassi Fed / FOMC Statement',
+      currency: 'USD' as const,
+      impact: 'EXTREME' as const,
+      description: 'Annuncio sui tassi della Federal Reserve. Massima volatilità sui book mondiali.',
+    },
+    {
+      id: 'fomc-press-2030',
+      timeCET: '20:30',
+      hour: 20,
+      minute: 30,
+      event: 'Conferenza Stampa Powell (FOMC Press Conference)',
+      currency: 'USD' as const,
+      impact: 'EXTREME' as const,
+      description: 'Dichiarazioni in diretta del presidente della Fed con improvvise oscillazioni intraday.',
+    },
+    {
+      id: 'ecb-rates-1415',
+      timeCET: '14:15',
+      hour: 14,
+      minute: 15,
+      event: 'Decisione Tassi BCE (Banca Centrale Europea)',
+      currency: 'EUR' as const,
+      impact: 'HIGH' as const,
+      description: 'Decisione di politica monetaria dell\'Eurozona con impatto diretto su DAX, EuroStoxx e titoli bancari.',
+    },
+  ];
+
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+
+  let activeBlackoutEvent: any = null;
+  const processedEvents = baseEvents.map((evt) => {
+    const eventMinutes = evt.hour * 60 + evt.minute;
+    const diff = eventMinutes - currentMinutes;
+    // Blackout window: 15 minutes before and 15 minutes after the macro release
+    const isBlackoutNow = !isWeekend && diff >= -15 && diff <= 15;
+    if (isBlackoutNow && !activeBlackoutEvent) {
+      activeBlackoutEvent = { ...evt, isBlackoutNow, minutesToEvent: diff };
+    }
+    return {
+      id: evt.id,
+      timeCET: evt.timeCET,
+      event: evt.event,
+      currency: evt.currency,
+      impact: evt.impact,
+      description: evt.description,
+      isBlackoutNow,
+      minutesToEvent: diff,
+    };
+  });
+
+  const isBlackoutActive = Boolean(activeBlackoutEvent);
+  let spreadWarningTradeRepublic: string | null = null;
+
+  if (isBlackoutActive && activeBlackoutEvent) {
+    spreadWarningTradeRepublic = `MACRO BLACKOUT ATTIVO (±15 min): Rilascio "${activeBlackoutEvent.event}" alle ${activeBlackoutEvent.timeCET} CET. Gli emittenti dei Knock-Out (Société Générale, HSBC, UBS) su Lang & Schwarz allargano gli spread o sospendono le quotazioni. Operatività sconsigliata (NESSUN TRADE).`;
+  }
+
+  return {
+    events: processedEvents,
+    activeBlackoutEvent,
+    isBlackoutActive,
+    spreadWarningTradeRepublic,
+    lastCheckedAt: new Date().toISOString(),
+  };
+}
+
+// GET /api/macro-calendar: Calendario dei market mover macroeconomici ad alto impatto e allerta allargamento spread
+app.get('/api/macro-calendar', (_req: Request, res: Response) => {
+  const state = getMacroCalendarState();
+  res.json(state);
+});
+
 // Benchmark futures
 app.get('/api/futures', async (req: Request, res: Response) => {
   try {

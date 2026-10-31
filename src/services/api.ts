@@ -4,6 +4,7 @@ import {
   NewsItem,
   GeminiCatalystAnalysis,
   SessionInfo,
+  MacroCalendarState,
 } from '../types/radar';
 
 async function safeJson<T>(res: Response, defaultErrMsg: string): Promise<T> {
@@ -24,6 +25,18 @@ async function safeJson<T>(res: Response, defaultErrMsg: string): Promise<T> {
 export async function fetchSessionInfo(): Promise<SessionInfo> {
   const res = await fetch('/api/session');
   return safeJson<SessionInfo>(res, 'Errore durante il recupero della sessione');
+}
+
+export async function fetchMacroCalendar(): Promise<MacroCalendarState> {
+  try {
+    const res = await fetch('/api/macro-calendar');
+    if (!res.ok) {
+      return { events: [], activeBlackoutEvent: null, isBlackoutActive: false, spreadWarningTradeRepublic: null };
+    }
+    return res.json();
+  } catch {
+    return { events: [], activeBlackoutEvent: null, isBlackoutActive: false, spreadWarningTradeRepublic: null };
+  }
 }
 
 export async function fetchBenchmarkFutures(forceRefresh: boolean = false): Promise<any> {

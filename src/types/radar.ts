@@ -88,10 +88,39 @@ export interface ScoreBreakdown {
   details: string[];
 }
 
+export interface KnockOutBarrierGuard {
+  safeDistanceAtr: number; // e.g. 1.5 * ATR
+  safeBarrierLevel: number; // long: entry - safeDistance, short: entry + safeDistance
+  maxRecommendedLeverage: number; // e.g. 4x - 12x
+  leverageRiskLevel: 'SAFE' | 'MODERATE' | 'AGGRESSIVE';
+  spreadBufferEur: number;
+  tradeRepublicTip: string;
+}
+
+export interface MacroEvent {
+  id: string;
+  timeCET: string;
+  event: string;
+  currency: 'USD' | 'EUR';
+  impact: 'HIGH' | 'EXTREME';
+  description: string;
+  isBlackoutNow: boolean;
+  minutesToEvent: number;
+}
+
+export interface MacroCalendarState {
+  events: MacroEvent[];
+  activeBlackoutEvent: MacroEvent | null;
+  isBlackoutActive: boolean;
+  spreadWarningTradeRepublic: string | null;
+  lastCheckedAt?: string;
+}
+
 export interface ScoredCandidate {
   quote: RawQuoteData;
   score: ScoreBreakdown;
   rank: number;
+  knockOutGuard?: KnockOutBarrierGuard;
 }
 
 export interface NewsItem {
@@ -379,6 +408,9 @@ export interface OptimizationProposal {
   proposedChanges: ProposedParameterChange[];
   appliedAt?: string;
   market?: 'EU' | 'US' | 'GLOBAL';
+  statisticalSignificance?: 'ELEVATA' | 'MODERATA' | 'INSUFFICIENTE';
+  statisticalConfidencePct?: number;
+  sampleSizeRequired?: number;
 }
 
 export interface DualOptimizationProposals {

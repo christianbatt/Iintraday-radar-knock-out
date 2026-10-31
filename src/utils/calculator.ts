@@ -7,6 +7,7 @@ import {
   NewsItem,
   KnockOutCalculatorInput,
   KnockOutSafetyCheck,
+  KnockOutBarrierGuard,
   PnLScenario,
   DynamicBreakevenInfo,
   DerivativeStressReport,
@@ -924,6 +925,41 @@ export function isCandidateCompliantWithParameters(
   return { compliant: reasons.length === 0, reasons };
 }
 
+/**
+ * Calculates safety distance, safe barrier level, and max recommended leverage for Trade Republic Knock-Outs
+ */
+export function calculateKnockOutBarrierGuard(
+  quote: RawQuoteData,
+  direction?: 'LONG' | 'SHORT'
+): KnockOutBarrierGuard {
+  const dir = direction ?? ((quote.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT');
+  const price = quote.preMarketPrice ?? quote.currentPrice ?? quote.prevClose ?? 0;
+  const atr = quote.atr14 ?? (price > 0 ? +(price * 0.02).toFixed(2) : 1.0);
+  const safeDistanceAtr = +(atr * 1.5).toFixed(2);
+  const safeBarrierLevel = +(dir === 'LONG' ? price - safeDistanceAtr : price + safeDistanceAtr).toFixed(2);
+
+  const spreadBufferEur = quote.market === 'EU' ? 0.04 : 0.12;
+  // Prudent leverage formula: Price / (Safe Distance * 1.15)
+  const calculatedLeverage = safeDistanceAtr > 0 ? Math.floor(price / (safeDistanceAtr * 1.15)) : 5;
+  const maxRecommendedLeverage = Math.max(3, Math.min(calculatedLeverage, 15));
+
+  let leverageRiskLevel: 'SAFE' | 'MODERATE' | 'AGGRESSIVE' = 'SAFE';
+  if (maxRecommendedLeverage >= 9 && maxRecommendedLeverage <= 12) {
+    leverageRiskLevel = 'MODERATE';
+  } else if (maxRecommendedLeverage > 12) {
+    leverageRiskLevel = 'AGGRESSIVE';
+  }
+
+  return {
+    safeDistanceAtr,
+    safeBarrierLevel: Math.max(0.01, safeBarrierLevel),
+    maxRecommendedLeverage,
+    leverageRiskLevel,
+    spreadBufferEur,
+    tradeRepublicTip: `Distanza barriera min. prudenziale: ±${safeDistanceAtr} ${quote.currency} (1.5x ATR). Leva max suggerita su Trade Republic: ~${maxRecommendedLeverage}x.`,
+  };
+}
+
 export function rankMarketCandidates(
   quotes: RawQuoteData[],
   market: 'EU' | 'US',
@@ -947,10 +983,13 @@ export function rankMarketCandidates(
 
   const scored = marketQuotes.map((quote) => {
     const catalystOrNews = options?.catalystCache?.[quote.ticker] || options?.newsCache?.[quote.ticker];
+    const dir: 'LONG' | 'SHORT' = (quote.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT';
+    const knockOutGuard = calculateKnockOutBarrierGuard(quote, dir);
     return {
       quote,
       score: calculateCandidateScore(quote, change, catalystOrNews),
       rank: 0,
+      knockOutGuard,
     };
   });
 
@@ -990,10 +1029,13 @@ export function rankTopCandidates(
         ? futuresChange.US
         : futuresChange.EU;
     const catalystOrNews = options?.catalystCache?.[quote.ticker] || options?.newsCache?.[quote.ticker];
+    const dir: 'LONG' | 'SHORT' = (quote.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT';
+    const knockOutGuard = calculateKnockOutBarrierGuard(quote, dir);
     return {
       quote,
       score: calculateCandidateScore(quote, change, catalystOrNews),
       rank: 0,
+      knockOutGuard,
     };
   });
 
@@ -2517,14 +2559,15 @@ export function evaluateSystemOptimization(
 
 /**
  * Evaluates systemic performance specifically for one market session ('EU' or 'US').
- * Requires at least `minRequiredTrades` (default 5) closed trades for that market before generating proposals.
+ * Requires at least `minRequiredTrades` (strictly 15) closed trades for that market before generating proposals,
+ * preventing curve-fitting and variance chasing.
  * If insufficient data, returns a clear status with zero mock or synthetic proposals.
  */
 export function evaluateSessionOptimization(
   trades: TradeJournalEntry[],
   market: 'EU' | 'US',
   currentParams: SystemParameters = DEFAULT_SYSTEM_PARAMETERS,
-  minRequiredTrades = 5
+  minRequiredTrades = 15
 ): OptimizationProposal {
   const marketTrades = trades.filter((t) => (t.market || (t.session === 'US' ? 'US' : 'EU')) === market);
   const sorted = [...marketTrades].sort(
@@ -2557,13 +2600,16 @@ export function evaluateSessionOptimization(
       },
       status: 'NO_CHANGES_NEEDED',
       performanceRating: 'GOOD',
-      summaryTitle: `Sessione ${marketName}: Dati Insufficienti (${total}/${minRequiredTrades} Trade)`,
-      summaryExplanation: `Sono stati registrati ${total} trade chiusi per il mercato ${marketName}. La soglia minima di affidabilità statistica richiede almeno ${minRequiredTrades} trade per formulare proposte di ricalibrazione. Il sistema mantiene attivi i parametri correnti senza generare stime fittizie.`,
+      summaryTitle: `Sessione ${marketName}: Dati Insufficienti - Campionamento in Corso (${total}/${minRequiredTrades} Trade)`,
+      summaryExplanation: `Sono stati registrati ${total} trade chiusi per il mercato ${marketName}. La soglia minima di affidabilità statistica richiede almeno ${minRequiredTrades} trade per formulare proposte di ricalibrazione ed evitare il curve-fitting (inseguire il rumore di mercato). Il sistema mantiene attivi i parametri correnti.`,
       identifiedStrengths: [],
       identifiedWeaknesses: [
-        `Campione statistico ridotto (${total}/${minRequiredTrades} trade chiusi): registra ulteriori trade in questa sessione per sbloccare l'auto-ottimizzazione.`,
+        `Campione statistico in formazione (${total}/${minRequiredTrades} trade chiusi): registra ulteriori ${minRequiredTrades - total} trade in questa sessione per sbloccare l'auto-ottimizzazione con significatività statistica validata.`,
       ],
       proposedChanges: [],
+      statisticalSignificance: 'INSUFFICIENTE',
+      statisticalConfidencePct: Math.round((total / minRequiredTrades) * 100),
+      sampleSizeRequired: minRequiredTrades,
     };
   }
 
@@ -2778,6 +2824,10 @@ export function evaluateSessionOptimization(
     summaryExplanation = `Rilevate inefficienze nei ${total} setup ${marketName}: ${identifiedWeaknesses[0] || 'Variazione parametri consigliata.'}`;
   }
 
+  const statisticalSignificance: 'ELEVATA' | 'MODERATA' | 'INSUFFICIENTE' =
+    total >= 30 ? 'ELEVATA' : total >= 15 ? 'MODERATA' : 'INSUFFICIENTE';
+  const statisticalConfidencePct = Math.min(100, Math.round((total / 30) * 100));
+
   return {
     id: `prop-${market.toLowerCase()}-${cycle}-${Date.now()}`,
     cycleNumber: cycle,
@@ -2792,13 +2842,16 @@ export function evaluateSessionOptimization(
     identifiedStrengths,
     identifiedWeaknesses,
     proposedChanges,
+    statisticalSignificance,
+    statisticalConfidencePct,
+    sampleSizeRequired: minRequiredTrades,
   };
 }
 
 export function evaluateDualSystemOptimization(
   trades: TradeJournalEntry[],
   currentParams: SystemParameters = DEFAULT_SYSTEM_PARAMETERS,
-  minRequiredTrades = 5
+  minRequiredTrades = 15
 ): DualOptimizationProposals {
   return {
     eu: evaluateSessionOptimization(trades, 'EU', currentParams, minRequiredTrades),

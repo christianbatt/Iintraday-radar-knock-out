@@ -94,7 +94,7 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
   const marketFlag = activeTab === 'EU' ? '🇪🇺' : '🇺🇸';
   const marketHours = activeTab === 'EU' ? '09:00 – 11:30 CET' : '15:30 – 17:30 CET';
 
-  const isInsufficient = activeSessionTradesCount < 5;
+  const isInsufficient = activeSessionTradesCount < 15;
 
   return (
     <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2 sm:p-5 bg-slate-950/80 backdrop-blur-md overflow-y-auto overscroll-contain">
@@ -197,10 +197,10 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
               <Info className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
               <div className="space-y-1">
                 <span className="font-bold text-xs font-mono block text-white">
-                  Dati insufficienti per la Sessione {marketName} ({activeSessionTradesCount}/5 Trade minimi)
+                  Campionamento in corso per la Sessione {marketName} ({activeSessionTradesCount}/15 Trade minimi)
                 </span>
                 <p className="text-xs text-amber-300/90 leading-relaxed font-sans">
-                  Il motore di ottimizzazione opera su base quantitativa reale al 100%: per garantire validità statistica ed evitare over-fitting prematuro, sono richiesti almeno 5 trade conclusi in questa sessione. Il sistema continua a utilizzare i parametri certificati standard ({marketName === 'Europa' ? `Score Min ${currentParameters.minScoreEurope ?? TRADING_PARAMS.MIN_SCORE_EU}` : `Score Min ${currentParameters.minScoreUSA ?? TRADING_PARAMS.MIN_SCORE_US}`}) senza introdurre stime fittizie.
+                  Il motore di ottimizzazione opera su basi quantitative rigorose: per garantire vera significatività statistica ed evitare il <strong>curve-fitting (reagire al rumore di mercato anziché a un vero edge)</strong>, sono richiesti almeno 15 trade conclusi in questa sessione. Il sistema continua a utilizzare i parametri certificati standard ({marketName === 'Europa' ? `Score Min ${currentParameters.minScoreEurope ?? TRADING_PARAMS.MIN_SCORE_EU}` : `Score Min ${currentParameters.minScoreUSA ?? TRADING_PARAMS.MIN_SCORE_US}`}) senza proporre variazioni premature.
                 </p>
               </div>
             </div>

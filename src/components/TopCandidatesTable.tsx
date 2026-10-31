@@ -479,10 +479,10 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
                       </div>
                     </td>
 
-                    {/* ATR Column with calibration button */}
+                    {/* ATR Column with calibration button & KO Barrier Guard */}
                     <td className="py-3 px-3 text-right bg-slate-900/60 border-x border-slate-800">
                       {atrVal != null ? (
-                        <div className="flex flex-col items-end">
+                        <div className="flex flex-col items-end gap-1">
                           <button
                             type="button"
                             onClick={(e) => toggleStopCalibration(q.ticker, e)}
@@ -502,6 +502,22 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
                               <ChevronDown className="w-3 h-3 ml-0.5 text-amber-400" />
                             )}
                           </button>
+
+                          {cand.knockOutGuard && (
+                            <span
+                              className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold tracking-tight inline-flex items-center gap-1 border ${
+                                cand.knockOutGuard.leverageRiskLevel === 'SAFE'
+                                  ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800/80'
+                                  : cand.knockOutGuard.leverageRiskLevel === 'MODERATE'
+                                  ? 'bg-amber-950/80 text-amber-300 border-amber-800/80'
+                                  : 'bg-rose-950/80 text-rose-300 border-rose-800/80'
+                              }`}
+                              title={cand.knockOutGuard.tradeRepublicTip}
+                            >
+                              <span>🛡️ KO:</span>
+                              <span>~{cand.knockOutGuard.maxRecommendedLeverage}x leva</span>
+                            </span>
+                          )}
                         </div>
                       ) : (
                         <span className="text-slate-600">nd</span>
@@ -608,12 +624,30 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
                                 ±{stopBuffer10} {q.currency}
                               </strong>
                             </div>
-                            <div className="text-[11px] text-slate-300 bg-slate-950 px-2.5 py-1 rounded border border-slate-800">
-                              🛡️ Barriera KO Consigliata: distanza &gt;{' '}
-                              <strong className="text-white font-bold">
-                                {(atrVal * 2.5).toFixed(2)} {q.currency}
-                              </strong>
-                            </div>
+                            {cand.knockOutGuard ? (
+                              <div className="text-[11px] text-slate-300 bg-slate-950 px-3 py-1.5 rounded border border-slate-800 flex items-center gap-3">
+                                <div>
+                                  🛡️ <span className="text-slate-400">Barriera KO Prudenziale:</span>{' '}
+                                  <strong className="text-emerald-300 font-bold">
+                                    {cand.knockOutGuard.safeBarrierLevel} {q.currency}
+                                  </strong>{' '}
+                                  <span className="text-[10px] text-slate-400">(dist. ±{cand.knockOutGuard.safeDistanceAtr})</span>
+                                </div>
+                                <div>
+                                  🎯 <span className="text-slate-400">Leva Max Trade Republic:</span>{' '}
+                                  <strong className="text-amber-300 font-bold">
+                                    ~{cand.knockOutGuard.maxRecommendedLeverage}x
+                                  </strong>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="text-[11px] text-slate-300 bg-slate-950 px-2.5 py-1 rounded border border-slate-800">
+                                🛡️ Barriera KO Consigliata: distanza &gt;{' '}
+                                <strong className="text-white font-bold">
+                                  {(atrVal * 2.5).toFixed(2)} {q.currency}
+                                </strong>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </td>
