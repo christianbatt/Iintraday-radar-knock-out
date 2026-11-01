@@ -258,7 +258,9 @@ export function calculateOrbFromIntradayBars(
     }
   }
 
-  if (orbCandles.length === 0) {
+  // Completezza ORB: per barre a 5 minuti sono necessarie almeno 3 candele nella finestra dei 15m.
+  // Se le barre sono incomplete, restituisce null attivando il Gate G2 (DATI INSUFFICIENTI).
+  if (orbCandles.length < 3) {
     return { orbHigh: null, orbLow: null, triggerLevel: null, stopLossLevel: null, firstBreakoutTime: null };
   }
 
@@ -273,10 +275,11 @@ export function calculateOrbFromIntradayBars(
 
   let firstBreakoutTime: string | null = null;
   for (const post of postOrbCandles) {
-    const brokeLong = post.high > orbHigh + TRADING_PARAMS.EPSILON;
-    const brokeShort = post.low < orbLow - TRADING_PARAMS.EPSILON;
-    const broke = direction === 'LONG' ? brokeLong : brokeShort;
-    if (broke || brokeLong || brokeShort) {
+    const broke =
+      direction === 'LONG'
+        ? post.high > orbHigh + TRADING_PARAMS.EPSILON
+        : post.low < orbLow - TRADING_PARAMS.EPSILON;
+    if (broke) {
       firstBreakoutTime = post.dateObj.toISOString();
       break;
     }
@@ -697,21 +700,32 @@ export function calculateCandidateScore(
     } else if ('catalizzatore' in newsOrCatalyst) {
       const cat = newsOrCatalyst as GeminiCatalystAnalysis;
       const text = `${cat.catalizzatore || ''} ${(cat.punti_a_favore || []).join(' ')}`.toLowerCase();
-      const hasMajorEvent =
-        text.includes('upgrade') ||
-        text.includes('target') ||
-        text.includes('contratto') ||
-        text.includes('ordini') ||
-        text.includes('utili') ||
-        text.includes('partnership') ||
+
+      const isEarningsRelease =
         text.includes('earnings') ||
-        text.includes('guidance');
-      if (hasMajorEvent) {
+        text.includes('utili') ||
+        text.includes('trimestrale') ||
+        text.includes('bilancio');
+
+      const hasOperationalCatalyst =
+        text.includes('upgrade') ||
+        text.includes('contratto') ||
+        text.includes('commessa') ||
+        text.includes('ordini') ||
+        text.includes('partnership') ||
+        text.includes('acquisizione');
+
+      if (isEarningsRelease) {
+        // Regola fondamentale di risk management intraday: il rilascio utili comporta rischio binario e spike spread.
+        // Il bonus automatico da keyword viene neutralizzato a 0pt con segnalazione esplicita di cautela.
+        newsScore = 0;
+        details.push('⚠️ Rilascio Utili/Earnings in giornata: bonus news neutralizzato a 0pt per rischio binario');
+      } else if (hasOperationalCatalyst) {
         newsScore = 15;
       } else if (cat.fonti && cat.fonti.length > 0) {
-        newsScore = 12;
+        newsScore = 10;
       } else if (!text.includes('nessuna notizia') && !text.includes('setup tecnico')) {
-        newsScore = 8;
+        newsScore = 5;
       } else {
         newsScore = 0;
       }
@@ -857,8 +871,8 @@ export function isRsiExtreme(rsi: number | null | undefined): boolean {
 }
 
 export function calculateRsiFromPrices(closes: number[], period: number = 14): number | null {
-  if (!closes || closes.length < 6) return null;
-  const p = Math.min(period, closes.length - 1);
+  if (!closes || closes.length < period + 1) return null;
+  const p = period;
   let gains = 0;
   let losses = 0;
 
@@ -936,11 +950,42 @@ export function calculateKnockOutBarrierGuard(
   const dir = direction ?? ((quote.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT');
   const price = quote.preMarketPrice ?? quote.currentPrice ?? quote.prevClose ?? 0;
   const atr = quote.atr14 ?? (price > 0 ? +(price * 0.02).toFixed(2) : 1.0);
+  const spreadBufferEur = quote.market === 'EU' ? 0.04 : 0.12;
+
+  // Se T ed S sono già definiti dall'ORB o dal freeze, utilizziamo l'unica formula canonica deterministica V112
+  if (quote.T != null && quote.S != null && quote.T > 0 && quote.S > 0) {
+    const T = quote.T;
+    const S = quote.S;
+    const dS = Math.abs(T - S) / T;
+    const L_sel = dS > 0 ? Math.floor(1 / (dS + TRADING_PARAMS.BUF_BAR)) : 10;
+    const maxRecommendedLeverage = Math.max(3, Math.min(L_sel, 25));
+    const safeBarrierLevel = +(
+      dir === 'LONG'
+        ? T * (1 - 1 / maxRecommendedLeverage)
+        : T * (1 + 1 / maxRecommendedLeverage)
+    ).toFixed(2);
+    const safeDistanceAtr = +Math.abs(T - safeBarrierLevel).toFixed(2);
+
+    let leverageRiskLevel: 'SAFE' | 'MODERATE' | 'AGGRESSIVE' = 'SAFE';
+    if (maxRecommendedLeverage >= 9 && maxRecommendedLeverage <= 15) {
+      leverageRiskLevel = 'MODERATE';
+    } else if (maxRecommendedLeverage > 15) {
+      leverageRiskLevel = 'AGGRESSIVE';
+    }
+
+    return {
+      safeDistanceAtr,
+      safeBarrierLevel: Math.max(0.01, safeBarrierLevel),
+      maxRecommendedLeverage,
+      leverageRiskLevel,
+      spreadBufferEur,
+      tradeRepublicTip: `Barriera KO V112: ${safeBarrierLevel} ${quote.currency} (distanza ${safeDistanceAtr}). Leva calibrata: ${maxRecommendedLeverage}x.`,
+    };
+  }
+
+  // Stima indicativa Pre-Market pre-ORB basata su 1.5x ATR
   const safeDistanceAtr = +(atr * 1.5).toFixed(2);
   const safeBarrierLevel = +(dir === 'LONG' ? price - safeDistanceAtr : price + safeDistanceAtr).toFixed(2);
-
-  const spreadBufferEur = quote.market === 'EU' ? 0.04 : 0.12;
-  // Prudent leverage formula: Price / (Safe Distance * 1.15)
   const calculatedLeverage = safeDistanceAtr > 0 ? Math.floor(price / (safeDistanceAtr * 1.15)) : 5;
   const maxRecommendedLeverage = Math.max(3, Math.min(calculatedLeverage, 15));
 
@@ -957,7 +1002,7 @@ export function calculateKnockOutBarrierGuard(
     maxRecommendedLeverage,
     leverageRiskLevel,
     spreadBufferEur,
-    tradeRepublicTip: `Distanza barriera min. prudenziale: ±${safeDistanceAtr} ${quote.currency} (1.5x ATR). Leva max suggerita su Trade Republic: ~${maxRecommendedLeverage}x.`,
+    tradeRepublicTip: `Distanza barriera indicativa pre-ORB: ±${safeDistanceAtr} ${quote.currency} (1.5x ATR). Leva max suggerita: ~${maxRecommendedLeverage}x.`,
   };
 }
 

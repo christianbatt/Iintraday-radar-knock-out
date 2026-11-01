@@ -28,7 +28,7 @@ Intraday Radar Pro è un'applicazione web e PWA ad alta intensità tecnologica c
 
 Il sistema combina:
 1. **Analisi Quantitativa Real-Time**: monitoraggio di gap percentuali, Relative Volume (RVOL), Average True Range (ATR a 14 periodi) e correlazione con i futures benchmark (FDAX, FESX, ES, NQ).
-2. **Setup Dual-Market Affiancati**: selezione algoritmica e contestuale del miglior setup per il mercato **Europeo (Top EU)** e per il mercato **Americano (Top US)**, ciascuno calcolato con Trigger d'ingresso, Stop Loss tecnico, Target (1.5R e 2.5R) e calcolo automatico della **Barriera di Knock-Out consigliata** con cuscinetto di sicurezza.
+2. **Setup Dual-Market Affiancati**: selezione algoritmica e contestuale del miglior setup per il mercato **Europeo (Top EU)** e per il mercato **Americano (Top US)**, ciascuno calcolato con Trigger d'ingresso, Stop Loss tecnico, Target (1.6R e 2.8R) e calcolo automatico della **Barriera di Knock-Out consigliata** con cuscinetto di sicurezza.
 3. **Screening Continuo a Mercati Aperti**: tabella interattiva dei titoli filtrabili per categoria (*Top Gap & Go*, *Alto Volume Relativo*, *Espansione ATR*, *Momentum*).
 4. **Analizzatore di Catalizzatori Gemini AI**: modulo di validazione rigorosa che analizza notizie ufficiali e feed finanziari in tempo reale, restituendo un output JSON deterministico (`TRADE` o `NESSUN_TRADE`), evidenziando rischi, invalidazioni e fonti verificate.
 5. **Governance di Rischio Integrata**: limite invalicabile di 2 trade al giorno, Circuit Breaker con blocco automatico al raggiungimento del -2% di perdita giornaliera sul capitale, calcolatore di size monetaria e Trade Journal completo.
@@ -43,7 +43,7 @@ Il sistema combina:
 - **Livelli Operativi Millimetrici**:
   - Prezzo di Trigger (Breakout / Pre-market High o Low)
   - Stop Loss Tecnico ancorato alla volatilità reale
-  - Distanza R e rapporto Rischio/Rendimento (1:1.5 fino a 1:2.5)
+  - Distanza R e rapporto Rischio/Rendimento (1:1.6 fino a 1:2.8)
   - **Livello Knock-Out Consigliato**: calcolato con una distanza di sicurezza pari a $2.65 \times \text{distanza SL}$ o $1.2 \times \text{ATR}$, per evitare lo stop out prematuro su spike di volatilità.
   - Calcolatore di quote e capitale impegnato in base al rischio massimo per operazione impostato dall'utente (es. 1% del conto).
 
