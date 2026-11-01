@@ -379,7 +379,7 @@ export interface SystemParameters {
   normalRiskMultiplier: number; // e.g. 0.50 * ATR
   target1Multiplier: number; // e.g. 1.60 * normalRisk
   target2Multiplier: number; // e.g. 2.80 * normalRisk
-  suggestedKoBarrierMultiplier: number; // e.g. 2.65 * normalRisk
+  suggestedKoBarrierMultiplier: number; // legacy: non usato nei calcoli
   triggerOffsetPercent: number; // e.g. 0.20 (%)
   rsiFilterActive: boolean; // default false
 }
