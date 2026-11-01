@@ -30,13 +30,16 @@ import {
 
 // Safe Firebase Config resolution (priority: VITE_ environment variables > config file)
 const rawConfig = (firebaseConfig || {}) as Record<string, any>;
+const metaEnv = typeof import.meta !== 'undefined' ? (import.meta as any).env : undefined;
 const apiKey =
-  import.meta.env.VITE_FIREBASE_API_KEY ||
+  metaEnv?.VITE_FIREBASE_API_KEY ||
+  process.env.VITE_FIREBASE_API_KEY ||
   (rawConfig.apiKey && rawConfig.apiKey !== 'YOUR_FIREBASE_API_KEY'
     ? rawConfig.apiKey
     : '');
 const projectId =
-  import.meta.env.VITE_FIREBASE_PROJECT_ID ||
+  metaEnv?.VITE_FIREBASE_PROJECT_ID ||
+  process.env.VITE_FIREBASE_PROJECT_ID ||
   (rawConfig.projectId && rawConfig.projectId !== 'YOUR_FIREBASE_PROJECT_ID'
     ? rawConfig.projectId
     : '');
@@ -125,6 +128,35 @@ export async function logoutUser(): Promise<void> {
 }
 
 /**
+ * Recursively strips undefined keys from plain JavaScript objects.
+ * Preserves non-plain objects (such as Firestore Timestamps, FieldValue, Dates, etc.)
+ * and handles nested arrays.
+ */
+export function stripUndefined<T>(value: T): T {
+  if (value === null || value === undefined) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => stripUndefined(item)) as unknown as T;
+  }
+  if (typeof value === 'object') {
+    const proto = Object.getPrototypeOf(value);
+    const isPlainObject = proto === Object.prototype || proto === null;
+    if (!isPlainObject) {
+      return value;
+    }
+    const result: Record<string, any> = {};
+    for (const [key, val] of Object.entries(value)) {
+      if (val !== undefined) {
+        result[key] = stripUndefined(val);
+      }
+    }
+    return result as T;
+  }
+  return value;
+}
+
+/**
  * Save or update system parameters & proposals in Firestore
  */
 export async function syncSystemSettingsToCloud(
@@ -140,19 +172,16 @@ export async function syncSystemSettingsToCloud(
   if (!db) return;
   try {
     const ref = doc(db, 'users', userId, 'settings', 'system');
-    await setDoc(
-      ref,
-      {
-        userId,
-        accountCapital: settings.accountCapital,
-        isPaperMode: settings.isPaperMode,
-        parameters: settings.parameters,
-        pendingProposal: settings.pendingProposal,
-        underlyings: settings.underlyings || null,
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
+    const rawPayload = {
+      userId,
+      accountCapital: settings.accountCapital,
+      isPaperMode: settings.isPaperMode,
+      parameters: settings.parameters,
+      pendingProposal: settings.pendingProposal,
+      underlyings: settings.underlyings || null,
+      updatedAt: new Date().toISOString(),
+    };
+    await setDoc(ref, stripUndefined(rawPayload), { merge: true });
   } catch (err) {
     console.error('[Firebase] Errore salvataggio impostazioni nel Cloud:', err);
   }
@@ -168,15 +197,13 @@ export async function syncTradeToCloud(
   if (!db) return;
   try {
     const ref = doc(db, 'users', userId, 'trades', trade.id);
-    await setDoc(
-      ref,
-      {
-        ...trade,
-        userId,
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
+    const rawPayload = {
+      ...trade,
+      closedAt: trade.closedAt ?? null,
+      userId,
+      updatedAt: new Date().toISOString(),
+    };
+    await setDoc(ref, stripUndefined(rawPayload), { merge: true });
   } catch (err) {
     console.error(`[Firebase] Errore salvataggio trade ${trade.id} nel Cloud:`, err);
   }
@@ -224,19 +251,25 @@ export async function batchUploadTradesToCloud(
   if (!db || trades.length === 0) return;
   try {
     const batch = writeBatch(db);
+    let validCount = 0;
     trades.forEach((trade) => {
+      if (!trade || typeof trade.id !== 'string' || trade.id.trim().length === 0) {
+        console.warn('[Firebase] Trade malformato scartato dal batch upload:', trade?.id || 'ID_MANCANTE', trade);
+        return;
+      }
       const ref = doc(db, 'users', userId, 'trades', trade.id);
-      batch.set(
-        ref,
-        {
-          ...trade,
-          userId,
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
+      const rawPayload = {
+        ...trade,
+        closedAt: trade.closedAt ?? null,
+        userId,
+        updatedAt: new Date().toISOString(),
+      };
+      batch.set(ref, stripUndefined(rawPayload), { merge: true });
+      validCount++;
     });
-    await batch.commit();
+    if (validCount > 0) {
+      await batch.commit();
+    }
   } catch (err) {
     console.error('[Firebase] Errore upload batch trade nel Cloud:', err);
   }

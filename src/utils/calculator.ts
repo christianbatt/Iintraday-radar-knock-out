@@ -1845,13 +1845,17 @@ export function generatePnLScenarios(
       grossPnlEur = -totalInvestedEur;
       netPnlEur = -totalInvestedEur;
     } else if (opts.isBreakeven) {
-      certEstimatedPrice = +(certPrice + frictionEur / Math.max(1, suggestedCertificates)).toFixed(3);
-      grossPnlEur = +frictionEur.toFixed(2);
-      netPnlEur = 0;
+      certEstimatedPrice = certPrice;
+      grossPnlEur = 0;
+      netPnlEur = -frictionEur;
     } else if (opts.isStop) {
       certEstimatedPrice = Math.max(0.01, +(certPrice * (1 + (underlyingChangePercent / 100) * leverage)).toFixed(3));
-      grossPnlEur = +(suggestedCertificates * (certEstimatedPrice - certPrice)).toFixed(2);
-      netPnlEur = -potentialLossEur;
+      // NOTE ON RISK CAP:
+      // potentialLossEur represents the GROSS loss cap derived from 1% account risk (maxRiskEur = capital * 1%).
+      // The position sizing calculates suggestedCertificates so that theoretical gross loss <= maxRiskEur.
+      // Net loss includes transaction frictions: netPnlEur = grossPnlEur - frictionEur.
+      grossPnlEur = -potentialLossEur;
+      netPnlEur = +(grossPnlEur - frictionEur).toFixed(2);
     } else {
       certEstimatedPrice = Math.max(0.01, +(certPrice * (1 + (underlyingChangePercent / 100) * leverage)).toFixed(3));
       grossPnlEur = +(suggestedCertificates * (certEstimatedPrice - certPrice)).toFixed(2);
@@ -1888,7 +1892,7 @@ export function generatePnLScenarios(
     buildScenario('t2', 'Target 2 (Trend Esteso)', TRADING_PARAMS.T2_R, t2Price, 'Massimo target intraday'),
     buildScenario('t1', 'Target 1 (Presa 70% Profitto)', TRADING_PARAMS.T1_R, t1Price, 'Target primario: chiusura parziale e stop a BE'),
     buildScenario('half', 'Pullback Favorevole (+0.8R)', 0.8, tHalfPrice, 'Scalping intermedio o gestione protettiva'),
-    buildScenario('be', 'Breakeven Dinamico (0.0R Netto)', 0, bePrice, 'Sottostante necessario per assorbire spread e fee', { isBreakeven: true }),
+    buildScenario('be', 'Pareggio al Carico (0.0R Lordo)', 0, entryPrice, 'Uscita al prezzo di carico: PnL lordo 0 e netto pari alle sole frizioni', { isBreakeven: true }),
     buildScenario('pullback', 'Drawdown Transitorio (-0.5R)', -0.5, pullbackPrice, 'Rintraccio fisiologico pre-breakout'),
     buildScenario('stop', 'Stop Loss Tecnico (-1.0R)', -1.0, stopPrice, 'Chiusura disciplinata al rischio predefinito 1%', { isStop: true }),
     buildScenario('ko', 'Stress Test Knock-Out (-100% Wipeout)', -100, koPrice, 'Liquidazione totale del certificato per gap o spike', { isKnockOut: true }),
@@ -2569,13 +2573,18 @@ export function evaluateSessionOptimization(
   currentParams: SystemParameters = DEFAULT_SYSTEM_PARAMETERS,
   minRequiredTrades = 15
 ): OptimizationProposal {
-  const marketTrades = trades.filter((t) => (t.market || (t.session === 'US' ? 'US' : 'EU')) === market);
-  const sorted = [...marketTrades].sort(
+  // Exclude OPEN trades and filter by market
+  const closedMarketTrades = trades.filter(
+    (t) => (t.market || (t.session === 'US' ? 'US' : 'EU')) === market && t.status !== 'OPEN'
+  );
+  const sorted = [...closedMarketTrades].sort(
     (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
   );
+  // Total calculated over full closed trade sample before slicing
+  const total = closedMarketTrades.length;
+  // Slice to 20 setups preserved strictly for display/visualization
   const evaluatedBatch = sorted.slice(0, 20);
-  const total = evaluatedBatch.length;
-  const cycle = Math.max(1, Math.floor(marketTrades.length / 20));
+  const cycle = Math.max(1, Math.floor(total / 20));
   const marketName = market === 'EU' ? 'Europa' : 'USA';
 
   if (total < minRequiredTrades) {
@@ -2587,14 +2596,14 @@ export function evaluateSessionOptimization(
       market,
       metrics: {
         totalSetups: total,
-        wins: evaluatedBatch.filter((t) => t.outcome === 'WIN').length,
-        losses: evaluatedBatch.filter((t) => t.outcome === 'LOSS').length,
-        breakevens: evaluatedBatch.filter((t) => t.outcome === 'BREAKEVEN').length,
-        expired: evaluatedBatch.filter((t) => t.outcome === 'EXPIRED').length,
+        wins: closedMarketTrades.filter((t) => t.outcome === 'WIN').length,
+        losses: closedMarketTrades.filter((t) => t.outcome === 'LOSS').length,
+        breakevens: closedMarketTrades.filter((t) => t.outcome === 'BREAKEVEN').length,
+        expired: closedMarketTrades.filter((t) => t.outcome === 'EXPIRED').length,
         winRate: 0,
         expiredRate: 0,
         lossRate: 0,
-        netPnlEur: +(evaluatedBatch.reduce((acc, t) => acc + (t.pnlEur || 0), 0)).toFixed(2),
+        netPnlEur: +(closedMarketTrades.reduce((acc, t) => acc + (t.pnlEur || 0), 0)).toFixed(2),
         profitFactor: 0,
         avgR: 0,
       },
@@ -2613,10 +2622,10 @@ export function evaluateSessionOptimization(
     };
   }
 
-  const wins = evaluatedBatch.filter((t) => t.outcome === 'WIN');
-  const losses = evaluatedBatch.filter((t) => t.outcome === 'LOSS');
-  const breakevens = evaluatedBatch.filter((t) => t.outcome === 'BREAKEVEN');
-  const expired = evaluatedBatch.filter((t) => t.outcome === 'EXPIRED');
+  const wins = closedMarketTrades.filter((t) => t.outcome === 'WIN');
+  const losses = closedMarketTrades.filter((t) => t.outcome === 'LOSS');
+  const breakevens = closedMarketTrades.filter((t) => t.outcome === 'BREAKEVEN');
+  const expired = closedMarketTrades.filter((t) => t.outcome === 'EXPIRED');
 
   const winCount = wins.length;
   const lossCount = losses.length;
@@ -2627,14 +2636,14 @@ export function evaluateSessionOptimization(
   const expiredRate = total > 0 ? +((expiredCount / total) * 100).toFixed(1) : 0;
   const lossRate = total > 0 ? +((lossCount / total) * 100).toFixed(1) : 0;
 
-  const netPnlEur = +(evaluatedBatch.reduce((acc, t) => acc + t.pnlEur, 0)).toFixed(2);
-  const totalGains = wins.reduce((acc, t) => acc + t.pnlEur, 0);
-  const totalLosses = Math.abs(losses.reduce((acc, t) => acc + t.pnlEur, 0));
+  const netPnlEur = +(closedMarketTrades.reduce((acc, t) => acc + (t.pnlEur || 0), 0)).toFixed(2);
+  const totalGains = wins.reduce((acc, t) => acc + (t.pnlEur || 0), 0);
+  const totalLosses = Math.abs(losses.reduce((acc, t) => acc + (t.pnlEur || 0), 0));
   const profitFactor =
     totalLosses > 0 ? +(totalGains / totalLosses).toFixed(2) : totalGains > 0 ? 99.0 : 0;
   const avgR =
     total > 0
-      ? +(evaluatedBatch.reduce((acc, t) => acc + t.rMultiple, 0) / total).toFixed(2)
+      ? +(closedMarketTrades.reduce((acc, t) => acc + (t.rMultiple || 0), 0) / total).toFixed(2)
       : 0;
 
   const metrics: OptimizationMetrics = {
@@ -3201,29 +3210,63 @@ export function generateFilteringAuditReport(
   const minScoreUS = parameters?.minScoreUSA ?? parameters?.minScore ?? TRADING_PARAMS.MIN_SCORE_US;
   const minRvolEU = parameters?.minRvolEurope ?? parameters?.minRvol ?? TRADING_PARAMS.MIN_RVOL_EU;
   const minRvolUS = parameters?.minRvolUSA ?? parameters?.minRvol ?? TRADING_PARAMS.MIN_RVOL_US;
+  const minGapEU = parameters?.minGapEurope ?? DEFAULT_SYSTEM_PARAMETERS.minGapEurope;
+  const minGapUS = parameters?.minGapUSA ?? DEFAULT_SYSTEM_PARAMETERS.minGapUSA;
 
-  if (dualTop.topEU && dualTop.topEU.score.total >= minScoreEU) {
-    const cat = catalystCache[dualTop.topEU.quote.ticker];
-    const isAbsenceOfNewsOnly = cat && (
-      cat.catalizzatore?.toLowerCase().includes('nessuna notizia') ||
-      cat.catalizzatore?.toLowerCase().includes('assenza di catalizzatore') ||
-      cat.catalizzatore?.toLowerCase().includes('assenza di notizie')
-    );
-    if (!cat || cat.decisione !== 'NESSUN_TRADE' || isAbsenceOfNewsOnly) {
-      qualifiedTickers.add(dualTop.topEU.quote.ticker);
+  const isCandidateFullyQualified = (
+    candidate: ScoredCandidate | null,
+    market: 'EU' | 'US'
+  ): boolean => {
+    if (!candidate || !candidate.quote) return false;
+    const q = candidate.quote;
+
+    // Data completeness
+    if (q.currentPrice == null && q.preMarketPrice == null) return false;
+    if (q.atr14 == null || q.atr14 <= 0) return false;
+
+    const isEU = market === 'EU';
+    const minScore = isEU ? minScoreEU : minScoreUS;
+    const minRvol = isEU ? minRvolEU : minRvolUS;
+    const minGap = isEU ? minGapEU : minGapUS;
+
+    // 1. Score Gate
+    if (candidate.score.total < minScore) return false;
+
+    // 2. RVOL Gate
+    const rvol = q.rvol != null ? q.rvol : (isEU ? 1.0 : 1.0);
+    if (rvol < minRvol) return false;
+
+    // 3. Gap Gate
+    const absGap = Math.abs(q.gapPercent ?? 0);
+    if (absGap < minGap) return false;
+
+    // 4. RSI Gate
+    const rsi = q.rsi5m ?? q.rsi14 ?? null;
+    if (isRsiFilterActive && isRsiExtreme(rsi)) return false;
+
+    // 5. Catalyst Gate
+    const cat = catalystCache[q.ticker];
+    if (cat && cat.decisione === 'NESSUN_TRADE') {
+      const isAbsenceOfNewsOnly =
+        cat.catalizzatore?.toLowerCase().includes('nessuna notizia') ||
+        cat.catalizzatore?.toLowerCase().includes('assenza di catalizzatore') ||
+        cat.catalizzatore?.toLowerCase().includes('assenza di notizie') ||
+        (cat.rischi?.length === 1 &&
+          (cat.rischi[0]?.toLowerCase().includes('mancanza di notizie') ||
+           cat.rischi[0]?.toLowerCase().includes('assenza di catalizzatore') ||
+           cat.rischi[0]?.toLowerCase().includes('assenza di notizie')));
+      if (!isAbsenceOfNewsOnly) return false;
     }
+
+    return true;
+  };
+
+  if (isCandidateFullyQualified(dualTop.topEU, 'EU')) {
+    qualifiedTickers.add(dualTop.topEU!.quote.ticker);
   }
 
-  if (dualTop.topUS && dualTop.topUS.score.total >= minScoreUS) {
-    const cat = catalystCache[dualTop.topUS.quote.ticker];
-    const isAbsenceOfNewsOnly = cat && (
-      cat.catalizzatore?.toLowerCase().includes('nessuna notizia') ||
-      cat.catalizzatore?.toLowerCase().includes('assenza di catalizzatore') ||
-      cat.catalizzatore?.toLowerCase().includes('assenza di notizie')
-    );
-    if (!cat || cat.decisione !== 'NESSUN_TRADE' || isAbsenceOfNewsOnly) {
-      qualifiedTickers.add(dualTop.topUS.quote.ticker);
-    }
+  if (isCandidateFullyQualified(dualTop.topUS, 'US')) {
+    qualifiedTickers.add(dualTop.topUS!.quote.ticker);
   }
 
   const countsByCategory = {
@@ -3470,6 +3513,13 @@ export function buildTheoreticalSetupForExcluded(
 
 /**
  * Updates active monitored excluded setups against live market quotes tick-by-tick.
+ *
+ * NOTA ARCHITETTURALE E LIMITE STRUTTURALE DEL POLLING SPOT PRICE:
+ * Questa funzione esegue una verifica istantanea (single-sample polling) basata sulle quotazioni spot fornite ad ogni ciclo del feed.
+ * Limite strutturale intrinseco: target o stop loss toccati dal sottostante all'interno dell'intervallo tra un poll e il successivo
+ * possono non essere intercettati se il prezzo ritraccia prima del campionamento successivo.
+ * Per una risoluzione esaustiva dei massimi e minimi estremi intraday intra-poll, è necessario un feed continuo tick-by-tick / OHLC.
+ * La presente funzione non altera la logica quantitativa di calcolo, ma documenta formalmente tale caratteristica operativa.
  */
 export function updateExcludedSetupsWithLiveQuotes(
   records: ExcludedSetupRecord[],
@@ -3698,109 +3748,238 @@ export function runExcludedSetupsAutoAnalysis(
 
     if (isTooRestrictive) {
       if (cat === 'RVOL_INSUFFICIENT') {
-        const profitableRvols = catRecords
-          .filter((r) => r.outcomeStatus === 'THEORETICAL_PROFIT' && typeof r.rvol === 'number' && r.rvol > 0)
+        const euProfitableRvols = catRecords
+          .filter((r) => r.market === 'EU' && r.outcomeStatus === 'THEORETICAL_PROFIT' && typeof r.rvol === 'number' && r.rvol > 0)
           .map((r) => r.rvol as number);
-        const minProfitableRvol = profitableRvols.length > 0 ? Math.min(...profitableRvols) : 0.65;
-        const proposed = Math.max(0.65, +Math.min(currentParams.minRvol - 0.05, minProfitableRvol).toFixed(2));
+        const usProfitableRvols = catRecords
+          .filter((r) => r.market === 'US' && r.outcomeStatus === 'THEORETICAL_PROFIT' && typeof r.rvol === 'number' && r.rvol > 0)
+          .map((r) => r.rvol as number);
 
-        const isAlreadyCalibrated = currentParams.minRvol <= proposed + 0.01;
+        let anyUncalibrated = false;
 
-        if (isAlreadyCalibrated) {
-          verdict = 'CALIBRATED';
-          verdictTitle = '✅ Filtro Calibrato & Ottimizzato';
-          verdictDescription = `La soglia attuale di Volume Relativo (${currentParams.minRvol}x) è già stata allineata al valore ottimale. I setup precedentemente scartati sono ora inclusi.`;
-          correctionProposal = undefined;
-        } else {
+        // Process EU
+        if (euProfitableRvols.length > 0) {
+          const curRvolEU = currentParams.minRvolEurope ?? TRADING_PARAMS.MIN_RVOL_EU;
+          const minProfitableEU = Math.min(...euProfitableRvols);
+          const proposedEU = Math.max(0.65, +Math.min(curRvolEU - 0.05, minProfitableEU).toFixed(2));
+          const isCalibratedEU = curRvolEU <= proposedEU + 0.01;
+
+          if (!isCalibratedEU) {
+            anyUncalibrated = true;
+            const proposal = {
+              parameterKey: 'minRvolEurope' as const,
+              label: 'Soglia Minima Volume Relativo Europa (minRvolEurope)',
+              currentValue: `${curRvolEU}x`,
+              proposedValue: `${proposedEU}x`,
+              actionType: 'REDUCE_PARAM' as const,
+              explanation: `Micro-ottimizzazione Europa: riduci la soglia minima di RVOL da ${curRvolEU}x a ${proposedEU}x per includere nella prossima sessione europea titoli con volume relativo a partire da ${proposedEU}x che sono andati a target.`,
+            };
+            if (!correctionProposal) correctionProposal = proposal;
+            urgentCorrections.push({
+              category: cat,
+              title: 'Allentamento Soglia RVOL Europa',
+              description: proposal.explanation,
+              parameterKey: 'minRvolEurope',
+              currentValue: curRvolEU,
+              proposedValue: proposedEU,
+            });
+          }
+        }
+
+        // Process US
+        if (usProfitableRvols.length > 0) {
+          const curRvolUS = currentParams.minRvolUSA ?? TRADING_PARAMS.MIN_RVOL_US;
+          const minProfitableUS = Math.min(...usProfitableRvols);
+          const proposedUS = Math.max(0.85, +Math.min(curRvolUS - 0.05, minProfitableUS).toFixed(2));
+          const isCalibratedUS = curRvolUS <= proposedUS + 0.01;
+
+          if (!isCalibratedUS) {
+            anyUncalibrated = true;
+            const proposal = {
+              parameterKey: 'minRvolUSA' as const,
+              label: 'Soglia Minima Volume Relativo USA (minRvolUSA)',
+              currentValue: `${curRvolUS}x`,
+              proposedValue: `${proposedUS}x`,
+              actionType: 'REDUCE_PARAM' as const,
+              explanation: `Micro-ottimizzazione USA: riduci la soglia minima di RVOL da ${curRvolUS}x a ${proposedUS}x per includere nella prossima sessione americana titoli con volume relativo a partire da ${proposedUS}x che sono andati a target.`,
+            };
+            if (!correctionProposal) correctionProposal = proposal;
+            urgentCorrections.push({
+              category: cat,
+              title: 'Allentamento Soglia RVOL USA',
+              description: proposal.explanation,
+              parameterKey: 'minRvolUSA',
+              currentValue: curRvolUS,
+              proposedValue: proposedUS,
+            });
+          }
+        }
+
+        if (anyUncalibrated) {
           verdict = 'TOO_RESTRICTIVE';
           verdictTitle = '⚠️ Filtro Troppo Severo (Troppi Profitti Persi)';
           verdictDescription = `${profitCount} setup su ${resolved} risolti (${winRate}%) sono andati a target con successo nonostante l'esclusione. Il filtro è eccessivamente restrittivo e sta frenando le performance della strategia.`;
-          correctionProposal = {
-            parameterKey: 'minRvol',
-            label: 'Soglia Minima Volume Relativo (RVOL)',
-            currentValue: `${currentParams.minRvol}x`,
-            proposedValue: `${proposed}x`,
-            actionType: 'REDUCE_PARAM',
-            explanation: `Micro-ottimizzazione: riduci la soglia minima di RVOL da ${currentParams.minRvol}x a ${proposed}x per includere nella prossima sessione titoli con volume relativo a partire da ${proposed}x che sono andati a target.`,
-          };
-          urgentCorrections.push({
-            category: cat,
-            title: 'Allentamento Soglia RVOL',
-            description: correctionProposal.explanation,
-            parameterKey: 'minRvol',
-            currentValue: currentParams.minRvol,
-            proposedValue: proposed,
-          });
+        } else {
+          verdict = 'CALIBRATED';
+          verdictTitle = '✅ Filtro Calibrato & Ottimizzato';
+          verdictDescription = 'Le soglie di Volume Relativo per i mercati con trade profittevoli sono già allineate ai valori ottimali. Nessuna ulteriore riduzione necessaria.';
+          correctionProposal = undefined;
         }
       } else if (cat === 'GAP_INSUFFICIENT') {
-        const profitableGaps = catRecords
-          .filter((r) => r.outcomeStatus === 'THEORETICAL_PROFIT' && typeof r.gapPercent === 'number')
+        const euProfitableGaps = catRecords
+          .filter((r) => r.market === 'EU' && r.outcomeStatus === 'THEORETICAL_PROFIT' && typeof r.gapPercent === 'number')
           .map((r) => Math.abs(r.gapPercent as number));
-        const minProfitableGap = profitableGaps.length > 0 ? Math.min(...profitableGaps) : 0.15;
-        const proposedEU = Math.max(0.15, +Math.min(currentParams.minGapEurope - 0.05, minProfitableGap).toFixed(2));
+        const usProfitableGaps = catRecords
+          .filter((r) => r.market === 'US' && r.outcomeStatus === 'THEORETICAL_PROFIT' && typeof r.gapPercent === 'number')
+          .map((r) => Math.abs(r.gapPercent as number));
 
-        const isAlreadyCalibrated = currentParams.minGapEurope <= proposedEU + 0.01;
+        let anyUncalibrated = false;
 
-        if (isAlreadyCalibrated) {
-          verdict = 'CALIBRATED';
-          verdictTitle = '✅ Filtro Calibrato & Ottimizzato';
-          verdictDescription = `Il Gap % minimo attuale (${currentParams.minGapEurope}%) è già stato calibrato per ammettere i setup profittevoli. Nessuna ulteriore riduzione necessaria.`;
-          correctionProposal = undefined;
-        } else {
+        // Process EU
+        if (euProfitableGaps.length > 0) {
+          const curGapEU = currentParams.minGapEurope ?? DEFAULT_SYSTEM_PARAMETERS.minGapEurope;
+          const minProfitableEU = Math.min(...euProfitableGaps);
+          const proposedEU = Math.max(0.15, +Math.min(curGapEU - 0.05, minProfitableEU).toFixed(2));
+          const isCalibratedEU = curGapEU <= proposedEU + 0.01;
+
+          if (!isCalibratedEU) {
+            anyUncalibrated = true;
+            const proposal = {
+              parameterKey: 'minGapEurope' as const,
+              label: 'Soglia Minima Gap % Europa (minGapEurope)',
+              currentValue: `${curGapEU}%`,
+              proposedValue: `${proposedEU}%`,
+              actionType: 'REDUCE_PARAM' as const,
+              explanation: `Micro-calibrazione Europa: abbassa il gap minimo europeo da ${curGapEU}% a ${proposedEU}% per intercettare continuazioni di trend con gap a partire da ±${proposedEU}%.`,
+            };
+            if (!correctionProposal) correctionProposal = proposal;
+            urgentCorrections.push({
+              category: cat,
+              title: 'Riduzione Soglia Gap Minimo Europa',
+              description: proposal.explanation,
+              parameterKey: 'minGapEurope',
+              currentValue: curGapEU,
+              proposedValue: proposedEU,
+            });
+          }
+        }
+
+        // Process US
+        if (usProfitableGaps.length > 0) {
+          const curGapUS = currentParams.minGapUSA ?? DEFAULT_SYSTEM_PARAMETERS.minGapUSA;
+          const minProfitableUS = Math.min(...usProfitableGaps);
+          const proposedUS = Math.max(0.35, +Math.min(curGapUS - 0.05, minProfitableUS).toFixed(2));
+          const isCalibratedUS = curGapUS <= proposedUS + 0.01;
+
+          if (!isCalibratedUS) {
+            anyUncalibrated = true;
+            const proposal = {
+              parameterKey: 'minGapUSA' as const,
+              label: 'Soglia Minima Gap % USA (minGapUSA)',
+              currentValue: `${curGapUS}%`,
+              proposedValue: `${proposedUS}%`,
+              actionType: 'REDUCE_PARAM' as const,
+              explanation: `Micro-calibrazione USA: abbassa il gap minimo americano da ${curGapUS}% a ${proposedUS}% per intercettare continuazioni di trend a Wall Street con gap a partire da ±${proposedUS}%.`,
+            };
+            if (!correctionProposal) correctionProposal = proposal;
+            urgentCorrections.push({
+              category: cat,
+              title: 'Riduzione Soglia Gap Minimo USA',
+              description: proposal.explanation,
+              parameterKey: 'minGapUSA',
+              currentValue: curGapUS,
+              proposedValue: proposedUS,
+            });
+          }
+        }
+
+        if (anyUncalibrated) {
           verdict = 'TOO_RESTRICTIVE';
           verdictTitle = '⚠️ Filtro Troppo Severo (Troppi Profitti Persi)';
           verdictDescription = `${profitCount} setup su ${resolved} risolti (${winRate}%) sono andati a target con successo nonostante l'esclusione. Il filtro è eccessivamente restrittivo e sta frenando le performance della strategia.`;
-          correctionProposal = {
-            parameterKey: 'minGapEurope',
-            label: 'Soglia Minima Gap % Europa',
-            currentValue: `${currentParams.minGapEurope}%`,
-            proposedValue: `${proposedEU}%`,
-            actionType: 'REDUCE_PARAM',
-            explanation: `Micro-calibrazione: abbassa il gap minimo europeo da ${currentParams.minGapEurope}% a ${proposedEU}% per intercettare continuazioni di trend con gap a partire da ±${proposedEU}%.`,
-          };
-          urgentCorrections.push({
-            category: cat,
-            title: 'Riduzione Soglia Gap Minimo',
-            description: correctionProposal.explanation,
-            parameterKey: 'minGapEurope',
-            currentValue: currentParams.minGapEurope,
-            proposedValue: proposedEU,
-          });
-        }
-      } else if (cat === 'SCORE_BELOW_MIN') {
-        const profitableScores = catRecords
-          .filter((r) => r.outcomeStatus === 'THEORETICAL_PROFIT' && typeof r.score === 'number')
-          .map((r) => r.score);
-        const minProfitableScore = profitableScores.length > 0 ? Math.min(...profitableScores) : currentParams.minScore - 2;
-        const proposedScore = Math.max(40, Math.min(currentParams.minScore - 1, minProfitableScore));
-
-        const isAlreadyCalibrated = currentParams.minScore <= proposedScore;
-
-        if (isAlreadyCalibrated) {
+        } else {
           verdict = 'CALIBRATED';
           verdictTitle = '✅ Filtro Calibrato & Ottimizzato';
-          verdictDescription = `La soglia di punteggio minima (${currentParams.minScore}/100) è già al livello ottimale per ammettere i setup di qualità.`;
+          verdictDescription = 'I Gap % minimi per i mercati con trade profittevoli sono già stati calibrati. Nessuna ulteriore riduzione necessaria.';
           correctionProposal = undefined;
-        } else {
+        }
+      } else if (cat === 'SCORE_BELOW_MIN') {
+        const euProfitableScores = catRecords
+          .filter((r) => r.market === 'EU' && r.outcomeStatus === 'THEORETICAL_PROFIT' && typeof r.score === 'number')
+          .map((r) => r.score);
+        const usProfitableScores = catRecords
+          .filter((r) => r.market === 'US' && r.outcomeStatus === 'THEORETICAL_PROFIT' && typeof r.score === 'number')
+          .map((r) => r.score);
+
+        let anyUncalibrated = false;
+
+        // Process EU
+        if (euProfitableScores.length > 0) {
+          const curScoreEU = currentParams.minScoreEurope ?? TRADING_PARAMS.MIN_SCORE_EU;
+          const minProfitableScoreEU = Math.min(...euProfitableScores);
+          const proposedEU = Math.max(40, Math.min(curScoreEU - 1, minProfitableScoreEU));
+          const isCalibratedEU = curScoreEU <= proposedEU;
+
+          if (!isCalibratedEU) {
+            anyUncalibrated = true;
+            const proposal = {
+              parameterKey: 'minScoreEurope' as const,
+              label: 'Punteggio Minimo Algoritmico Europa (minScoreEurope)',
+              currentValue: `${curScoreEU}/100`,
+              proposedValue: `${proposedEU}/100`,
+              actionType: 'REDUCE_PARAM' as const,
+              explanation: `Micro-ottimizzazione Europa: riduci la soglia di sblocco europeo da ${curScoreEU} a ${proposedEU}/100 per ammettere setup con punteggio da ${proposedEU} in su.`,
+            };
+            if (!correctionProposal) correctionProposal = proposal;
+            urgentCorrections.push({
+              category: cat,
+              title: 'Abbassamento Soglia Punteggio Europa',
+              description: proposal.explanation,
+              parameterKey: 'minScoreEurope',
+              currentValue: curScoreEU,
+              proposedValue: proposedEU,
+            });
+          }
+        }
+
+        // Process US
+        if (usProfitableScores.length > 0) {
+          const curScoreUS = currentParams.minScoreUSA ?? TRADING_PARAMS.MIN_SCORE_US;
+          const minProfitableScoreUS = Math.min(...usProfitableScores);
+          const proposedUS = Math.max(45, Math.min(curScoreUS - 1, minProfitableScoreUS));
+          const isCalibratedUS = curScoreUS <= proposedUS;
+
+          if (!isCalibratedUS) {
+            anyUncalibrated = true;
+            const proposal = {
+              parameterKey: 'minScoreUSA' as const,
+              label: 'Punteggio Minimo Algoritmico USA (minScoreUSA)',
+              currentValue: `${curScoreUS}/100`,
+              proposedValue: `${proposedUS}/100`,
+              actionType: 'REDUCE_PARAM' as const,
+              explanation: `Micro-ottimizzazione USA: riduci la soglia di sblocco americano da ${curScoreUS} a ${proposedUS}/100 per ammettere setup con punteggio da ${proposedUS} in su.`,
+            };
+            if (!correctionProposal) correctionProposal = proposal;
+            urgentCorrections.push({
+              category: cat,
+              title: 'Abbassamento Soglia Punteggio USA',
+              description: proposal.explanation,
+              parameterKey: 'minScoreUSA',
+              currentValue: curScoreUS,
+              proposedValue: proposedUS,
+            });
+          }
+        }
+
+        if (anyUncalibrated) {
           verdict = 'TOO_RESTRICTIVE';
           verdictTitle = '⚠️ Filtro Troppo Severo (Troppi Profitti Persi)';
           verdictDescription = `${profitCount} setup su ${resolved} risolti (${winRate}%) sono andati a target con successo nonostante l'esclusione.`;
-          correctionProposal = {
-            parameterKey: 'minScore',
-            label: 'Punteggio Minimo Algoritmico (minScore)',
-            currentValue: `${currentParams.minScore}/100`,
-            proposedValue: `${proposedScore}/100`,
-            actionType: 'REDUCE_PARAM',
-            explanation: `Micro-ottimizzazione: riduci la soglia di sblocco da ${currentParams.minScore} a ${proposedScore}/100 per ammettere setup con punteggio da ${proposedScore} in su.`,
-          };
-          urgentCorrections.push({
-            category: cat,
-            title: 'Abbassamento Soglia Punteggio',
-            description: correctionProposal.explanation,
-            parameterKey: 'minScore',
-            currentValue: currentParams.minScore,
-            proposedValue: proposedScore,
-          });
+        } else {
+          verdict = 'CALIBRATED';
+          verdictTitle = '✅ Filtro Calibrato & Ottimizzato';
+          verdictDescription = 'Le soglie di punteggio minime per i mercati con trade profittevoli sono già al livello ottimale per ammettere i setup di qualità.';
+          correctionProposal = undefined;
         }
       } else if (cat === 'RSI_EXTREME') {
         if (!currentParams.rsiFilterActive) {

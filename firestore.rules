@@ -18,20 +18,42 @@ service cloud.firestore {
       return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function isValidTrade(data) {
+      return data.id is string
+        && data.ticker is string
+        && (data.direction == 'LONG' || data.direction == 'SHORT' || data.direction == 'NESSUNA')
+        && data.entryPrice is number
+        && data.stopLoss is number
+        && data.target1 is number
+        && (data.status == 'OPEN' || data.status == 'CLOSED')
+        && (data.outcome == 'WIN' || data.outcome == 'LOSS' || data.outcome == 'BREAKEVEN' || data.outcome == 'EXPIRED');
+    }
+
     match /users/{userId} {
       allow get: if isOwner(userId);
       allow list: if false;
       allow write: if isOwner(userId);
 
       match /settings/system {
-        allow get, write: if isOwner(userId);
+        allow get: if isOwner(userId);
         allow list: if false;
+        // Governance: Direct updates to parameters are forbidden unless accompanied by an ACCEPTED proposal or initial write
+        allow write: if isOwner(userId)
+          && (
+            resource == null
+            || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['parameters'])
+            || (
+              request.resource.data.pendingProposal != null
+              && request.resource.data.pendingProposal.status == 'ACCEPTED'
+            )
+          );
       }
 
       match /trades/{tradeId} {
         allow get: if isOwner(userId) && isValidId(tradeId);
         allow list: if isOwner(userId);
-        allow write: if isOwner(userId) && isValidId(tradeId);
+        allow create, update: if isOwner(userId) && isValidId(tradeId) && isValidTrade(request.resource.data);
+        allow delete: if isOwner(userId) && isValidId(tradeId);
       }
     }
   }
