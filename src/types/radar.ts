@@ -106,6 +106,14 @@ export interface MacroEvent {
   description: string;
   isBlackoutNow: boolean;
   minutesToEvent: number;
+  country?: string;
+  period?: string | null;
+  consensus?: string | null;
+  prior?: string | null;
+  actual?: string | null;
+  unit?: string | null;
+  source_name?: string | null;
+  url?: string | null;
 }
 
 export interface MacroCalendarState {
@@ -113,7 +121,11 @@ export interface MacroCalendarState {
   activeBlackoutEvent: MacroEvent | null;
   isBlackoutActive: boolean;
   spreadWarningTradeRepublic: string | null;
+  isWeekend?: boolean;
+  marketClosed?: boolean;
+  message?: string;
   lastCheckedAt?: string;
+  attribution?: string;
 }
 
 export interface ScoredCandidate {
@@ -424,6 +436,8 @@ export interface SessionInfo {
     date: string;
     hour: number;
     minute: number;
+    dayOfWeek?: number;
+    isWeekend?: boolean;
     isEuropeWindow: boolean;
     isUSAWindow: boolean;
     isEuropeLive?: boolean;
@@ -432,6 +446,7 @@ export interface SessionInfo {
     marketStatusEU?: 'PRE_MARKET' | 'OPEN_LIVE' | 'CLOSED';
     marketStatusUS?: 'PRE_MARKET' | 'OPEN_LIVE' | 'CLOSED';
     currentMinutes: number;
+    usMinutes?: number;
   };
   recommendedSession: 'EU' | 'US' | 'GLOBAL';
 }

@@ -231,10 +231,19 @@ function getCETTime() {
   const minute = parseInt(euMap.minute || '0', 10);
   const totalMinutes = hour * 60 + minute;
 
-  // Screening Europa: 07:30 (450m) to 08:55 (535m) Europe/Rome
-  const isEuropeWindow = totalMinutes >= 450 && totalMinutes <= 535;
-  // Regular Trading Session Hours Europe: 09:00 (540m) to 17:35 (1055m) Europe/Rome
-  const isEuropeLive = totalMinutes >= 540 && totalMinutes <= 1055;
+  // Day of week in Rome / New York
+  const dayFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Rome',
+    weekday: 'short',
+  });
+  const weekdayStr = dayFormatter.format(now); // "Sun", "Mon", etc.
+  const isWeekend = weekdayStr === 'Sat' || weekdayStr === 'Sun';
+  const dayOfWeek = now.getDay();
+
+  // Screening Europa: 07:30 (450m) to 08:55 (535m) Europe/Rome (solo feriali)
+  const isEuropeWindow = !isWeekend && totalMinutes >= 450 && totalMinutes <= 535;
+  // Regular Trading Session Hours Europe: 09:00 (540m) to 17:35 (1055m) Europe/Rome (solo feriali)
+  const isEuropeLive = !isWeekend && totalMinutes >= 540 && totalMinutes <= 1055;
 
   // USA (America/New_York) - 100% Dynamic with Intl
   const usFormatter = new Intl.DateTimeFormat('en-US', {
@@ -254,12 +263,12 @@ function getCETTime() {
   const usMinute = parseInt(usMap.minute || '0', 10);
   const usTotalMinutes = usHour * 60 + usMinute;
 
-  // Screening USA: 08:30 (510m) to 09:25 (565m) America/New_York
-  const isUSAWindow = usTotalMinutes >= 510 && usTotalMinutes <= 565;
-  // Pre-Market USA: 04:00 (240m) to 09:29 (569m) America/New_York
-  const isUSAPreMarket = usTotalMinutes >= 240 && usTotalMinutes <= 569;
-  // Regular Live Session USA: 09:30 (570m) to 16:05 (965m) America/New_York
-  const isUSALive = usTotalMinutes >= 570 && usTotalMinutes <= 965;
+  // Screening USA: 08:30 (510m) to 09:25 (565m) America/New_York (solo feriali)
+  const isUSAWindow = !isWeekend && usTotalMinutes >= 510 && usTotalMinutes <= 565;
+  // Pre-Market USA: 04:00 (240m) to 09:29 (569m) America/New_York (solo feriali)
+  const isUSAPreMarket = !isWeekend && usTotalMinutes >= 240 && usTotalMinutes <= 569;
+  // Regular Live Session USA: 09:30 (570m) to 16:05 (965m) America/New_York (solo feriali)
+  const isUSALive = !isWeekend && usTotalMinutes >= 570 && usTotalMinutes <= 965;
 
   const marketStatusEU: 'PRE_MARKET' | 'OPEN_LIVE' | 'CLOSED' = isEuropeLive
     ? 'OPEN_LIVE'
@@ -278,6 +287,8 @@ function getCETTime() {
     date: `${euMap.year}-${euMap.month}-${euMap.day}`,
     hour,
     minute,
+    dayOfWeek,
+    isWeekend,
     isEuropeWindow,
     isUSAWindow,
     isEuropeLive,
@@ -1326,88 +1337,169 @@ app.get('/api/session', (_req: Request, res: Response) => {
   });
 });
 
-// Real-Time Macroeconomic High-Impact Calendar & Spread Guard
-function getMacroCalendarState(): any {
+// Real-Time Macroeconomic High-Impact Calendar via FinanceCalendar.com & Knock-Out Spread Guard
+interface CachedMacroData {
+  date: string;
+  rawEvents: any[];
+  marketClosed: boolean;
+  marketLabel?: string;
+  fetchedAt: number;
+}
+
+let cachedMacro: CachedMacroData | null = null;
+
+async function fetchFinanceCalendarToday(): Promise<{ rawEvents: any[]; marketClosed: boolean; marketLabel?: string }> {
+  const cet = getCETTime();
+  const todayDate = cet.date;
+  const now = Date.now();
+
+  // If weekend, markets are closed and no economic releases scheduled
+  if (cet.isWeekend) {
+    return {
+      rawEvents: [],
+      marketClosed: true,
+      marketLabel: 'Mercato Chiuso (Weekend)',
+    };
+  }
+
+  // 30-minute in-memory cache to stay well within the 2,000 requests/day limit
+  if (cachedMacro && cachedMacro.date === todayDate && now - cachedMacro.fetchedAt < 30 * 60 * 1000) {
+    return {
+      rawEvents: cachedMacro.rawEvents,
+      marketClosed: cachedMacro.marketClosed,
+      marketLabel: cachedMacro.marketLabel,
+    };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    // Countries: US (United States), EU (Euro area), DE (Germany)
+    const url = 'https://www.financecalendar.com/wp-json/fc/v1/today?country=US,EU,DE&impact=high';
+    const resp = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'IntradayRadar/1.0 (+https://ais-dev-yn3qenhns3fitcc4fsyngo-665143262858.europe-west2.run.app)',
+      },
+    });
+    clearTimeout(timeoutId);
+
+    if (resp.ok) {
+      const data: any = await resp.json();
+      const rawEvents = Array.isArray(data?.events) ? data.events : [];
+      const marketClosed = data?.market?.open === false;
+      const marketLabel = data?.market?.label || undefined;
+
+      cachedMacro = {
+        date: todayDate,
+        rawEvents,
+        marketClosed,
+        marketLabel,
+        fetchedAt: now,
+      };
+
+      return { rawEvents, marketClosed, marketLabel };
+    } else {
+      console.warn(`[FinanceCalendar API] Risposta HTTP ${resp.status} - utilizzo fallback locale.`);
+    }
+  } catch (err: any) {
+    console.warn(`[FinanceCalendar API] Notice: ${err.message || err}`);
+  }
+
+  // Return cached data if available for today, else empty
+  if (cachedMacro && cachedMacro.date === todayDate) {
+    return {
+      rawEvents: cachedMacro.rawEvents,
+      marketClosed: cachedMacro.marketClosed,
+      marketLabel: cachedMacro.marketLabel,
+    };
+  }
+
+  return { rawEvents: [], marketClosed: false };
+}
+
+async function getMacroCalendarState(): Promise<any> {
   const cet = getCETTime();
   const currentMinutes = cet.currentMinutes;
   const now = new Date();
-  const dayOfWeek = now.getDay(); // 0 = Sun, 1 = Mon ... 5 = Fri, 6 = Sat
+  const isWeekend = cet.isWeekend;
 
-  // Canonical high-impact macro releases affecting Knock-Out spreads & market volatility
-  const baseEvents = [
-    {
-      id: 'us-cpi-pce-1430',
-      timeCET: '14:30',
-      hour: 14,
-      minute: 30,
-      event: 'US CPI / PPI / Non-Farm Payrolls (Dati Macro USA)',
-      currency: 'USD' as const,
-      impact: 'HIGH' as const,
-      description: 'Dati cardine sull\'inflazione e occupazione USA. Impatto violento su indici, rendimenti obbligazionari e dollaro.',
-    },
-    {
-      id: 'us-ism-pmi-1600',
-      timeCET: '16:00',
-      hour: 16,
-      minute: 0,
-      event: 'US ISM Manifatturiero / Servizi & JOLTS',
-      currency: 'USD' as const,
-      impact: 'HIGH' as const,
-      description: 'Barometro fondamentale dello stato di salute dell\'economia americana.',
-    },
-    {
-      id: 'fomc-fed-2000',
-      timeCET: '20:00',
-      hour: 20,
-      minute: 0,
-      event: 'Decisione Tassi Fed / FOMC Statement',
-      currency: 'USD' as const,
-      impact: 'EXTREME' as const,
-      description: 'Annuncio sui tassi della Federal Reserve. Massima volatilità sui book mondiali.',
-    },
-    {
-      id: 'fomc-press-2030',
-      timeCET: '20:30',
-      hour: 20,
-      minute: 30,
-      event: 'Conferenza Stampa Powell (FOMC Press Conference)',
-      currency: 'USD' as const,
-      impact: 'EXTREME' as const,
-      description: 'Dichiarazioni in diretta del presidente della Fed con improvvise oscillazioni intraday.',
-    },
-    {
-      id: 'ecb-rates-1415',
-      timeCET: '14:15',
-      hour: 14,
-      minute: 15,
-      event: 'Decisione Tassi BCE (Banca Centrale Europea)',
-      currency: 'EUR' as const,
-      impact: 'HIGH' as const,
-      description: 'Decisione di politica monetaria dell\'Eurozona con impatto diretto su DAX, EuroStoxx e titoli bancari.',
-    },
-  ];
+  if (isWeekend) {
+    return {
+      events: [],
+      activeBlackoutEvent: null,
+      isBlackoutActive: false,
+      spreadWarningTradeRepublic: null,
+      isWeekend: true,
+      marketClosed: true,
+      message: 'I mercati finanziari sono chiusi per il fine settimana (sabato/domenica). Nessun market mover macroeconomico programmato per oggi.',
+      lastCheckedAt: now.toISOString(),
+      attribution: 'FinanceCalendar.com',
+    };
+  }
 
-  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  const { rawEvents, marketClosed, marketLabel } = await fetchFinanceCalendarToday();
 
   let activeBlackoutEvent: any = null;
-  const processedEvents = baseEvents.map((evt) => {
-    const eventMinutes = evt.hour * 60 + evt.minute;
-    const diff = eventMinutes - currentMinutes;
-    // Blackout window: 15 minutes before and 15 minutes after the macro release
-    const isBlackoutNow = !isWeekend && diff >= -15 && diff <= 15;
-    if (isBlackoutNow && !activeBlackoutEvent) {
-      activeBlackoutEvent = { ...evt, isBlackoutNow, minutesToEvent: diff };
+  const processedEvents = rawEvents.map((evt: any, idx: number) => {
+    let timeCET = 'All Day';
+    let hour = 0;
+    let minute = 0;
+    let diff = 9999;
+
+    if (evt.release_at_utc) {
+      try {
+        const d = new Date(evt.release_at_utc);
+        const cetFmt = new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Europe/Rome',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        });
+        const parts = cetFmt.formatToParts(d);
+        hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
+        minute = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
+        timeCET = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+        const eventMinutes = hour * 60 + minute;
+        diff = eventMinutes - currentMinutes;
+      } catch {
+        // keep All Day
+      }
     }
-    return {
-      id: evt.id,
-      timeCET: evt.timeCET,
-      event: evt.event,
-      currency: evt.currency,
-      impact: evt.impact,
-      description: evt.description,
+
+    const isHighOrExtreme =
+      evt.impact?.toLowerCase() === 'high' ||
+      evt.impact?.toLowerCase() === 'extreme' ||
+      evt.category === 'central-banks-monetary-policy';
+
+    // Blackout window: 15 minutes before and 15 minutes after the macro release
+    const isBlackoutNow = diff >= -15 && diff <= 15;
+
+    const mappedEvent = {
+      id: evt.id || `macro-${idx}`,
+      timeCET,
+      event: evt.title || evt.name || evt.series_name || 'Market Mover Macro',
+      currency: (evt.country === 'US' ? 'USD' : 'EUR') as 'USD' | 'EUR',
+      impact: (evt.impact?.toUpperCase() === 'EXTREME' ? 'EXTREME' : 'HIGH') as 'HIGH' | 'EXTREME',
+      description: evt.series_name || evt.category || 'Dato macroeconomico primario',
       isBlackoutNow,
       minutesToEvent: diff,
+      country: evt.country,
+      period: evt.period || null,
+      consensus: evt.consensus != null ? String(evt.consensus) : null,
+      prior: evt.prior != null ? String(evt.prior) : null,
+      actual: evt.actual != null ? String(evt.actual) : null,
+      unit: evt.unit || null,
+      source_name: evt.source_name || null,
+      url: evt.url || null,
     };
+
+    if (isBlackoutNow && !activeBlackoutEvent && isHighOrExtreme) {
+      activeBlackoutEvent = mappedEvent;
+    }
+
+    return mappedEvent;
   });
 
   const isBlackoutActive = Boolean(activeBlackoutEvent);
@@ -1422,14 +1514,26 @@ function getMacroCalendarState(): any {
     activeBlackoutEvent,
     isBlackoutActive,
     spreadWarningTradeRepublic,
-    lastCheckedAt: new Date().toISOString(),
+    isWeekend: false,
+    marketClosed,
+    marketLabel,
+    message:
+      processedEvents.length === 0
+        ? 'Nessun market mover ad alto impatto programmato per oggi.'
+        : undefined,
+    lastCheckedAt: now.toISOString(),
+    attribution: 'FinanceCalendar.com',
   };
 }
 
 // GET /api/macro-calendar: Calendario dei market mover macroeconomici ad alto impatto e allerta allargamento spread
-app.get('/api/macro-calendar', (_req: Request, res: Response) => {
-  const state = getMacroCalendarState();
-  res.json(state);
+app.get('/api/macro-calendar', async (_req: Request, res: Response) => {
+  try {
+    const state = await getMacroCalendarState();
+    res.json(state);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Errore recupero calendario macro' });
+  }
 });
 
 // Benchmark futures

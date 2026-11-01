@@ -111,7 +111,12 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
 
             {/* Session Window Badges */}
-            {currentSession === 'GLOBAL' ? (
+            {sessionInfo?.cet?.isWeekend ? (
+              <span className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-amber-950/60 border border-amber-600/60 text-amber-300 font-medium">
+                <span className="w-2 h-2 rounded-full bg-amber-400" />
+                MERCATO CHIUSO (Weekend • Riapertura Lunedì 08:00 CET)
+              </span>
+            ) : currentSession === 'GLOBAL' ? (
               <span className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-indigo-950/70 border border-indigo-600/70 text-indigo-300 font-medium">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
                 Live Globale (EU: {sessionInfo?.cet?.isEuropeLive ? 'Aperto' : 'Pre/Post'} • US: {sessionInfo?.cet?.isUSALive ? 'Aperto' : 'Pre-Mkt'})

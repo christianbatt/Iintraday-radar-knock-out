@@ -29,6 +29,7 @@ import {
   ExcludedSetupsAutoAnalysis,
   ExcludedOutcomeStatus,
   EntryMode,
+  MacroEvent,
 } from '../types/radar';
 import { TRADING_PARAMS } from '../config/tradingParams';
 import { getMarketTime, getExchangeDateStr } from './timezone';
@@ -1151,38 +1152,69 @@ export function getOrbPhaseInfo(
   }
 }
 
-export function getMacroBlackoutStatus(): {
+export function getMacroBlackoutStatus(
+  macroEvents?: MacroEvent[],
+  now: Date = new Date()
+): {
   isBlackoutActive: boolean;
   label: string;
   description: string;
+  activeEvent?: MacroEvent | null;
 } {
-  const now = new Date();
-  const cetFormatter = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Europe/Rome',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-  const parts = cetFormatter.formatToParts(now);
-  const hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
-  const minute = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
-  const currentMinutes = hour * 60 + minute;
+  const day = now.getDay();
+  const isWeekend = day === 0 || day === 6;
 
-  // Window 1: 14:15 - 14:45 CET (US Macro Data: CPI, NFP, Retail Sales at 14:30 CET)
-  if (currentMinutes >= 14 * 60 + 15 && currentMinutes <= 14 * 60 + 45) {
+  if (isWeekend) {
     return {
-      isBlackoutActive: true,
-      label: 'Blackout Macro Imminente (14:15 - 14:45 CET)',
-      description: 'Finestra rilascio dati macro USA (ore 14:30 CET). Spike e allargamento spread broker: astenersi da nuovi ingressi a ridosso del dato.',
+      isBlackoutActive: false,
+      label: 'Nessun Blackout Macro (Mercato Chiuso)',
+      description: 'I mercati finanziari sono chiusi per il fine settimana (sabato/domenica). Nessun rilascio macroeconomico.',
+      activeEvent: null,
     };
   }
 
-  // Window 2: 19:45 - 20:30 CET (FOMC Fed Decision at 20:00 CET)
-  if (currentMinutes >= 19 * 60 + 45 && currentMinutes <= 20 * 60 + 30) {
+  if (Array.isArray(macroEvents) && macroEvents.length > 0) {
+    const cetFormatter = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Rome',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const parts = cetFormatter.formatToParts(now);
+    const hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
+    const minute = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
+    const currentMinutes = hour * 60 + minute;
+
+    const highImpact = macroEvents.filter(
+      (e) => e.impact === 'HIGH' || e.impact === 'EXTREME'
+    );
+
+    for (const evt of highImpact) {
+      if (evt.timeCET && evt.timeCET.includes(':')) {
+        const [hStr, mStr] = evt.timeCET.split(':');
+        const evtHour = parseInt(hStr, 10);
+        const evtMin = parseInt(mStr, 10);
+        if (!isNaN(evtHour) && !isNaN(evtMin)) {
+          const eventMinutes = evtHour * 60 + evtMin;
+          const diff = eventMinutes - currentMinutes;
+          // Finestra di blackout dinamica: da 15 minuti prima a 15 minuti dopo il rilascio reale
+          if (diff >= -15 && diff <= 15) {
+            return {
+              isBlackoutActive: true,
+              label: `Blackout Macro Imminente (${evt.timeCET} CET)`,
+              description: `Finestra rilascio dati macro ad alto impatto: ${evt.event} (${evt.timeCET} CET). Spike e allargamento spread broker: astenersi da nuovi ingressi a ridosso del dato.`,
+              activeEvent: evt,
+            };
+          }
+        }
+      }
+    }
+
     return {
-      isBlackoutActive: true,
-      label: 'Blackout Decisione Tassi Fed (19:45 - 20:30 CET)',
-      description: 'Annuncio tassi e conferenza stampa Fed: volatilità estrema a due vie. Proteggere le posizioni aperte.',
+      isBlackoutActive: false,
+      label: 'Nessun Blackout Macro Imminente',
+      description: 'Nessun rilascio macro primario nell\'immediato. Flusso di mercato regolare.',
+      activeEvent: null,
     };
   }
 
@@ -1190,6 +1222,7 @@ export function getMacroBlackoutStatus(): {
     isBlackoutActive: false,
     label: 'Nessun Blackout Macro Imminente',
     description: 'Nessun rilascio macro primario nell\'immediato. Flusso di mercato regolare.',
+    activeEvent: null,
   };
 }
 
@@ -1348,6 +1381,7 @@ export function buildExecutionSetup(
     entryMode?: EntryMode | null;
     currentTime?: Date;
     customLeve?: readonly number[];
+    macroEvents?: MacroEvent[];
   }
 ): ExecutionSetup {
   const currentTime = options?.currentTime || new Date();
@@ -1667,7 +1701,7 @@ export function buildExecutionSetup(
 
   const orbPhase = getOrbPhaseInfo(marketType, currentTime);
   const adrInfo = calculateAdrInfo(quote);
-  const macroBlackout = getMacroBlackoutStatus();
+  const macroBlackout = getMacroBlackoutStatus(options?.macroEvents, currentTime);
   const overnightWarning = getOvernightCountdownStatus(marketType);
   const initialBalance = calculateInitialBalance(quote, marketType);
 

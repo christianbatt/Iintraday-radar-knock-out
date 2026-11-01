@@ -832,8 +832,8 @@ export default function App() {
 
       setTopCandidateEU(finalTopEU);
       setTopCandidateUS(finalTopUS);
-      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU }));
-      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters, { entryMode: entryModeUS }));
+      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU, macroEvents: macroCalendar?.events }));
+      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters, { entryMode: entryModeUS, macroEvents: macroCalendar?.events }));
 
       // 4.5. Visual Filtering Audit Generation (triggers 3-5s notification banner)
       const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCache };
@@ -976,8 +976,8 @@ export default function App() {
 
       setTopCandidateEU(finalTopEU);
       setTopCandidateUS(finalTopUS);
-      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU }));
-      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters, { entryMode: entryModeUS }));
+      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU, macroEvents: macroCalendar?.events }));
+      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters, { entryMode: entryModeUS, macroEvents: macroCalendar?.events }));
 
       const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCache };
       if (finalTopEU && finalCatEU) currentCache[finalTopEU.quote.ticker] = finalCatEU;
@@ -1132,10 +1132,10 @@ export default function App() {
 
       // Update setups if active candidate is either top EU or top US
       if (topCandidateEU?.quote.ticker === ticker) {
-        setSetupEU(buildExecutionSetup(cand, res, 'EU', parameters, { entryMode: getActiveEntryMode('EU') }));
+        setSetupEU(buildExecutionSetup(cand, res, 'EU', parameters, { entryMode: getActiveEntryMode('EU'), macroEvents: macroCalendar?.events }));
       }
       if (topCandidateUS?.quote.ticker === ticker) {
-        setSetupUS(buildExecutionSetup(cand, res, 'US', parameters, { entryMode: getActiveEntryMode('US') }));
+        setSetupUS(buildExecutionSetup(cand, res, 'US', parameters, { entryMode: getActiveEntryMode('US'), macroEvents: macroCalendar?.events }));
       }
     } catch (err) {
       console.error('Errore rianalisi:', err);
@@ -1157,6 +1157,7 @@ export default function App() {
 
     const newSetup = buildExecutionSetup(cand, existingCat, market, parameters, {
       entryMode: getActiveEntryMode(market),
+      macroEvents: macroCalendar?.events,
     });
 
     if (market === 'EU') {
@@ -1602,10 +1603,10 @@ export default function App() {
       setTopCandidateUS(dual.topUS);
       setTopCandidates(dual.allRanked);
       if (dual.topEU) {
-        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', newParams, { entryMode: getActiveEntryMode('EU') }));
+        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', newParams, { entryMode: getActiveEntryMode('EU'), macroEvents: macroCalendar?.events }));
       }
       if (dual.topUS) {
-        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', newParams, { entryMode: getActiveEntryMode('US') }));
+        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', newParams, { entryMode: getActiveEntryMode('US'), macroEvents: macroCalendar?.events }));
       }
       const audit = generateFilteringAuditReport(
         quotes,
@@ -1619,10 +1620,10 @@ export default function App() {
       setAuditReport(audit);
     } else {
       if (topCandidateEU) {
-        setSetupEU(buildExecutionSetup(topCandidateEU, catalystCache[topCandidateEU.quote.ticker] || null, 'EU', newParams, { entryMode: getActiveEntryMode('EU') }));
+        setSetupEU(buildExecutionSetup(topCandidateEU, catalystCache[topCandidateEU.quote.ticker] || null, 'EU', newParams, { entryMode: getActiveEntryMode('EU'), macroEvents: macroCalendar?.events }));
       }
       if (topCandidateUS) {
-        setSetupUS(buildExecutionSetup(topCandidateUS, catalystCache[topCandidateUS.quote.ticker] || null, 'US', newParams, { entryMode: getActiveEntryMode('US') }));
+        setSetupUS(buildExecutionSetup(topCandidateUS, catalystCache[topCandidateUS.quote.ticker] || null, 'US', newParams, { entryMode: getActiveEntryMode('US'), macroEvents: macroCalendar?.events }));
       }
     }
   };
@@ -1746,10 +1747,10 @@ export default function App() {
       }
 
       if (dual.topEU) {
-        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', updated, { entryMode: getActiveEntryMode('EU') }));
+        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', updated, { entryMode: getActiveEntryMode('EU'), macroEvents: macroCalendar?.events }));
       }
       if (dual.topUS) {
-        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', updated, { entryMode: getActiveEntryMode('US') }));
+        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', updated, { entryMode: getActiveEntryMode('US'), macroEvents: macroCalendar?.events }));
       }
 
       const audit = generateFilteringAuditReport(
@@ -1836,10 +1837,10 @@ export default function App() {
       }
 
       if (dual.topEU) {
-        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', updated, { entryMode: getActiveEntryMode('EU') }));
+        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', updated, { entryMode: getActiveEntryMode('EU'), macroEvents: macroCalendar?.events }));
       }
       if (dual.topUS) {
-        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', updated, { entryMode: getActiveEntryMode('US') }));
+        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', updated, { entryMode: getActiveEntryMode('US'), macroEvents: macroCalendar?.events }));
       }
 
       const audit = generateFilteringAuditReport(

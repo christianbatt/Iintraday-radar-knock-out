@@ -9,7 +9,7 @@ interface MacroCalendarBannerProps {
 export const MacroCalendarBanner: React.FC<MacroCalendarBannerProps> = ({ macroCalendar }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(false);
 
-  if (!macroCalendar || !macroCalendar.events || macroCalendar.events.length === 0) {
+  if (!macroCalendar || macroCalendar.isWeekend || !macroCalendar.events || macroCalendar.events.length === 0) {
     return null;
   }
 
@@ -130,6 +130,9 @@ export const MacroCalendarBanner: React.FC<MacroCalendarBannerProps> = ({ macroC
                 </span>
               </div>
             ))}
+          </div>
+          <div className="text-[10px] text-slate-500 font-mono text-right pt-1">
+            Fonte dati: FinanceCalendar.com API (Stati Uniti, Germania, Eurozona)
           </div>
         </div>
       )}
