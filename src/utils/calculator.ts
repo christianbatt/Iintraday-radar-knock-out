@@ -1994,11 +1994,6 @@ export function generatePnLScenarios(
     ? +(Math.abs(setup.target2Level - entryPrice) / stopDistance).toFixed(2)
     : TRADING_PARAMS.T2_R;
 
-  const t1R = setup.riskRewardRatio ?? TRADING_PARAMS.T1_R;
-  const t2R = stopDistance > 0 && setup.target2Level != null
-    ? +(Math.abs(setup.target2Level - entryPrice) / stopDistance).toFixed(2)
-    : TRADING_PARAMS.T2_R;
-
   const buildScenario = (
     id: string,
     label: string,
