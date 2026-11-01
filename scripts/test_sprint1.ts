@@ -4,6 +4,7 @@ import {
   calculateKnockOutBarrierGuard,
   calculateKnockOutSafety,
   buildExecutionSetup,
+  checkQuoteStaleness,
   DEFAULT_SYSTEM_PARAMETERS,
   generatePnLScenarios,
   IntradayCandleInput,
@@ -12,7 +13,7 @@ import { RawQuoteData } from '../src/types/radar';
 import { TRADING_PARAMS } from '../src/config/tradingParams';
 
 console.log('================================================================');
-console.log('=== SPRINT 1 TEST SUITE: LOGICA & INTEGRITÀ DEI SETUP ===');
+console.log('=== SPRINT 1+2 TEST SUITE: LOGICA & INTEGRITÀ DEI SETUP ===');
 console.log('================================================================');
 
 // -----------------------------------------------------------------------------
@@ -27,7 +28,7 @@ const testBars: IntradayCandleInput[] = [
   { timestamp: '2026-10-26T09:05:00+01:00', high: 99.8, low: 99.2, close: 99.4 },
   { timestamp: '2026-10-26T09:10:00+01:00', high: 99.9, low: 99.1, close: 99.7 },
   // Post-ORB 09:15: rottura RIBASSISTA sotto orbLow (99.00 -> low 98.50) MA high sotto 100.00
-  { timestamp: '2026-10-26T09:15:00+01:00', high: 99.5, low: 98.5, close: 99.0 },
+  { timestamp: '2026-10-26T09:15:00+01:00', high: 99.5, low: 98.5, close: 98.8 },
   // Post-ORB 09:20: rottura RIALZISTA sopra orbHigh (100.00 -> high 100.50)
   { timestamp: '2026-10-26T09:20:00+01:00', high: 100.5, low: 99.4, close: 100.2 },
 ];
@@ -45,6 +46,30 @@ if (orbShort.firstBreakoutTime !== expectedShortTime) {
   throw new Error(`Punto 1 Fail: Breakout SHORT atteso alle 09:15, ottenuto: ${orbShort.firstBreakoutTime}`);
 }
 console.log('1.2 Breakout SHORT rilevato correttamente:', orbShort.firstBreakoutTime);
+
+const wickOnlyBars: IntradayCandleInput[] = [
+  ...testBars.slice(0, 3),
+  { timestamp: '2026-10-26T09:15:00+01:00', high: 100.5, low: 98.5, close: 99.5 },
+];
+const orbWickOnly = calculateOrbFromIntradayBars(wickOnlyBars, 'EU', baseDate);
+if (orbWickOnly.firstBreakoutTimeLong !== null || orbWickOnly.firstBreakoutTimeShort !== null) {
+  throw new Error('S2.1 Wick oltre ORB con chiusura interna non deve confermare breakout');
+}
+console.log('S2.1 Wick oltre i livelli con chiusura dentro ORB: PASS (nessun breakout)');
+
+const closeConfirmedBars: IntradayCandleInput[] = [
+  ...testBars.slice(0, 3),
+  { timestamp: '2026-10-26T09:15:00+01:00', high: 100.5, low: 99.2, close: 100.1 },
+  { timestamp: '2026-10-26T09:20:00+01:00', high: 99.8, low: 98.5, close: 98.8 },
+];
+const orbCloseConfirmed = calculateOrbFromIntradayBars(closeConfirmedBars, 'EU', baseDate);
+if (
+  orbCloseConfirmed.firstBreakoutTimeLong !== new Date('2026-10-26T09:15:00+01:00').toISOString() ||
+  orbCloseConfirmed.firstBreakoutTimeShort !== new Date('2026-10-26T09:20:00+01:00').toISOString()
+) {
+  throw new Error('S2.2 I breakout devono essere confermati dalle chiusure oltre i livelli ORB');
+}
+console.log('S2.2 Chiusure oltre ORB confermano LONG e SHORT: PASS');
 
 // 1.3 Solo rottura opposta: se si verifica SOLO un breakdown short, non deve impostare il timestamp LONG
 const onlyShortBreakBars: IntradayCandleInput[] = [
@@ -290,6 +315,85 @@ const quoteAuth: RawQuoteData = {
   timestamp: new Date().toISOString(),
   source: 'test',
 };
+
+// Sprint 2: staleness EU/US e gate G12/G13 con G1-G11 passanti.
+console.log('\n--- SPRINT 2: ADR residuo e freschezza quote ---');
+const stalenessNow = new Date('2026-10-26T09:50:00+01:00');
+const euQuoteFourMinutesOld = {
+  ...quoteAuth,
+  timestamp: new Date(stalenessNow.getTime() - 4 * 60000).toISOString(),
+};
+const euQuoteSixMinutesOld = {
+  ...quoteAuth,
+  timestamp: new Date(stalenessNow.getTime() - 6 * 60000).toISOString(),
+};
+if (checkQuoteStaleness(euQuoteFourMinutesOld, stalenessNow).isStale) {
+  throw new Error('S2.3 Quote EU di 4 minuti deve restare fresca');
+}
+if (!checkQuoteStaleness(euQuoteSixMinutesOld, stalenessNow).isStale) {
+  throw new Error('S2.3 Quote EU di 6 minuti deve risultare stantia');
+}
+if (!checkQuoteStaleness({ ...euQuoteFourMinutesOld, market: 'US' }, stalenessNow).isStale) {
+  throw new Error('S2.3 Quote US di 4 minuti deve superare la soglia di 3 minuti');
+}
+if (!checkQuoteStaleness({ ...quoteAuth, timestamp: '' }, stalenessNow).isStale) {
+  throw new Error('S2.3 Timestamp assente deve risultare stantio/non verificabile');
+}
+if (!checkQuoteStaleness({ ...quoteAuth, timestamp: 'invalid' }, stalenessNow).isStale) {
+  throw new Error('S2.3 Timestamp non valido deve risultare stantio/non verificabile');
+}
+console.log('S2.3 Soglie EU/US, timestamp assente e non valido: PASS');
+
+const setupForSprint2Gate = (quote: RawQuoteData) =>
+  buildExecutionSetup(
+    { quote, score: { total: 80 } as any, rank: 1 },
+    { decisione: 'TRADE', direzione: 'LONG', catalizzatore: '', punti_a_favore: [], rischi: [], condizioni_invalidazione: [], fonti: [] },
+    'EU',
+    undefined,
+    { currentTime: stalenessNow }
+  );
+
+const setupAdrBlocked = setupForSprint2Gate({
+  ...quoteAuth,
+  currentPrice: 100.1,
+  orbHigh: 100,
+  orbLow: 99,
+  adr14: 1,
+  liqEur20d: 5_000_000,
+  todayHigh: 100.2,
+  todayLow: 99.7,
+  timestamp: stalenessNow.toISOString(),
+});
+if (
+  setupAdrBlocked.gateResults?.['G7']?.passed !== true ||
+  setupAdrBlocked.gateResults?.['G12']?.passed !== false ||
+  setupAdrBlocked.blockedGate !== 'G12' ||
+  setupAdrBlocked.decision !== 'NESSUN_TRADE'
+) {
+  throw new Error(`S2.4 T1 fuori ADR residuo deve bloccare G12, ottenuto ${setupAdrBlocked.blockedGate}`);
+}
+console.log('S2.4 T1 fuori ADR residuo blocca G12: PASS');
+
+const setupStaleBlocked = setupForSprint2Gate({
+  ...quoteAuth,
+  currentPrice: 100.1,
+  orbHigh: 100,
+  orbLow: 99,
+  adr14: 10,
+  liqEur20d: 5_000_000,
+  todayHigh: 100.2,
+  todayLow: 99.9,
+  timestamp: new Date(stalenessNow.getTime() - 6 * 60000).toISOString(),
+});
+if (
+  setupStaleBlocked.gateResults?.['G12']?.passed !== true ||
+  setupStaleBlocked.gateResults?.['G13']?.passed !== false ||
+  setupStaleBlocked.blockedGate !== 'G13' ||
+  setupStaleBlocked.decision !== 'NESSUN_TRADE'
+) {
+  throw new Error(`S2.5 Quote stantia deve bloccare G13, ottenuto ${setupStaleBlocked.blockedGate}`);
+}
+console.log('S2.5 Quote EU stantia blocca G13: PASS');
 
 // 3.1 Long setup canonico
 const guardLong = calculateKnockOutBarrierGuard(quoteAuth, 'LONG');

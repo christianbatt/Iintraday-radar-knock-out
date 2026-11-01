@@ -33,6 +33,7 @@ import {
   runExcludedSetupsAutoAnalysis,
   isCandidateCompliantWithParameters,
   createJournalEntryFromSetup,
+  checkQuoteStaleness,
 } from './utils/calculator';
 import {
   fetchSessionInfo,
@@ -340,6 +341,20 @@ export default function App() {
 
   const [isOptimizerModalOpen, setIsOptimizerModalOpen] = useState<boolean>(false);
   const [optimizationNotification, setOptimizationNotification] = useState<string | null>(null);
+
+  // 6e. Avviso latenza feed europeo
+  useEffect(() => {
+    const staleEUCount = quotes.filter(
+      (quote) => quote.market === 'EU' && checkQuoteStaleness(quote).isStale
+    ).length;
+    if (staleEUCount === 0) return;
+
+    setOptimizationNotification(
+      `Feed Europa in ritardo: ${staleEUCount} titolo/i con dati superiori a 5 min. Verificare connessione dati.`
+    );
+    const timeoutId = window.setTimeout(() => setOptimizationNotification(null), 8000);
+    return () => window.clearTimeout(timeoutId);
+  }, [quotes]);
 
   // 6b. Firebase Cloud Sync & Cross-Device Authentication State
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -1185,6 +1200,7 @@ export default function App() {
 
       const matchingQuote = quotes.find((q) => q.ticker === trade.ticker);
       if (!matchingQuote) return trade;
+      if (checkQuoteStaleness(matchingQuote).isStale) return trade;
 
       const livePrice = matchingQuote.currentPrice ?? matchingQuote.preMarketPrice;
       if (livePrice == null || livePrice <= 0) return trade;
