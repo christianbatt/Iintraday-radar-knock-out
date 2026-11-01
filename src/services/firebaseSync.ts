@@ -20,7 +20,6 @@ import {
   getDocs,
   Firestore,
 } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
 import {
   OptimizationProposal,
   SystemParameters,
@@ -28,8 +27,13 @@ import {
   UnderlyingItem,
 } from '../types/radar';
 
-// Safe Firebase Config resolution (priority: VITE_ environment variables > config file)
-const rawConfig = (firebaseConfig || {}) as Record<string, any>;
+// Safe Firebase Config resolution (priority: VITE_ environment variables > optional local config)
+const firebaseConfigModules = import.meta.glob('../../firebase-applet-config.json', {
+  eager: true,
+  import: 'default',
+});
+const firebaseConfig = Object.values(firebaseConfigModules)[0] as Record<string, any> | undefined;
+const rawConfig = firebaseConfig || {};
 const metaEnv = typeof import.meta !== 'undefined' ? (import.meta as any).env : undefined;
 const apiKey =
   metaEnv?.VITE_FIREBASE_API_KEY ||
