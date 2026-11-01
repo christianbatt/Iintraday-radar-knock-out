@@ -328,6 +328,8 @@ export interface RawQuoteData {
   orbHigh?: number | null;
   orbLow?: number | null;
   orbBreakoutTime?: string | null;
+  orbBreakoutTimeLong?: string | null;
+  orbBreakoutTimeShort?: string | null;
   gapPercent: number | null;
   rvol: number | null;
   impliedVolatility?: number | null;
@@ -421,6 +423,8 @@ async function getIntraday5mMetrics(
   orbHigh: number | null;
   orbLow: number | null;
   orbBreakoutTime: string | null;
+  orbBreakoutTimeLong: string | null;
+  orbBreakoutTimeShort: string | null;
 }> {
   const cacheKey = `metrics5m:${ticker}:${market}`;
   const cached = cache.get<{
@@ -431,6 +435,8 @@ async function getIntraday5mMetrics(
     orbHigh: number | null;
     orbLow: number | null;
     orbBreakoutTime: string | null;
+    orbBreakoutTimeLong: string | null;
+    orbBreakoutTimeShort: string | null;
   }>(cacheKey);
   if (cached) return cached.data;
 
@@ -441,7 +447,7 @@ async function getIntraday5mMetrics(
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
       signal: AbortSignal.timeout(6000),
     });
-    if (!resp.ok) return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null };
+    if (!resp.ok) return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null, orbBreakoutTimeLong: null, orbBreakoutTimeShort: null };
     const json = await resp.json();
     const rawQuotes = json?.chart?.result?.[0]?.indicators?.quote?.[0];
     const closes: number[] = rawQuotes?.close?.filter(
@@ -625,6 +631,8 @@ async function getIntraday5mMetrics(
     let orbHigh: number | null = null;
     let orbLow: number | null = null;
     let orbBreakoutTime: string | null = null;
+    let orbBreakoutTimeLong: string | null = null;
+    let orbBreakoutTimeShort: string | null = null;
     let orbRvol: number | null = null;
 
     try {
@@ -670,7 +678,9 @@ async function getIntraday5mMetrics(
         const orbRes = calculateOrbFromIntradayBars(candles5m, market, latestCandleDate);
         orbHigh = orbRes.orbHigh != null ? +orbRes.orbHigh.toFixed(2) : null;
         orbLow = orbRes.orbLow != null ? +orbRes.orbLow.toFixed(2) : null;
-        orbBreakoutTime = orbRes.firstBreakoutTime;
+        orbBreakoutTimeLong = orbRes.firstBreakoutTimeLong;
+        orbBreakoutTimeShort = orbRes.firstBreakoutTimeShort;
+        orbBreakoutTime = orbRes.firstBreakoutTimeLong ?? orbRes.firstBreakoutTimeShort ?? null;
 
         const allDates = Array.from(sessionOrbMap.keys()).sort();
         if (allDates.length > 0) {
@@ -686,11 +696,31 @@ async function getIntraday5mMetrics(
       // ignore
     }
 
-    const result = { rsi5m, rvol: orbRvol, rvol20m, orderFlow, orbHigh, orbLow, orbBreakoutTime };
+    const result = {
+      rsi5m,
+      rvol: orbRvol,
+      rvol20m,
+      orderFlow,
+      orbHigh,
+      orbLow,
+      orbBreakoutTime,
+      orbBreakoutTimeLong,
+      orbBreakoutTimeShort,
+    };
     cache.set(cacheKey, result, 25);
     return result;
   } catch {
-    return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null };
+    return {
+      rsi5m: null,
+      rvol: null,
+      rvol20m: null,
+      orderFlow: null,
+      orbHigh: null,
+      orbLow: null,
+      orbBreakoutTime: null,
+      orbBreakoutTimeLong: null,
+      orbBreakoutTimeShort: null,
+    };
   }
 }
 
@@ -1052,6 +1082,8 @@ async function fetchQuoteForTicker(
     orbHigh: (await intraday5mPromise).orbHigh ?? null,
     orbLow: (await intraday5mPromise).orbLow ?? null,
     orbBreakoutTime: (await intraday5mPromise).orbBreakoutTime ?? null,
+    orbBreakoutTimeLong: (await intraday5mPromise).orbBreakoutTimeLong ?? null,
+    orbBreakoutTimeShort: (await intraday5mPromise).orbBreakoutTimeShort ?? null,
     gapPercent,
     rvol: quoteData.rvol ?? (await intraday5mPromise).rvol ?? null,
     rvol20m: quoteData.rvol20m ?? (await intraday5mPromise).rvol20m,

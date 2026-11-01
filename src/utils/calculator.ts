@@ -215,16 +215,29 @@ export function calculateOrbFromIntradayBars(
   bars: IntradayCandleInput[],
   market: 'EU' | 'US',
   referenceDate?: Date,
-  direction: 'LONG' | 'SHORT' = 'LONG'
+  direction?: 'LONG' | 'SHORT',
+  asOfTime?: Date
 ): {
   orbHigh: number | null;
   orbLow: number | null;
   triggerLevel: number | null;
   stopLossLevel: number | null;
   firstBreakoutTime: string | null;
+  firstBreakoutTimeLong: string | null;
+  firstBreakoutTimeShort: string | null;
 } {
+  const emptyResult = {
+    orbHigh: null,
+    orbLow: null,
+    triggerLevel: null,
+    stopLossLevel: null,
+    firstBreakoutTime: null,
+    firstBreakoutTimeLong: null,
+    firstBreakoutTimeShort: null,
+  };
+
   if (!bars || bars.length === 0) {
-    return { orbHigh: null, orbLow: null, triggerLevel: null, stopLossLevel: null, firstBreakoutTime: null };
+    return emptyResult;
   }
 
   const openM =
@@ -232,6 +245,11 @@ export function calculateOrbFromIntradayBars(
       ? TRADING_PARAMS.US_OPEN_HOUR * 60 + TRADING_PARAMS.US_OPEN_MINUTE
       : TRADING_PARAMS.EU_OPEN_HOUR * 60 + TRADING_PARAMS.EU_OPEN_MINUTE;
   const orbEndM = openM + TRADING_PARAMS.ORB_MINUTES;
+
+  // I tre slot attesi di 5 minuti: [openM, openM + 5, openM + 10]
+  // EU: 09:00 (540), 09:05 (545), 09:10 (550)
+  // US: 09:30 (570), 09:35 (575), 09:40 (580)
+  const expectedSlots = [openM, openM + 5, openM + 10];
 
   const toDate = (ts: number | string | Date): Date => {
     if (ts instanceof Date) return ts;
@@ -242,48 +260,119 @@ export function calculateOrbFromIntradayBars(
   const refDateObj = referenceDate || toDate(bars[0].timestamp);
   const sessionDateStr = getExchangeDateStr(market, refDateObj);
 
-  const orbCandles: { high: number; low: number; close: number; dateObj: Date }[] = [];
+  const slotMap = new Map<number, { high: number; low: number; close: number; dateObj: Date }>();
   const postOrbCandles: { high: number; low: number; close: number; dateObj: Date }[] = [];
+  let hasDuplicateOrInvalid = false;
 
   for (const b of bars) {
-    if (b.high == null || b.low == null || b.high <= 0 || b.low <= 0) continue;
     const d = toDate(b.timestamp);
+    if (isNaN(d.getTime())) {
+      hasDuplicateOrInvalid = true;
+      continue;
+    }
+
+    // Validazione rigorosa prezzi OHLC
+    if (
+      b.high == null ||
+      b.low == null ||
+      b.close == null ||
+      isNaN(b.high) ||
+      isNaN(b.low) ||
+      isNaN(b.close) ||
+      b.high <= 0 ||
+      b.low <= 0 ||
+      b.close <= 0 ||
+      b.high < b.low
+    ) {
+      hasDuplicateOrInvalid = true;
+      continue;
+    }
+
     const mt = getMarketTime(market, d);
     if (mt.dateFormatted !== sessionDateStr) continue;
+
     const startMin = mt.totalMinutes;
+
     if (startMin >= openM && startMin < orbEndM) {
-      orbCandles.push({ high: b.high, low: b.low, close: b.close, dateObj: d });
+      // Verifica allineamento intervallo 5m
+      const offset = startMin - openM;
+      if (offset % 5 !== 0 || !expectedSlots.includes(startMin)) {
+        hasDuplicateOrInvalid = true;
+        continue;
+      }
+
+      // Rifiuta barre duplicate per lo stesso intervallo 5m
+      if (slotMap.has(startMin)) {
+        hasDuplicateOrInvalid = true;
+        continue;
+      }
+
+      // Se asOfTime è specificato, la barra è completa SOLO se l'intervallo 5m è già terminato
+      if (asOfTime) {
+        const asOfMt = getMarketTime(market, asOfTime);
+        if (asOfMt.dateFormatted === sessionDateStr) {
+          const slotEndMin = startMin + 5;
+          if (asOfMt.totalMinutes < slotEndMin) {
+            // Barra ancora in formazione: non completa
+            continue;
+          }
+        }
+      }
+
+      slotMap.set(startMin, { high: b.high, low: b.low, close: b.close, dateObj: d });
     } else if (startMin >= orbEndM) {
       postOrbCandles.push({ high: b.high, low: b.low, close: b.close, dateObj: d });
     }
   }
 
-  // Completezza ORB: per barre a 5 minuti sono necessarie almeno 3 candele nella finestra dei 15m.
-  // Se le barre sono incomplete, restituisce null attivando il Gate G2 (DATI INSUFFICIENTI).
-  if (orbCandles.length < 3) {
-    return { orbHigh: null, orbLow: null, triggerLevel: null, stopLossLevel: null, firstBreakoutTime: null };
+  // Completezza ORB: devono essere presenti esattamente tutti e 3 gli slot previsti senza duplicati o anomalie
+  const isComplete =
+    !hasDuplicateOrInvalid &&
+    expectedSlots.every((slot) => slotMap.has(slot));
+
+  if (!isComplete) {
+    return emptyResult;
   }
 
+  const orbCandles = expectedSlots.map((slot) => slotMap.get(slot)!);
   const orbHigh = +Math.max(...orbCandles.map((c) => c.high)).toFixed(6);
   const orbLow = +Math.min(...orbCandles.map((c) => c.low)).toFixed(6);
-  const triggerLevel = direction === 'LONG' ? orbHigh : orbLow;
+
+  const effectiveDirection = direction ?? 'LONG';
+  const triggerLevel = effectiveDirection === 'LONG' ? orbHigh : orbLow;
   const stopLossLevel = +(
-    direction === 'LONG'
+    effectiveDirection === 'LONG'
       ? orbLow * (1 - TRADING_PARAMS.STOP_BUF)
       : orbHigh * (1 + TRADING_PARAMS.STOP_BUF)
   ).toFixed(6);
 
-  let firstBreakoutTime: string | null = null;
+  // Calcolo e conservazione timestamp distinti per breakout LONG e SHORT
+  // Ordiniamo le candele post-ORB cronologicamente
+  postOrbCandles.sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime());
+
+  let firstBreakoutTimeLong: string | null = null;
+  let firstBreakoutTimeShort: string | null = null;
+
   for (const post of postOrbCandles) {
-    const broke =
-      direction === 'LONG'
-        ? post.high > orbHigh + TRADING_PARAMS.EPSILON
-        : post.low < orbLow - TRADING_PARAMS.EPSILON;
-    if (broke) {
-      firstBreakoutTime = post.dateObj.toISOString();
+    if (firstBreakoutTimeLong === null && post.high > orbHigh + TRADING_PARAMS.EPSILON) {
+      firstBreakoutTimeLong = post.dateObj.toISOString();
+    }
+    if (firstBreakoutTimeShort === null && post.low < orbLow - TRADING_PARAMS.EPSILON) {
+      firstBreakoutTimeShort = post.dateObj.toISOString();
+    }
+    if (firstBreakoutTimeLong !== null && firstBreakoutTimeShort !== null) {
       break;
     }
   }
+
+  // firstBreakoutTime corrisponde esclusivamente alla direzione valutata
+  // Nessun default silenzioso LONG se la direzione richiesta è SHORT o non specificata
+  const firstBreakoutTime =
+    direction === 'LONG'
+      ? firstBreakoutTimeLong
+      : direction === 'SHORT'
+      ? firstBreakoutTimeShort
+      : null;
 
   return {
     orbHigh,
@@ -291,6 +380,8 @@ export function calculateOrbFromIntradayBars(
     triggerLevel,
     stopLossLevel,
     firstBreakoutTime,
+    firstBreakoutTimeLong,
+    firstBreakoutTimeShort,
   };
 }
 
@@ -691,66 +782,47 @@ export function calculateCandidateScore(
   }
 
   // 7. NEWS & CATALYST BONUS SCORE (+0 to +15pt)
+  // Rimosso bonus ingenuo da keyword ("target", "utili", "earnings", "guidance", "upgrade", "contratto", ecc.),
+  // array di fonti non vuoto e timestamp recenti senza riscontro direzionale.
   let newsScore = 0;
   if (typeof newsOrCatalyst === 'number') {
     newsScore = Math.max(0, Math.min(TRADING_PARAMS.SCORE_MAX_COMPONENTS.NEWS, newsOrCatalyst));
+    details.push(`Bonus catalizzatore numerico esplicito: +${newsScore}pt`);
   } else if (newsOrCatalyst && typeof newsOrCatalyst === 'object') {
     if ('newsBonusScore' in newsOrCatalyst && typeof (newsOrCatalyst as any).newsBonusScore === 'number') {
-      newsScore = (newsOrCatalyst as any).newsBonusScore;
-    } else if ('catalizzatore' in newsOrCatalyst) {
-      const cat = newsOrCatalyst as GeminiCatalystAnalysis;
-      const text = `${cat.catalizzatore || ''} ${(cat.punti_a_favore || []).join(' ')}`.toLowerCase();
-
-      const isEarningsRelease =
-        text.includes('earnings') ||
-        text.includes('utili') ||
-        text.includes('trimestrale') ||
-        text.includes('bilancio');
-
-      const hasOperationalCatalyst =
-        text.includes('upgrade') ||
-        text.includes('contratto') ||
-        text.includes('commessa') ||
-        text.includes('ordini') ||
-        text.includes('partnership') ||
-        text.includes('acquisizione');
-
-      if (isEarningsRelease) {
-        // Regola fondamentale di risk management intraday: il rilascio utili comporta rischio binario e spike spread.
-        // Il bonus automatico da keyword viene neutralizzato a 0pt con segnalazione esplicita di cautela.
-        newsScore = 0;
-        details.push('⚠️ Rilascio Utili/Earnings in giornata: bonus news neutralizzato a 0pt per rischio binario');
-      } else if (hasOperationalCatalyst) {
-        newsScore = 15;
-      } else if (cat.fonti && cat.fonti.length > 0) {
-        newsScore = 10;
-      } else if (!text.includes('nessuna notizia') && !text.includes('setup tecnico')) {
-        newsScore = 5;
-      } else {
-        newsScore = 0;
-      }
-    } else if (Array.isArray(newsOrCatalyst) && newsOrCatalyst.length > 0) {
-      let freshestHours = 999;
-      for (const item of newsOrCatalyst) {
-        if (item.publishedAt) {
-          const t = new Date(item.publishedAt).getTime();
-          if (!isNaN(t)) {
-            const ageH = (Date.now() - t) / (1000 * 60 * 60);
-            if (ageH < freshestHours) freshestHours = ageH;
-          }
+      const rawBonus = (newsOrCatalyst as any).newsBonusScore;
+      newsScore = Math.max(0, Math.min(TRADING_PARAMS.SCORE_MAX_COMPONENTS.NEWS, rawBonus));
+      details.push(
+        `Bonus catalizzatore verificato: +${newsScore}pt (vincolato a 0..${TRADING_PARAMS.SCORE_MAX_COMPONENTS.NEWS}pt)`
+      );
+    } else {
+      newsScore = 0;
+      if ('catalizzatore' in newsOrCatalyst) {
+        const cat = newsOrCatalyst as GeminiCatalystAnalysis;
+        const text = `${cat.catalizzatore || ''} ${(cat.punti_a_favore || []).join(' ')}`.toLowerCase();
+        if (
+          text.includes('earnings') ||
+          text.includes('utili') ||
+          text.includes('trimestrale') ||
+          text.includes('bilancio')
+        ) {
+          details.push(
+            '⚠️ Rilascio Utili/Earnings in giornata: bonus news neutralizzato a 0pt per rischio binario (nessun bonus keyword)'
+          );
+        } else {
+          details.push(
+            'Contributo notizie neutro (0pt): nessun bonus automatico da keyword, fonti o parole isolate'
+          );
         }
-      }
-      if (freshestHours <= 4) {
-        newsScore = 15;
-        details.push(`🔥 Notizia Fresca (<4h): +15pt`);
-      } else if (freshestHours <= 12) {
-        newsScore = 10;
-        details.push(`📰 Notizia Recente (<12h): +10pt`);
       } else {
-        newsScore = 6;
-        details.push(`📰 Notizia nota (>12h): +6pt`);
+        details.push(
+          'Contributo notizie neutro (0pt): nessun bonus da parole isolate o timestamp recenti'
+        );
       }
     }
+  } else {
+    newsScore = 0;
+    details.push('Nessuna notizia o catalizzatore verificato: 0pt');
   }
 
   if (newsScore > 0 && typeof newsOrCatalyst === 'object' && newsOrCatalyst !== null && 'direzione' in newsOrCatalyst) {
@@ -766,7 +838,7 @@ export function calculateCandidateScore(
   }
 
   if (newsScore === 0) {
-    details.push('Assenza notizie straordinarie: 0pt bonus');
+    details.push('Contributo finale catalizzatore: 0pt bonus');
   }
 
   // 8. CONFLUENZA TREND MACRO DAILY EMA(20) (+0 to +8pt)
@@ -951,58 +1023,66 @@ export function calculateKnockOutBarrierGuard(
   const price = quote.preMarketPrice ?? quote.currentPrice ?? quote.prevClose ?? 0;
   const atr = quote.atr14 ?? (price > 0 ? +(price * 0.02).toFixed(2) : 1.0);
   const spreadBufferEur = quote.market === 'EU' ? 0.04 : 0.12;
+  const eps = TRADING_PARAMS.EPSILON;
 
   // Se T ed S sono già definiti dall'ORB o dal freeze, utilizziamo l'unica formula canonica deterministica V112
   if (quote.T != null && quote.S != null && quote.T > 0 && quote.S > 0) {
     const T = quote.T;
     const S = quote.S;
     const dS = Math.abs(T - S) / T;
-    const L_sel = dS > 0 ? Math.floor(1 / (dS + TRADING_PARAMS.BUF_BAR)) : 10;
-    const maxRecommendedLeverage = Math.max(3, Math.min(L_sel, 25));
-    const safeBarrierLevel = +(
-      dir === 'LONG'
-        ? T * (1 - 1 / maxRecommendedLeverage)
-        : T * (1 + 1 / maxRecommendedLeverage)
-    ).toFixed(2);
-    const safeDistanceAtr = +Math.abs(T - safeBarrierLevel).toFixed(2);
+    const eligibleLevers = TRADING_PARAMS.LEVE.filter(
+      (l) => dS * l <= TRADING_PARAMS.LMAX + eps && 1 / l + eps >= dS + TRADING_PARAMS.BUF_BAR
+    );
 
-    let leverageRiskLevel: 'SAFE' | 'MODERATE' | 'AGGRESSIVE' = 'SAFE';
-    if (maxRecommendedLeverage >= 9 && maxRecommendedLeverage <= 15) {
-      leverageRiskLevel = 'MODERATE';
-    } else if (maxRecommendedLeverage > 15) {
-      leverageRiskLevel = 'AGGRESSIVE';
+    if (eligibleLevers.length > 0) {
+      const maxRecommendedLeverage = Math.max(...eligibleLevers);
+      const safeBarrierLevel = +(
+        dir === 'LONG'
+          ? T * (1 - 1 / maxRecommendedLeverage)
+          : T * (1 + 1 / maxRecommendedLeverage)
+      ).toFixed(2);
+      const safeDistanceAtr = +Math.abs(T - safeBarrierLevel).toFixed(2);
+
+      let leverageRiskLevel: 'SAFE' | 'MODERATE' | 'AGGRESSIVE' = 'SAFE';
+      if (maxRecommendedLeverage >= 9 && maxRecommendedLeverage <= 15) {
+        leverageRiskLevel = 'MODERATE';
+      } else if (maxRecommendedLeverage > 15) {
+        leverageRiskLevel = 'AGGRESSIVE';
+      }
+
+      return {
+        safeDistanceAtr,
+        safeBarrierLevel: Math.max(0.01, safeBarrierLevel),
+        maxRecommendedLeverage,
+        leverageRiskLevel,
+        spreadBufferEur,
+        tradeRepublicTip: `Barriera KO V112: ${safeBarrierLevel} ${quote.currency} (distanza ${safeDistanceAtr}). Leva calibrata: ${maxRecommendedLeverage}x.`,
+        isExecutableSetup: true,
+      };
+    } else {
+      // Nessuna leva compatibile nel grid LEVE (es. dS troppo grande o L_sel < 1)
+      return {
+        safeDistanceAtr: +(atr * 1.5).toFixed(2),
+        safeBarrierLevel: null,
+        maxRecommendedLeverage: null,
+        leverageRiskLevel: 'SAFE',
+        spreadBufferEur,
+        tradeRepublicTip: 'Nessuna leva Turbo compatibile con la distanza dello stop (L_sel < 1 o rischio KO eccessivo).',
+        isExecutableSetup: false,
+      };
     }
-
-    return {
-      safeDistanceAtr,
-      safeBarrierLevel: Math.max(0.01, safeBarrierLevel),
-      maxRecommendedLeverage,
-      leverageRiskLevel,
-      spreadBufferEur,
-      tradeRepublicTip: `Barriera KO V112: ${safeBarrierLevel} ${quote.currency} (distanza ${safeDistanceAtr}). Leva calibrata: ${maxRecommendedLeverage}x.`,
-    };
   }
 
-  // Stima indicativa Pre-Market pre-ORB basata su 1.5x ATR
+  // Pre-ORB / T o S non ancora definiti: la logica ATR 1.5x è solo informativa di sicurezza, MAI raccomandazione eseguibile
   const safeDistanceAtr = +(atr * 1.5).toFixed(2);
-  const safeBarrierLevel = +(dir === 'LONG' ? price - safeDistanceAtr : price + safeDistanceAtr).toFixed(2);
-  const calculatedLeverage = safeDistanceAtr > 0 ? Math.floor(price / (safeDistanceAtr * 1.15)) : 5;
-  const maxRecommendedLeverage = Math.max(3, Math.min(calculatedLeverage, 15));
-
-  let leverageRiskLevel: 'SAFE' | 'MODERATE' | 'AGGRESSIVE' = 'SAFE';
-  if (maxRecommendedLeverage >= 9 && maxRecommendedLeverage <= 12) {
-    leverageRiskLevel = 'MODERATE';
-  } else if (maxRecommendedLeverage > 12) {
-    leverageRiskLevel = 'AGGRESSIVE';
-  }
-
   return {
     safeDistanceAtr,
-    safeBarrierLevel: Math.max(0.01, safeBarrierLevel),
-    maxRecommendedLeverage,
-    leverageRiskLevel,
+    safeBarrierLevel: null,
+    maxRecommendedLeverage: null,
+    leverageRiskLevel: 'SAFE',
     spreadBufferEur,
-    tradeRepublicTip: `Distanza barriera indicativa pre-ORB: ±${safeDistanceAtr} ${quote.currency} (1.5x ATR). Leva max suggerita: ~${maxRecommendedLeverage}x.`,
+    tradeRepublicTip: `Controllo sicurezza indicativo pre-ORB: distanza ±${safeDistanceAtr} ${quote.currency} (1.5x ATR). Barriera eseguibile non disponibile fino a definizione ORB (T ed S).`,
+    isExecutableSetup: false,
   };
 }
 
@@ -1587,7 +1667,12 @@ export function buildExecutionSetup(
       : 0;
   const extensionPct = +(extensionFraction * 100).toFixed(2);
 
-  const Tb = quote.orbBreakoutTime || null;
+  const Tb =
+    direction === 'LONG'
+      ? (quote.orbBreakoutTimeLong ?? quote.orbBreakoutTime ?? null)
+      : direction === 'SHORT'
+      ? (quote.orbBreakoutTimeShort ?? null)
+      : null;
   const marketTime = getMarketTime(marketType, currentTime);
 
   // 8. Evaluation of Gates G1 to G11 in exact sequence

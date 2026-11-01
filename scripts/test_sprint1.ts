@@ -2,53 +2,217 @@ import {
   calculateOrbFromIntradayBars,
   calculateCandidateScore,
   calculateKnockOutBarrierGuard,
+  buildExecutionSetup,
   IntradayCandleInput,
 } from '../src/utils/calculator';
 import { RawQuoteData } from '../src/types/radar';
+import { TRADING_PARAMS } from '../src/config/tradingParams';
 
-console.log('=== TEST SPRINT 1 VERIFICATION ===');
+console.log('================================================================');
+console.log('=== SPRINT 1 TEST SUITE: LOGICA & INTEGRITÀ DEI SETUP ===');
+console.log('================================================================');
 
-// 1. G5 Direzionale: rottura ribassista non deve sporcare il breakout LONG
+// -----------------------------------------------------------------------------
+// PUNTO 1: G5 BREAKOUT NELLA DIREZIONE CORRETTA
+// -----------------------------------------------------------------------------
+console.log('\n--- PUNTO 1: G5 Breakout Direzionale ---');
+
 const baseDate = new Date('2026-10-26T09:00:00+01:00');
 const testBars: IntradayCandleInput[] = [
   // 3 barre ORB 09:00, 09:05, 09:10
   { timestamp: '2026-10-26T09:00:00+01:00', high: 100.0, low: 99.0, close: 99.5 },
   { timestamp: '2026-10-26T09:05:00+01:00', high: 99.8, low: 99.2, close: 99.4 },
   { timestamp: '2026-10-26T09:10:00+01:00', high: 99.9, low: 99.1, close: 99.7 },
-  // Post-ORB 09:15: spike ribassista sotto orbLow (99.00 -> low 98.50) MA high sotto 100.00
+  // Post-ORB 09:15: rottura RIBASSISTA sotto orbLow (99.00 -> low 98.50) MA high sotto 100.00
   { timestamp: '2026-10-26T09:15:00+01:00', high: 99.5, low: 98.5, close: 99.0 },
-  // Post-ORB 09:20: breakout rialzista sopra orbHigh (100.00 -> high 100.50)
+  // Post-ORB 09:20: rottura RIALZISTA sopra orbHigh (100.00 -> high 100.50)
   { timestamp: '2026-10-26T09:20:00+01:00', high: 100.5, low: 99.4, close: 100.2 },
 ];
 
 const orbLong = calculateOrbFromIntradayBars(testBars, 'EU', baseDate, 'LONG');
-console.log('1a. orbLong firstBreakoutTime:', orbLong.firstBreakoutTime);
 const expectedLongTime = new Date('2026-10-26T09:20:00+01:00').toISOString();
 if (orbLong.firstBreakoutTime !== expectedLongTime) {
-  throw new Error(`Expected firstBreakoutTime for LONG to be 09:20 (${expectedLongTime}), got ${orbLong.firstBreakoutTime}`);
+  throw new Error(`Punto 1 Fail: Breakout LONG atteso alle 09:20, ottenuto: ${orbLong.firstBreakoutTime}`);
 }
+console.log('1.1 Breakout LONG rilevato correttamente:', orbLong.firstBreakoutTime);
 
 const orbShort = calculateOrbFromIntradayBars(testBars, 'EU', baseDate, 'SHORT');
-console.log('1b. orbShort firstBreakoutTime:', orbShort.firstBreakoutTime);
 const expectedShortTime = new Date('2026-10-26T09:15:00+01:00').toISOString();
 if (orbShort.firstBreakoutTime !== expectedShortTime) {
-  throw new Error(`Expected firstBreakoutTime for SHORT to be 09:15 (${expectedShortTime}), got ${orbShort.firstBreakoutTime}`);
+  throw new Error(`Punto 1 Fail: Breakout SHORT atteso alle 09:15, ottenuto: ${orbShort.firstBreakoutTime}`);
 }
-console.log('-> Punto 1 G5 Direzionale: PASS');
+console.log('1.2 Breakout SHORT rilevato correttamente:', orbShort.firstBreakoutTime);
 
-// 2. Completezza ORB: con sole 2 barre 5m restituisce null (Gate G2 attivo)
-const incompleteBars: IntradayCandleInput[] = [
+// 1.3 Solo rottura opposta: se si verifica SOLO un breakdown short, non deve impostare il timestamp LONG
+const onlyShortBreakBars: IntradayCandleInput[] = [
   { timestamp: '2026-10-26T09:00:00+01:00', high: 100.0, low: 99.0, close: 99.5 },
   { timestamp: '2026-10-26T09:05:00+01:00', high: 99.8, low: 99.2, close: 99.4 },
+  { timestamp: '2026-10-26T09:10:00+01:00', high: 99.9, low: 99.1, close: 99.7 },
+  { timestamp: '2026-10-26T09:15:00+01:00', high: 99.5, low: 98.2, close: 98.8 }, // rottura short
 ];
-const orbIncomplete = calculateOrbFromIntradayBars(incompleteBars, 'EU', baseDate, 'LONG');
-if (orbIncomplete.orbHigh !== null || orbIncomplete.orbLow !== null) {
-  throw new Error(`Expected null ORB with incomplete bars, got orbHigh: ${orbIncomplete.orbHigh}`);
+const orbOnlyShort = calculateOrbFromIntradayBars(onlyShortBreakBars, 'EU', baseDate, 'LONG');
+if (orbOnlyShort.firstBreakoutTime !== null) {
+  throw new Error(`Punto 1 Fail: rottura SHORT non deve impostare firstBreakoutTime per LONG. Ottenuto: ${orbOnlyShort.firstBreakoutTime}`);
 }
-console.log('-> Punto 6 Completezza ORB: PASS');
+if (orbOnlyShort.firstBreakoutTimeLong !== null) {
+  throw new Error('Punto 1 Fail: firstBreakoutTimeLong deve essere null');
+}
+if (orbOnlyShort.firstBreakoutTimeShort === null) {
+  throw new Error('Punto 1 Fail: firstBreakoutTimeShort deve registrare il breakdown alle 09:15');
+}
+console.log('1.3 Rottura opposta isolata non inquina la direzione opposta: PASS');
 
-// 3. Unica fonte per barriera, leva e target: calcolo deterministico V112 in knockOutGuard
-const quoteWithTS: RawQuoteData = {
+// 1.4 Nessuna rottura: entrambi null
+const noBreakBars: IntradayCandleInput[] = [
+  { timestamp: '2026-10-26T09:00:00+01:00', high: 100.0, low: 99.0, close: 99.5 },
+  { timestamp: '2026-10-26T09:05:00+01:00', high: 99.8, low: 99.2, close: 99.4 },
+  { timestamp: '2026-10-26T09:10:00+01:00', high: 99.9, low: 99.1, close: 99.7 },
+  { timestamp: '2026-10-26T09:15:00+01:00', high: 99.8, low: 99.2, close: 99.5 }, // dentro range
+];
+const orbNoBreak = calculateOrbFromIntradayBars(noBreakBars, 'EU', baseDate);
+if (orbNoBreak.firstBreakoutTimeLong !== null || orbNoBreak.firstBreakoutTimeShort !== null) {
+  throw new Error('Punto 1 Fail: Nessuna rottura deve restituire timestamp null per entrambi i lati');
+}
+console.log('1.4 Nessuna rottura: PASS');
+
+// 1.5 G5 scade solo usando il timestamp della direzione selezionata
+// Supponiamo che alle 09:15 sia avvenuta rottura SHORT, e alle 09:40 rottura LONG.
+// Valutando il setup alle 09:50:
+// Per LONG: tempo trascorso dalla rottura LONG (09:40) = 10 min <= FRESH_MIN (30 min) -> G5 PASSA!
+// Se avesse usato erroneamente il timestamp SHORT (09:15, diff = 35 min > 30 min), G5 sarebbe scaduto falsamente!
+const quoteWithDirectionalBreakouts: RawQuoteData = {
+  ticker: 'ENI.MI',
+  name: 'Eni S.p.A.',
+  market: 'EU',
+  currency: 'EUR',
+  currentPrice: 100.10,
+  prevClose: 99.00,
+  preMarketPrice: 100.00,
+  prevHigh: 101.00,
+  prevLow: 98.00,
+  preMarketHigh: 100.00,
+  preMarketLow: 99.50,
+  todayOpen: 100.00,
+  todayHigh: 100.20,
+  todayLow: 98.50,
+  avgVolume20d: 500000,
+  preMarketVolume: 50000,
+  atr14: 1.5,
+  adr14: 2.0,
+  liqEur20d: 5_000_000,
+  completedBarsCount: 20,
+  gapPercent: 1.0,
+  rvol: 1.5,
+  orbHigh: 100.00,
+  orbLow: 99.00,
+  T: 100.00,
+  S: 99.00 * (1 - TRADING_PARAMS.STOP_BUF),
+  orbBreakoutTime: new Date('2026-10-26T09:15:00+01:00').toISOString(), // SHORT rottura vecchia (35 min fa)
+  orbBreakoutTimeShort: new Date('2026-10-26T09:15:00+01:00').toISOString(), // 35m fa
+  orbBreakoutTimeLong: new Date('2026-10-26T09:40:00+01:00').toISOString(),  // 10m fa (fresca!)
+  timestamp: '2026-10-26T09:50:00+01:00',
+  source: 'test',
+};
+
+const setupLong = buildExecutionSetup(
+  { quote: quoteWithDirectionalBreakouts, score: { total: 80 } as any, rank: 1 },
+  { decisione: 'TRADE', direzione: 'LONG', catalizzatore: '', punti_a_favore: [], rischi: [], condizioni_invalidazione: [], fonti: [] },
+  'EU',
+  undefined,
+  { currentTime: new Date('2026-10-26T09:50:00+01:00') }
+);
+
+if (!setupLong.gateResults?.['G5']?.passed) {
+  throw new Error('Punto 1 Fail: Il setup LONG non doveva scadere in G5 poiché la rottura LONG è avvenuta solo 10 minuti fa!');
+}
+console.log('1.5 Setup LONG con rottura fresca non scade per breakdown opposto vecchio: PASS');
+
+// -----------------------------------------------------------------------------
+// PUNTO 6: COMPLETEZZA ORB (TRE BARRE 5M COMPLETE E VALIDE)
+// -----------------------------------------------------------------------------
+console.log('\n--- PUNTO 6: Completezza ORB a 3 barre ---');
+
+// 6.1: 0 barre
+const orb0 = calculateOrbFromIntradayBars([], 'EU', baseDate);
+if (orb0.orbHigh !== null || orb0.orbLow !== null) throw new Error('6.1 0 barre deve dare null');
+
+// 6.2: 1 barra
+const orb1 = calculateOrbFromIntradayBars([testBars[0]], 'EU', baseDate);
+if (orb1.orbHigh !== null || orb1.orbLow !== null) throw new Error('6.2 1 barra deve dare null');
+
+// 6.3: 2 barre
+const orb2 = calculateOrbFromIntradayBars([testBars[0], testBars[1]], 'EU', baseDate);
+if (orb2.orbHigh !== null || orb2.orbLow !== null) throw new Error('6.3 2 barre deve dare null');
+
+// 6.4: 3 barre valide (09:00, 09:05, 09:10)
+const valid3Bars: IntradayCandleInput[] = [
+  { timestamp: '2026-10-26T09:00:00+01:00', high: 100.0, low: 99.0, close: 99.5 },
+  { timestamp: '2026-10-26T09:05:00+01:00', high: 99.8, low: 99.2, close: 99.4 },
+  { timestamp: '2026-10-26T09:10:00+01:00', high: 99.9, low: 99.1, close: 99.7 },
+];
+const orb3 = calculateOrbFromIntradayBars(valid3Bars, 'EU', baseDate);
+if (orb3.orbHigh !== 100.0 || orb3.orbLow !== 99.0) {
+  throw new Error(`6.4 3 barre valide deve dare High 100 e Low 99, ottenuto ${orb3.orbHigh}, ${orb3.orbLow}`);
+}
+console.log('6.1-6.4 Conteggio barre 0, 1, 2, 3: PASS');
+
+// 6.5: Barra duplicata (due barre alle 09:05) -> Rifiutare, restituisce null
+const dupBars: IntradayCandleInput[] = [
+  { timestamp: '2026-10-26T09:00:00+01:00', high: 100.0, low: 99.0, close: 99.5 },
+  { timestamp: '2026-10-26T09:05:00+01:00', high: 99.8, low: 99.2, close: 99.4 },
+  { timestamp: '2026-10-26T09:05:00+01:00', high: 99.7, low: 99.3, close: 99.4 }, // duplicato
+];
+const orbDup = calculateOrbFromIntradayBars(dupBars, 'EU', baseDate);
+if (orbDup.orbHigh !== null || orbDup.orbLow !== null) {
+  throw new Error('6.5 Barra duplicata deve invalidare ORB restituendo null');
+}
+console.log('6.5 Rifiuto barra duplicata: PASS');
+
+// 6.6: Barra non allineata (09:02 anziché 09:05)
+const misalignedBars: IntradayCandleInput[] = [
+  { timestamp: '2026-10-26T09:00:00+01:00', high: 100.0, low: 99.0, close: 99.5 },
+  { timestamp: '2026-10-26T09:02:00+01:00', high: 99.8, low: 99.2, close: 99.4 }, // non allineata a 5m
+  { timestamp: '2026-10-26T09:10:00+01:00', high: 99.9, low: 99.1, close: 99.7 },
+];
+const orbMisaligned = calculateOrbFromIntradayBars(misalignedBars, 'EU', baseDate);
+if (orbMisaligned.orbHigh !== null || orbMisaligned.orbLow !== null) {
+  throw new Error('6.6 Barra non allineata (09:02) deve invalidare ORB');
+}
+console.log('6.6 Rifiuto barra non allineata: PASS');
+
+// 6.7: Barra ancora in formazione al momento asOf (es. asOf alle 09:14, la barra 09:10 termina alle 09:15)
+const asOfForming = new Date('2026-10-26T09:14:00+01:00');
+const orbForming = calculateOrbFromIntradayBars(valid3Bars, 'EU', baseDate, 'LONG', asOfForming);
+if (orbForming.orbHigh !== null || orbForming.orbLow !== null) {
+  throw new Error('6.7 Barra 09:10 ancora in formazione alle 09:14 deve risultare incompleta (null)');
+}
+
+const asOfCompleted = new Date('2026-10-26T09:15:00+01:00');
+const orbCompleted = calculateOrbFromIntradayBars(valid3Bars, 'EU', baseDate, 'LONG', asOfCompleted);
+if (orbCompleted.orbHigh !== 100.0 || orbCompleted.orbLow !== 99.0) {
+  throw new Error('6.7 Alle 09:15 la barra 09:10 è terminata e ORB deve risultare valido');
+}
+console.log('6.7 Controllo completamento intervallo asOfTime: PASS');
+
+// 6.8: ORB USA (09:30, 09:35, 09:40)
+const usDate = new Date('2026-10-26T09:30:00-04:00');
+const usBars: IntradayCandleInput[] = [
+  { timestamp: '2026-10-26T09:30:00-04:00', high: 200.0, low: 198.0, close: 199.0 },
+  { timestamp: '2026-10-26T09:35:00-04:00', high: 201.0, low: 198.5, close: 200.5 },
+  { timestamp: '2026-10-26T09:40:00-04:00', high: 200.8, low: 199.0, close: 199.5 },
+];
+const orbUS = calculateOrbFromIntradayBars(usBars, 'US', usDate);
+if (orbUS.orbHigh !== 201.0 || orbUS.orbLow !== 198.0) {
+  throw new Error(`6.8 ORB US deve dare High 201 e Low 198, ottenuto ${orbUS.orbHigh}, ${orbUS.orbLow}`);
+}
+console.log('6.8 ORB USA valido: PASS');
+
+// -----------------------------------------------------------------------------
+// PUNTO 3: UNICA FONTE AUTOREVOLE PER BARRIERA, LEVA E TARGET
+// -----------------------------------------------------------------------------
+console.log('\n--- PUNTO 3: Unica fonte barriera, leva e target ---');
+
+const quoteAuth: RawQuoteData = {
   ticker: 'TEST.MI',
   name: 'Test Stock',
   market: 'EU',
@@ -71,60 +235,148 @@ const quoteWithTS: RawQuoteData = {
   source: 'test',
 };
 
-const guard = calculateKnockOutBarrierGuard(quoteWithTS, 'LONG');
-console.log('3. Guard deterministico V112:', guard);
-if (guard.maxRecommendedLeverage !== 25) {
-  throw new Error(`Expected maxRecommendedLeverage 25, got ${guard.maxRecommendedLeverage}`);
+// 3.1 Long setup canonico
+const guardLong = calculateKnockOutBarrierGuard(quoteAuth, 'LONG');
+if (guardLong.maxRecommendedLeverage !== 25) {
+  throw new Error(`3.1 Attesa leva 25, ottenuta: ${guardLong.maxRecommendedLeverage}`);
 }
-if (guard.safeBarrierLevel !== 96.0) {
-  throw new Error(`Expected safeBarrierLevel 96.00, got ${guard.safeBarrierLevel}`);
+if (guardLong.safeBarrierLevel !== 96.0) {
+  throw new Error(`3.1 Attesa barriera 96.00, ottenuta: ${guardLong.safeBarrierLevel}`);
 }
-console.log('-> Punto 3 Unica fonte barriera e target: PASS');
+if (guardLong.isExecutableSetup !== true) {
+  throw new Error('3.1 isExecutableSetup deve essere true');
+}
+console.log('3.1 Guard V112 LONG canonico: PASS (Leva 25x, Barriera 96.00)');
 
-// 4. Punto 12: Notizie senza keyword ingenua (earnings/utili neutralizzati a 0pt, upgrade a 15pt)
-const quoteBase: RawQuoteData = {
-  ...quoteWithTS,
-  gapPercent: 0.8,
-  vwap: 100,
+// 3.2 Short setup canonico
+const guardShort = calculateKnockOutBarrierGuard(quoteAuth, 'SHORT');
+// Short: B_rec = T * (1 + 1/25) = 100 * 1.04 = 104.00
+if (guardShort.safeBarrierLevel !== 104.0) {
+  throw new Error(`3.2 Attesa barriera SHORT 104.00, ottenuta: ${guardShort.safeBarrierLevel}`);
+}
+console.log('3.2 Guard V112 SHORT canonico: PASS (Leva 25x, Barriera 104.00)');
+
+// 3.3 Setup privo di leva compatibile (L_sel < 1, ad es. stop distance = 50%)
+const quoteWideStop: RawQuoteData = {
+  ...quoteAuth,
+  T: 100,
+  S: 50, // dS = 50% -> 1 / (0.50 + 0.001) = 1.99 < LEVE min (5)
 };
-
-// 4a. Catalizzatore con earnings / utili -> bonus neutralizzato a 0pt
-const scoreEarnings = calculateCandidateScore(
-  quoteBase,
-  0.5,
-  {
-    decisione: 'TRADE',
-    direzione: 'LONG',
-    catalizzatore: 'Rilascio trimestrale ed earnings oltre le attese',
-    punti_a_favore: ['Fatturato in crescita', 'Nuova guidance'],
-    rischi: [],
-    condizioni_invalidazione: [],
-    fonti: [{ title: 'Comunicato Ufficiale' }],
-  } as any
-);
-console.log('4a. Score con earnings:', scoreEarnings.newsScore);
-if (scoreEarnings.newsScore !== 0) {
-  throw new Error(`Expected newsScore 0 for earnings event, got ${scoreEarnings.newsScore}`);
+const guardWide = calculateKnockOutBarrierGuard(quoteWideStop, 'LONG');
+if (guardWide.safeBarrierLevel !== null || guardWide.maxRecommendedLeverage !== null || guardWide.isExecutableSetup !== false) {
+  throw new Error('3.3 Setup senza leva compatibile deve restituire barriera e leva null, non inventate');
 }
+console.log('3.3 Setup privo di leva compatibile (L_sel < 1): PASS (restituisce null e non raccomanda barriera)');
 
-// 4b. Catalizzatore operativo solido: nuovo contratto / upgrade
-const scoreUpgrade = calculateCandidateScore(
-  quoteBase,
+// 3.4 Pre-ORB (T ed S null): barriera eseguibile non disponibile
+const quotePreOrb: RawQuoteData = {
+  ...quoteAuth,
+  T: null,
+  S: null,
+};
+const guardPreOrb = calculateKnockOutBarrierGuard(quotePreOrb, 'LONG');
+if (guardPreOrb.safeBarrierLevel !== null || guardPreOrb.maxRecommendedLeverage !== null || guardPreOrb.isExecutableSetup !== false) {
+  throw new Error('3.4 Pre-ORB senza T/S non deve inventare una barriera eseguibile');
+}
+console.log('3.4 Pre-ORB senza T/S: PASS (distanza ATR informativa, barriera eseguibile null)');
+
+// -----------------------------------------------------------------------------
+// PUNTO 12: NEUTRALIZZAZIONE BONUS NEWS INGANNEVOLI
+// -----------------------------------------------------------------------------
+console.log('\n--- PUNTO 12: Neutralizzazione bonus keyword news ---');
+
+// 12.1 Parole chiave isolate ("earnings", "utili", "target", "guidance", "upgrade", "contratto") senza bonus esplicito
+const scoreKeywordUpgrade = calculateCandidateScore(
+  quoteAuth,
   0.5,
   {
     decisione: 'TRADE',
     direzione: 'LONG',
-    catalizzatore: 'Upgrade a Buy da Morgan Stanley con nuovo contratto industriale',
-    punti_a_favore: ['Espansione backlog'],
+    catalizzatore: 'Forte upgrade a Buy con nuovo target price ambizioso e nuovo contratto industriale',
+    punti_a_favore: ['Guidance rialzata'],
     rischi: [],
     condizioni_invalidazione: [],
     fonti: [{ title: 'Broker note' }],
   } as any
 );
-console.log('4b. Score con upgrade/contratto:', scoreUpgrade.newsScore);
-if (scoreUpgrade.newsScore !== 15) {
-  throw new Error(`Expected newsScore 15 for upgrade/contratto, got ${scoreUpgrade.newsScore}`);
+if (scoreKeywordUpgrade.newsScore !== 0) {
+  throw new Error(`12.1 Parole chiave come upgrade/contratto/target devono dare newsScore 0, ottenuto: ${scoreKeywordUpgrade.newsScore}`);
 }
-console.log('-> Punto 12 Neutralizzazione keyword earnings: PASS');
+console.log('12.1 Parole chiave isolate ("upgrade", "contratto", "target"): PASS (newsScore 0pt)');
 
-console.log('=== ALL SPRINT 1 TESTS COMPLETED SUCCESSFULLY! ===');
+// 12.2 Titolo positivo vs titolo negativo con identiche parole chiave -> entrambi 0pt
+const scorePos = calculateCandidateScore(quoteAuth, 0.5, {
+  decisione: 'TRADE',
+  direzione: 'LONG',
+  catalizzatore: 'Guidance e target annuale confermati positivi',
+  punti_a_favore: [],
+  rischi: [],
+  condizioni_invalidazione: [],
+  fonti: [],
+} as any);
+
+const scoreNeg = calculateCandidateScore(quoteAuth, 0.5, {
+  decisione: 'NESSUN_TRADE',
+  direzione: 'SHORT',
+  catalizzatore: 'Guidance e target annuale tagliati drasticamente',
+  punti_a_favore: [],
+  rischi: [],
+  condizioni_invalidazione: [],
+  fonti: [],
+} as any);
+
+if (scorePos.newsScore !== 0 || scoreNeg.newsScore !== 0) {
+  throw new Error(`12.2 Titolo positivo e negativo con parole chiave devono entrambi avere newsScore 0. Ottenuto: ${scorePos.newsScore}, ${scoreNeg.newsScore}`);
+}
+console.log('12.2 Titolo positivo e negativo con stesse keyword: PASS (entrambi 0pt)');
+
+// 12.3 Notizie recenti ma senza riscontro direzionale (array di NewsItem) -> 0pt
+const scoreNewsArray = calculateCandidateScore(quoteAuth, 0.5, [
+  { id: '1', title: 'Breaking news recente', summary: '', source: 'Reuters', url: '', publishedAt: new Date().toISOString() },
+] as any);
+if (scoreNewsArray.newsScore !== 0) {
+  throw new Error(`12.3 Array di notizie generiche recenti deve dare newsScore 0, ottenuto: ${scoreNewsArray.newsScore}`);
+}
+console.log('12.3 Array di notizie generiche recenti: PASS (0pt, nessun bonus orario acritico)');
+
+// 12.4 Assenza notizie -> 0pt
+const scoreNoNews = calculateCandidateScore(quoteAuth, 0.5, null);
+if (scoreNoNews.newsScore !== 0) {
+  throw new Error(`12.4 Assenza notizie deve dare newsScore 0, ottenuto: ${scoreNoNews.newsScore}`);
+}
+console.log('12.4 Assenza di notizie: PASS (0pt)');
+
+// 12.5 Bonus numerico esplicito valido
+const scoreExplicitValid = calculateCandidateScore(quoteAuth, 0.5, 10);
+if (scoreExplicitValid.newsScore !== 10) {
+  throw new Error(`12.5 Punteggio numerico esplicito 10 deve assegnare 10, ottenuto: ${scoreExplicitValid.newsScore}`);
+}
+const scoreObjectValid = calculateCandidateScore(quoteAuth, 0.5, {
+  decisione: 'TRADE',
+  direzione: 'LONG',
+  catalizzatore: 'Validato con catalizzatore quantitativo',
+  punti_a_favore: [],
+  rischi: [],
+  condizioni_invalidazione: [],
+  fonti: [],
+  newsBonusScore: 12,
+} as any);
+if (scoreObjectValid.newsScore !== 12) {
+  throw new Error(`12.5 newsBonusScore esplicito 12 deve assegnare 12, ottenuto: ${scoreObjectValid.newsScore}`);
+}
+console.log('12.5 Punteggio esplicito validato: PASS (10pt e 12pt)');
+
+// 12.6 Punteggio numerico esplicito fuori scala (vincolo 0..15)
+const scoreTooHigh = calculateCandidateScore(quoteAuth, 0.5, 99);
+if (scoreTooHigh.newsScore !== 15) {
+  throw new Error(`12.6 Bonus 99 deve essere vincolato a 15, ottenuto: ${scoreTooHigh.newsScore}`);
+}
+const scoreTooLow = calculateCandidateScore(quoteAuth, 0.5, -20);
+if (scoreTooLow.newsScore !== 0) {
+  throw new Error(`12.6 Bonus -20 deve essere vincolato a 0, ottenuto: ${scoreTooLow.newsScore}`);
+}
+console.log('12.6 Punteggio numerico fuori scala clippato a [0, 15]: PASS');
+
+console.log('\n================================================================');
+console.log('=== TUTTI I TEST DELLO SPRINT 1 HANNO AVUTO ESITO POSITIVO! ===');
+console.log('================================================================');

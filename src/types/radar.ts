@@ -31,6 +31,8 @@ export interface RawQuoteData {
   orbHigh?: number | null;
   orbLow?: number | null;
   orbBreakoutTime?: string | null;
+  orbBreakoutTimeLong?: string | null;
+  orbBreakoutTimeShort?: string | null;
   completedBarsCount?: number | null;
   T?: number | null;
   E?: number | null;
@@ -90,11 +92,12 @@ export interface ScoreBreakdown {
 
 export interface KnockOutBarrierGuard {
   safeDistanceAtr: number; // e.g. 1.5 * ATR
-  safeBarrierLevel: number; // long: entry - safeDistance, short: entry + safeDistance
-  maxRecommendedLeverage: number; // e.g. 4x - 12x
+  safeBarrierLevel: number | null; // long: entry - safeDistance, short: entry + safeDistance (null se setup non eseguibile)
+  maxRecommendedLeverage: number | null; // e.g. 4x - 12x (null se nessuna leva compatibile o non eseguibile)
   leverageRiskLevel: 'SAFE' | 'MODERATE' | 'AGGRESSIVE';
   spreadBufferEur: number;
   tradeRepublicTip: string;
+  isExecutableSetup?: boolean;
 }
 
 export interface MacroEvent {

@@ -503,7 +503,7 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
                             )}
                           </button>
 
-                          {cand.knockOutGuard && (
+                          {cand.knockOutGuard && cand.knockOutGuard.maxRecommendedLeverage != null ? (
                             <span
                               className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold tracking-tight inline-flex items-center gap-1 border ${
                                 cand.knockOutGuard.leverageRiskLevel === 'SAFE'
@@ -516,6 +516,13 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
                             >
                               <span>🛡️ KO:</span>
                               <span>~{cand.knockOutGuard.maxRecommendedLeverage}x leva</span>
+                            </span>
+                          ) : (
+                            <span
+                              className="text-[9px] px-1.5 py-0.2 rounded font-mono text-slate-500 bg-slate-950/60 border border-slate-800/80 inline-flex items-center gap-1"
+                              title={cand.knockOutGuard?.tradeRepublicTip ?? 'Barriera non disponibile (attendere ORB)'}
+                            >
+                              <span>🛡️ KO: N/D</span>
                             </span>
                           )}
                         </div>
@@ -624,10 +631,10 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
                                 ±{stopBuffer10} {q.currency}
                               </strong>
                             </div>
-                            {cand.knockOutGuard ? (
+                            {cand.knockOutGuard && cand.knockOutGuard.safeBarrierLevel != null && cand.knockOutGuard.maxRecommendedLeverage != null ? (
                               <div className="text-[11px] text-slate-300 bg-slate-950 px-3 py-1.5 rounded border border-slate-800 flex items-center gap-3">
                                 <div>
-                                  🛡️ <span className="text-slate-400">Barriera KO Prudenziale:</span>{' '}
+                                  🛡️ <span className="text-slate-400">Barriera KO Calcolata:</span>{' '}
                                   <strong className="text-emerald-300 font-bold">
                                     {cand.knockOutGuard.safeBarrierLevel} {q.currency}
                                   </strong>{' '}
@@ -641,11 +648,8 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
                                 </div>
                               </div>
                             ) : (
-                              <div className="text-[11px] text-slate-300 bg-slate-950 px-2.5 py-1 rounded border border-slate-800">
-                                🛡️ Barriera KO Consigliata: distanza &gt;{' '}
-                                <strong className="text-white font-bold">
-                                  {(atrVal * 2.5).toFixed(2)} {q.currency}
-                                </strong>
+                              <div className="text-[11px] text-slate-400 bg-slate-950 px-2.5 py-1 rounded border border-slate-800">
+                                🛡️ Barriera e Leva KO: <span className="text-amber-400/90 font-mono">Non disponibili (attendere definizione ORB)</span>
                               </div>
                             )}
                           </div>
