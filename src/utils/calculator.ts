@@ -354,10 +354,10 @@ export function calculateOrbFromIntradayBars(
   let firstBreakoutTimeShort: string | null = null;
 
   for (const post of postOrbCandles) {
-    if (firstBreakoutTimeLong === null && post.high > orbHigh + TRADING_PARAMS.EPSILON) {
+    if (firstBreakoutTimeLong === null && post.close > orbHigh + TRADING_PARAMS.EPSILON) {
       firstBreakoutTimeLong = post.dateObj.toISOString();
     }
-    if (firstBreakoutTimeShort === null && post.low < orbLow - TRADING_PARAMS.EPSILON) {
+    if (firstBreakoutTimeShort === null && post.close < orbLow - TRADING_PARAMS.EPSILON) {
       firstBreakoutTimeShort = post.dateObj.toISOString();
     }
     if (firstBreakoutTimeLong !== null && firstBreakoutTimeShort !== null) {
@@ -1498,6 +1498,40 @@ export function calculateAdrInfo(quote: RawQuoteData): {
   }
 }
 
+/**
+ * Verifica se un dato di mercato è stantio rispetto all'orario corrente.
+ * La soglia è 5 minuti per EU e 3 minuti per US.
+ */
+export function checkQuoteStaleness(
+  quote: RawQuoteData,
+  currentTime: Date = new Date(),
+  options?: { euStalenessMin?: number; usStalenessMin?: number }
+): { isStale: boolean; minutesDelay: number | null; warning: string | null } {
+  const threshold = quote.market === 'EU'
+    ? options?.euStalenessMin ?? 5
+    : options?.usStalenessMin ?? 3;
+
+  if (!quote.timestamp) {
+    return { isStale: true, minutesDelay: null, warning: 'Timestamp assente: dato non verificabile' };
+  }
+
+  const quoteTime = new Date(quote.timestamp);
+  if (Number.isNaN(quoteTime.getTime())) {
+    return { isStale: true, minutesDelay: null, warning: 'Timestamp non valido: dato non verificabile' };
+  }
+
+  const minutesDelay = (currentTime.getTime() - quoteTime.getTime()) / 60000;
+  if (minutesDelay > threshold) {
+    return {
+      isStale: true,
+      minutesDelay: +minutesDelay.toFixed(1),
+      warning: `Feed ${quote.market} in ritardo di ${minutesDelay.toFixed(1)} min (soglia: ${threshold} min)`,
+    };
+  }
+
+  return { isStale: false, minutesDelay: +minutesDelay.toFixed(1), warning: null };
+}
+
 export function buildExecutionSetup(
   topCandidate: ScoredCandidate | null,
   catalyst: GeminiCatalystAnalysis | null,
@@ -1659,6 +1693,11 @@ export function buildExecutionSetup(
       : null;
   const adrConsumptionPct =
     adrConsumptionFraction != null ? +(adrConsumptionFraction * 100).toFixed(1) : null;
+  let adrRemainingPriceSpace: number | null = null;
+  if (adrConsumptionFraction != null && quote.adr14 != null && quote.adr14 > 0) {
+    const consumedRange = quote.adr14 * adrConsumptionFraction;
+    adrRemainingPriceSpace = +(quote.adr14 - consumedRange).toFixed(4);
+  }
 
   const extensionFraction =
     entryLevel > 0
@@ -1675,6 +1714,7 @@ export function buildExecutionSetup(
       ? (quote.orbBreakoutTimeShort ?? null)
       : null;
   const marketTime = getMarketTime(marketType, currentTime);
+  const staleness = checkQuoteStaleness(quote, currentTime);
 
   // 8. Evaluation of Gates G1 to G11 in exact sequence
   const gateResults: Record<string, { passed: boolean; label: string; message?: string }> = {};
@@ -1823,7 +1863,26 @@ export function buildExecutionSetup(
     message: g11Pass ? undefined : 'PUNTEGGIO SOTTO SOGLIA',
   };
 
-  const gateKeys = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'G9', 'G10', 'G11'];
+  // G12: T1 raggiungibile entro lo spazio ADR residuo
+  const t1Distance = Math.abs(target1Level - entryLevel);
+  const g12Pass =
+    adrRemainingPriceSpace == null ||
+    t1Distance <= adrRemainingPriceSpace + TRADING_PARAMS.EPSILON;
+  gateResults['G12'] = {
+    passed: g12Pass,
+    label: 'T1 vs ADR Residuo',
+    message: g12Pass ? undefined : 'T1 FUORI PORTATA ADR',
+  };
+
+  // G13: quote non stantia
+  const g13Pass = !staleness.isStale;
+  gateResults['G13'] = {
+    passed: g13Pass,
+    label: 'Freshness Dati',
+    message: g13Pass ? undefined : staleness.warning ?? 'DATI NON FRESCHI',
+  };
+
+  const gateKeys = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'G9', 'G10', 'G11', 'G12', 'G13'];
   const firstFailedKey = gateKeys.find((k) => !gateResults[k].passed);
 
   const decision: 'TRADE' | 'NESSUN_TRADE' = firstFailedKey ? 'NESSUN_TRADE' : 'TRADE';

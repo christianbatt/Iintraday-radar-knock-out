@@ -173,7 +173,9 @@ function runAllTests() {
   {
     const now1130 = new Date('2026-10-26T11:30:00+01:00');
     // G5 LONG usa il timestamp direzionale, non il campo generico legacy.
-    const q = createBaseFixtureQuote({ orbBreakoutTimeLong: new Date('2026-10-26T09:30:00+01:00').toISOString() });
+    const q = createBaseFixtureQuote({
+      orbBreakoutTimeLong: new Date('2026-10-26T09:30:00+01:00').toISOString(),
+    });
     const cand = buildCandidateFromQuote(q);
     const setup = buildExecutionSetup(cand, null, 'EU', undefined, { currentTime: now1130 });
     const g5 = setup.gateResults?.['G5'];
@@ -195,7 +197,10 @@ function runAllTests() {
   // T04 | now = 10:30 (60 min) | G5 passa
   {
     const now1030 = new Date('2026-10-26T10:30:00+01:00');
-    const q = createBaseFixtureQuote({ orbBreakoutTimeLong: new Date('2026-10-26T09:30:00+01:00').toISOString() });
+    const q = createBaseFixtureQuote({
+      orbBreakoutTimeLong: new Date('2026-10-26T09:30:00+01:00').toISOString(),
+      timestamp: now1030.toISOString(),
+    });
     const cand = buildCandidateFromQuote(q);
     const setup = buildExecutionSetup(cand, null, 'EU', undefined, { currentTime: now1030 });
     const g5 = setup.gateResults?.['G5'];
@@ -1265,7 +1270,7 @@ function runAllTests() {
           r.barrierRecommended === 96.00 &&
           r.selectedLeverage === 25 &&
           r.gateResults != null &&
-          Object.keys(r.gateResults).length === 11
+          Object.keys(r.gateResults).length === 13
       );
 
     recordTest(
@@ -1284,7 +1289,7 @@ function runAllTests() {
         S: 99.6,
         B_rec: 96,
         L_sel: 25,
-        gatesCount: 11,
+        gatesCount: 13,
       },
       {
         missingThrows: missingModeError !== null,
