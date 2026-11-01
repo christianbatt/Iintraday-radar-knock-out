@@ -563,6 +563,7 @@ export const DEFAULT_SYSTEM_PARAMETERS: SystemParameters = {
   normalRiskMultiplier: 0.50,
   target1Multiplier: TRADING_PARAMS.T1_R,
   target2Multiplier: TRADING_PARAMS.T2_R,
+  // legacy: non usato nei calcoli.
   suggestedKoBarrierMultiplier: 2.65,
   triggerOffsetPercent: 0.20,
   rsiFilterActive: false,
@@ -1669,7 +1670,7 @@ export function buildExecutionSetup(
 
   const Tb =
     direction === 'LONG'
-      ? (quote.orbBreakoutTimeLong ?? quote.orbBreakoutTime ?? null)
+      ? (quote.orbBreakoutTimeLong ?? null)
       : direction === 'SHORT'
       ? (quote.orbBreakoutTimeShort ?? null)
       : null;
@@ -1988,6 +1989,10 @@ export function generatePnLScenarios(
   const isLong = setup.direction === 'LONG';
   const leverage = input.leverage || 1;
   const capital = input.accountCapital || 10000;
+  const t1R = setup.riskRewardRatio ?? TRADING_PARAMS.T1_R;
+  const t2R = stopDistance > 0 && setup.target2Level != null
+    ? +(Math.abs(setup.target2Level - entryPrice) / stopDistance).toFixed(2)
+    : TRADING_PARAMS.T2_R;
 
   const buildScenario = (
     id: string,
@@ -2044,8 +2049,8 @@ export function generatePnLScenarios(
     };
   };
 
-  const t2Price = setup.target2Level ?? (isLong ? entryPrice + stopDistance * TRADING_PARAMS.T2_R : entryPrice - stopDistance * TRADING_PARAMS.T2_R);
-  const t1Price = setup.target1Level ?? (isLong ? entryPrice + stopDistance * TRADING_PARAMS.T1_R : entryPrice - stopDistance * TRADING_PARAMS.T1_R);
+  const t2Price = setup.target2Level ?? (isLong ? entryPrice + stopDistance * t2R : entryPrice - stopDistance * t2R);
+  const t1Price = setup.target1Level ?? (isLong ? entryPrice + stopDistance * t1R : entryPrice - stopDistance * t1R);
   const tHalfPrice = isLong ? entryPrice + stopDistance * 0.8 : entryPrice - stopDistance * 0.8;
   const bePrice = isLong ? entryPrice + breakevenPoints : entryPrice - breakevenPoints;
   const pullbackPrice = isLong ? entryPrice - stopDistance * 0.5 : entryPrice + stopDistance * 0.5;
@@ -2053,8 +2058,8 @@ export function generatePnLScenarios(
   const koPrice = input.barrierStrike;
 
   return [
-    buildScenario('t2', 'Target 2 (Trend Esteso)', TRADING_PARAMS.T2_R, t2Price, 'Massimo target intraday'),
-    buildScenario('t1', 'Target 1 (Presa 70% Profitto)', TRADING_PARAMS.T1_R, t1Price, 'Target primario: chiusura parziale e stop a BE'),
+    buildScenario('t2', 'Target 2 (Trend Esteso)', t2R, t2Price, 'Massimo target intraday'),
+    buildScenario('t1', 'Target 1 (Presa 70% Profitto)', t1R, t1Price, 'Target primario: chiusura parziale e stop a BE'),
     buildScenario('half', 'Pullback Favorevole (+0.8R)', 0.8, tHalfPrice, 'Scalping intermedio o gestione protettiva'),
     buildScenario('be', 'Pareggio al Carico (0.0R Lordo)', 0, entryPrice, 'Uscita al prezzo di carico: PnL lordo 0 e netto pari alle sole frizioni', { isBreakeven: true }),
     buildScenario('pullback', 'Drawdown Transitorio (-0.5R)', -0.5, pullbackPrice, 'Rintraccio fisiologico pre-breakout'),
@@ -2261,7 +2266,10 @@ export function calculateKnockOutSafety(
 
   const rewardRatioT1 = setup.riskRewardRatio || TRADING_PARAMS.T1_R;
   const potentialGainT1Eur = +(potentialLossEur * rewardRatioT1).toFixed(2);
-  const potentialGainT2Eur = +(potentialLossEur * TRADING_PARAMS.T2_R).toFixed(2);
+  const t2R = stopDistance > 0 && setup.target2Level != null
+    ? +(Math.abs(setup.target2Level - entryPrice) / stopDistance).toFixed(2)
+    : TRADING_PARAMS.T2_R;
+  const potentialGainT2Eur = +(potentialLossEur * t2R).toFixed(2);
 
   // Dynamic Breakeven calculation
   const breakeven = calculateDynamicBreakeven(

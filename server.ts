@@ -675,7 +675,7 @@ async function getIntraday5mMetrics(
 
       if (candles5m.length > 0) {
         const latestCandleDate = new Date(timestamps5m[timestamps5m.length - 1] * 1000);
-        const orbRes = calculateOrbFromIntradayBars(candles5m, market, latestCandleDate);
+        const orbRes = calculateOrbFromIntradayBars(candles5m, market, latestCandleDate, undefined, new Date());
         orbHigh = orbRes.orbHigh != null ? +orbRes.orbHigh.toFixed(2) : null;
         orbLow = orbRes.orbLow != null ? +orbRes.orbLow.toFixed(2) : null;
         orbBreakoutTimeLong = orbRes.firstBreakoutTimeLong;
@@ -689,7 +689,9 @@ async function getIntraday5mMetrics(
           const histVolumes = histDates.map((d) => sessionOrbMap.get(d)!);
           const currentBars = sessionCandles.get(latestDate) || [];
 
-          orbRvol = calculateOrbRvolFromBars(currentBars, histVolumes.slice(-20));
+          orbRvol = orbRes.orbHigh != null
+            ? calculateOrbRvolFromBars(currentBars, histVolumes.slice(-20))
+            : null;
         }
       }
     } catch {
@@ -2377,8 +2379,6 @@ newsBonusScore: numero intero da 0 a 15 (punti bonus aggiuntivi per forza del ca
       const topSummary = realNews[0]?.summary || '';
       const allText = `${topTitle} ${topSummary}`.toLowerCase();
 
-      const isUpgrade = allText.includes('target') || allText.includes('rating') || allText.includes('buy') || allText.includes('outperform');
-      const isOrders = allText.includes('ordini') || allText.includes('contratto') || allText.includes('partnership') || allText.includes('commessa');
       const isEarnings = allText.includes('utili') || allText.includes('trimestrale') || allText.includes('conti') || allText.includes('risultati');
 
       let catalizzatoreDesc = '';
@@ -2393,25 +2393,12 @@ newsBonusScore: numero intero da 0 a 15 (punti bonus aggiuntivi per forza del ca
         direzione = 'NESSUNA';
         catalizzatoreDesc = `Giorno di rilascio utili/trimestrale per ${candidate.ticker} (${realNews[0]?.source}: "${topTitle}"). Rischio spread e spike bid/ask su leva Knock-Out.`;
         rischi.push('Giorno di rilascio utili: rischio elevato di spike opposto e knock-out anticipato.');
-      } else if (isUpgrade || isOrders) {
-        decisione = 'TRADE';
-        direzione = isPositive ? 'LONG' : 'SHORT';
-        newsBonusScore = 15;
-        if (isUpgrade) {
-          catalizzatoreDesc = `Revisione raccomandazioni analisti da fonte ${realNews[0]?.source}: "${topTitle}".`;
-          puntiAFavore.push(`Fonte finanziaria accreditata: ${realNews[0]?.source}`);
-          puntiAFavore.push('Revisione target price/rating con espansione volumetrica (+15pt bonus)');
-        } else {
-          catalizzatoreDesc = `Nuovo contratto/partnership confermata da fonte ${realNews[0]?.source}: "${topTitle}".`;
-          puntiAFavore.push(`Fonte accreditata: ${realNews[0]?.source}`);
-          puntiAFavore.push('Nuove commesse e visibilità aziendale (+15pt bonus)');
-        }
       } else if (realNews.length > 0) {
         decisione = 'TRADE';
         direzione = isPositive ? 'LONG' : 'SHORT';
-        newsBonusScore = 8;
-        catalizzatoreDesc = `Notizie di mercato ordinarie da ${realNews[0]?.source}: "${topTitle}". Dinamica convalidata dai parametri tecnici.`;
-        puntiAFavore.push(`Notizie coerenti con il sottostante da ${realNews[0]?.source} (+8pt bonus)`);
+        newsBonusScore = 0;
+        catalizzatoreDesc = `Notizie presenti da ${realNews[0]?.source}: "${topTitle}". Dinamica da valutare con i parametri tecnici.`;
+        puntiAFavore.push('Notizie presenti ma non valutate qualitativamente: nessun bonus automatico');
         rischi.push('Flusso informativo ordinario: mantenere rigore sulla tenuta del VWAP');
       } else {
         decisione = 'TRADE';

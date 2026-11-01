@@ -85,17 +85,14 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
   const trigger = setup?.triggerLevel ?? quote?.preMarketPrice ?? quote?.currentPrice ?? 0;
   const stop = setup?.stopLossLevel ?? 0;
   const dist = Math.abs(trigger - stop);
+  const barrierFromSetup = setup?.barrierRecommended ?? setup?.suggestedKoBarrier ?? null;
+  const t1R = setup?.riskRewardRatio ?? TRADING_PARAMS.T1_R;
+  const t2R = setup?.target2Level != null && dist > 0
+    ? +(Math.abs(setup.target2Level - trigger) / dist).toFixed(2)
+    : TRADING_PARAMS.T2_R;
 
-  const defaultBarrier =
-    setup?.suggestedKoBarrier ??
-    (trigger > 0 && dist > 0
-      ? setup?.direction === 'LONG'
-        ? +(trigger - dist * 2.65).toFixed(2)
-        : +(trigger + dist * 2.65).toFixed(2)
-      : 0);
-
-  const [barrierStrike, setBarrierStrike] = useState<number>(defaultBarrier);
-  const [leverage, setLeverage] = useState<number>(10);
+  const [barrierStrike, setBarrierStrike] = useState<number>(barrierFromSetup ?? 0);
+  const [leverage, setLeverage] = useState<number>(setup?.selectedLeverage ?? 10);
   const [certPrice, setCertPrice] = useState<number>(2.5);
   const [ratio, setRatio] = useState<number>(market === 'US' ? 0.1 : 1);
   const [fxRateEurUsd, setFxRateEurUsd] = useState<number>(1.08);
@@ -114,18 +111,10 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
   const [showScenarios, setShowScenarios] = useState<boolean>(false);
   const [showFrictionExplainer, setShowFrictionExplainer] = useState<boolean>(false);
 
-  // Sync default barrier when setup updates
   React.useEffect(() => {
-    if (setup?.suggestedKoBarrier) {
-      setBarrierStrike(setup.suggestedKoBarrier);
-    } else if (trigger > 0 && dist > 0) {
-      setBarrierStrike(
-        setup?.direction === 'LONG'
-          ? +(trigger - dist * 2.65).toFixed(2)
-          : +(trigger + dist * 2.65).toFixed(2)
-      );
-    }
-  }, [setup?.suggestedKoBarrier, setup?.triggerLevel, setup?.stopLossLevel, setup?.direction]);
+    setBarrierStrike(barrierFromSetup ?? 0);
+    if (setup?.selectedLeverage != null) setLeverage(setup.selectedLeverage);
+  }, [barrierFromSetup, setup?.selectedLeverage, setup?.direction, setup?.triggerLevel]);
 
   const koInput: KnockOutCalculatorInput = {
     barrierStrike,
@@ -249,8 +238,8 @@ Stop Loss: ${setup.stopLossLevel?.toFixed(2)} ${quote.currency} (${setup.structu
 Barriera KO Suggerita: ${barrierStrike.toFixed(2)} ${quote.currency} (Leva ${leverage}x | Parità ${ratio})
 Prezzo Certificato Stimato: ${(koSafety.theoreticalCertPriceEur || certPrice).toFixed(2)} €
 N. Quote Consigliate (1% Rischio): ${koSafety.suggestedCertificates} quote (~${koSafety.totalInvestedEur.toFixed(2)} €)
-Target 1 (1.6R): ${setup.target1Level?.toFixed(2)} ${quote.currency} (Monetizza 65-70% della posizione)
-Target 2 (2.8R): ${setup.target2Level?.toFixed(2)} ${quote.currency} (Runner finale)
+Target 1 (${t1R}R): ${setup.target1Level?.toFixed(2)} ${quote.currency} (Monetizza 65-70% della posizione)
+Target 2 (${t2R}R): ${setup.target2Level?.toFixed(2)} ${quote.currency} (Runner finale)
 Breakeven Reale: ${dynamicBreakeven?.underlyingBreakevenPrice.toFixed(2)} ${quote.currency}
 Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo Overnight.`;
 
@@ -435,7 +424,7 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
                 <Target className="w-5 h-5 text-emerald-400 shrink-0" />
                 <div>
                   <div className="text-xs font-bold text-emerald-300 uppercase tracking-wide">
-                    🎯 Target 1 Raggiunto (+1.6R su {setup?.target1Level} {quote?.currency})!
+                    🎯 Target 1 Raggiunto (+{t1R}R su {setup?.target1Level} {quote?.currency})!
                   </div>
                   <div className="text-[11px] text-slate-200 mt-0.5">
                     Regola ferrea: Incassa il 65-70% del controvalore e sposta lo Stop a <strong>{dynamicBreakeven?.underlyingBreakevenPrice.toFixed(2)} {quote?.currency}</strong> (Breakeven Dinamico).
@@ -732,7 +721,7 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
               {/* Target 1 */}
               <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-2.5">
                 <div className="text-[10px] text-slate-400 uppercase font-semibold">
-                  Target 1 (R:R 1.6)
+                  Target 1 (R:R {t1R})
                 </div>
                 <div className="text-sm font-bold text-emerald-400 tabular-nums mt-0.5">
                   {setup.target1Level?.toFixed(2)}
@@ -743,7 +732,7 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
               {/* Target 2 */}
               <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-2.5">
                 <div className="text-[10px] text-slate-400 uppercase font-semibold">
-                  Target 2 (R:R 2.8)
+                  Target 2 (R:R {t2R})
                 </div>
                 <div className="text-sm font-bold text-emerald-300 tabular-nums mt-0.5">
                   {setup.target2Level?.toFixed(2)}
@@ -1034,7 +1023,7 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
                 <div className="min-w-0">
                   <span className="text-[10px] text-slate-400 uppercase block truncate">Barriera KO Sicura</span>
                   <div className="font-bold text-sky-300 truncate">
-                    {setup.suggestedKoBarrier?.toFixed(2)} {quote?.currency}
+                    {setup.suggestedKoBarrier != null ? `${setup.suggestedKoBarrier.toFixed(2)} ${quote?.currency}` : 'N/D'}
                   </div>
                 </div>
               </div>
@@ -1094,6 +1083,7 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
                         <option value={10}>10x (Standard)</option>
                         <option value={15}>15x (Dinamica)</option>
                         <option value={20}>20x (Alta)</option>
+                        <option value={25}>25x (Max)</option>
                       </select>
                     </div>
                     <div>
@@ -1522,7 +1512,7 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
                 >
                   <span className="flex items-center gap-1.5 font-bold">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Target 1 (+1.6R WIN)</span>
+                    <span>Target 1 (+{t1R}R WIN)</span>
                   </span>
                   <span className="text-emerald-400 font-bold">+{koSafety.potentialGainT1Eur} €</span>
                 </button>

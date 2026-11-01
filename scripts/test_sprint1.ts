@@ -2,7 +2,10 @@ import {
   calculateOrbFromIntradayBars,
   calculateCandidateScore,
   calculateKnockOutBarrierGuard,
+  calculateKnockOutSafety,
   buildExecutionSetup,
+  DEFAULT_SYSTEM_PARAMETERS,
+  generatePnLScenarios,
   IntradayCandleInput,
 } from '../src/utils/calculator';
 import { RawQuoteData } from '../src/types/radar';
@@ -126,6 +129,59 @@ if (!setupLong.gateResults?.['G5']?.passed) {
   throw new Error('Punto 1 Fail: Il setup LONG non doveva scadere in G5 poiché la rottura LONG è avvenuta solo 10 minuti fa!');
 }
 console.log('1.5 Setup LONG con rottura fresca non scade per breakdown opposto vecchio: PASS');
+
+const quoteWithShortBreakouts: RawQuoteData = {
+  ...quoteWithDirectionalBreakouts,
+  gapPercent: -1.0,
+  orbBreakoutTimeShort: new Date('2026-10-26T09:40:00+01:00').toISOString(),
+  orbBreakoutTimeLong: new Date('2026-10-26T09:45:00+01:00').toISOString(),
+};
+const setupShortWithLaterLong = buildExecutionSetup(
+  { quote: quoteWithShortBreakouts, score: { total: 80 } as any, rank: 1 },
+  { decisione: 'TRADE', direzione: 'SHORT', catalizzatore: '', punti_a_favore: [], rischi: [], condizioni_invalidazione: [], fonti: [] },
+  'EU',
+  undefined,
+  { currentTime: new Date('2026-10-26T09:50:00+01:00') }
+);
+if (!setupShortWithLaterLong.gateResults?.['G5']?.passed) {
+  throw new Error('1.6 Setup SHORT con breakout SHORT presente non deve scadere per il timestamp LONG più recente');
+}
+console.log('1.6 G5 SHORT usa il proprio breakout anche se il LONG è più recente: PASS');
+
+const quoteShortAgainstOlderLong: RawQuoteData = {
+  ...quoteWithShortBreakouts,
+  orbBreakoutTimeLong: new Date('2026-10-26T09:15:00+01:00').toISOString(),
+  orbBreakoutTime: new Date('2026-10-26T09:15:00+01:00').toISOString(),
+};
+const setupShortAgainstOlderLong = buildExecutionSetup(
+  { quote: quoteShortAgainstOlderLong, score: { total: 80 } as any, rank: 1 },
+  { decisione: 'TRADE', direzione: 'SHORT', catalizzatore: '', punti_a_favore: [], rischi: [], condizioni_invalidazione: [], fonti: [] },
+  'EU',
+  undefined,
+  { currentTime: new Date('2026-10-26T09:50:00+01:00') }
+);
+if (!setupShortAgainstOlderLong.gateResults?.['G5']?.passed) {
+  throw new Error('1.7 G5 SHORT deve usare il breakout delle 09:40, non il timestamp LONG/generico delle 09:15');
+}
+console.log('1.7 G5 SHORT 09:40 con LONG/generico 09:15: PASS');
+
+const quoteWithoutShortBreakout: RawQuoteData = {
+  ...quoteWithShortBreakouts,
+  orbBreakoutTimeShort: null,
+  orbBreakoutTimeLong: new Date('2026-10-26T09:15:00+01:00').toISOString(),
+  orbBreakoutTime: new Date('2026-10-26T09:15:00+01:00').toISOString(),
+};
+const setupShortWithoutBreakout = buildExecutionSetup(
+  { quote: quoteWithoutShortBreakout, score: { total: 80 } as any, rank: 1 },
+  { decisione: 'TRADE', direzione: 'SHORT', catalizzatore: '', punti_a_favore: [], rischi: [], condizioni_invalidazione: [], fonti: [] },
+  'EU',
+  undefined,
+  { currentTime: new Date('2026-10-26T09:50:00+01:00') }
+);
+if (!setupShortWithoutBreakout.gateResults?.['G5']?.passed) {
+  throw new Error('1.8 G5 SHORT senza timestamp direzionale deve passare (Tb null)');
+}
+console.log('1.8 G5 SHORT senza timestamp SHORT: PASS (Tb null)');
 
 // -----------------------------------------------------------------------------
 // PUNTO 6: COMPLETEZZA ORB (TRE BARRE 5M COMPLETE E VALIDE)
@@ -256,6 +312,42 @@ if (guardShort.safeBarrierLevel !== 104.0) {
 }
 console.log('3.2 Guard V112 SHORT canonico: PASS (Leva 25x, Barriera 104.00)');
 
+const setupCustomR = buildExecutionSetup(
+  { quote: quoteAuth, score: { total: 80 } as any, rank: 1 },
+  { decisione: 'TRADE', direzione: 'LONG', catalizzatore: '', punti_a_favore: [], rischi: [], condizioni_invalidazione: [], fonti: [] },
+  'EU',
+  { ...DEFAULT_SYSTEM_PARAMETERS, target1Multiplier: 1.35, target2Multiplier: 3.0 },
+  { currentTime: new Date('2026-10-26T09:50:00+01:00') }
+);
+if (setupCustomR.barrierRecommended == null || setupCustomR.selectedLeverage == null) {
+  throw new Error('3.5 Setup R configurabile deve fornire barriera e leva per il test');
+}
+const customRSafety = calculateKnockOutSafety(setupCustomR, {
+  barrierStrike: setupCustomR.barrierRecommended,
+  leverage: setupCustomR.selectedLeverage,
+  certificatePrice: 2.5,
+  accountCapital: 10000,
+  maxRiskPercent: 1,
+});
+if (Math.abs(customRSafety.potentialGainT2Eur - customRSafety.potentialLossEur * 3.0) > 0.02) {
+  throw new Error(`3.5 Guadagno T2 deve essere coerente con 3R: loss=${customRSafety.potentialLossEur}, gain=${customRSafety.potentialGainT2Eur}`);
+}
+const customRScenarios = generatePnLScenarios(
+  setupCustomR,
+  { barrierStrike: setupCustomR.barrierRecommended, leverage: setupCustomR.selectedLeverage, certificatePrice: 2.5, accountCapital: 10000, maxRiskPercent: 1 },
+  2.5,
+  customRSafety.suggestedCertificates,
+  customRSafety.totalInvestedEur,
+  0,
+  0,
+  customRSafety.stopDistance,
+  customRSafety.potentialLossEur
+);
+if (customRScenarios.find((scenario) => scenario.id === 't1')?.rMultiple !== 1.35 || customRScenarios.find((scenario) => scenario.id === 't2')?.rMultiple !== 3.0) {
+  throw new Error('3.5 Scenari T1/T2 devono esporre rMultiple 1.35 e 3.0');
+}
+console.log('3.5 R target configurabili coerenti in guadagni e scenari: PASS');
+
 // 3.3 Setup privo di leva compatibile (L_sel < 1, ad es. stop distance = 50%)
 const quoteWideStop: RawQuoteData = {
   ...quoteAuth,
@@ -332,12 +424,12 @@ console.log('12.2 Titolo positivo e negativo con stesse keyword: PASS (entrambi 
 
 // 12.3 Notizie recenti ma senza riscontro direzionale (array di NewsItem) -> 0pt
 const scoreNewsArray = calculateCandidateScore(quoteAuth, 0.5, [
-  { id: '1', title: 'Breaking news recente', summary: '', source: 'Reuters', url: '', publishedAt: new Date().toISOString() },
+  { id: '1', title: 'Upgrade a Buy, nuovo target e contratto', summary: '', source: 'Reuters', url: '', publishedAt: new Date().toISOString() },
 ] as any);
 if (scoreNewsArray.newsScore !== 0) {
-  throw new Error(`12.3 Array di notizie generiche recenti deve dare newsScore 0, ottenuto: ${scoreNewsArray.newsScore}`);
+  throw new Error(`12.3 Array NewsItem con keyword upgrade/target/contratto deve dare newsScore 0, ottenuto: ${scoreNewsArray.newsScore}`);
 }
-console.log('12.3 Array di notizie generiche recenti: PASS (0pt, nessun bonus orario acritico)');
+console.log('12.3 Array NewsItem con keyword upgrade/target/contratto: PASS (newsScore 0)');
 
 // 12.4 Assenza notizie -> 0pt
 const scoreNoNews = calculateCandidateScore(quoteAuth, 0.5, null);

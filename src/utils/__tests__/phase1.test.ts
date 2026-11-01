@@ -172,7 +172,8 @@ function runAllTests() {
   // T03 | now = 11:30 | G5 TRIGGER SCADUTO
   {
     const now1130 = new Date('2026-10-26T11:30:00+01:00');
-    const q = createBaseFixtureQuote();
+    // G5 LONG usa il timestamp direzionale, non il campo generico legacy.
+    const q = createBaseFixtureQuote({ orbBreakoutTimeLong: new Date('2026-10-26T09:30:00+01:00').toISOString() });
     const cand = buildCandidateFromQuote(q);
     const setup = buildExecutionSetup(cand, null, 'EU', undefined, { currentTime: now1130 });
     const g5 = setup.gateResults?.['G5'];
@@ -194,7 +195,7 @@ function runAllTests() {
   // T04 | now = 10:30 (60 min) | G5 passa
   {
     const now1030 = new Date('2026-10-26T10:30:00+01:00');
-    const q = createBaseFixtureQuote();
+    const q = createBaseFixtureQuote({ orbBreakoutTimeLong: new Date('2026-10-26T09:30:00+01:00').toISOString() });
     const cand = buildCandidateFromQuote(q);
     const setup = buildExecutionSetup(cand, null, 'EU', undefined, { currentTime: now1030 });
     const g5 = setup.gateResults?.['G5'];
@@ -212,7 +213,7 @@ function runAllTests() {
   // T05 | now = 10:31 (61 min) | G5 TRIGGER SCADUTO
   {
     const now1031 = new Date('2026-10-26T10:31:00+01:00');
-    const q = createBaseFixtureQuote();
+    const q = createBaseFixtureQuote({ orbBreakoutTimeLong: new Date('2026-10-26T09:30:00+01:00').toISOString() });
     const cand = buildCandidateFromQuote(q);
     const setup = buildExecutionSetup(cand, null, 'EU', undefined, { currentTime: now1031 });
     const g5 = setup.gateResults?.['G5'];
