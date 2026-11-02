@@ -70,9 +70,11 @@ if (isFirebaseConfigured) {
     authInstance = getAuth(appInstance);
 
     const databaseId =
-      resolvedFirebaseConfig.firestoreDatabaseId && resolvedFirebaseConfig.firestoreDatabaseId !== '(default)'
+      metaEnv?.VITE_FIRESTORE_DATABASE_ID ||
+      process.env.VITE_FIRESTORE_DATABASE_ID ||
+      (resolvedFirebaseConfig.firestoreDatabaseId && resolvedFirebaseConfig.firestoreDatabaseId !== '(default)'
         ? resolvedFirebaseConfig.firestoreDatabaseId
-        : '(default)';
+        : 'ai-studio-intradayradar-eb2063c2-bea2-4167-bbfc-dfc1368980c0');
 
     try {
       firestoreInstance = initializeFirestore(
