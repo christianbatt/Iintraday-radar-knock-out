@@ -20,6 +20,7 @@ import {
 } from './types/radar';
 import { TRADING_PARAMS } from './config/tradingParams';
 import { getMarketTime } from './utils/timezone';
+import { loadParameters } from './utils/paramSync';
 import { DEFAULT_TRADE_REPUBLIC_UNDERLYINGS } from './data/defaultUnderlyings';
 import {
   getDualTopCandidates,
@@ -310,15 +311,9 @@ export default function App() {
   }, [journalEntries]);
 
   // 6. System Parameters & Adaptive Self-Optimization (Every 20 Setups)
-  const [parameters, setParameters] = useState<SystemParameters>(() => {
-    try {
-      const saved = localStorage.getItem('intraday_radar_parameters');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // fallback
-    }
-    return DEFAULT_SYSTEM_PARAMETERS;
-  });
+  const [parameters, setParameters] = useState<SystemParameters>(() =>
+    loadParameters(localStorage.getItem('intraday_radar_parameters'), DEFAULT_SYSTEM_PARAMETERS)
+  );
 
   // 6a. Excluded Setups Auto-Analysis & Optimization Calculation
   const excludedAutoAnalysis = React.useMemo(() => {
