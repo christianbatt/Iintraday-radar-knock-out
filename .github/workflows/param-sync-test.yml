@@ -1,0 +1,15 @@
+name: param-sync-test
+on:
+  push:
+    branches: [fix/param-sync, 'copilot/**']
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npx tsx src/utils/__tests__/param_merge.test.ts
