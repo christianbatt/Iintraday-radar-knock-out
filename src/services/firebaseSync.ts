@@ -18,9 +18,12 @@ import {
   deleteDoc,
   writeBatch,
   getDocs,
+  getDoc,
+  runTransaction,
   Firestore,
 } from 'firebase/firestore';
 import {
+  AILearnedInsight,
   OptimizationProposal,
   SystemParameters,
   TradeJournalEntry,
@@ -28,10 +31,12 @@ import {
 } from '../types/radar';
 
 // Safe Firebase Config resolution (priority: VITE_ environment variables > optional local config)
-const firebaseConfigModules = import.meta.glob('../../firebase-applet-config.json', {
-  eager: true,
-  import: 'default',
-});
+const firebaseConfigModules = typeof import.meta.glob === 'function'
+  ? import.meta.glob('../../firebase-applet-config.json', {
+      eager: true,
+      import: 'default',
+    })
+  : {};
 const firebaseConfig = Object.values(firebaseConfigModules)[0] as Record<string, any> | undefined;
 const rawConfig = firebaseConfig || {};
 const metaEnv = typeof import.meta !== 'undefined' ? (import.meta as any).env : undefined;
@@ -89,6 +94,67 @@ if (isFirebaseConfigured) {
 
 export const auth: Auth | null = authInstance;
 export const db: Firestore | null = firestoreInstance;
+
+export function createAIMemoryPayload(memory: AILearnedInsight[], version: number) {
+  return {
+    memory,
+    updatedAt: new Date().toISOString(),
+    version,
+    rulesCount: memory.length,
+    validatedCount: memory.filter((rule) => rule.confidence !== null).length,
+  };
+}
+
+/** Persist memory for an authenticated user's devices and retain version snapshots. */
+export async function syncAIMemoryToFirebase(uid: string, memory: AILearnedInsight[]): Promise<void> {
+  if (!db || !uid) return;
+
+  try {
+    const currentRef = doc(db, 'users', uid, 'ai_specialization_memory', 'current');
+    await runTransaction(db, async (transaction) => {
+      const currentSnapshot = await transaction.get(currentRef);
+      const currentVersion = currentSnapshot.data()?.version;
+      const version = typeof currentVersion === 'number' && Number.isFinite(currentVersion)
+        ? currentVersion + 1
+        : 1;
+      const payload = createAIMemoryPayload(memory, version);
+      const versionRef = doc(db, 'users', uid, 'ai_specialization_memory', 'current', 'versions', String(version));
+      transaction.set(currentRef, payload, { merge: true });
+      transaction.set(versionRef, payload);
+    });
+  } catch (error) {
+    console.error('[Firebase Sync] Errore scrittura AI memory:', error);
+  }
+}
+
+/** Pull a user's memory; return null to let callers fall back to local/server state. */
+export async function pullAIMemoryFromFirebase(uid: string): Promise<AILearnedInsight[] | null> {
+  if (!db || !uid) return null;
+
+  try {
+    const reference = doc(db, 'users', uid, 'ai_specialization_memory', 'current');
+    const snapshot = await getDoc(reference);
+    if (!snapshot.exists()) return null;
+    const memory: unknown = snapshot.data()?.memory;
+    if (!Array.isArray(memory)) return null;
+
+    const validMemory = memory.filter((rule): rule is AILearnedInsight =>
+      rule != null &&
+      typeof rule === 'object' &&
+      typeof rule.id === 'string' &&
+      typeof rule.learnedAt === 'string' &&
+      (rule.market === 'EU' || rule.market === 'US' || rule.market === 'GLOBAL') &&
+      typeof rule.topic === 'string' &&
+      typeof rule.directive === 'string' &&
+      (rule.confidence === null || typeof rule.confidence === 'number') &&
+      typeof rule.sampleEvidence === 'string'
+    );
+    return validMemory.length === memory.length ? validMemory : null;
+  } catch (error) {
+    console.error('[Firebase Sync] Errore lettura AI memory:', error);
+    return null;
+  }
+}
 
 const googleProvider = new GoogleAuthProvider();
 

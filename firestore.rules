@@ -41,6 +41,16 @@ service cloud.firestore {
           || data.outcomeStatus == 'INSUFFICIENT_DATA');
     }
 
+    function isValidAIMemory(data) {
+      return data.keys().hasAll(['memory', 'updatedAt', 'version', 'rulesCount', 'validatedCount'])
+        && data.memory is list
+        && data.memory.size() <= 50
+        && data.version is int
+        && data.rulesCount == data.memory.size()
+        && data.validatedCount is int
+        && data.updatedAt is string;
+    }
+
     match /users/{userId} {
       allow get: if isOwner(userId);
       allow list: if false;
@@ -74,6 +84,25 @@ service cloud.firestore {
           && isValidId(excludedId)
           && isValidExcludedSetup(request.resource.data);
         allow delete: if isOwner(userId) && isValidId(excludedId);
+      }
+
+      match /ai_specialization_memory/{memoryId} {
+        allow read: if isOwner(userId) && userId != 'system' && memoryId == 'current';
+        allow create, update: if isOwner(userId)
+          && userId != 'system'
+          && memoryId == 'current'
+          && isValidAIMemory(request.resource.data);
+        allow delete: if isOwner(userId) && userId != 'system' && memoryId == 'current';
+
+        match /versions/{versionId} {
+          allow read: if isOwner(userId) && userId != 'system' && memoryId == 'current' && isValidId(versionId);
+          allow create: if isOwner(userId)
+            && userId != 'system'
+            && memoryId == 'current'
+            && isValidId(versionId)
+            && isValidAIMemory(request.resource.data);
+          allow update, delete: if false;
+        }
       }
     }
   }

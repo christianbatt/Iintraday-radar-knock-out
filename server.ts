@@ -175,7 +175,13 @@ if (fs.existsSync(firebaseLocalConfigPath)) {
 let firebaseAdminApp: ReturnType<typeof initializeFirebaseAdminApp> | null = null;
 let firebaseAdminAuth: ReturnType<typeof getFirebaseAdminAuth> | null = null;
 let firebaseAdminFirestore: ReturnType<typeof getFirebaseAdminFirestore> | null = null;
-const AI_MEMORY_FIRESTORE_PATH = ['_system', 'aiSpecializationMemory'] as const;
+const AI_MEMORY_SYSTEM_UID = process.env.AI_MEMORY_SYSTEM_UID || 'system';
+const AI_MEMORY_FIRESTORE_PATH = [
+  'users',
+  AI_MEMORY_SYSTEM_UID,
+  'ai_specialization_memory',
+  'current',
+] as const;
 if (firebaseProjectId) {
   try {
     firebaseAdminApp = getFirebaseAdminApps().find((candidate) => candidate.name === 'intraday-radar-auth') ||
@@ -192,13 +198,15 @@ if (validApiKeys.length === 0 && !firebaseAdminAuth) {
 }
 
 async function loadPersistentAIMemory(): Promise<AILearnedInsight[]> {
+  const localMemory = loadAIMemoryFromDisk();
   if (firebaseAdminFirestore) {
     try {
       const reference = firebaseAdminFirestore.doc(AI_MEMORY_FIRESTORE_PATH.join('/'));
       const snapshot = await reference.get();
-      const storedMemory: unknown = snapshot.data()?.memory;
-      if (Array.isArray(storedMemory)) {
-        const memory = storedMemory.filter((entry): entry is AILearnedInsight =>
+      const documentData = snapshot.data();
+      const storedMemory: unknown = documentData?.memory;
+      if (snapshot.exists && Array.isArray(storedMemory)) {
+        const remoteMemory = storedMemory.filter((entry): entry is AILearnedInsight =>
           entry &&
           typeof entry === 'object' &&
           typeof entry.id === 'string' &&
@@ -206,13 +214,22 @@ async function loadPersistentAIMemory(): Promise<AILearnedInsight[]> {
           typeof entry.directive === 'string' &&
           (entry.confidence === null || typeof entry.confidence === 'number')
         );
-        saveAIMemoryLocally(memory);
-        return memory;
+        const localUpdatedAt = fs.existsSync(AI_MEMORY_FILE) ? fs.statSync(AI_MEMORY_FILE).mtimeMs : 0;
+        const remoteUpdatedAt = Date.parse(String(documentData?.updatedAt || '')) || 0;
+
+        if (remoteMemory.length > 0 && (remoteUpdatedAt >= localUpdatedAt || localMemory.length === 0)) {
+          saveAIMemoryLocally(remoteMemory);
+          return remoteMemory;
+        }
+        const memoryMatches = JSON.stringify(localMemory) === JSON.stringify(remoteMemory);
+        if (localMemory.length > 0 && !memoryMatches) {
+          await persistAIMemoryToFirestore(localMemory);
+        }
+        return localMemory.length > 0 ? localMemory : remoteMemory;
       }
 
-      const localMemory = loadAIMemoryFromDisk();
       if (localMemory.length > 0) {
-        await reference.set({ memory: localMemory, updatedAt: new Date().toISOString() });
+        await persistAIMemoryToFirestore(localMemory);
       }
       return localMemory;
     } catch (error) {
@@ -225,7 +242,23 @@ async function loadPersistentAIMemory(): Promise<AILearnedInsight[]> {
 async function persistAIMemoryToFirestore(memory: AILearnedInsight[]): Promise<void> {
   if (!firebaseAdminFirestore) return;
   const reference = firebaseAdminFirestore.doc(AI_MEMORY_FIRESTORE_PATH.join('/'));
-  await reference.set({ memory, updatedAt: new Date().toISOString() });
+  await firebaseAdminFirestore.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(reference);
+    const previousVersion = snapshot.data()?.version;
+    const version = typeof previousVersion === 'number' && Number.isInteger(previousVersion)
+      ? previousVersion + 1
+      : 1;
+    const payload = {
+      memory,
+      updatedAt: new Date().toISOString(),
+      version,
+      rulesCount: memory.length,
+      validatedCount: memory.filter((entry) => entry.confidence !== null).length,
+    };
+    const versionReference = reference.collection('versions').doc(String(version));
+    transaction.set(reference, payload, { merge: true });
+    transaction.create(versionReference, payload);
+  });
 }
 
 function isValidApiKey(req: Request): boolean {
@@ -2625,6 +2658,8 @@ async function startServer() {
       res.sendFile(path.join(__dirname, 'dist', 'index.html'));
     });
   }
+
+  aiLearnedMemory = await loadPersistentAIMemory();
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Intraday Radar] Server running at http://0.0.0.0:${PORT}`);
