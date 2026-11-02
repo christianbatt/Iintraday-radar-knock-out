@@ -28,11 +28,11 @@ import {
   ExcludedCategoryAnalysis,
   SystemParameters,
   ExclusionCategory,
+  AILearnedInsight,
 } from '../types/radar';
 import {
   fetchAIMemory,
   triggerAISpecialization,
-  AILearnedInsight,
 } from '../services/api';
 
 interface ExcludedSetupsAnalyzerModalProps {
@@ -97,9 +97,7 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
       if (res.success && res.memory) {
         setAiMemory(res.memory);
         setSpecializeFeedback(
-          res.newInsightsCount > 0
-            ? `Specializzazione completata con successo! ${res.newInsightsCount} nuove direttive operative integrate nella memoria continua.`
-            : `Specializzazione eseguita: i parametri e le direttive qualitative correnti sono già ottimali e allineati con i dati storici.`
+          res.message || 'Eventuali proposte LLM non sono state persistite; la memoria richiede validazione statistica sui trade reali.'
         );
       } else {
         setSpecializeFeedback(res.message || 'Operazione completata.');
@@ -734,8 +732,10 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5 text-[11px]">
-                          <span className="text-slate-400">Indice di Confidenza:</span>
-                          <span className="font-bold text-emerald-400 font-mono">{d.confidence}%</span>
+                          <span className="text-slate-400">{d.confidence == null ? 'Stato:' : 'Score statistico (1-q):'}</span>
+                          <span className={`font-bold font-mono ${d.confidence == null ? 'text-amber-300' : 'text-emerald-400'}`}>
+                            {d.confidence == null ? 'IPOTESI NON VALIDATA' : `${d.confidence}%`}
+                          </span>
                         </div>
                       </div>
 

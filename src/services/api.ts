@@ -5,7 +5,18 @@ import {
   GeminiCatalystAnalysis,
   SessionInfo,
   MacroCalendarState,
+  AILearnedInsight,
 } from '../types/radar';
+import { auth } from './firebaseSync';
+
+async function fetchWithFirebaseAuth(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  const currentUser = auth?.currentUser;
+  if (currentUser) {
+    headers.set('Authorization', `Bearer ${await currentUser.getIdToken()}`);
+  }
+  return fetch(input, { ...init, headers });
+}
 
 async function safeJson<T>(res: Response, defaultErrMsg: string): Promise<T> {
   const contentType = res.headers.get('content-type') || '';
@@ -73,7 +84,7 @@ export async function analyzeCatalystWithGemini(
   news: NewsItem[],
   futures: any
 ): Promise<GeminiCatalystAnalysis> {
-  const res = await fetch('/api/analyze-catalyst', {
+  const res = await fetchWithFirebaseAuth('/api/analyze-catalyst', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ candidate, news, futures }),
@@ -82,7 +93,7 @@ export async function analyzeCatalystWithGemini(
 }
 
 export async function clearServerCache(): Promise<void> {
-  await fetch('/api/cache/clear', { method: 'POST' });
+  await fetchWithFirebaseAuth('/api/cache/clear', { method: 'POST' });
 }
 
 export async function fetchSharedAppState(sinceVersion?: number): Promise<{
@@ -93,7 +104,7 @@ export async function fetchSharedAppState(sinceVersion?: number): Promise<{
 }> {
   try {
     const url = sinceVersion ? `/api/sync/state?sinceVersion=${sinceVersion}` : '/api/sync/state';
-    const res = await fetch(url);
+    const res = await fetchWithFirebaseAuth(url);
     if (!res.ok) return { hasUpdates: false };
     return res.json();
   } catch {
@@ -103,7 +114,7 @@ export async function fetchSharedAppState(sinceVersion?: number): Promise<{
 
 export async function pushSharedAppState(patch: any): Promise<{ success: boolean; version?: number }> {
   try {
-    const res = await fetch('/api/sync/state', {
+    const res = await fetchWithFirebaseAuth('/api/sync/state', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
@@ -115,19 +126,9 @@ export async function pushSharedAppState(patch: any): Promise<{ success: boolean
   }
 }
 
-export interface AILearnedInsight {
-  id: string;
-  learnedAt: string;
-  market: 'EU' | 'US' | 'GLOBAL';
-  topic: string;
-  directive: string;
-  confidence: number;
-  sampleEvidence: string;
-}
-
 export async function fetchAIMemory(): Promise<AILearnedInsight[]> {
   try {
-    const res = await fetch('/api/ai/memory');
+    const res = await fetchWithFirebaseAuth('/api/ai/memory');
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data.memory) ? data.memory : [];
@@ -141,7 +142,7 @@ export async function triggerAISpecialization(
   excludedSetups: any[]
 ): Promise<{ success: boolean; newInsightsCount: number; memory: AILearnedInsight[]; message?: string }> {
   try {
-    const res = await fetch('/api/ai/specialize', {
+    const res = await fetchWithFirebaseAuth('/api/ai/specialize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ trades, excludedSetups }),
@@ -176,7 +177,7 @@ export async function fetchDeskPostMortem(
   error?: string;
 }> {
   try {
-    const res = await fetch('/api/ai/desk-post-mortem', {
+    const res = await fetchWithFirebaseAuth('/api/ai/desk-post-mortem', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ trades, market }),

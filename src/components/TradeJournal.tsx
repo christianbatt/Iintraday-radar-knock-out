@@ -29,6 +29,7 @@ import {
 import { User } from 'firebase/auth';
 import { PerformanceSummary } from './PerformanceSummary';
 import { HistoricalEquityDashboard } from './HistoricalEquityDashboard';
+import { checkQuoteStaleness } from '../utils/calculator';
 
 interface TradeJournalProps {
   entries: TradeJournalEntry[];
@@ -144,7 +145,6 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
       finalOutcome = manualOutcome;
       if (manualOutcome === 'EXPIRED') {
         rMultiple = 0;
-        if (pnlEur === 150) finalPnl = -2.0; // default friction
         finalExitPrice = entryPrice;
       }
     }
@@ -186,27 +186,32 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
     let pnlEur = trade.pnlEur;
     let rMultiple = trade.rMultiple;
     let notes = trade.notes;
+    const riskAmountEur = trade.potentialLossEur ?? trade.maxRiskEur ?? null;
+    const frictionEur = Math.max(0, trade.frictionEur ?? 0);
 
     if (newOutcome === 'WIN') {
       exitPrice = trade.target1;
-      rMultiple = 1.6;
-      pnlEur = trade.pnlEur <= 0 ? 160 : trade.pnlEur;
+      const riskDistance = Math.abs(trade.entryPrice - trade.stopLoss);
+      const targetDistance = Math.abs(trade.target1 - trade.entryPrice);
+      rMultiple = riskDistance > 0 ? +(targetDistance / riskDistance).toFixed(2) : 0;
+      const grossGainEur = trade.potentialGainT1Eur ?? (riskAmountEur != null ? riskAmountEur * rMultiple : null);
+      if (grossGainEur != null) pnlEur = +(grossGainEur - frictionEur).toFixed(2);
       notes = 'Target 1 centrato con pieno profitto.';
     } else if (newOutcome === 'LOSS') {
       exitPrice = trade.stopLoss;
       rMultiple = -1.0;
-      pnlEur = trade.pnlEur >= 0 ? -100 : trade.pnlEur;
+      if (riskAmountEur != null) pnlEur = +(-riskAmountEur - frictionEur).toFixed(2);
       notes = 'Stop loss tassativo eseguito.';
     } else if (newOutcome === 'BREAKEVEN') {
       exitPrice = trade.entryPrice;
       rMultiple = 0;
-      pnlEur = -2.0;
-      notes = 'Chiuso a pareggio (spese commissionali).';
+      pnlEur = -frictionEur;
+      notes = 'Chiuso a pareggio; attrito contabilizzato se disponibile.';
     } else if (newOutcome === 'EXPIRED') {
       exitPrice = trade.entryPrice;
       rMultiple = 0;
-      pnlEur = -2.0;
-      notes = 'Setup scaduto al cutoff di sessione: nessun breakout.';
+      pnlEur = -frictionEur;
+      notes = 'Setup scaduto al cutoff; attrito contabilizzato se disponibile.';
     }
 
     const updated: TradeJournalEntry = {
@@ -556,11 +561,14 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
           <div className="space-y-2">
             {openTrades.map((t) => {
               const liveQ = quotes.find((q) => q.ticker === t.ticker);
-              const livePrice = liveQ?.currentPrice ?? liveQ?.preMarketPrice;
+              const isQuoteFresh = liveQ != null && !checkQuoteStaleness(liveQ).isStale;
+              const livePrice = isQuoteFresh ? liveQ.currentPrice ?? liveQ.preMarketPrice : null;
               const isLong = t.direction === 'LONG';
               const riskDist = Math.abs(t.entryPrice - t.stopLoss);
+              const riskAmountEur = t.potentialLossEur ?? t.maxRiskEur ?? null;
+              const frictionEur = Math.max(0, t.frictionEur ?? 0);
 
-              let floatingPnlEur = 0;
+              let floatingPnlEur: number | null = null;
               let floatingR = 0;
               let distToTarget = 0;
               let distToStop = 0;
@@ -568,7 +576,9 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
               if (livePrice && riskDist > 0) {
                 const diff = isLong ? livePrice - t.entryPrice : t.entryPrice - livePrice;
                 floatingR = +(diff / riskDist).toFixed(2);
-                floatingPnlEur = +(floatingR * (accountCapital * 0.01)).toFixed(2);
+                if (riskAmountEur != null) {
+                  floatingPnlEur = +(floatingR * riskAmountEur - frictionEur).toFixed(2);
+                }
                 distToTarget = +(Math.abs(t.target1 - livePrice)).toFixed(2);
                 distToStop = +(Math.abs(livePrice - t.stopLoss)).toFixed(2);
               }
@@ -600,10 +610,10 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
                         <span className="font-bold text-white text-xs">{livePrice.toFixed(2)}</span>
                         <span
                           className={`font-bold text-xs ${
-                            floatingPnlEur > 0 ? 'text-emerald-400' : floatingPnlEur < 0 ? 'text-rose-400' : 'text-slate-300'
+                            floatingPnlEur == null ? 'text-slate-400' : floatingPnlEur > 0 ? 'text-emerald-400' : floatingPnlEur < 0 ? 'text-rose-400' : 'text-slate-300'
                           }`}
                         >
-                          {floatingPnlEur > 0 ? `+${floatingPnlEur}` : floatingPnlEur} € ({floatingR > 0 ? `+${floatingR}` : floatingR}R)
+                          {floatingPnlEur == null ? 'N/D' : floatingPnlEur > 0 ? `+${floatingPnlEur}` : floatingPnlEur} € ({floatingR > 0 ? `+${floatingR}` : floatingR}R)
                         </span>
                       </div>
                     ) : (
@@ -935,22 +945,28 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
                 const isExpired = trade.outcome === 'EXPIRED';
 
                 const liveQ = isOpen ? quotes.find((q) => q.ticker === trade.ticker) : null;
-                const livePrice = liveQ?.currentPrice ?? liveQ?.preMarketPrice;
+                const isQuoteFresh = liveQ != null && !checkQuoteStaleness(liveQ).isStale;
+                const livePrice = isQuoteFresh ? liveQ.currentPrice ?? liveQ.preMarketPrice : null;
                 const isLong = trade.direction === 'LONG';
                 const riskDist = Math.abs(trade.entryPrice - trade.stopLoss);
+                const riskAmountEur = trade.potentialLossEur ?? trade.maxRiskEur ?? null;
+                const frictionEur = Math.max(0, trade.frictionEur ?? 0);
 
                 let floatingR = trade.rMultiple;
-                let floatingPnlEur = trade.pnlEur;
+                let floatingPnlEur: number | null = isOpen ? null : trade.pnlEur;
                 let distToTarget = 0;
                 let distToStop = 0;
 
                 if (isOpen && livePrice != null && riskDist > 0) {
                   const diff = isLong ? livePrice - trade.entryPrice : trade.entryPrice - livePrice;
                   floatingR = +(diff / riskDist).toFixed(2);
-                  floatingPnlEur = +(floatingR * (accountCapital * 0.01)).toFixed(2);
+                  if (riskAmountEur != null) {
+                    floatingPnlEur = +(floatingR * riskAmountEur - frictionEur).toFixed(2);
+                  }
                   distToTarget = +(Math.abs(trade.target1 - livePrice)).toFixed(2);
                   distToStop = +(Math.abs(livePrice - trade.stopLoss)).toFixed(2);
                 }
+                const displayedPnl = isOpen ? floatingPnlEur : trade.pnlEur;
 
                 return (
                   <tr key={trade.id} className={`hover:bg-slate-800/40 transition-colors ${isOpen ? 'bg-sky-950/20' : ''}`}>
@@ -1005,19 +1021,17 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
                     </td>
                     <td
                       className={`py-2 px-3 text-right font-bold ${
-                        (isOpen ? floatingPnlEur : trade.pnlEur) > 0
+                        displayedPnl != null && displayedPnl > 0
                           ? 'text-emerald-400'
-                          : (isOpen ? floatingPnlEur : trade.pnlEur) < 0
+                          : displayedPnl != null && displayedPnl < 0
                           ? 'text-rose-400'
                           : 'text-slate-300'
                       }`}
                     >
                       <div>
                         <span>
-                          {(isOpen ? floatingPnlEur : trade.pnlEur) > 0
-                            ? `+${(isOpen ? floatingPnlEur : trade.pnlEur).toFixed(2)}`
-                            : (isOpen ? floatingPnlEur : trade.pnlEur).toFixed(2)}{' '}
-                          €
+                          {displayedPnl == null ? 'N/D' : displayedPnl > 0 ? `+${displayedPnl.toFixed(2)}` : displayedPnl.toFixed(2)}{' '}
+                          {displayedPnl == null ? '' : '€'}
                         </span>
                         {isOpen && (
                           <span className="text-[9px] block text-slate-500 font-sans font-normal">

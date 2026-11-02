@@ -29,6 +29,18 @@ service cloud.firestore {
         && (data.outcome == 'WIN' || data.outcome == 'LOSS' || data.outcome == 'BREAKEVEN' || data.outcome == 'EXPIRED');
     }
 
+    function isValidExcludedSetup(data) {
+      return data.id is string
+        && data.ticker is string
+        && (data.market == 'EU' || data.market == 'US')
+        && (data.direction == 'LONG' || data.direction == 'SHORT')
+        && (data.outcomeStatus == 'MONITORING'
+          || data.outcomeStatus == 'THEORETICAL_PROFIT'
+          || data.outcomeStatus == 'THEORETICAL_STOP'
+          || data.outcomeStatus == 'THEORETICAL_EXPIRED'
+          || data.outcomeStatus == 'INSUFFICIENT_DATA');
+    }
+
     match /users/{userId} {
       allow get: if isOwner(userId);
       allow list: if false;
@@ -54,6 +66,14 @@ service cloud.firestore {
         allow list: if isOwner(userId);
         allow create, update: if isOwner(userId) && isValidId(tradeId) && isValidTrade(request.resource.data);
         allow delete: if isOwner(userId) && isValidId(tradeId);
+      }
+
+      match /excludedSetups/{excludedId} {
+        allow get, list: if isOwner(userId) && isValidId(excludedId);
+        allow create, update: if isOwner(userId)
+          && isValidId(excludedId)
+          && isValidExcludedSetup(request.resource.data);
+        allow delete: if isOwner(userId) && isValidId(excludedId);
       }
     }
   }

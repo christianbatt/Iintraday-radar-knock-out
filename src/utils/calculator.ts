@@ -468,8 +468,21 @@ export function createJournalEntryFromSetup(
   }
   const t1Mult = parameters?.target1Multiplier ?? TRADING_PARAMS.T1_R;
   const initialOutcome = tradeData.outcome || 'OPEN';
-  let pnlEur = tradeData.pnlEur != null ? tradeData.pnlEur : 0;
+  const suppliedPnl = typeof tradeData.pnlEur === 'number' && Number.isFinite(tradeData.pnlEur)
+    ? tradeData.pnlEur
+    : null;
+  let pnlEur = suppliedPnl ?? 0;
   let rMultiple = tradeData.rMultiple != null ? tradeData.rMultiple : 0;
+  const potentialLossEur =
+    typeof tradeData.potentialLossEur === 'number' && Number.isFinite(tradeData.potentialLossEur)
+      ? tradeData.potentialLossEur
+      : typeof tradeData.maxRiskEur === 'number' && Number.isFinite(tradeData.maxRiskEur)
+      ? tradeData.maxRiskEur
+      : null;
+  const frictionEur =
+    typeof tradeData.frictionEur === 'number' && Number.isFinite(tradeData.frictionEur)
+      ? Math.max(0, tradeData.frictionEur)
+      : 0;
   const baseEntry = tradeData.entryLevel ?? tradeData.triggerLevel ?? tradeData.entryPrice ?? null;
   const baseStop = tradeData.stopLossLevel ?? tradeData.stopLoss ?? null;
   const baseT1 = tradeData.target1Level ?? tradeData.target1 ?? null;
@@ -483,15 +496,34 @@ export function createJournalEntryFromSetup(
   } else if (initialOutcome === 'WIN') {
     exitPrice = baseT1 ?? exitPrice;
     rMultiple = +t1Mult.toFixed(2);
-    pnlEur = tradeData.potentialGainT1Eur != null ? tradeData.potentialGainT1Eur : +(100 * rMultiple).toFixed(2);
+    if (suppliedPnl != null) {
+      pnlEur = suppliedPnl;
+    } else {
+      const grossGain =
+        typeof tradeData.potentialGainT1Eur === 'number'
+          ? tradeData.potentialGainT1Eur
+          : potentialLossEur != null
+          ? potentialLossEur * rMultiple
+          : null;
+      if (grossGain == null) {
+        throw new Error('PnL WIN non calcolabile: mancano potenziale T1 o rischio monetario effettivo');
+      }
+      pnlEur = +(grossGain - frictionEur).toFixed(2);
+    }
   } else if (initialOutcome === 'LOSS') {
     exitPrice = baseStop ?? exitPrice;
     rMultiple = -1.0;
-    pnlEur = -(tradeData.maxRiskEur != null ? tradeData.maxRiskEur : 100);
+    if (suppliedPnl != null) {
+      pnlEur = suppliedPnl;
+    } else if (potentialLossEur != null) {
+      pnlEur = +(-potentialLossEur - frictionEur).toFixed(2);
+    } else {
+      throw new Error('PnL LOSS non calcolabile: manca il rischio monetario effettivo');
+    }
   } else if (initialOutcome === 'EXPIRED' || initialOutcome === 'BREAKEVEN') {
     exitPrice = baseEntry ?? exitPrice;
     rMultiple = 0;
-    pnlEur = -2.0;
+    pnlEur = suppliedPnl ?? -frictionEur;
   }
 
   const resolvedBarrier = tradeData.barrierRecommended ?? tradeData.barrierStrike ?? null;
@@ -531,7 +563,10 @@ export function createJournalEntryFromSetup(
     leverage: resolvedLeverage ?? undefined,
     suggestedCertificates: tradeData.suggestedCertificates,
     maxRiskEur: tradeData.maxRiskEur,
+    potentialLossEur: tradeData.potentialLossEur,
     potentialGainT1Eur: tradeData.potentialGainT1Eur,
+    potentialGainT2Eur: tradeData.potentialGainT2Eur,
+    frictionEur: tradeData.frictionEur,
     investedEur: tradeData.investedEur,
     entryMode: tradeData.entryMode,
     triggerLevel: tradeData.triggerLevel ?? baseEntry,
@@ -563,8 +598,6 @@ export const DEFAULT_SYSTEM_PARAMETERS: SystemParameters = {
   normalRiskMultiplier: 0.50,
   target1Multiplier: TRADING_PARAMS.T1_R,
   target2Multiplier: TRADING_PARAMS.T2_R,
-  // legacy: non usato nei calcoli.
-  suggestedKoBarrierMultiplier: 2.65,
   triggerOffsetPercent: 0.20,
   rsiFilterActive: false,
 };

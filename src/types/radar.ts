@@ -163,6 +163,16 @@ export interface GeminiCatalystAnalysis {
   newsBonusScore?: number;
 }
 
+export interface AILearnedInsight {
+  id: string;
+  learnedAt: string;
+  market: 'EU' | 'US' | 'GLOBAL';
+  topic: string;
+  directive: string;
+  confidence: number | null;
+  sampleEvidence: string;
+}
+
 export interface ExecutionSetup {
   candidate: RawQuoteData;
   decision: 'TRADE' | 'NESSUN_TRADE';
@@ -353,7 +363,10 @@ export interface TradeJournalEntry {
   leverage?: number;
   suggestedCertificates?: number;
   maxRiskEur?: number;
+  potentialLossEur?: number;
   potentialGainT1Eur?: number;
+  potentialGainT2Eur?: number;
+  frictionEur?: number;
   investedEur?: number;
   entryMode?: EntryMode | null;
   triggerLevel?: number | null; // T
@@ -379,7 +392,6 @@ export interface SystemParameters {
   normalRiskMultiplier: number; // e.g. 0.50 * ATR
   target1Multiplier: number; // e.g. 1.60 * normalRisk
   target2Multiplier: number; // e.g. 2.80 * normalRisk
-  suggestedKoBarrierMultiplier: number; // legacy: non usato nei calcoli
   triggerOffsetPercent: number; // e.g. 0.20 (%)
   rsiFilterActive: boolean; // default false
 }

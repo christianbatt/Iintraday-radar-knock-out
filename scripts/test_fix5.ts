@@ -19,7 +19,6 @@ const defaultParams: SystemParameters = {
   normalRiskMultiplier: 0.5,
   target1Multiplier: 1.6,
   target2Multiplier: 2.8,
-  suggestedKoBarrierMultiplier: 2.65,
   triggerOffsetPercent: 0.2,
   rsiFilterActive: true,
 };

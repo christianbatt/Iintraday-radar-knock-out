@@ -1201,6 +1201,9 @@ export default function App() {
       const matchingQuote = quotes.find((q) => q.ticker === trade.ticker);
       if (!matchingQuote) return trade;
       if (checkQuoteStaleness(matchingQuote).isStale) return trade;
+      const riskAmountEur = trade.potentialLossEur ?? trade.maxRiskEur;
+      if (riskAmountEur == null || !Number.isFinite(riskAmountEur) || riskAmountEur <= 0) return trade;
+      const frictionEur = Math.max(0, trade.frictionEur ?? 0);
 
       const livePrice = matchingQuote.currentPrice ?? matchingQuote.preMarketPrice;
       if (livePrice == null || livePrice <= 0) return trade;
@@ -1217,7 +1220,8 @@ export default function App() {
       if (isTargetHit && riskDist > 0) {
         hasResolved = true;
         const rMultiple = +(targetDist / riskDist).toFixed(2);
-        const pnlEur = +(rMultiple * (accountCapital * 0.01)).toFixed(2);
+        const grossGainEur = trade.potentialGainT1Eur ?? riskAmountEur * rMultiple;
+        const pnlEur = +(grossGainEur - frictionEur).toFixed(2);
         resolvedNotification = `🎯 Risoluzione Autonoma: ${trade.ticker} ha raggiunto Target 1 a ${livePrice.toFixed(2)} ${matchingQuote.currency} (+${rMultiple}R / +${pnlEur} €)!`;
 
         return {
@@ -1238,7 +1242,7 @@ export default function App() {
       if (isStopHit) {
         hasResolved = true;
         const rMultiple = -1.0;
-        const pnlEur = -+(accountCapital * 0.01).toFixed(2);
+        const pnlEur = +(-riskAmountEur - frictionEur).toFixed(2);
         resolvedNotification = `🛑 Risoluzione Autonoma: ${trade.ticker} ha attivato Stop Loss a ${livePrice.toFixed(2)} ${matchingQuote.currency} (-1.0R)!`;
 
         return {
@@ -1263,7 +1267,7 @@ export default function App() {
 
       const priceDiff = isLong ? livePrice - entry : entry - livePrice;
       const rMultiple = riskDist > 0 ? +(priceDiff / riskDist).toFixed(2) : 0;
-      const pnlEur = +(rMultiple * (accountCapital * 0.01)).toFixed(2);
+      const pnlEur = +(rMultiple * riskAmountEur - frictionEur).toFixed(2);
 
       // Sub-scenario 3A: Trade is ALREADY in Soft Cutoff Extension
       if (trade.softCutoffActive) {
@@ -1277,7 +1281,7 @@ export default function App() {
             status: 'CLOSED' as const,
             outcome: 'BREAKEVEN' as const,
             exitPrice: entry,
-            pnlEur: 0,
+            pnlEur: -frictionEur,
             rMultiple: 0,
             closedAt: new Date().toISOString(),
             closeReason: 'BREAKEVEN' as const,

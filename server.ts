@@ -1,10 +1,16 @@
-import express, { Request, Response } from 'express';
+import express, { NextFunction, Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
+import rateLimit from 'express-rate-limit';
+import cron from 'node-cron';
+import { getApps as getFirebaseAdminApps, initializeApp as initializeFirebaseAdminApp } from 'firebase-admin/app';
+import { getAuth as getFirebaseAdminAuth } from 'firebase-admin/auth';
+import { getFirestore as getFirebaseAdminFirestore } from 'firebase-admin/firestore';
 import {
   filterCompletedBars,
   calculateAtr14FromBars,
@@ -17,6 +23,8 @@ import {
 } from './src/utils/calculator';
 import { getExchangeDateStr, getMarketTime } from './src/utils/timezone';
 import { TRADING_PARAMS } from './src/config/tradingParams';
+import { AILearnedInsight } from './src/types/radar';
+import { runNightlyLearning } from './scripts/nightly_learning';
 
 dotenv.config();
 
@@ -56,19 +64,29 @@ function sanitizeParameters(params: any): any {
   return p;
 }
 
-let sharedAppState: SharedAppState = {
-  version: 1,
-  updatedAt: new Date().toISOString(),
-};
+const sharedAppStates = new Map<string, SharedAppState>();
+
+function createEmptySharedAppState(): SharedAppState {
+  return { version: 1, updatedAt: new Date().toISOString() };
+}
 
 try {
   if (fs.existsSync(SHARED_STATE_FILE)) {
     const raw = fs.readFileSync(SHARED_STATE_FILE, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object') {
-      sharedAppState = { ...sharedAppState, ...parsed };
-      if (sharedAppState.parameters) {
-        sharedAppState.parameters = sanitizeParameters(sharedAppState.parameters);
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const store = parsed as Record<string, unknown>;
+      if (store.users && typeof store.users === 'object' && !Array.isArray(store.users)) {
+        for (const [userId, value] of Object.entries(store.users as Record<string, unknown>)) {
+          if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+          const userState = { ...createEmptySharedAppState(), ...(value as Partial<SharedAppState>) };
+          if (userState.parameters) userState.parameters = sanitizeParameters(userState.parameters);
+          sharedAppStates.set(userId, userState);
+        }
+      } else if ('journalEntries' in store || 'parameters' in store || 'excludedRecords' in store) {
+        const legacyState = { ...createEmptySharedAppState(), ...(store as Partial<SharedAppState>) };
+        if (legacyState.parameters) legacyState.parameters = sanitizeParameters(legacyState.parameters);
+        sharedAppStates.set('legacy', legacyState);
       }
     }
   }
@@ -76,83 +94,194 @@ try {
   console.info('[Sync] Inizializzato nuovo stato condiviso.');
 }
 
+function getSharedAppState(userId: string): SharedAppState {
+  let state = sharedAppStates.get(userId);
+  if (!state) {
+    state = createEmptySharedAppState();
+    sharedAppStates.set(userId, state);
+  }
+  return state;
+}
+
 function saveSharedAppStateToDisk() {
+  const temporaryPath = `${SHARED_STATE_FILE}.${process.pid}.tmp`;
   try {
-    fs.writeFileSync(SHARED_STATE_FILE, JSON.stringify(sharedAppState, null, 2), 'utf-8');
+    fs.writeFileSync(temporaryPath, JSON.stringify({ version: 1, users: Object.fromEntries(sharedAppStates) }, null, 2), 'utf-8');
+    fs.renameSync(temporaryPath, SHARED_STATE_FILE);
   } catch (e) {
     console.warn('[Sync] Impossibile salvare shared_radar_state.json:', e);
+    if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
   }
 }
 
 // AI Continuous Specialization & Qualitative Optimization Memory Store
 const AI_MEMORY_FILE = path.join(__dirname, 'ai_specialization_memory.json');
 
-export interface AILearnedInsight {
-  id: string;
-  learnedAt: string;
-  market: 'EU' | 'US' | 'GLOBAL';
-  topic: string;
-  directive: string;
-  confidence: number;
-  sampleEvidence: string;
-}
-
-let aiLearnedMemory: AILearnedInsight[] = [
-  {
-    id: 'ai-rule-1',
-    learnedAt: '2026-10-30T12:00:00.000Z',
-    market: 'EU',
-    topic: 'PERSISTENZA_MOMENTUM_CONTRATTI',
-    directive: 'I contratti industriali/cloud pluriennali con rialzo di guidance mostrano persistenza del trend per tutta la prima ora: convalidare TRADE LONG e non anticipare uscite prima del Target 1.',
-    confidence: 92,
-    sampleEvidence: 'Convalidato su campioni SAP e tech europei con win rate 85% a target.',
-  },
-  {
-    id: 'ai-rule-2',
-    learnedAt: '2026-10-30T12:00:00.000Z',
-    market: 'GLOBAL',
-    topic: 'TRAP_RILASCIO_UTILI_INTRADAY',
-    directive: 'Se la notizia riguarda rilascio di utili nello stesso giorno della seduta, anche con numeri positivi lo spread bid/ask e la volatilità distruggono le posizioni a leva: dichiarare sempre NESSUN_TRADE per protezione capitale.',
-    confidence: 98,
-    sampleEvidence: 'Evitati 4 knock-out su picchi di volatilità opposti durante trimestrali.',
-  },
-  {
-    id: 'ai-rule-3',
-    learnedAt: '2026-10-30T12:00:00.000Z',
-    market: 'EU',
-    topic: 'GAP_MINIMO_RELAXATION',
-    directive: 'Sui titoli europei a larga capitalizzazione (DAX/STOXX), gap moderati tra 0.15% e 0.35% con volumi costanti e futures favorevoli generano breakout stabili e puliti, privi del rischio di riassorbimento brusco dei maxi-gap.',
-    confidence: 88,
-    sampleEvidence: 'Confermato dall\'auto-analisi empirica dei titoli scartati andati a target.',
-  },
-];
-
-try {
-  if (fs.existsSync(AI_MEMORY_FILE)) {
-    const raw = fs.readFileSync(AI_MEMORY_FILE, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) {
-      aiLearnedMemory = parsed;
-    }
-  } else {
-    fs.writeFileSync(AI_MEMORY_FILE, JSON.stringify(aiLearnedMemory, null, 2), 'utf-8');
-  }
-} catch (e) {
-  console.info('[AI Specialization] Inizializzata memoria di specializzazione.');
-}
-
-function saveAIMemoryToDisk() {
+function loadAIMemoryFromDisk(): AILearnedInsight[] {
   try {
-    fs.writeFileSync(AI_MEMORY_FILE, JSON.stringify(aiLearnedMemory, null, 2), 'utf-8');
-  } catch (e) {
-    console.warn('[AI Specialization] Impossibile salvare ai_specialization_memory.json:', e);
+    const parsed: unknown = JSON.parse(fs.readFileSync(AI_MEMORY_FILE, 'utf-8'));
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry): entry is AILearnedInsight =>
+      entry &&
+      typeof entry === 'object' &&
+      typeof entry.id === 'string' &&
+      typeof entry.topic === 'string' &&
+      typeof entry.directive === 'string' &&
+      (entry.confidence === null || typeof entry.confidence === 'number')
+    );
+  } catch {
+    return [];
   }
 }
+
+function saveAIMemoryLocally(memory: AILearnedInsight[]): void {
+  const temporaryPath = `${AI_MEMORY_FILE}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, JSON.stringify(memory, null, 2), 'utf-8');
+    fs.renameSync(temporaryPath, AI_MEMORY_FILE);
+  } catch (error) {
+    console.warn('[AI Specialization] Impossibile aggiornare il mirror locale:', error);
+    if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+  }
+}
+
+let aiLearnedMemory: AILearnedInsight[] = loadAIMemoryFromDisk();
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 app.use(express.json({ limit: '10mb' }));
+app.set('trust proxy', 1);
+
+const validApiKeys = (process.env.VALID_API_KEYS || '').split(',').map((key) => key.trim()).filter(Boolean);
+const firebaseLocalConfigPath = path.join(__dirname, 'firebase-applet-config.json');
+let firebaseProjectId =
+  process.env.FIREBASE_PROJECT_ID ||
+  process.env.GOOGLE_CLOUD_PROJECT ||
+  process.env.GCLOUD_PROJECT ||
+  process.env.VITE_FIREBASE_PROJECT_ID ||
+  '';
+let firebaseDatabaseId = process.env.FIRESTORE_DATABASE_ID || '(default)';
+if (fs.existsSync(firebaseLocalConfigPath)) {
+  try {
+    const firebaseConfig = JSON.parse(fs.readFileSync(firebaseLocalConfigPath, 'utf8'));
+    firebaseProjectId ||= firebaseConfig.projectId || '';
+    firebaseDatabaseId = process.env.FIRESTORE_DATABASE_ID || firebaseConfig.firestoreDatabaseId || '(default)';
+  } catch {
+    console.warn('[Auth] firebase-applet-config.json non valido; Firebase token auth non disponibile.');
+  }
+}
+
+let firebaseAdminApp: ReturnType<typeof initializeFirebaseAdminApp> | null = null;
+let firebaseAdminAuth: ReturnType<typeof getFirebaseAdminAuth> | null = null;
+let firebaseAdminFirestore: ReturnType<typeof getFirebaseAdminFirestore> | null = null;
+const AI_MEMORY_FIRESTORE_PATH = ['_system', 'aiSpecializationMemory'] as const;
+if (firebaseProjectId) {
+  try {
+    firebaseAdminApp = getFirebaseAdminApps().find((candidate) => candidate.name === 'intraday-radar-auth') ||
+      initializeFirebaseAdminApp({ projectId: firebaseProjectId }, 'intraday-radar-auth');
+    firebaseAdminAuth = getFirebaseAdminAuth(firebaseAdminApp);
+    firebaseAdminFirestore = getFirebaseAdminFirestore(firebaseAdminApp, firebaseDatabaseId);
+  } catch (error) {
+    console.warn('[Auth] Firebase Admin auth non disponibile:', error);
+  }
+}
+
+if (validApiKeys.length === 0 && !firebaseAdminAuth) {
+  console.warn('[Auth] Nessun autenticatore configurato: route sensibili restano chiuse (401/503).');
+}
+
+async function loadPersistentAIMemory(): Promise<AILearnedInsight[]> {
+  if (firebaseAdminFirestore) {
+    try {
+      const reference = firebaseAdminFirestore.doc(AI_MEMORY_FIRESTORE_PATH.join('/'));
+      const snapshot = await reference.get();
+      const storedMemory: unknown = snapshot.data()?.memory;
+      if (Array.isArray(storedMemory)) {
+        const memory = storedMemory.filter((entry): entry is AILearnedInsight =>
+          entry &&
+          typeof entry === 'object' &&
+          typeof entry.id === 'string' &&
+          typeof entry.topic === 'string' &&
+          typeof entry.directive === 'string' &&
+          (entry.confidence === null || typeof entry.confidence === 'number')
+        );
+        saveAIMemoryLocally(memory);
+        return memory;
+      }
+
+      const localMemory = loadAIMemoryFromDisk();
+      if (localMemory.length > 0) {
+        await reference.set({ memory: localMemory, updatedAt: new Date().toISOString() });
+      }
+      return localMemory;
+    } catch (error) {
+      console.warn('[AI Specialization] Firestore non disponibile; fallback alla memoria locale:', error);
+    }
+  }
+  return loadAIMemoryFromDisk();
+}
+
+async function persistAIMemoryToFirestore(memory: AILearnedInsight[]): Promise<void> {
+  if (!firebaseAdminFirestore) return;
+  const reference = firebaseAdminFirestore.doc(AI_MEMORY_FIRESTORE_PATH.join('/'));
+  await reference.set({ memory, updatedAt: new Date().toISOString() });
+}
+
+function isValidApiKey(req: Request): boolean {
+  const providedKey = req.get('x-api-key');
+  if (!providedKey) return false;
+  const provided = Buffer.from(providedKey);
+  return validApiKeys.some((key) => {
+    const expected = Buffer.from(key);
+    return provided.length === expected.length && timingSafeEqual(provided, expected);
+  });
+}
+
+async function requireApiAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+  if (isValidApiKey(req)) {
+    res.locals.authenticatedUid = 'service-api-key';
+    next();
+    return;
+  }
+
+  const authorization = req.get('authorization') || '';
+  const tokenMatch = authorization.match(/^Bearer\s+(.+)$/i);
+  if (!tokenMatch) {
+    res.status(401).json({ error: 'Unauthorized', message: 'Firebase Bearer token or valid x-api-key required' });
+    return;
+  }
+  if (!firebaseAdminAuth) {
+    res.status(503).json({ error: 'Authentication unavailable: Firebase project ID is not configured' });
+    return;
+  }
+
+  try {
+    const decoded = await firebaseAdminAuth.verifyIdToken(tokenMatch[1]);
+    res.locals.authenticatedUid = decoded.uid;
+    next();
+  } catch {
+    res.status(401).json({ error: 'Unauthorized', message: 'Firebase ID token invalid or expired' });
+  }
+}
+
+function requireServerApiKey(req: Request, res: Response, next: NextFunction): void {
+  if (isValidApiKey(req)) {
+    res.locals.authenticatedUid = 'service-api-key';
+    next();
+    return;
+  }
+  res.status(401).json({ error: 'Unauthorized', message: 'Valid x-api-key header required' });
+}
+
+const apiLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => res.status(429).json({ error: 'Rate limit exceeded. Max 60 requests/minute.' }),
+});
+app.use('/api/', apiLimiter);
 
 // In-Memory Cache Store (Redis-like TTL Cache)
 interface CacheEntry<T> {
@@ -1625,7 +1754,9 @@ app.get('/api/news/:ticker', async (req: Request, res: Response) => {
 });
 
 // GET /api/sync/state: Sincronizzazione centralizzata dello stato (Desktop, Mobile, Dev preview)
-app.get('/api/sync/state', (req: Request, res: Response) => {
+app.get('/api/sync/state', requireApiAuth, (req: Request, res: Response) => {
+  const userId = typeof res.locals.authenticatedUid === 'string' ? res.locals.authenticatedUid : 'legacy';
+  const sharedAppState = getSharedAppState(userId);
   const sinceVersion = req.query.sinceVersion ? parseInt(req.query.sinceVersion as string, 10) : 0;
   if (sinceVersion && sinceVersion >= sharedAppState.version) {
     return res.json({ hasUpdates: false, version: sharedAppState.version });
@@ -1639,8 +1770,10 @@ app.get('/api/sync/state', (req: Request, res: Response) => {
 });
 
 // POST /api/sync/state: Riceve modifiche ai parametri, congelamento setup e trade per propagarli a tutte le app
-app.post('/api/sync/state', (req: Request, res: Response) => {
+app.post('/api/sync/state', requireApiAuth, async (req: Request, res: Response) => {
   try {
+    const userId = typeof res.locals.authenticatedUid === 'string' ? res.locals.authenticatedUid : 'legacy';
+    const sharedAppState = getSharedAppState(userId);
     const patch = req.body || {};
     let hasChanged = false;
 
@@ -1704,6 +1837,27 @@ app.post('/api/sync/state', (req: Request, res: Response) => {
       saveSharedAppStateToDisk();
     }
 
+    if (
+      Array.isArray(patch.excludedRecords) &&
+      firebaseAdminFirestore &&
+      userId !== 'service-api-key'
+    ) {
+      const batch = firebaseAdminFirestore.batch();
+      let writeCount = 0;
+      for (const record of sharedAppState.excludedRecords || []) {
+        if (!record || typeof record.id !== 'string' || record.id.length === 0) continue;
+        const documentId = createHash('sha256').update(record.id).digest('hex');
+        const reference = firebaseAdminFirestore
+          .collection('users')
+          .doc(userId)
+          .collection('excludedSetups')
+          .doc(documentId);
+        batch.set(reference, record, { merge: true });
+        writeCount++;
+      }
+      if (writeCount > 0) await batch.commit();
+    }
+
     return res.json({
       success: true,
       version: sharedAppState.version,
@@ -1716,7 +1870,8 @@ app.post('/api/sync/state', (req: Request, res: Response) => {
 });
 
 // GET /api/ai/memory: Restituisce le regole auree di trading e le direttive apprese dall'AI
-app.get('/api/ai/memory', (_req: Request, res: Response) => {
+app.get(['/api/ai/memory', '/api/ai-memory'], requireApiAuth, async (_req: Request, res: Response) => {
+  aiLearnedMemory = await loadPersistentAIMemory();
   res.json({
     totalRules: aiLearnedMemory.length,
     lastUpdated: aiLearnedMemory[aiLearnedMemory.length - 1]?.learnedAt || new Date().toISOString(),
@@ -1726,8 +1881,10 @@ app.get('/api/ai/memory', (_req: Request, res: Response) => {
 });
 
 // POST /api/ai/specialize: L'AI analizza i trade e i setup scartati per distillare nuove regole empiriche di condotta
-app.post('/api/ai/specialize', async (req: Request, res: Response) => {
+app.post('/api/ai/specialize', requireApiAuth, async (req: Request, res: Response) => {
   try {
+    const userId = typeof res.locals.authenticatedUid === 'string' ? res.locals.authenticatedUid : 'legacy';
+    const sharedAppState = getSharedAppState(userId);
     const trades: any[] = Array.isArray(req.body?.trades) ? req.body.trades : (sharedAppState.journalEntries || []);
     const excluded: any[] = Array.isArray(req.body?.excluded) ? req.body.excluded : (sharedAppState.excludedRecords || []);
 
@@ -1749,7 +1906,7 @@ app.post('/api/ai/specialize', async (req: Request, res: Response) => {
     const promptText = `Sei il Lead Quantitative Risk Manager & Head of Systematic Trading.
 Analizza questo dataset reale di trade conclusi e setup scartati per distillare da 1 a 3 DIRETTIVE OPERATIVE AUREE (Regole di condotta) che guideranno le future valutazioni dell'AI su catalizzatori e parametri.
 
-STATISTICHE REALI DEL SISTEMA:
+STATISTICHE FORNITE (non costituiscono validazione statistica):
 - Trade Chiusi: ${trades.length} (Vinti: ${winTrades.length}, Persi: ${lossTrades.length})
 - Setup Esclusi Monitorati: ${excluded.length} (Andati a Target: ${profitableExcluded.length}, Andati a Stop: ${stoppedExcluded.length})
 - Esempi Trade Vincenti: ${JSON.stringify(winTrades.slice(0, 3).map((t) => ({ ticker: t.ticker, strategy: t.strategy, rMult: t.rMultiple, notes: t.notes })))}
@@ -1757,12 +1914,12 @@ STATISTICHE REALI DEL SISTEMA:
 - Esempi Esclusi Andati a Target: ${JSON.stringify(profitableExcluded.slice(0, 4).map((e) => ({ ticker: e.ticker, reason: e.primaryReasonCategory, gap: e.gapPercent, rvol: e.rvol })))}
 
 Istruzioni:
-Restituisci un oggetto JSON con il campo "newDirectives", array di 1-3 elementi con struttura:
+Restituisci eventuali proposte non persistenti nel campo "newDirectives". Non dichiarare una confidence statistica e non affermare che le proposte sono state validate:
 {
   "topic": "STRINGA_SINTETICA_MAIUSCOLA",
   "market": "EU" | "US" | "GLOBAL",
   "directive": "Regola operativa chiara, concisa e vincolante da applicare nelle future analisi",
-  "confidence": numero intero da 80 a 99,
+  "confidence": null,
   "sampleEvidence": "Spiegazione quantitativa basata sui dati reali esaminati"
 }`;
 
@@ -1797,43 +1954,19 @@ Restituisci un oggetto JSON con il campo "newDirectives", array di 1-3 elementi 
       }
     }
 
-    if (generated && Array.isArray(generated.newDirectives) && generated.newDirectives.length > 0) {
-      const added: AILearnedInsight[] = [];
-      generated.newDirectives.forEach((item: any, idx: number) => {
-        if (item.directive && item.topic) {
-          const entry: AILearnedInsight = {
-            id: `ai-rule-${Date.now()}-${idx}`,
-            learnedAt: new Date().toISOString(),
-            market: item.market || 'GLOBAL',
-            topic: item.topic.toUpperCase().replace(/\s+/g, '_'),
-            directive: item.directive,
-            confidence: typeof item.confidence === 'number' ? item.confidence : 90,
-            sampleEvidence: item.sampleEvidence || 'Estratto dall\'analisi empirica di trade e setup scartati.',
-          };
-          aiLearnedMemory.push(entry);
-          added.push(entry);
-        }
-      });
-
-      // Keep maximum 20 most recent high-conviction directives
-      if (aiLearnedMemory.length > 20) {
-        aiLearnedMemory = aiLearnedMemory.slice(-20);
-      }
-      saveAIMemoryToDisk();
-
-      return res.json({
-        success: true,
-        addedCount: added.length,
-        newRules: added,
-        totalRules: aiLearnedMemory.length,
-        directives: aiLearnedMemory,
-      });
-    }
-
+    const proposedDirectives = Array.isArray(generated?.newDirectives)
+      ? generated.newDirectives.filter((item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string')
+      : [];
+    aiLearnedMemory = await loadPersistentAIMemory();
     return res.json({
       success: true,
       addedCount: 0,
-      message: 'L\'AI ha confermato che le regole correnti sono già allineate e ottimali.',
+      newInsightsCount: 0,
+      proposedDirectives,
+      memory: aiLearnedMemory,
+      message: proposedDirectives.length > 0
+        ? 'Proposte LLM non persistite: la memoria viene aggiornata solo dalla pipeline statistica sui trade reali.'
+        : 'Nessuna proposta LLM; la memoria persistente resta invariata.',
       totalRules: aiLearnedMemory.length,
       directives: aiLearnedMemory,
     });
@@ -1843,8 +1976,10 @@ Restituisci un oggetto JSON con il campo "newDirectives", array di 1-3 elementi 
 });
 
 // POST /api/ai/desk-post-mortem: Genera una relazione retrospettiva istituzionale del desk e distilla nuove direttive operative
-app.post('/api/ai/desk-post-mortem', async (req: Request, res: Response) => {
+app.post('/api/ai/desk-post-mortem', requireApiAuth, async (req: Request, res: Response) => {
   try {
+    const userId = typeof res.locals.authenticatedUid === 'string' ? res.locals.authenticatedUid : 'legacy';
+    const sharedAppState = getSharedAppState(userId);
     const rawTrades: any[] = Array.isArray(req.body?.trades) ? req.body.trades : (sharedAppState.journalEntries || []);
     const market = req.body?.market || 'GLOBAL';
 
@@ -1898,7 +2033,7 @@ Restituisci un JSON rigoroso con questi campi:
 2. "strengths": array di 2-3 stringhe che evidenziano cosa ha funzionato a livello di timing, selezione o disciplina.
 3. "failurePatterns": array di 2-3 stringhe che evidenziano i punti critici reali (falsi breakout, trade lenti, mancato allineamento o violazioni di timing).
 4. "tacticalAdvice": stringa con il piano d'azione operativo concreto per la prossima sessione.
-5. "newDirectives": array di 1-2 direttive quantitative/qualitative ({ "topic": string, "market": "${market}", "directive": string, "confidence": number, "sampleEvidence": string }) che verranno salvate permanentemente nella memoria di specializzazione dell'AI.`;
+5. "newDirectives": array opzionale di ipotesi non persistenti ({ "topic": string, "market": "${market}", "directive": string, "confidence": null, "sampleEvidence": string }).`;
 
     const systemInstruction = `Sei un Senior Risk Officer rigoroso ed esperto. Analizza con occhio clinico e linguaggio istituzionale da hedge fund. Non inventare dati. Rispondi solo in formato JSON.`;
 
@@ -1951,29 +2086,10 @@ Restituisci un JSON rigoroso con questi campi:
       };
     }
 
-    // Process new directives if any
-    let newDirectivesAdded = 0;
-    if (Array.isArray(generated.newDirectives) && generated.newDirectives.length > 0) {
-      generated.newDirectives.forEach((item: any, idx: number) => {
-        if (item.directive && item.topic) {
-          const entry: AILearnedInsight = {
-            id: `ai-postmortem-${Date.now()}-${idx}`,
-            learnedAt: new Date().toISOString(),
-            market: item.market || (market === 'EU' ? 'EU' : market === 'US' ? 'US' : 'GLOBAL'),
-            topic: String(item.topic).toUpperCase().replace(/\s+/g, '_'),
-            directive: String(item.directive),
-            confidence: typeof item.confidence === 'number' ? item.confidence : 92,
-            sampleEvidence: item.sampleEvidence || `Estratto dal Post-Mortem del Desk sulle sessioni ${market}.`,
-          };
-          aiLearnedMemory.push(entry);
-          newDirectivesAdded++;
-        }
-      });
-      if (aiLearnedMemory.length > 20) {
-        aiLearnedMemory = aiLearnedMemory.slice(-20);
-      }
-      saveAIMemoryToDisk();
-    }
+    const proposedDirectives = Array.isArray(generated.newDirectives)
+      ? generated.newDirectives.filter((item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string')
+      : [];
+    aiLearnedMemory = await loadPersistentAIMemory();
 
     return res.json({
       success: true,
@@ -1985,7 +2101,9 @@ Restituisci un JSON rigoroso con questi campi:
         tacticalAdvice: generated.tacticalAdvice,
         generatedAt: new Date().toISOString(),
       },
-      newDirectivesAdded,
+      newDirectivesAdded: 0,
+      proposedDirectives,
+      note: 'Le proposte del post-mortem non sono persistite; la memoria richiede validazione statistica sui trade reali.',
       totalRules: aiLearnedMemory.length,
       directives: aiLearnedMemory,
     });
@@ -2090,7 +2208,7 @@ async function callOpenRouterModel(
 }
 
 // Endpoint diagnostico per verificare la chiave OpenRouter
-app.post('/api/test-openrouter', async (req: Request, res: Response) => {
+app.post('/api/test-openrouter', requireServerApiKey, async (req: Request, res: Response) => {
   try {
     const rawKey = (req.body?.apiKey || process.env.OPENROUTER_API_KEY || '').trim();
     if (!rawKey) {
@@ -2170,7 +2288,7 @@ app.post('/api/test-openrouter', async (req: Request, res: Response) => {
 });
 
 // Analyze Catalyst (Gerarchia: OpenRouter Nemotron 3 Ultra -> DeepSeek Free -> Fallback Gemini -> Regole Determistiche)
-app.post('/api/analyze-catalyst', async (req: Request, res: Response) => {
+app.post('/api/analyze-catalyst', requireApiAuth, async (req: Request, res: Response) => {
   try {
     const { candidate, news, futures } = req.body;
 
@@ -2204,9 +2322,14 @@ app.post('/api/analyze-catalyst', async (req: Request, res: Response) => {
       });
     }
 
+    aiLearnedMemory = await loadPersistentAIMemory();
     const activeDirectives = aiLearnedMemory
+      .filter((directive) => directive.confidence != null)
       .slice(-6)
-      .map((d, i) => `[Direttiva Specializzata ${i + 1} - ${d.topic} (${d.market})]: ${d.directive} (Confidenza: ${d.confidence}%)`)
+      .map((directive, index) =>
+        `[Pattern statistico ${index + 1} - ${directive.topic} (${directive.market})]: ${directive.directive} ` +
+        `(score 1-q: ${directive.confidence}%; evidenza: ${directive.sampleEvidence})`
+      )
       .join('\n');
 
     const systemInstruction = `Sei un analista di trading intraday rigoroso. Ricevi dati di mercato già calcolati dal codice e notizie con fonti.
@@ -2444,10 +2567,46 @@ newsBonusScore: numero intero da 0 a 15 (punti bonus aggiuntivi per forza del ca
 });
 
 // Cache control endpoint
-app.post('/api/cache/clear', (_req: Request, res: Response) => {
+app.post('/api/cache/clear', requireApiAuth, (_req: Request, res: Response) => {
   cache.clear();
   res.json({ message: 'Cache svuotata con successo' });
 });
+
+let nightlyLearningInProgress = false;
+async function executeNightlyLearning() {
+  if (nightlyLearningInProgress) throw new Error('Nightly learning già in esecuzione su questa istanza');
+  nightlyLearningInProgress = true;
+  try {
+    const persistentMemory = await loadPersistentAIMemory();
+    saveAIMemoryLocally(persistentMemory);
+    const results = await runNightlyLearning(false);
+    aiLearnedMemory = loadAIMemoryFromDisk();
+    await persistAIMemoryToFirestore(aiLearnedMemory);
+    return results;
+  } finally {
+    nightlyLearningInProgress = false;
+  }
+}
+
+app.post('/api/ai/learning/run', requireServerApiKey, async (_req: Request, res: Response) => {
+  try {
+    const results = await executeNightlyLearning();
+    return res.json({ success: true, validatedPatterns: results.length });
+  } catch (error: any) {
+    return res.status(409).json({ success: false, error: error?.message || String(error) });
+  }
+});
+
+if (process.env.K_SERVICE) {
+  console.warn('[Cron] Cloud Run: configura Cloud Scheduler su POST /api/ai/learning/run (cron in-process disabilitato per evitare duplicati e cold start).');
+} else {
+  cron.schedule('0 2 * * 1-5', () => {
+    void executeNightlyLearning().catch((error: unknown) => {
+      console.error('[Cron] Nightly learning fallito:', error);
+    });
+  }, { timezone: 'Europe/Rome' });
+  console.log('[Cron] Nightly learning schedulato: 02:00 Europe/Rome lun-ven');
+}
 
 // Serve public static assets (manifest, icons, favicon)
 app.use(express.static(path.join(__dirname, 'public')));

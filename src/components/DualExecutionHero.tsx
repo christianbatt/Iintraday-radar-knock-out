@@ -142,6 +142,27 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
     }
     if (!setup) return;
 
+    const outcomeScenarioId = chosenOutcome === 'WIN'
+      ? 't1'
+      : chosenOutcome === 'LOSS'
+      ? 'stop'
+      : chosenOutcome === 'OPEN'
+      ? null
+      : 'be';
+    const outcomeScenario = outcomeScenarioId
+      ? koSafety.scenarios.find((scenario) => scenario.id === outcomeScenarioId)
+      : undefined;
+    const frictionEur = koSafety.breakeven.totalFrictionEur;
+    const realizedPnl = chosenOutcome === 'OPEN'
+      ? undefined
+      : outcomeScenario?.netPnlEur ?? (
+          chosenOutcome === 'WIN'
+            ? koSafety.potentialGainT1Eur - frictionEur
+            : chosenOutcome === 'LOSS'
+            ? -koSafety.potentialLossEur - frictionEur
+            : -frictionEur
+        );
+
     onSaveToJournal({
       session: market,
       ticker: quote?.ticker,
@@ -155,7 +176,12 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
       leverage,
       suggestedCertificates: koSafety.suggestedCertificates,
       maxRiskEur: koSafety.maxRiskEur,
+      potentialLossEur: koSafety.potentialLossEur,
       potentialGainT1Eur: koSafety.potentialGainT1Eur,
+      potentialGainT2Eur: koSafety.potentialGainT2Eur,
+      frictionEur,
+      pnlEur: realizedPnl,
+      rMultiple: chosenOutcome === 'WIN' ? t1R : chosenOutcome === 'LOSS' ? -1 : 0,
       investedEur: koSafety.totalInvestedEur,
       isPaper: isNoTrade ? true : isPaperMode,
       outcome: chosenOutcome,
@@ -1514,7 +1540,7 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                     <span>Target 1 (+{t1R}R WIN)</span>
                   </span>
-                  <span className="text-emerald-400 font-bold">+{koSafety.potentialGainT1Eur} €</span>
+                  <span className="text-emerald-400 font-bold">+{koSafety.scenarios.find((scenario) => scenario.id === 't1')?.netPnlEur ?? koSafety.potentialGainT1Eur - koSafety.breakeven.totalFrictionEur} €</span>
                 </button>
 
                 <button
@@ -1525,7 +1551,7 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
                     <Lock className="w-3.5 h-3.5 text-rose-400" />
                     <span>Stop Loss (-1.0R LOSS)</span>
                   </span>
-                  <span className="text-rose-400 font-bold">-{koSafety.maxRiskEur} €</span>
+                  <span className="text-rose-400 font-bold">{koSafety.scenarios.find((scenario) => scenario.id === 'stop')?.netPnlEur ?? -koSafety.potentialLossEur - koSafety.breakeven.totalFrictionEur} €</span>
                 </button>
 
                 <button
@@ -1536,7 +1562,7 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
                     <Clock className="w-3.5 h-3.5 text-amber-400" />
                     <span>Scaduto al Cutoff (EXPIRED)</span>
                   </span>
-                  <span className="text-amber-400 font-bold">-2.00 €</span>
+                  <span className="text-amber-400 font-bold">{koSafety.scenarios.find((scenario) => scenario.id === 'be')?.netPnlEur ?? -koSafety.breakeven.totalFrictionEur} €</span>
                 </button>
 
                 <button
@@ -1544,7 +1570,7 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
                   className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-slate-300 flex items-center justify-between transition-colors cursor-pointer"
                 >
                   <span>⚖️ Pareggio / Breakeven</span>
-                  <span className="text-slate-400">-2.00 €</span>
+                  <span className="text-slate-400">{koSafety.scenarios.find((scenario) => scenario.id === 'be')?.netPnlEur ?? -koSafety.breakeven.totalFrictionEur} €</span>
                 </button>
               </div>
             )}
