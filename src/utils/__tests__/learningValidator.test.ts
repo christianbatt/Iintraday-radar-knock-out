@@ -91,13 +91,14 @@ assert(insufficient === null, 'I controfattuali esclusi non devono completare il
 console.log('Test 3 - esclusi non gonfiano il campione reale: PASS');
 
 const paperOnly = validateLearningPattern(
-  Array.from({ length: 40 }, (_, index) => ({ ...createTrade(index), isPaper: true })),
+  Array.from({ length: 40 }, (_, index) => ({ ...createTrade(index, index < 28 ? 'WIN' : 'LOSS'), isPaper: true })),
   [],
   'PAPER_ONLY',
   'EU'
 );
-assert(paperOnly === null, 'Paper trade non devono entrare nella pipeline di apprendimento reale');
-console.log('Test 3b - paper trade esclusi dal campione: PASS');
+assert(paperOnly !== null, 'I trade in paper trading devono essere inclusi nella validazione dell\'apprendimento');
+assert(paperOnly.stats.n === 40, 'Il campione deve includere tutti i 40 trade in paper trading');
+console.log('Test 3b - paper trade inclusi correttamente nell\'analisi: PASS');
 
 const actualTrades = Array.from({ length: 30 }, (_, index) =>
   createTrade(index, index < 22 ? 'WIN' : 'LOSS')

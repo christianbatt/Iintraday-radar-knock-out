@@ -1973,13 +1973,13 @@ app.post('/api/ai/specialize', requireApiAuth, async (req: Request, res: Respons
     const stoppedExcluded = excluded.filter((e) => e.outcomeStatus === 'THEORETICAL_STOP');
 
     const promptText = `Sei il Lead Quantitative Risk Manager & Head of Systematic Trading.
-Analizza questo dataset reale di trade conclusi e setup scartati per distillare da 1 a 3 DIRETTIVE OPERATIVE AUREE (Regole di condotta) che guideranno le future valutazioni dell'AI su catalizzatori e parametri.
+Analizza questo dataset di trade conclusi (inclusi sia operazioni in paper trading che eseguite a mercato reale) e setup scartati per distillare da 1 a 3 DIRETTIVE OPERATIVE AUREE (Regole di condotta) che guideranno le future valutazioni dell'AI su catalizzatori e parametri.
 
-STATISTICHE FORNITE (non costituiscono validazione statistica):
+STATISTICHE FORNITE (trade reali e paper trading):
 - Trade Chiusi: ${trades.length} (Vinti: ${winTrades.length}, Persi: ${lossTrades.length})
 - Setup Esclusi Monitorati: ${excluded.length} (Andati a Target: ${profitableExcluded.length}, Andati a Stop: ${stoppedExcluded.length})
-- Esempi Trade Vincenti: ${JSON.stringify(winTrades.slice(0, 3).map((t) => ({ ticker: t.ticker, strategy: t.strategy, rMult: t.rMultiple, notes: t.notes })))}
-- Esempi Trade in Perdita: ${JSON.stringify(lossTrades.slice(0, 3).map((t) => ({ ticker: t.ticker, strategy: t.strategy, rMult: t.rMultiple, notes: t.notes })))}
+- Esempi Trade Vincenti: ${JSON.stringify(winTrades.slice(0, 3).map((t) => ({ ticker: t.ticker, strategy: t.strategy, mode: t.isPaper ? 'PAPER' : 'REALE', rMult: t.rMultiple, notes: t.notes })))}
+- Esempi Trade in Perdita: ${JSON.stringify(lossTrades.slice(0, 3).map((t) => ({ ticker: t.ticker, strategy: t.strategy, mode: t.isPaper ? 'PAPER' : 'REALE', rMult: t.rMultiple, notes: t.notes })))}
 - Esempi Esclusi Andati a Target: ${JSON.stringify(profitableExcluded.slice(0, 4).map((e) => ({ ticker: e.ticker, reason: e.primaryReasonCategory, gap: e.gapPercent, rvol: e.rvol })))}
 
 Istruzioni:
@@ -2073,9 +2073,9 @@ app.post('/api/ai/desk-post-mortem', requireApiAuth, async (req: Request, res: R
     const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
 
     const promptText = `Sei l'Head of Quantitative Trading & Senior Risk Officer di un desk proprietario intraday.
-Redigi il "POST-MORTEM UFFICIALE DEL DESK" analizzando le ultime sessioni operative (${market === 'EU' ? 'Europa' : market === 'US' ? 'USA' : 'Globale'}).
+Redigi il "POST-MORTEM UFFICIALE DEL DESK" analizzando le ultime sessioni operative (${market === 'EU' ? 'Europa' : market === 'US' ? 'USA' : 'Globale'}) includendo tutti i trade registrati a diario (sia eseguiti a mercato reale che in paper trading).
 
-METRICHE DI PERFORMANCE REALI:
+METRICHE DI PERFORMANCE (REALI E PAPER TRADING):
 - Trade Totali Analizzati: ${total}
 - Win: ${wins.length} | Loss: ${losses.length} | BE: ${breakevens.length} | Expired: ${expired.length}
 - Win Rate: ${winRate}% | P&L Netto: ${netPnl} € | R-Multiple Medio: ${avgR}R
@@ -2083,6 +2083,7 @@ METRICHE DI PERFORMANCE REALI:
       ticker: t.ticker,
       direction: t.direction,
       outcome: t.outcome,
+      mode: t.isPaper ? 'PAPER' : 'REALE',
       rMultiple: t.rMultiple,
       closeReason: t.closeReason,
       notes: t.notes,

@@ -34,7 +34,6 @@ export function validateLearningPattern(
   market: 'EU' | 'US' | 'GLOBAL'
 ): LearningResult | null {
   const actualTrades = trades.filter((trade) =>
-    trade.isPaper === false &&
     trade.status !== 'OPEN' &&
     (trade.outcome === 'WIN' || trade.outcome === 'LOSS' || trade.outcome === 'BREAKEVEN' || trade.outcome === 'EXPIRED') &&
     Number.isFinite(trade.rMultiple) &&

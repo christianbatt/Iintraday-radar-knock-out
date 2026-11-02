@@ -66,7 +66,7 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
 
   const handleGeneratePostMortem = async () => {
     if (trades.length === 0) {
-      setPostMortemError('Nessun trade registrato a diario. Per redigere il Post-Mortem del Desk, registra almeno un trade concluso nel Diario di Trading.');
+      setPostMortemError('Nessun trade registrato a diario. Per redigere il Post-Mortem del Desk, registra almeno un trade concluso (in modalità reale o paper trading) nel Diario di Trading.');
       return;
     }
     setIsLoadingPostMortem(true);

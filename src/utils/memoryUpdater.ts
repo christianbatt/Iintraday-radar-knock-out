@@ -36,7 +36,7 @@ export function updateAIMemory(
       directive: result.directive,
       confidence: Math.round(result.confidence * 100),
       sampleEvidence:
-        `Trade reali: ${result.stats.n}; IDs: ${result.evidence.slice(0, 10).join(', ')}` +
+        `Trade analizzati (reali e paper): ${result.stats.n}; IDs: ${result.evidence.slice(0, 10).join(', ')}` +
         `${result.evidence.length > 10 ? ', ...' : ''}. ` +
         `Win rate ${(result.stats.winRate * 100).toFixed(1)}%, avg R ${result.stats.avgR.toFixed(2)}, ` +
         `profit factor ${result.stats.profitFactor.toFixed(2)}, p=${result.stats.pValue.toFixed(4)}, ` +
