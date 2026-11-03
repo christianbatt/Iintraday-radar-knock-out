@@ -1090,6 +1090,8 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
                             ? 'TARGET'
                             : trade.closeReason === 'STOP_HIT'
                             ? 'STOP'
+                            : trade.closeReason === 'CUTOFF_MOMENTUM_LOSS'
+                            ? 'MOMENTUM LOSS'
                             : trade.closeReason}
                         </span>
                       )}

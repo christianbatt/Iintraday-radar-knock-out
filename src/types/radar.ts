@@ -363,7 +363,8 @@ export interface TradeJournalEntry {
     | 'CUTOFF_EXPIRED'
     | 'SOFT_CUTOFF_HARD_EXIT'
     | 'EOD_CUTOFF'
-    | 'MANUAL';
+    | 'MANUAL'
+    | 'CUTOFF_MOMENTUM_LOSS';
   mfe?: number; // Maximum Favorable Excursion (in R-multiples)
   mae?: number; // Maximum Adverse Excursion (in R-multiples)
   slippagePrice?: number; // Slippage price diff relative to stop
