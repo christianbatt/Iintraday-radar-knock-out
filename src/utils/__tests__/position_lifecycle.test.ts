@@ -573,4 +573,172 @@ console.log('--- RUNNING POSITION LIFECYCLE TESTS ---');
   console.log('[T16_us_hard_ceiling_expired_not_momentum_loss] PASS');
 }
 
+// Test 17: US hard ceiling 21:30 su trade gia' in softCutoffActive, momentum >= 0 -> CUTOFF_EXPIRED
+{
+  const trade = createMockTrade({
+    session: 'US',
+    market: 'US',
+    ticker: 'AAPL',
+    direction: 'LONG',
+    entryPrice: 200,
+    stopLoss: 190, // riskDist = 10
+    target1: 220,
+    softCutoffActive: true,
+  });
+  const quote = createMockQuote({ ticker: 'AAPL', market: 'US', currentPrice: 206 }); // +0.60R
+  const session2130: SessionInfo = {
+    cet: {
+      formatted: '21:30',
+      date: '03/11/2026',
+      hour: 21,
+      minute: 30,
+      currentMinutes: 1290,
+      isEuropeWindow: false,
+      isUSAWindow: true,
+      isEuropeLive: false,
+      isUSALive: true,
+      marketStatusUS: 'OPEN_LIVE',
+    },
+    recommendedSession: 'US',
+  };
+
+  const res = evaluateOpenPositionLifecycle(trade, quote, new Date('2026-11-03T20:30:00.000Z'), {
+    sessionInfo: session2130,
+    usSoftCutoffCET: 1050,
+    usHardCeilingCET: 1290,
+    momentum: 0.1,
+  });
+
+  assert.strictEqual(res.wasClosed, true);
+  assert.strictEqual(res.updatedTrade.status, 'CLOSED');
+  assert.strictEqual(res.updatedTrade.closeReason, 'CUTOFF_EXPIRED');
+  console.log('[T17_soft_cutoff_hard_ceiling_momentum_positive_expired] PASS');
+}
+
+// Test 18: US hard ceiling 21:30 su trade gia' in softCutoffActive, momentum < 0 -> SOFT_CUTOFF_HARD_EXIT
+{
+  const trade = createMockTrade({
+    session: 'US',
+    market: 'US',
+    ticker: 'AAPL',
+    direction: 'LONG',
+    entryPrice: 200,
+    stopLoss: 190, // riskDist = 10
+    target1: 220,
+    softCutoffActive: true,
+  });
+  const quote = createMockQuote({ ticker: 'AAPL', market: 'US', currentPrice: 206 }); // +0.60R
+  const session2130: SessionInfo = {
+    cet: {
+      formatted: '21:30',
+      date: '03/11/2026',
+      hour: 21,
+      minute: 30,
+      currentMinutes: 1290,
+      isEuropeWindow: false,
+      isUSAWindow: true,
+      isEuropeLive: false,
+      isUSALive: true,
+      marketStatusUS: 'OPEN_LIVE',
+    },
+    recommendedSession: 'US',
+  };
+
+  const res = evaluateOpenPositionLifecycle(trade, quote, new Date('2026-11-03T20:30:00.000Z'), {
+    sessionInfo: session2130,
+    usSoftCutoffCET: 1050,
+    usHardCeilingCET: 1290,
+    momentum: -1,
+  });
+
+  assert.strictEqual(res.wasClosed, true);
+  assert.strictEqual(res.updatedTrade.status, 'CLOSED');
+  assert.strictEqual(res.updatedTrade.closeReason, 'SOFT_CUTOFF_HARD_EXIT');
+  console.log('[T18_soft_cutoff_hard_ceiling_momentum_negative_hard_exit] PASS');
+}
+
+// Test 19: proxy momentum su trade in softCutoffActive - picco 207 (0.7R), arretramento dichiarato 0.10R -> CUTOFF_EXPIRED
+{
+  const trade = createMockTrade({
+    session: 'US',
+    market: 'US',
+    ticker: 'AAPL',
+    direction: 'LONG',
+    entryPrice: 200,
+    stopLoss: 190, // riskDist = 10
+    target1: 220,
+    softCutoffActive: true,
+    stateHistory: [],
+    mfe: 0.7, // picco 207 = +0.7R
+  });
+  const quote = createMockQuote({ ticker: 'AAPL', market: 'US', currentPrice: 206 }); // +0.60R
+  const session2130: SessionInfo = {
+    cet: {
+      formatted: '21:30',
+      date: '03/11/2026',
+      hour: 21,
+      minute: 30,
+      currentMinutes: 1290,
+      isEuropeWindow: false,
+      isUSAWindow: true,
+      isEuropeLive: false,
+      isUSALive: true,
+      marketStatusUS: 'OPEN_LIVE',
+    },
+    recommendedSession: 'US',
+  };
+
+  const res = evaluateOpenPositionLifecycle(trade, quote, new Date('2026-11-03T20:30:00.000Z'), {
+    sessionInfo: session2130,
+    usSoftCutoffCET: 1050,
+    usHardCeilingCET: 1290,
+  });
+
+  assert.strictEqual(res.wasClosed, true);
+  assert.strictEqual(res.updatedTrade.closeReason, 'CUTOFF_EXPIRED');
+  console.log('[T19_soft_cutoff_momentum_proxy_retrace_010_expired] PASS');
+}
+
+// Test 20: proxy momentum su trade in softCutoffActive - picco 209 (0.9R), arretramento 0.30R -> SOFT_CUTOFF_HARD_EXIT
+{
+  const trade = createMockTrade({
+    session: 'US',
+    market: 'US',
+    ticker: 'AAPL',
+    direction: 'LONG',
+    entryPrice: 200,
+    stopLoss: 190, // riskDist = 10
+    target1: 220,
+    softCutoffActive: true,
+    stateHistory: [],
+    mfe: 0.9, // picco 209 = +0.9R
+  });
+  const quote = createMockQuote({ ticker: 'AAPL', market: 'US', currentPrice: 206 }); // +0.60R
+  const session2130: SessionInfo = {
+    cet: {
+      formatted: '21:30',
+      date: '03/11/2026',
+      hour: 21,
+      minute: 30,
+      currentMinutes: 1290,
+      isEuropeWindow: false,
+      isUSAWindow: true,
+      isEuropeLive: false,
+      isUSALive: true,
+      marketStatusUS: 'OPEN_LIVE',
+    },
+    recommendedSession: 'US',
+  };
+
+  const res = evaluateOpenPositionLifecycle(trade, quote, new Date('2026-11-03T20:30:00.000Z'), {
+    sessionInfo: session2130,
+    usSoftCutoffCET: 1050,
+    usHardCeilingCET: 1290,
+  });
+
+  assert.strictEqual(res.wasClosed, true);
+  assert.strictEqual(res.updatedTrade.closeReason, 'SOFT_CUTOFF_HARD_EXIT');
+  console.log('[T20_soft_cutoff_momentum_proxy_retrace_030_hard_exit] PASS');
+}
+
 console.log('ALL POSITION LIFECYCLE TESTS PASS!');
