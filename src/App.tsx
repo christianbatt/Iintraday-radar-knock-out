@@ -20,7 +20,7 @@ import {
 } from './types/radar';
 import { TRADING_PARAMS } from './config/tradingParams';
 import { getMarketTime } from './utils/timezone';
-import { loadParameters } from './utils/paramSync';
+import { loadParameters, sanitizeScoreParameters, shouldApplyPolledParameters, shouldApplyCloudParameters } from './utils/paramSync';
 import { DEFAULT_TRADE_REPUBLIC_UNDERLYINGS } from './data/defaultUnderlyings';
 import {
   getDualTopCandidates,
@@ -408,26 +408,12 @@ export default function App() {
 
         isRemoteSyncingRef.current = true;
 
-        // 1. Parametri (se versione remota >= locale, applica subito e sanifica)
-        if (s.parameters && typeof s.parameters.version === 'number') {
-          const sanitizedParams: SystemParameters = {
-            ...s.parameters,
-            minScore: typeof s.parameters.minScore === 'number' && s.parameters.minScore > 100
-              ? (s.parameters.minScore > 1000 ? Math.round(s.parameters.minScore / 1000) : 90)
-              : s.parameters.minScore,
-            minScoreEurope: typeof s.parameters.minScoreEurope === 'number' && s.parameters.minScoreEurope > 100
-              ? (s.parameters.minScoreEurope > 1000 ? Math.round(s.parameters.minScoreEurope / 1000) : 90)
-              : s.parameters.minScoreEurope,
-            minScoreUSA: typeof s.parameters.minScoreUSA === 'number' && s.parameters.minScoreUSA > 100
-              ? (s.parameters.minScoreUSA > 1000 ? Math.round(s.parameters.minScoreUSA / 1000) : 92)
-              : s.parameters.minScoreUSA,
-          };
-          const currentVer = parametersRef.current?.version || 0;
-          if (sanitizedParams.version > currentVer) {
-            setParameters(sanitizedParams);
-            parametersRef.current = sanitizedParams;
-            localStorage.setItem('intraday_radar_parameters', JSON.stringify(sanitizedParams));
-          }
+        // 1. Parametri: applica solo se la versione remota è strettamente maggiore della locale
+        if (s.parameters && shouldApplyPolledParameters(parametersRef.current, s.parameters)) {
+          const sanitizedParams = sanitizeScoreParameters(s.parameters);
+          setParameters(sanitizedParams);
+          parametersRef.current = sanitizedParams;
+          localStorage.setItem('intraday_radar_parameters', JSON.stringify(sanitizedParams));
         }
 
         // 2. Setup monitorati e congelati di oggi (EU / US)
@@ -541,11 +527,8 @@ export default function App() {
         unsubData = subscribeToUserCloudData(
           user.uid,
           (cloudSettings) => {
-            if (cloudSettings.parameters && typeof cloudSettings.parameters.version === 'number') {
-              const localParams = parametersRef.current;
-              if (!localParams || cloudSettings.parameters.version > localParams.version) {
-                setParameters(cloudSettings.parameters);
-              }
+            if (shouldApplyCloudParameters(parametersRef.current, cloudSettings.parameters)) {
+              setParameters(sanitizeScoreParameters(cloudSettings.parameters));
             }
             if (cloudSettings.pendingProposal !== undefined) {
               setPendingProposal(cloudSettings.pendingProposal);
