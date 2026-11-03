@@ -423,7 +423,7 @@ export default function App() {
               : s.parameters.minScoreUSA,
           };
           const currentVer = parametersRef.current?.version || 0;
-          if (sanitizedParams.version >= currentVer) {
+          if (sanitizedParams.version > currentVer) {
             setParameters(sanitizedParams);
             parametersRef.current = sanitizedParams;
             localStorage.setItem('intraday_radar_parameters', JSON.stringify(sanitizedParams));
@@ -541,8 +541,11 @@ export default function App() {
         unsubData = subscribeToUserCloudData(
           user.uid,
           (cloudSettings) => {
-            if (cloudSettings.parameters) {
-              setParameters(cloudSettings.parameters);
+            if (cloudSettings.parameters && typeof cloudSettings.parameters.version === 'number') {
+              const localParams = parametersRef.current;
+              if (!localParams || cloudSettings.parameters.version > localParams.version) {
+                setParameters(cloudSettings.parameters);
+              }
             }
             if (cloudSettings.pendingProposal !== undefined) {
               setPendingProposal(cloudSettings.pendingProposal);

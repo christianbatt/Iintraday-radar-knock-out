@@ -37,5 +37,18 @@ check('T6_lower_version_ignored', (() => {
 check('T7_null_remote', eq(resolveRemoteParameters(BASE, null, BASE).result, BASE));
 check('T8_score_sanitized', resolveRemoteParameters(BASE, { version: 113, minScoreEurope: 150 } as P, BASE).result.minScoreEurope === 90);
 
+check('T9_equal_version_different_values_keeps_local', (() => {
+  const r = resolveRemoteParameters(BASE, { ...BASE, minScore: 80, target1Multiplier: 2 }, BASE);
+  return r.result === BASE;
+})());
+check('T10_greater_version_applies_remote', (() => {
+  const r = resolveRemoteParameters(BASE, { ...BASE, version: 113, minScore: 80 }, BASE);
+  return r.result.version === 113 && r.result.minScore === 80;
+})());
+check('T11_lower_version_keeps_local', (() => {
+  const r = resolveRemoteParameters(BASE, { ...BASE, version: 100, minScore: 80 }, BASE);
+  return r.result === BASE;
+})());
+
 console.log(failed === 0 ? 'ALL PASS' : failed + ' FAIL');
 process.exitCode = failed === 0 ? 0 : 1;
