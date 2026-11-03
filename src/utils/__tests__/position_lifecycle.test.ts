@@ -284,4 +284,163 @@ console.log('--- RUNNING POSITION LIFECYCLE TESTS ---');
   console.log('[T9_missing_potential_loss_eur_fallback] PASS');
 }
 
+// Test 10: US Soft Cutoff (17:30 CET) - Caso 3.1: R < 0.35 -> Chiudi a mercato, motivo CUTOFF_EXPIRED
+{
+  const trade = createMockTrade({
+    session: 'US',
+    market: 'US',
+    ticker: 'AAPL',
+    direction: 'LONG',
+    entryPrice: 200,
+    stopLoss: 190, // riskDist = 10
+    target1: 220,
+  });
+  // Price at 202 (+0.20R < +0.35R)
+  const quote = createMockQuote({ ticker: 'AAPL', market: 'US', currentPrice: 202 });
+  const session1730: SessionInfo = {
+    cet: {
+      formatted: '17:35',
+      date: '03/11/2026',
+      hour: 17,
+      minute: 35,
+      currentMinutes: 1055, // 17:35 CET, past 17:30 (1050)
+      isEuropeWindow: false,
+      isUSAWindow: true,
+      isEuropeLive: false,
+      isUSALive: true,
+      marketStatusUS: 'OPEN_LIVE',
+    },
+    recommendedSession: 'US',
+  };
+
+  const res = evaluateOpenPositionLifecycle(trade, quote, new Date('2026-11-03T16:35:00.000Z'), {
+    sessionInfo: session1730,
+    usSoftCutoffCET: 1050,
+    softCutoffRThreshold: 0.35,
+  });
+
+  assert.strictEqual(res.wasClosed, true, 'US trade with R < 0.35 at cutoff must be closed');
+  assert.strictEqual(res.updatedTrade.status, 'CLOSED');
+  assert.strictEqual(res.updatedTrade.closeReason, 'CUTOFF_EXPIRED');
+  assert.strictEqual(res.updatedTrade.rMultiple, 0.2);
+  console.log('[T10_us_cutoff_r_below_threshold_expired] PASS');
+}
+
+// Test 11: US Soft Cutoff (17:30 CET) - Caso 3.2: R >= 0.35 e momentum >= 0 -> Stop a pareggio, resta aperta
+{
+  const trade = createMockTrade({
+    session: 'US',
+    market: 'US',
+    ticker: 'MSFT',
+    direction: 'LONG',
+    entryPrice: 500,
+    stopLoss: 490, // riskDist = 10
+    target1: 520,
+    mfe: 0.8,
+  });
+  // Price at 508 (+0.80R >= +0.35R, and on peak so proxy momentum >= 0)
+  const quote = createMockQuote({ ticker: 'MSFT', market: 'US', currentPrice: 508 });
+  const session1730: SessionInfo = {
+    cet: {
+      formatted: '17:35',
+      date: '03/11/2026',
+      hour: 17,
+      minute: 35,
+      currentMinutes: 1055,
+      isEuropeWindow: false,
+      isUSAWindow: true,
+      isUSALive: true,
+      marketStatusUS: 'OPEN_LIVE',
+    },
+    recommendedSession: 'US',
+  };
+
+  const res = evaluateOpenPositionLifecycle(trade, quote, new Date('2026-11-03T16:35:00.000Z'), {
+    sessionInfo: session1730,
+    usSoftCutoffCET: 1050,
+    softCutoffRThreshold: 0.35,
+    momentum: 0.25, // momentum positivo esplicito
+  });
+
+  assert.strictEqual(res.wasClosed, false, 'US trade with R >= 0.35 and momentum >= 0 must stay open');
+  assert.strictEqual(res.updatedTrade.status, 'OPEN');
+  assert.strictEqual(res.updatedTrade.softCutoffActive, true);
+  assert.strictEqual(res.updatedTrade.isBreakevenLocked, true);
+  assert.strictEqual(res.updatedTrade.stopLoss, 500, 'Stop loss must be moved to entry (breakeven)');
+  assert.strictEqual(res.reason, 'SOFT_CUTOFF_ACTIVATED');
+  console.log('[T11_us_cutoff_r_above_threshold_positive_momentum_stays_open] PASS');
+}
+
+// Test 12: US Soft Cutoff (17:30 CET) - Caso 3.3: R >= 0.35 e momentum < 0 -> Chiudi a mercato, motivo CUTOFF_MOMENTUM_LOSS
+{
+  const trade = createMockTrade({
+    session: 'US',
+    market: 'US',
+    ticker: 'NVDA',
+    direction: 'LONG',
+    entryPrice: 100,
+    stopLoss: 90, // riskDist = 10
+    target1: 120,
+    mfe: 1.2, // aveva toccato 112 (+1.2R)
+  });
+  // Price now dropped back to 105 (+0.50R >= +0.35R, but retraced from +1.2R -> negative momentum)
+  const quote = createMockQuote({ ticker: 'NVDA', market: 'US', currentPrice: 105 });
+  const session1730: SessionInfo = {
+    cet: {
+      formatted: '17:35',
+      date: '03/11/2026',
+      hour: 17,
+      minute: 35,
+      currentMinutes: 1055,
+      isEuropeWindow: false,
+      isUSAWindow: true,
+      isUSALive: true,
+      marketStatusUS: 'OPEN_LIVE',
+    },
+    recommendedSession: 'US',
+  };
+
+  // Test con momentum < 0 (sia via proxy arretramento MFE che con parametro momentum: -0.30)
+  const res = evaluateOpenPositionLifecycle(trade, quote, new Date('2026-11-03T16:35:00.000Z'), {
+    sessionInfo: session1730,
+    usSoftCutoffCET: 1050,
+    softCutoffRThreshold: 0.35,
+    momentum: -0.30,
+  });
+
+  assert.strictEqual(res.wasClosed, true, 'US trade with R >= 0.35 and momentum < 0 must be closed');
+  assert.strictEqual(res.updatedTrade.status, 'CLOSED');
+  assert.strictEqual(res.updatedTrade.closeReason, 'CUTOFF_MOMENTUM_LOSS');
+  assert.strictEqual(res.updatedTrade.exitPrice, 105);
+  assert.strictEqual(res.updatedTrade.rMultiple, 0.5);
+  console.log('[T12_us_cutoff_r_above_threshold_negative_momentum_closed] PASS');
+}
+
+// Test 13: Verifica tassativa R <= -1 si chiude sullo stop e non resta mai IN CORSO
+{
+  const trade = createMockTrade({
+    direction: 'LONG',
+    entryPrice: 100,
+    stopLoss: 95, // riskDist = 5
+    target1: 110,
+  });
+  // Price at 95.00 (exact -1.0R)
+  const quoteExact = createMockQuote({ currentPrice: 95.00 });
+  const resExact = evaluateOpenPositionLifecycle(trade, quoteExact, new Date('2026-11-03T10:00:00.000Z'));
+  assert.strictEqual(resExact.wasClosed, true);
+  assert.strictEqual(resExact.updatedTrade.status, 'CLOSED');
+  assert.strictEqual(resExact.updatedTrade.outcome, 'LOSS');
+  assert.strictEqual(resExact.updatedTrade.rMultiple, -1.0);
+
+  // Price at 90.00 (gap to -2.0R <= -1.0R)
+  const quoteGap = createMockQuote({ currentPrice: 90.00 });
+  const resGap = evaluateOpenPositionLifecycle(trade, quoteGap, new Date('2026-11-03T10:00:00.000Z'));
+  assert.strictEqual(resGap.wasClosed, true);
+  assert.strictEqual(resGap.updatedTrade.status, 'CLOSED');
+  assert.strictEqual(resGap.updatedTrade.outcome, 'LOSS');
+  assert.strictEqual(resGap.updatedTrade.closeReason, 'STOP_GAP_SLIPPAGE');
+  assert.strictEqual(resGap.updatedTrade.rMultiple, -2.0);
+  console.log('[T13_strict_r_below_minus_1_closed] PASS');
+}
+
 console.log('ALL POSITION LIFECYCLE TESTS PASS!');
