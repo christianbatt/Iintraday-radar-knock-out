@@ -76,3 +76,9 @@ export function shouldApplyCloudParameters(local: any, remote: any): boolean {
   if (!local) return true;
   return remote.version > local.version;
 }
+
+// Il push al server è necessario solo se la versione locale non è quella già applicata dal cloud.
+export function shouldPushLocalParameters(parameters: any, lastAppliedRemoteVersion: number | null): boolean {
+  if (!parameters || typeof parameters.version !== 'number') return false;
+  return parameters.version !== lastAppliedRemoteVersion;
+}
