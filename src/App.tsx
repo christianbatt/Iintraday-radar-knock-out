@@ -20,7 +20,7 @@ import {
 } from './types/radar';
 import { TRADING_PARAMS } from './config/tradingParams';
 import { getMarketTime } from './utils/timezone';
-import { loadParameters, sanitizeScoreParameters, shouldApplyPolledParameters, shouldApplyCloudParameters } from './utils/paramSync';
+import { loadParameters, sanitizeScoreParameters, shouldApplyPolledParameters, shouldApplyCloudParameters, shouldPushLocalParameters } from './utils/paramSync';
 import { DEFAULT_TRADE_REPUBLIC_UNDERLYINGS } from './data/defaultUnderlyings';
 import {
   getDualTopCandidates,
@@ -356,12 +356,14 @@ export default function App() {
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'LOCAL_ONLY' | 'SYNCED' | 'SYNCING'>('LOCAL_ONLY');
 
   const parametersRef = React.useRef(parameters);
+  const lastAppliedRemoteVersionRef = React.useRef<number | null>(null);
 
   // Sync parameters & proposal to localStorage & Shared Server
   useEffect(() => {
     parametersRef.current = parameters;
     localStorage.setItem('intraday_radar_parameters', JSON.stringify(parameters));
     if (!isRemoteSyncingRef.current && hasInitialSyncCompletedRef.current) {
+      if (!shouldPushLocalParameters(parameters, lastAppliedRemoteVersionRef.current)) return;
       pushSharedAppState({ parameters });
     }
   }, [parameters]);
@@ -413,6 +415,7 @@ export default function App() {
           const sanitizedParams = sanitizeScoreParameters(s.parameters);
           setParameters(sanitizedParams);
           parametersRef.current = sanitizedParams;
+          lastAppliedRemoteVersionRef.current = sanitizedParams.version;
           localStorage.setItem('intraday_radar_parameters', JSON.stringify(sanitizedParams));
         }
 
@@ -529,6 +532,7 @@ export default function App() {
           (cloudSettings) => {
             if (shouldApplyCloudParameters(parametersRef.current, cloudSettings.parameters)) {
               setParameters(sanitizeScoreParameters(cloudSettings.parameters));
+              lastAppliedRemoteVersionRef.current = cloudSettings.parameters.version;
             }
             if (cloudSettings.pendingProposal !== undefined) {
               setPendingProposal(cloudSettings.pendingProposal);

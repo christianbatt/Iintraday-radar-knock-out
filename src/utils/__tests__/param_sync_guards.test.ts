@@ -1,4 +1,4 @@
-import { sanitizeScoreParameters, shouldApplyPolledParameters, shouldApplyCloudParameters } from '../paramSync';
+import { sanitizeScoreParameters, shouldApplyPolledParameters, shouldApplyCloudParameters, shouldPushLocalParameters } from '../paramSync';
 
 let failed = 0;
 function check(name: string, ok: boolean) {
@@ -40,6 +40,13 @@ check('S2_europe_divided_by_1000', clean.minScoreEurope === 2);
 check('S3_usa_fallback_92', clean.minScoreUSA === 92);
 check('S4_value_in_range_kept', sanitizeScoreParameters({ minScore: 95 } as any).minScore === 95);
 check('S5_input_not_mutated', JSON.stringify(raw) === snapshot);
+
+// Push locale
+check('Q1_local_newer', shouldPushLocalParameters({ version: 113 }, 112) === true);
+check('Q2_cloud_echo', shouldPushLocalParameters({ version: 112 }, 112) === false);
+check('Q3_no_remote_applied', shouldPushLocalParameters({ version: 113 }, null) === true);
+check('Q4_params_null', shouldPushLocalParameters(null, 112) === false);
+check('Q5_version_missing', shouldPushLocalParameters({ minScore: 90 }, 112) === false);
 
 console.log(failed === 0 ? 'ALL PASS' : failed + ' FAIL');
 process.exitCode = failed === 0 ? 0 : 1;
