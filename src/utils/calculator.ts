@@ -4607,6 +4607,31 @@ export function evaluateOpenPositionLifecycle(
   const isEuHardCeiling = market === 'EU' && currentMinutes >= euHardCeilingCET;
   const isUsHardCeiling = market === 'US' && currentMinutes >= usHardCeilingCET;
 
+  // Calcolo momentum
+  // NOTA: stateHistory viene scritto solo sulle transizioni di stato (attivazione Soft Cutoff / chiusura),
+  // non esiste alcun campionamento periodico a 30 minuti: senza storico prezzi il ramo .find sottostante
+  // e' non raggiungibile in produzione. Il proxy esplicito su MFE/arretramento e' quindi il percorso operativo.
+  let momentum = options?.momentum;
+  if (momentum == null) {
+    const windowMs = momentumWindowMin * 60 * 1000;
+    const cutoffTimeMs = currentTime.getTime();
+    const pastState = trade.stateHistory?.find((h) => {
+      const hTime = new Date(h.timestamp).getTime();
+      return !Number.isNaN(hTime) && cutoffTimeMs - hTime >= windowMs * 0.7;
+    });
+
+    if (pastState && typeof pastState.price === 'number') {
+      const pastR = riskDist > 0 ? (isLong ? (pastState.price - entry) / riskDist : (entry - pastState.price) / riskDist) : 0;
+      momentum = +(currentR - pastR).toFixed(2);
+    } else {
+      // Fallback proxy: senza storico prezzi usa la distanza residua dal target / arretramento da MFE
+      // Se il trade è arretrato rispetto al massimo favorevole raggiunto (distanza residua aumentata), momentum negativo
+      // Se il trade è sui massimi favorevoli verso target (distanza residua ridotta al minimo), momentum positivo/nullo
+      const retracement = newMfe - currentR;
+      momentum = retracement > usMomentumRetraceR ? -1 : 1;
+    }
+  }
+
   // Sub-scenario 4A: Trade is ALREADY in Soft Cutoff Extension
   if (trade.softCutoffActive) {
     // Condition 1: Breakeven retest
@@ -4627,12 +4652,14 @@ export function evaluateOpenPositionLifecycle(
     if ((market === 'EU' && isEuHardCeiling) || (market === 'US' && isUsHardCeiling)) {
       const ceilingTimeStr = market === 'EU' ? '14:15' : '21:30';
       const outcome = currentR >= 0.2 ? 'WIN' : 'BREAKEVEN';
+      // US con momentum non negativo: scadenza temporale (CUTOFF_EXPIRED). EU invariato.
+      const hardCeilingReason = market === 'US' && momentum >= 0 ? 'CUTOFF_EXPIRED' : 'SOFT_CUTOFF_HARD_EXIT';
       const notif = `⏰ Hard Ceiling Cutoff: ${trade.ticker} chiuso alle ${ceilingTimeStr} CET prima dei macro (+${currentR}R).`;
       return closePosition(
         effectiveLivePrice,
         currentR,
         outcome,
-        'SOFT_CUTOFF_HARD_EXIT',
+        hardCeilingReason,
         `Hard Exit Ceiling raggiunto (${ceilingTimeStr} CET): incassato a ${effectiveLivePrice.toFixed(2)} (+${currentR}R).`,
         notif
       );
@@ -4682,31 +4709,6 @@ export function evaluateOpenPositionLifecycle(
     }
   } else if (market === 'US' && isUsCutoff) {
     // Regole 2 & 3: US decisione dinamica al soft cutoff
-    // Calcolo momentum
-    // NOTA: stateHistory viene scritto solo sulle transizioni di stato (attivazione Soft Cutoff / chiusura),
-    // non esiste alcun campionamento periodico a 30 minuti: senza storico prezzi il ramo .find sottostante
-    // e' non raggiungibile in produzione. Il proxy esplicito su MFE/arretramento e' quindi il percorso operativo.
-    let momentum = options?.momentum;
-    if (momentum == null) {
-      const windowMs = momentumWindowMin * 60 * 1000;
-      const cutoffTimeMs = currentTime.getTime();
-      const pastState = trade.stateHistory?.find((h) => {
-        const hTime = new Date(h.timestamp).getTime();
-        return !Number.isNaN(hTime) && cutoffTimeMs - hTime >= windowMs * 0.7;
-      });
-
-      if (pastState && typeof pastState.price === 'number') {
-        const pastR = riskDist > 0 ? (isLong ? (pastState.price - entry) / riskDist : (entry - pastState.price) / riskDist) : 0;
-        momentum = +(currentR - pastR).toFixed(2);
-      } else {
-        // Fallback proxy: senza storico prezzi usa la distanza residua dal target / arretramento da MFE
-        // Se il trade è arretrato rispetto al massimo favorevole raggiunto (distanza residua aumentata), momentum negativo
-        // Se il trade è sui massimi favorevoli verso target (distanza residua ridotta al minimo), momentum positivo/nullo
-        const retracement = newMfe - currentR;
-        momentum = retracement > usMomentumRetraceR ? -1 : 1;
-      }
-    }
-
     // Regola 3.1: R < softCutoffRThreshold (0.35) -> chiudi a mercato, motivo CUTOFF_EXPIRED
     if (currentR < softCutoffRThreshold) {
       const outcome = Math.abs(currentR) < 0.2 ? 'BREAKEVEN' : currentR > 0 ? 'WIN' : 'EXPIRED';
