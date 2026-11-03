@@ -443,4 +443,134 @@ console.log('--- RUNNING POSITION LIFECYCLE TESTS ---');
   console.log('[T13_strict_r_below_minus_1_closed] PASS');
 }
 
+// Test 14: Proxy momentum (soglia default usMomentumRetraceR = 0.25) - arretramento 0.10R -> resta aperta
+{
+  const trade = createMockTrade({
+    session: 'US',
+    market: 'US',
+    ticker: 'TSLA',
+    direction: 'LONG',
+    entryPrice: 100,
+    stopLoss: 90, // riskDist = 10
+    target1: 120,
+    mfe: 0.7, // picco +0.70R, prezzo attuale +0.60R => arretramento 0.10R
+  });
+  const quote = createMockQuote({ ticker: 'TSLA', market: 'US', currentPrice: 106 }); // +0.60R
+  const session1735: SessionInfo = {
+    cet: {
+      formatted: '17:35',
+      date: '03/11/2026',
+      hour: 17,
+      minute: 35,
+      currentMinutes: 1055,
+      isEuropeWindow: false,
+      isUSAWindow: true,
+      isEuropeLive: false,
+      isUSALive: true,
+      marketStatusUS: 'OPEN_LIVE',
+    },
+    recommendedSession: 'US',
+  };
+
+  const res = evaluateOpenPositionLifecycle(trade, quote, new Date('2026-11-03T16:35:00.000Z'), {
+    sessionInfo: session1735,
+    usSoftCutoffCET: 1050,
+    softCutoffRThreshold: 0.35,
+  });
+
+  assert.strictEqual(res.wasClosed, false, 'Retracement 0.10R below 0.25R threshold must keep position open');
+  assert.strictEqual(res.updatedTrade.status, 'OPEN');
+  assert.strictEqual(res.updatedTrade.softCutoffActive, true);
+  console.log('[T14_momentum_proxy_retrace_010_stays_open] PASS');
+}
+
+// Test 15: Proxy momentum - arretramento 0.30R (> soglia 0.25R) -> chiusura CUTOFF_MOMENTUM_LOSS
+{
+  const trade = createMockTrade({
+    session: 'US',
+    market: 'US',
+    ticker: 'AMD',
+    direction: 'LONG',
+    entryPrice: 100,
+    stopLoss: 90, // riskDist = 10
+    target1: 120,
+    mfe: 0.9, // picco +0.90R, prezzo attuale +0.60R => arretramento 0.30R
+  });
+  const quote = createMockQuote({ ticker: 'AMD', market: 'US', currentPrice: 106 }); // +0.60R
+  const session1735: SessionInfo = {
+    cet: {
+      formatted: '17:35',
+      date: '03/11/2026',
+      hour: 17,
+      minute: 35,
+      currentMinutes: 1055,
+      isEuropeWindow: false,
+      isUSAWindow: true,
+      isEuropeLive: false,
+      isUSALive: true,
+      marketStatusUS: 'OPEN_LIVE',
+    },
+    recommendedSession: 'US',
+  };
+
+  const res = evaluateOpenPositionLifecycle(trade, quote, new Date('2026-11-03T16:35:00.000Z'), {
+    sessionInfo: session1735,
+    usSoftCutoffCET: 1050,
+    softCutoffRThreshold: 0.35,
+  });
+
+  assert.strictEqual(res.wasClosed, true, 'Retracement 0.30R above 0.25R threshold must close position');
+  assert.strictEqual(res.updatedTrade.status, 'CLOSED');
+  assert.strictEqual(res.updatedTrade.closeReason, 'CUTOFF_MOMENTUM_LOSS');
+  assert.strictEqual(res.updatedTrade.rMultiple, 0.6);
+  console.log('[T15_momentum_proxy_retrace_030_closes] PASS');
+}
+
+// Test 16: Hard ceiling US 21:30 con R = 0.6 e momentum >= 0 -> CUTOFF_EXPIRED (non CUTOFF_MOMENTUM_LOSS)
+{
+  const trade = createMockTrade({
+    session: 'US',
+    market: 'US',
+    ticker: 'META',
+    direction: 'LONG',
+    entryPrice: 100,
+    stopLoss: 90, // riskDist = 10
+    target1: 120,
+    mfe: 0.7, // arretramento 0.10R => momentum >= 0
+  });
+  const quote = createMockQuote({ ticker: 'META', market: 'US', currentPrice: 106 }); // +0.60R
+  const session2135: SessionInfo = {
+    cet: {
+      formatted: '21:35',
+      date: '03/11/2026',
+      hour: 21,
+      minute: 35,
+      currentMinutes: 1295, // 21:35 CET, oltre hard ceiling 1290 e prima di EOD 1320
+      isEuropeWindow: false,
+      isUSAWindow: true,
+      isEuropeLive: false,
+      isUSALive: true,
+      marketStatusUS: 'OPEN_LIVE',
+    },
+    recommendedSession: 'US',
+  };
+
+  const res = evaluateOpenPositionLifecycle(trade, quote, new Date('2026-11-03T20:35:00.000Z'), {
+    sessionInfo: session2135,
+    usSoftCutoffCET: 1050,
+    usHardCeilingCET: 1290,
+    softCutoffRThreshold: 0.35,
+  });
+
+  assert.strictEqual(res.wasClosed, true, 'Position must close at US hard ceiling');
+  assert.strictEqual(res.updatedTrade.status, 'CLOSED');
+  assert.strictEqual(res.updatedTrade.closeReason, 'CUTOFF_EXPIRED', 'Expiry at 21:30 must not be reported as momentum loss');
+  assert.strictEqual(res.updatedTrade.rMultiple, 0.6);
+  assert.ok(
+    typeof res.notification === 'string' && res.notification.includes('21:30'),
+    'Notification must reference the 21:30 hard ceiling'
+  );
+  console.log('[T16_us_hard_ceiling_expired_not_momentum_loss] PASS');
+}
+
 console.log('ALL POSITION LIFECYCLE TESTS PASS!');

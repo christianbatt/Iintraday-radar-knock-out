@@ -4321,10 +4321,14 @@ export function runExcludedSetupsAutoAnalysis(
   };
 }
 
+export type PositionCloseReason =
+  | NonNullable<TradeJournalEntry['closeReason']>
+  | 'CUTOFF_MOMENTUM_LOSS';
+
 export interface PositionEvaluationResult {
   updatedTrade: TradeJournalEntry;
   wasClosed: boolean;
-  reason?: TradeJournalEntry['closeReason'] | 'SOFT_CUTOFF_ACTIVATED' | 'CUTOFF_MOMENTUM_LOSS';
+  reason?: PositionCloseReason | 'SOFT_CUTOFF_ACTIVATED';
   notification?: string;
 }
 
@@ -4339,6 +4343,7 @@ export interface PositionEvaluationOptions {
   softCutoffRThreshold?: number; // default 0.35 (soglia minima R)
   momentumWindowMin?: number; // default 30 (finestra temporale momentum in minuti)
   momentum?: number; // valore esplicito momentum (opzionale)
+  usMomentumRetraceR?: number; // default 0.25 (soglia arretramento dal picco per il proxy momentum)
   euSoftCutoffCET?: number; // default 690 (11:30 CET in minuti)
   euHardCeilingCET?: number; // default 855 (14:15 CET in minuti)
   euEodCET?: number; // default 1050 (17:30 CET in minuti)
@@ -4422,7 +4427,7 @@ export function evaluateOpenPositionLifecycle(
     exitP: number,
     rMult: number,
     outcome: 'WIN' | 'LOSS' | 'BREAKEVEN' | 'EXPIRED',
-    reason: TradeJournalEntry['closeReason'],
+    reason: PositionCloseReason,
     noteSuffix: string,
     notification: string,
     slippageP: number = 0,
@@ -4558,6 +4563,15 @@ export function evaluateOpenPositionLifecycle(
   const usHardCeilingCET = options?.usHardCeilingCET ?? 1290; // default 21:30 CET (1290 min)
   const softCutoffRThreshold = options?.softCutoffRThreshold ?? 0.35; // default 0.35R
   const momentumWindowMin = options?.momentumWindowMin ?? 30; // default 30 min
+  // Soglia proxy momentum: arretramento dal picco > soglia => momentum < 0. Valori fuori [0.05, 1] => default 0.25
+  const rawMomentumRetraceR = options?.usMomentumRetraceR;
+  const usMomentumRetraceR =
+    typeof rawMomentumRetraceR === 'number' &&
+    Number.isFinite(rawMomentumRetraceR) &&
+    rawMomentumRetraceR >= 0.05 &&
+    rawMomentumRetraceR <= 1
+      ? rawMomentumRetraceR
+      : 0.25;
 
   const euSoftCutoffCET = options?.euSoftCutoffCET ?? 690; // default 11:30 CET (690 min)
   const euHardCeilingCET = options?.euHardCeilingCET ?? 855; // default 14:15 CET (855 min)
@@ -4669,6 +4683,9 @@ export function evaluateOpenPositionLifecycle(
   } else if (market === 'US' && isUsCutoff) {
     // Regole 2 & 3: US decisione dinamica al soft cutoff
     // Calcolo momentum
+    // NOTA: stateHistory viene scritto solo sulle transizioni di stato (attivazione Soft Cutoff / chiusura),
+    // non esiste alcun campionamento periodico a 30 minuti: senza storico prezzi il ramo .find sottostante
+    // e' non raggiungibile in produzione. Il proxy esplicito su MFE/arretramento e' quindi il percorso operativo.
     let momentum = options?.momentum;
     if (momentum == null) {
       const windowMs = momentumWindowMin * 60 * 1000;
@@ -4686,7 +4703,7 @@ export function evaluateOpenPositionLifecycle(
         // Se il trade è arretrato rispetto al massimo favorevole raggiunto (distanza residua aumentata), momentum negativo
         // Se il trade è sui massimi favorevoli verso target (distanza residua ridotta al minimo), momentum positivo/nullo
         const retracement = newMfe - currentR;
-        momentum = retracement > 0.05 ? -1 : 1;
+        momentum = retracement > usMomentumRetraceR ? -1 : 1;
       }
     }
 
@@ -4735,14 +4752,29 @@ export function evaluateOpenPositionLifecycle(
       };
     }
 
-    // Regola 3.3: R >= softCutoffRThreshold e momentum < 0 -> chiudi a mercato, motivo CUTOFF_MOMENTUM_LOSS
+    // Regola 3.3: R >= softCutoffRThreshold e momentum >= 0 ma hard ceiling US raggiunto (21:30 CET)
+    // -> chiusura per scadenza oraria, MAI come perdita di momentum
+    if (momentum >= 0) {
+      const outcome = currentR >= 0.2 ? 'WIN' : 'BREAKEVEN';
+      const notif = `⏰ Hard Ceiling Cutoff: ${trade.ticker} chiuso alle 21:30 CET per scadenza temporale (+${currentR}R).`;
+      return closePosition(
+        effectiveLivePrice,
+        currentR,
+        outcome,
+        'CUTOFF_EXPIRED',
+        `Hard Ceiling US raggiunto (21:30 CET) con momentum non negativo (${momentum}): chiusura per scadenza a ${effectiveLivePrice.toFixed(2)} (+${currentR}R).`,
+        notif
+      );
+    }
+
+    // Regola 3.4: R >= softCutoffRThreshold e momentum < 0 -> chiudi a mercato, motivo CUTOFF_MOMENTUM_LOSS
     const outcome = currentR >= 0.2 ? 'WIN' : 'BREAKEVEN';
     const notif = `📉 Risoluzione Cutoff Momentum Loss: ${trade.ticker} a +${currentR}R ma con perdita di momentum (${momentum} < 0). Chiusura protettiva anticipata.`;
     return closePosition(
       effectiveLivePrice,
       currentR,
       outcome,
-      'CUTOFF_MOMENTUM_LOSS' as any,
+      'CUTOFF_MOMENTUM_LOSS',
       `Chiusura al cutoff US per perdita di momentum (+${currentR}R, momentum ${momentum} < 0) a ${effectiveLivePrice.toFixed(2)}.`,
       notif
     );
