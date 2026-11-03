@@ -137,7 +137,7 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
   const isBlockedByStress = stressReport && stressReport.filterStatus === 'CRITICAL_BLOCKED';
 
   const handleLogTrade = (chosenOutcome: 'OPEN' | 'WIN' | 'LOSS' | 'BREAKEVEN' | 'EXPIRED' = 'OPEN') => {
-    if (circuitBreakerActive || isBlockedByStress) {
+    if ((chosenOutcome === 'OPEN' && circuitBreakerActive) || isBlockedByStress) {
       return;
     }
     if (!setup) return;

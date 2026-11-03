@@ -35,6 +35,7 @@ import {
   isCandidateCompliantWithParameters,
   createJournalEntryFromSetup,
   checkQuoteStaleness,
+  evaluateOpenPositionLifecycle,
 } from './utils/calculator';
 import {
   fetchSessionInfo,
@@ -1179,177 +1180,43 @@ export default function App() {
   };
 
   // 6c. Autonomous Live Trade Monitor
-  // Evaluates every active OPEN position against live tick prices and market hours
+  // Evaluates every active OPEN position against live tick prices, excursions (MFE/MAE), and market sessions
   useEffect(() => {
-    if (quotes.length === 0 || journalEntries.length === 0) return;
+    if (quotes.length === 0) return;
 
-    const openTrades = journalEntries.filter((t) => t.status === 'OPEN');
-    if (openTrades.length === 0) return;
+    setJournalEntries((prevEntries) => {
+      const openTrades = prevEntries.filter((t) => t.status === 'OPEN');
+      if (openTrades.length === 0) return prevEntries;
 
-    let hasResolved = false;
-    let resolvedNotification = '';
+      let hasAnyChange = false;
+      let notificationToDisplay = '';
+      const now = new Date();
 
-    const updatedList = journalEntries.map((trade) => {
-      if (trade.status !== 'OPEN') return trade;
+      const updatedList = prevEntries.map((trade) => {
+        if (trade.status !== 'OPEN') return trade;
 
-      const matchingQuote = quotes.find((q) => q.ticker === trade.ticker);
-      if (!matchingQuote) return trade;
-      if (checkQuoteStaleness(matchingQuote).isStale) return trade;
-      const riskAmountEur = trade.potentialLossEur ?? trade.maxRiskEur;
-      if (riskAmountEur == null || !Number.isFinite(riskAmountEur) || riskAmountEur <= 0) return trade;
-      const frictionEur = Math.max(0, trade.frictionEur ?? 0);
+        const matchingQuote = quotes.find((q) => q.ticker === trade.ticker);
+        const evalResult = evaluateOpenPositionLifecycle(trade, matchingQuote, now, {
+          sessionInfo,
+          accountCapital,
+        });
 
-      const livePrice = matchingQuote.currentPrice ?? matchingQuote.preMarketPrice;
-      if (livePrice == null || livePrice <= 0) return trade;
-
-      const isLong = trade.direction === 'LONG';
-      const entry = trade.entryPrice;
-      const stop = trade.stopLoss;
-      const target1 = trade.target1;
-      const riskDist = Math.abs(entry - stop);
-      const targetDist = Math.abs(target1 - entry);
-
-      // Check 1: Target 1 Hit (WIN)
-      const isTargetHit = isLong ? livePrice >= target1 : livePrice <= target1;
-      if (isTargetHit && riskDist > 0) {
-        hasResolved = true;
-        const rMultiple = +(targetDist / riskDist).toFixed(2);
-        const grossGainEur = trade.potentialGainT1Eur ?? riskAmountEur * rMultiple;
-        const pnlEur = +(grossGainEur - frictionEur).toFixed(2);
-        resolvedNotification = `🎯 Risoluzione Autonoma: ${trade.ticker} ha raggiunto Target 1 a ${livePrice.toFixed(2)} ${matchingQuote.currency} (+${rMultiple}R / +${pnlEur} €)!`;
-
-        return {
-          ...trade,
-          status: 'CLOSED' as const,
-          outcome: 'WIN' as const,
-          exitPrice: livePrice,
-          pnlEur,
-          rMultiple,
-          closedAt: new Date().toISOString(),
-          closeReason: 'TARGET_HIT' as const,
-          notes: `${trade.notes} | Risolto autonomamente dal monitoraggio live: Target 1 toccato a ${livePrice.toFixed(2)} ${matchingQuote.currency}.`.trim(),
-        };
-      }
-
-      // Check 2: Stop Loss Hit (LOSS)
-      const isStopHit = isLong ? livePrice <= stop : livePrice >= stop;
-      if (isStopHit) {
-        hasResolved = true;
-        const rMultiple = -1.0;
-        const pnlEur = +(-riskAmountEur - frictionEur).toFixed(2);
-        resolvedNotification = `🛑 Risoluzione Autonoma: ${trade.ticker} ha attivato Stop Loss a ${livePrice.toFixed(2)} ${matchingQuote.currency} (-1.0R)!`;
-
-        return {
-          ...trade,
-          status: 'CLOSED' as const,
-          outcome: 'LOSS' as const,
-          exitPrice: livePrice,
-          pnlEur,
-          rMultiple,
-          closedAt: new Date().toISOString(),
-          closeReason: 'STOP_HIT' as const,
-          notes: `${trade.notes} | Risolto autonomamente: Stop Loss attivato a ${livePrice.toFixed(2)} ${matchingQuote.currency}.`.trim(),
-        };
-      }
-
-      // Check 3: Cutoff Time Expiration with Adaptive Soft Cutoff (11:30 CET EU / 17:30 CET US)
-      const currentMinutes = sessionInfo?.cet?.currentMinutes ?? 0;
-      const isEuCutoff = trade.session === 'EU' && currentMinutes >= 690; // 11:30 CET
-      const isUsCutoff = trade.session === 'US' && currentMinutes >= 1050; // 17:30 CET
-      const isEuHardCeiling = trade.session === 'EU' && currentMinutes >= 855; // 14:15 CET (pre-macro USA)
-      const isUsHardCeiling = trade.session === 'US' && currentMinutes >= 1290; // 21:30 CET (15:30 NY)
-
-      const priceDiff = isLong ? livePrice - entry : entry - livePrice;
-      const rMultiple = riskDist > 0 ? +(priceDiff / riskDist).toFixed(2) : 0;
-      const pnlEur = +(rMultiple * riskAmountEur - frictionEur).toFixed(2);
-
-      // Sub-scenario 3A: Trade is ALREADY in Soft Cutoff Extension
-      if (trade.softCutoffActive) {
-        // Condition 1: Breakeven retest (price falls back to entry level)
-        const isBreakevenHit = isLong ? livePrice <= entry : livePrice >= entry;
-        if (isBreakevenHit) {
-          hasResolved = true;
-          resolvedNotification = `🛡️ Breakeven Attivato: ${trade.ticker} ritracciato al prezzo di carico in Soft Cutoff. Capitale protetto a pareggio (0.00 €).`;
-          return {
-            ...trade,
-            status: 'CLOSED' as const,
-            outcome: 'BREAKEVEN' as const,
-            exitPrice: entry,
-            pnlEur: -frictionEur,
-            rMultiple: 0,
-            closedAt: new Date().toISOString(),
-            closeReason: 'BREAKEVEN' as const,
-            notes: `${trade.notes} | Chiuso a Breakeven durante estensione Soft Cutoff a ${entry.toFixed(2)} ${matchingQuote.currency}.`.trim(),
-          };
+        if (evalResult.updatedTrade !== trade) {
+          hasAnyChange = true;
+          if (evalResult.notification) {
+            notificationToDisplay = evalResult.notification;
+          }
+          return evalResult.updatedTrade;
         }
-
-        // Condition 2: Hard Exit Ceiling reached (14:15 CET EU pre-macro / 21:30 CET US)
-        if (isEuHardCeiling || isUsHardCeiling) {
-          hasResolved = true;
-          const outcome = rMultiple >= 0.2 ? ('WIN' as const) : ('BREAKEVEN' as const);
-          resolvedNotification = `⏰ Hard Ceiling Cutoff: ${trade.ticker} chiuso alle ${trade.session === 'EU' ? '14:15' : '21:30'} CET prima dei macro USA (+${rMultiple}R / +${pnlEur} €).`;
-          return {
-            ...trade,
-            status: 'CLOSED' as const,
-            outcome,
-            exitPrice: livePrice,
-            pnlEur,
-            rMultiple,
-            closedAt: new Date().toISOString(),
-            closeReason: 'SOFT_CUTOFF_HARD_EXIT' as const,
-            notes: `${trade.notes} | Hard Exit Ceiling raggiunto (${trade.session === 'EU' ? '14:15 pre-macro' : '21:30'} CET): incassato profitto a ${livePrice.toFixed(2)} (+${rMultiple}R).`.trim(),
-          };
-        }
-
-        // Otherwise remain in active extension!
         return trade;
+      });
+
+      if (!hasAnyChange) return prevEntries;
+
+      if (notificationToDisplay) {
+        setOptimizationNotification(notificationToDisplay);
+        setTimeout(() => setOptimizationNotification(null), 6000);
       }
-
-      // Sub-scenario 3B: Standard Cutoff reached (11:30 EU / 17:30 US)
-      if (isEuCutoff || isUsCutoff) {
-        // Soft Cutoff Extension Gate:
-        // C1: Latent profit >= +0.35R
-        // C2: Not already past hard ceiling
-        const canSoftExtend = rMultiple >= 0.35 && !(isEuHardCeiling || isUsHardCeiling);
-
-        if (canSoftExtend) {
-          hasResolved = true;
-          resolvedNotification = `🛡️ Soft Cutoff Attivato: ${trade.ticker} è a +${rMultiple}R! Stop protetto a Pareggio (${entry.toFixed(2)}), posizione mantenuta a mercato verso Target 1 fino al Ceiling (${trade.session === 'EU' ? '14:15' : '21:30'} CET).`;
-          return {
-            ...trade,
-            softCutoffActive: true,
-            softCutoffExtendedAt: new Date().toISOString(),
-            isBreakevenLocked: true,
-            stopLoss: entry, // lock Breakeven
-            notes: `${trade.notes} | 🛡️ Soft Cutoff Attivato a +${rMultiple}R: Stop portato a Pareggio (${entry.toFixed(2)}). Estensione attiva verso Target 1 fino al Ceiling ${trade.session === 'EU' ? '14:15' : '21:30'} CET.`.trim(),
-          };
-        }
-
-        // Insufficient momentum (< +0.35R) or negative -> Disciplined Hard Cutoff Close
-        hasResolved = true;
-        const outcome = Math.abs(rMultiple) < 0.2 ? ('BREAKEVEN' as const) : ('EXPIRED' as const);
-        resolvedNotification = `⏰ Risoluzione Autonoma: ${trade.ticker} cutoff orario superato senza momentum sufficiente (+${rMultiple}R < +0.35R). Chiusura disciplinata (${outcome}).`;
-
-        return {
-          ...trade,
-          status: 'CLOSED' as const,
-          outcome,
-          exitPrice: livePrice,
-          pnlEur,
-          rMultiple,
-          closedAt: new Date().toISOString(),
-          closeReason: 'CUTOFF_EXPIRED' as const,
-          notes: `${trade.notes} | Risolto autonomamente: cutoff orario superato (+${rMultiple}R < +0.35R) a ${livePrice.toFixed(2)} ${matchingQuote.currency}.`.trim(),
-        };
-      }
-
-      return trade;
-    });
-
-    if (hasResolved) {
-      setJournalEntries(updatedList);
-      setOptimizationNotification(resolvedNotification);
-      setTimeout(() => setOptimizationNotification(null), 6000);
 
       // Cloud sync updated list if logged in
       if (currentUser) {
@@ -1359,8 +1226,10 @@ export default function App() {
           }
         });
       }
-    }
-  }, [quotes, sessionInfo]);
+
+      return updatedList;
+    });
+  }, [quotes, sessionInfo, accountCapital, currentUser]);
 
   // 6d. Autonomous Excluded Setups Live Monitor (Counterfactual Tick-by-Tick Evaluation)
   useEffect(() => {

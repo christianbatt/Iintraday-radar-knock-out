@@ -561,11 +561,11 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
           <div className="space-y-2">
             {openTrades.map((t) => {
               const liveQ = quotes.find((q) => q.ticker === t.ticker);
-              const isQuoteFresh = liveQ != null && !checkQuoteStaleness(liveQ).isStale;
-              const livePrice = isQuoteFresh ? liveQ.currentPrice ?? liveQ.preMarketPrice : null;
+              const livePrice = liveQ ? (liveQ.currentPrice ?? liveQ.preMarketPrice ?? liveQ.prevClose ?? null) : null;
               const isLong = t.direction === 'LONG';
               const riskDist = Math.abs(t.entryPrice - t.stopLoss);
               const riskAmountEur = t.potentialLossEur ?? t.maxRiskEur ?? null;
+              const effectiveRiskEur = riskAmountEur ?? 100;
               const frictionEur = Math.max(0, t.frictionEur ?? 0);
 
               let floatingPnlEur: number | null = null;
@@ -576,9 +576,7 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
               if (livePrice && riskDist > 0) {
                 const diff = isLong ? livePrice - t.entryPrice : t.entryPrice - livePrice;
                 floatingR = +(diff / riskDist).toFixed(2);
-                if (riskAmountEur != null) {
-                  floatingPnlEur = +(floatingR * riskAmountEur - frictionEur).toFixed(2);
-                }
+                floatingPnlEur = +(floatingR * effectiveRiskEur - frictionEur).toFixed(2);
                 distToTarget = +(Math.abs(t.target1 - livePrice)).toFixed(2);
                 distToStop = +(Math.abs(livePrice - t.stopLoss)).toFixed(2);
               }
@@ -945,11 +943,11 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
                 const isExpired = trade.outcome === 'EXPIRED';
 
                 const liveQ = isOpen ? quotes.find((q) => q.ticker === trade.ticker) : null;
-                const isQuoteFresh = liveQ != null && !checkQuoteStaleness(liveQ).isStale;
-                const livePrice = isQuoteFresh ? liveQ.currentPrice ?? liveQ.preMarketPrice : null;
+                const livePrice = liveQ ? (liveQ.currentPrice ?? liveQ.preMarketPrice ?? liveQ.prevClose ?? null) : null;
                 const isLong = trade.direction === 'LONG';
                 const riskDist = Math.abs(trade.entryPrice - trade.stopLoss);
                 const riskAmountEur = trade.potentialLossEur ?? trade.maxRiskEur ?? null;
+                const effectiveRiskEur = riskAmountEur ?? 100;
                 const frictionEur = Math.max(0, trade.frictionEur ?? 0);
 
                 let floatingR = trade.rMultiple;
@@ -960,9 +958,7 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
                 if (isOpen && livePrice != null && riskDist > 0) {
                   const diff = isLong ? livePrice - trade.entryPrice : trade.entryPrice - livePrice;
                   floatingR = +(diff / riskDist).toFixed(2);
-                  if (riskAmountEur != null) {
-                    floatingPnlEur = +(floatingR * riskAmountEur - frictionEur).toFixed(2);
-                  }
+                  floatingPnlEur = +(floatingR * effectiveRiskEur - frictionEur).toFixed(2);
                   distToTarget = +(Math.abs(trade.target1 - livePrice)).toFixed(2);
                   distToStop = +(Math.abs(livePrice - trade.stopLoss)).toFixed(2);
                 }
@@ -1054,6 +1050,12 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
                           ? `+${(isOpen ? floatingR : trade.rMultiple).toFixed(2)}R`
                           : `${(isOpen ? floatingR : trade.rMultiple).toFixed(2)}R`}
                       </span>
+                      {(trade.mfe != null || trade.mae != null) && (
+                        <div className="text-[9px] font-normal tracking-tight font-mono">
+                          {trade.mfe != null && <span className="text-emerald-400 mr-1" title="MFE (Massimo Favorevole)">+{trade.mfe.toFixed(2)}</span>}
+                          {trade.mae != null && <span className="text-rose-400" title="MAE (Massimo Avverso)">{trade.mae.toFixed(2)}</span>}
+                        </div>
+                      )}
                     </td>
                     <td className="py-2 px-3 text-center">
                       {isOpen ? (
@@ -1076,6 +1078,19 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({
                       ) : (
                         <span className="inline-flex items-center gap-1 text-slate-400 font-bold text-[11px]">
                           <MinusCircle className="w-3.5 h-3.5" /> BE
+                        </span>
+                      )}
+                      {trade.closeReason && (
+                        <span className="block text-[8px] text-slate-500 font-mono mt-0.5 uppercase">
+                          {trade.closeReason === 'STOP_GAP_SLIPPAGE'
+                            ? 'GAP STOP'
+                            : trade.closeReason === 'EOD_CUTOFF'
+                            ? 'EOD'
+                            : trade.closeReason === 'TARGET_HIT'
+                            ? 'TARGET'
+                            : trade.closeReason === 'STOP_HIT'
+                            ? 'STOP'
+                            : trade.closeReason}
                         </span>
                       )}
                     </td>

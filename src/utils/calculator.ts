@@ -30,6 +30,7 @@ import {
   ExcludedOutcomeStatus,
   EntryMode,
   MacroEvent,
+  SessionInfo,
 } from '../types/radar';
 import { TRADING_PARAMS } from '../config/tradingParams';
 import { getMarketTime, getExchangeDateStr } from './timezone';
@@ -4319,3 +4320,321 @@ export function runExcludedSetupsAutoAnalysis(
     analyzedAt: new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }),
   };
 }
+
+export interface PositionEvaluationResult {
+  updatedTrade: TradeJournalEntry;
+  wasClosed: boolean;
+  reason?: TradeJournalEntry['closeReason'] | 'SOFT_CUTOFF_ACTIVATED';
+  notification?: string;
+}
+
+/**
+ * Valuta il ciclo di vita di una posizione aperta (Paper o Reale)
+ * - Monitoraggio tick-by-tick indipendente dal limite giornaliero nuovi trade
+ * - Esecuzione automatica al primo tocco di target o stop
+ * - Rilevamento salto/gap oltre lo stop con calcolo effettivo slippage e R negativo
+ * - Tracciamento continuo MFE (massimo favorevole) e MAE (massimo avverso)
+ * - Chiusura di fine sessione (EOD) con motivo esplicito (EOD_CUTOFF)
+ * - Tracciamento cronistoria transizioni di stato (stateHistory)
+ */
+export function evaluateOpenPositionLifecycle(
+  trade: TradeJournalEntry,
+  quote: RawQuoteData | undefined,
+  currentTime: Date = new Date(),
+  options?: {
+    sessionInfo?: SessionInfo | null;
+    accountCapital?: number;
+    forceEod?: boolean;
+    ignoreStaleness?: boolean;
+  }
+): PositionEvaluationResult {
+  if (trade.status !== 'OPEN') {
+    return { updatedTrade: trade, wasClosed: false };
+  }
+
+  const livePrice =
+    quote?.currentPrice ??
+    quote?.preMarketPrice ??
+    quote?.prevClose ??
+    (trade.exitPrice > 0 ? trade.exitPrice : null);
+
+  const isLong = trade.direction === 'LONG';
+  const entry = trade.entryPrice;
+  const stop = trade.stopLoss;
+  const target1 = trade.target1;
+  const market = trade.market || (trade.session === 'US' ? 'US' : 'EU');
+
+  const riskDist = Math.abs(entry - stop) > 0 ? Math.abs(entry - stop) : entry > 0 ? entry * 0.005 : 1;
+  const targetDist = Math.abs(target1 - entry) > 0 ? Math.abs(target1 - entry) : riskDist * TRADING_PARAMS.T1_R;
+
+  // Fallback capital and risk amount: non bloccare mai il monitoraggio se riskAmountEur manca
+  const fallbackCap = options?.accountCapital && options.accountCapital > 0 ? options.accountCapital : 10000;
+  const riskAmountEur =
+    typeof trade.potentialLossEur === 'number' && Number.isFinite(trade.potentialLossEur) && trade.potentialLossEur > 0
+      ? trade.potentialLossEur
+      : typeof trade.maxRiskEur === 'number' && Number.isFinite(trade.maxRiskEur) && trade.maxRiskEur > 0
+      ? trade.maxRiskEur
+      : +(fallbackCap * 0.01).toFixed(2);
+  const frictionEur = Math.max(0, trade.frictionEur ?? 0);
+
+  // Time metrics
+  const marketTime = getMarketTime(market, currentTime);
+  const currentMinutes = options?.sessionInfo?.cet?.currentMinutes ?? marketTime.hour * 60 + marketTime.minute;
+
+  // Excursion update (MFE / MAE in R-multiples)
+  let newMfe = typeof trade.mfe === 'number' ? trade.mfe : 0;
+  let newMae = typeof trade.mae === 'number' ? trade.mae : 0;
+
+  if (livePrice != null && livePrice > 0) {
+    const tickR = isLong ? (livePrice - entry) / riskDist : (entry - livePrice) / riskDist;
+    newMfe = Math.max(newMfe, tickR);
+    newMae = Math.min(newMae, tickR);
+
+    // Also consider quote high/low if present
+    if (typeof quote?.todayHigh === 'number' && typeof quote?.todayLow === 'number') {
+      const highR = isLong ? (quote.todayHigh - entry) / riskDist : (entry - quote.todayHigh) / riskDist;
+      const lowR = isLong ? (quote.todayLow - entry) / riskDist : (entry - quote.todayLow) / riskDist;
+      newMfe = Math.max(newMfe, highR, lowR);
+      newMae = Math.min(newMae, highR, lowR);
+    }
+  }
+
+  newMfe = +newMfe.toFixed(2);
+  newMae = +newMae.toFixed(2);
+
+  const prevHistory = trade.stateHistory ? [...trade.stateHistory] : [];
+
+  // Helper function to close position with explicit reason, slippage, and history
+  const closePosition = (
+    exitP: number,
+    rMult: number,
+    outcome: 'WIN' | 'LOSS' | 'BREAKEVEN' | 'EXPIRED',
+    reason: TradeJournalEntry['closeReason'],
+    noteSuffix: string,
+    notification: string,
+    slippageP: number = 0,
+    slippageE: number = 0
+  ): PositionEvaluationResult => {
+    const timestampIso = currentTime.toISOString();
+    const finalPnlEur =
+      outcome === 'WIN'
+        ? trade.potentialGainT1Eur != null && Math.abs(rMult - targetDist / riskDist) < 0.05
+          ? +(trade.potentialGainT1Eur - frictionEur).toFixed(2)
+          : +(rMult * riskAmountEur - frictionEur).toFixed(2)
+        : outcome === 'LOSS'
+        ? +(rMult * riskAmountEur - frictionEur).toFixed(2)
+        : outcome === 'BREAKEVEN'
+        ? -frictionEur
+        : +(rMult * riskAmountEur - frictionEur).toFixed(2);
+
+    const updatedTrade: TradeJournalEntry = {
+      ...trade,
+      status: 'CLOSED',
+      outcome,
+      exitPrice: +exitP.toFixed(4),
+      pnlEur: finalPnlEur,
+      rMultiple: +rMult.toFixed(2),
+      closedAt: timestampIso,
+      closeReason: reason,
+      mfe: newMfe,
+      mae: newMae,
+      slippagePrice: slippageP > 0 ? +slippageP.toFixed(4) : undefined,
+      slippageEur: slippageE > 0 ? +slippageE.toFixed(2) : undefined,
+      potentialLossEur: trade.potentialLossEur ?? riskAmountEur,
+      maxRiskEur: trade.maxRiskEur ?? riskAmountEur,
+      notes: `${trade.notes} | ${noteSuffix}`.trim(),
+      stateHistory: [
+        ...prevHistory,
+        {
+          timestamp: timestampIso,
+          status: 'CLOSED',
+          price: +exitP.toFixed(4),
+          reason: reason || 'UNKNOWN',
+          notes: noteSuffix,
+        },
+      ],
+    };
+
+    return {
+      updatedTrade,
+      wasClosed: true,
+      reason,
+      notification,
+    };
+  };
+
+  // CHECK 1: Target 1 Hit (WIN)
+  if (livePrice != null && livePrice > 0) {
+    const isTargetHit = isLong ? livePrice >= target1 : livePrice <= target1;
+    if (isTargetHit) {
+      const rMultiple = +(targetDist / riskDist).toFixed(2);
+      newMfe = Math.max(newMfe, rMultiple);
+      const grossGainEur = trade.potentialGainT1Eur ?? riskAmountEur * rMultiple;
+      const pnlEur = +(grossGainEur - frictionEur).toFixed(2);
+      const notif = `🎯 Risoluzione Autonoma: ${trade.ticker} ha raggiunto Target 1 a ${livePrice.toFixed(2)} (+${rMultiple}R / +${pnlEur} €)!`;
+      return closePosition(
+        livePrice,
+        rMultiple,
+        'WIN',
+        'TARGET_HIT',
+        `Target 1 toccato a ${livePrice.toFixed(2)}.`,
+        notif
+      );
+    }
+
+    // CHECK 2: Stop Loss Hit (LOSS / SLIPPAGE)
+    const isStopHit = isLong ? livePrice <= stop : livePrice >= stop;
+    if (isStopHit) {
+      const priceDiff = isLong ? livePrice - entry : entry - livePrice;
+      const actualR = +(priceDiff / riskDist).toFixed(2);
+      newMae = Math.min(newMae, actualR);
+
+      // Slippage: check if price gapped past stop level by more than 1 cent
+      const slippageDiff = isLong ? stop - livePrice : livePrice - stop;
+      const isSlippage = slippageDiff > 0.01;
+      const finalR = isSlippage ? actualR : -1.0;
+      const reason: TradeJournalEntry['closeReason'] = isSlippage ? 'STOP_GAP_SLIPPAGE' : 'STOP_HIT';
+      const slippageEur = isSlippage ? +(Math.abs(actualR - -1.0) * riskAmountEur).toFixed(2) : 0;
+      const notif = isSlippage
+        ? `🛑 Risoluzione Stop con Slippage: ${trade.ticker} ha saltato lo stop a ${livePrice.toFixed(2)} (${finalR}R / slippage: ${slippageDiff.toFixed(2)})!`
+        : `🛑 Risoluzione Autonoma: ${trade.ticker} ha attivato Stop Loss a ${livePrice.toFixed(2)} (-1.0R)!`;
+
+      return closePosition(
+        livePrice,
+        finalR,
+        'LOSS',
+        reason,
+        isSlippage
+          ? `Stop Loss saltato (gap/slippage) a ${livePrice.toFixed(2)} (${finalR}R, slippage: ${slippageDiff.toFixed(2)}).`
+          : `Stop Loss attivato a ${livePrice.toFixed(2)} (-1.0R).`,
+        notif,
+        isSlippage ? slippageDiff : 0,
+        slippageEur
+      );
+    }
+  }
+
+  const effectiveLivePrice = livePrice != null && livePrice > 0 ? livePrice : entry;
+  const currentDiff = isLong ? effectiveLivePrice - entry : entry - effectiveLivePrice;
+  const currentR = riskDist > 0 ? +(currentDiff / riskDist).toFixed(2) : 0;
+
+  // CHECK 3: End Of Day (EOD) Market Close
+  // EU market closes at 17:30 CET (1050m)
+  // US market closes at 22:00 CET (1320m) / 16:00 NY
+  // Also close if calendar date has rolled over
+  const tradeDateStr = trade.date; // "DD/MM/YYYY"
+  const currentItDateStr = currentTime.toLocaleDateString('it-IT');
+  const isPastDay = Boolean(tradeDateStr && currentItDateStr && tradeDateStr !== currentItDateStr);
+  const isEuEod = market === 'EU' && (currentMinutes >= 1050 || options?.sessionInfo?.cet?.marketStatusEU === 'CLOSED');
+  const isUsEod = market === 'US' && (currentMinutes >= 1320 || options?.sessionInfo?.cet?.marketStatusUS === 'CLOSED');
+
+  if (options?.forceEod || isPastDay || isEuEod || isUsEod) {
+    const outcome = currentR >= 0.2 ? 'WIN' : currentR <= -0.2 ? 'LOSS' : 'EXPIRED';
+    const notif = `🏁 Chiusura EOD: ${trade.ticker} chiuso al termine della sessione a ${effectiveLivePrice.toFixed(2)} (${currentR > 0 ? '+' : ''}${currentR}R).`;
+    return closePosition(
+      effectiveLivePrice,
+      currentR,
+      outcome,
+      'EOD_CUTOFF',
+      `Chiusura di fine sessione (EOD) a ${effectiveLivePrice.toFixed(2)} (${currentR > 0 ? '+' : ''}${currentR}R).`,
+      notif
+    );
+  }
+
+  // CHECK 4: Intraday Cutoff and Soft Cutoff (11:30 EU / 17:30 US)
+  const isEuCutoff = market === 'EU' && currentMinutes >= 690; // 11:30 CET
+  const isUsCutoff = market === 'US' && currentMinutes >= 1050; // 17:30 CET
+  const isEuHardCeiling = market === 'EU' && currentMinutes >= 855; // 14:15 CET (pre-macro USA)
+  const isUsHardCeiling = market === 'US' && currentMinutes >= 1290; // 21:30 CET (15:30 NY)
+
+  // Sub-scenario 4A: Trade is ALREADY in Soft Cutoff Extension
+  if (trade.softCutoffActive) {
+    // Condition 1: Breakeven retest
+    const isBreakevenHit = isLong ? effectiveLivePrice <= entry : effectiveLivePrice >= entry;
+    if (isBreakevenHit) {
+      const notif = `🛡️ Breakeven Attivato: ${trade.ticker} ritracciato al prezzo di carico in Soft Cutoff. Capitale protetto a pareggio (0.00 €).`;
+      return closePosition(
+        entry,
+        0,
+        'BREAKEVEN',
+        'BREAKEVEN',
+        `Chiuso a Breakeven durante estensione Soft Cutoff a ${entry.toFixed(2)}.`,
+        notif
+      );
+    }
+
+    // Condition 2: Hard Exit Ceiling reached
+    if (isEuHardCeiling || isUsHardCeiling) {
+      const outcome = currentR >= 0.2 ? 'WIN' : 'BREAKEVEN';
+      const notif = `⏰ Hard Ceiling Cutoff: ${trade.ticker} chiuso alle ${market === 'EU' ? '14:15' : '21:30'} CET prima dei macro (+${currentR}R).`;
+      return closePosition(
+        effectiveLivePrice,
+        currentR,
+        outcome,
+        'SOFT_CUTOFF_HARD_EXIT',
+        `Hard Exit Ceiling raggiunto (${market === 'EU' ? '14:15' : '21:30'} CET): incassato a ${effectiveLivePrice.toFixed(2)} (+${currentR}R).`,
+        notif
+      );
+    }
+  } else if (isEuCutoff || isUsCutoff) {
+    // Sub-scenario 4B: Standard Cutoff reached
+    const canSoftExtend = currentR >= 0.35 && !(isEuHardCeiling || isUsHardCeiling);
+    if (canSoftExtend) {
+      const timestampIso = currentTime.toISOString();
+      const updatedTrade: TradeJournalEntry = {
+        ...trade,
+        softCutoffActive: true,
+        softCutoffExtendedAt: timestampIso,
+        isBreakevenLocked: true,
+        stopLoss: entry, // lock Breakeven
+        mfe: newMfe,
+        mae: newMae,
+        notes: `${trade.notes} | 🛡️ Soft Cutoff Attivato a +${currentR}R: Stop portato a Pareggio (${entry.toFixed(2)}).`.trim(),
+        stateHistory: [
+          ...prevHistory,
+          {
+            timestamp: timestampIso,
+            status: 'OPEN',
+            price: effectiveLivePrice,
+            reason: 'SOFT_CUTOFF_ACTIVATED',
+            notes: `Soft Cutoff attivato a +${currentR}R. Stop lock a ${entry.toFixed(2)}.`,
+          },
+        ],
+      };
+      return {
+        updatedTrade,
+        wasClosed: false,
+        reason: 'SOFT_CUTOFF_ACTIVATED',
+        notification: `🛡️ Soft Cutoff Attivato: ${trade.ticker} è a +${currentR}R! Stop protetto a Pareggio (${entry.toFixed(2)}).`,
+      };
+    } else {
+      // Disciplined cutoff close
+      const outcome = Math.abs(currentR) < 0.2 ? 'BREAKEVEN' : currentR > 0 ? 'WIN' : 'EXPIRED';
+      const notif = `⏰ Risoluzione Autonoma: ${trade.ticker} cutoff orario superato (+${currentR}R < +0.35R). Chiusura disciplinata (${outcome}).`;
+      return closePosition(
+        effectiveLivePrice,
+        currentR,
+        outcome,
+        'CUTOFF_EXPIRED',
+        `Cutoff orario superato (+${currentR}R < +0.35R) a ${effectiveLivePrice.toFixed(2)}.`,
+        notif
+      );
+    }
+  }
+
+  // If still OPEN, update MFE and MAE
+  const mfeOrMaeChanged = trade.mfe !== newMfe || trade.mae !== newMae;
+  if (mfeOrMaeChanged) {
+    return {
+      updatedTrade: {
+        ...trade,
+        mfe: newMfe,
+        mae: newMae,
+      },
+      wasClosed: false,
+    };
+  }
+
+  return { updatedTrade: trade, wasClosed: false };
+}
+

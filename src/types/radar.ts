@@ -355,7 +355,26 @@ export interface TradeJournalEntry {
   notes: string;
   isPaper: boolean;
   closedAt?: string;
-  closeReason?: 'TARGET_HIT' | 'STOP_HIT' | 'BREAKEVEN' | 'CUTOFF_EXPIRED' | 'SOFT_CUTOFF_HARD_EXIT' | 'MANUAL';
+  closeReason?:
+    | 'TARGET_HIT'
+    | 'STOP_HIT'
+    | 'STOP_GAP_SLIPPAGE'
+    | 'BREAKEVEN'
+    | 'CUTOFF_EXPIRED'
+    | 'SOFT_CUTOFF_HARD_EXIT'
+    | 'EOD_CUTOFF'
+    | 'MANUAL';
+  mfe?: number; // Maximum Favorable Excursion (in R-multiples)
+  mae?: number; // Maximum Adverse Excursion (in R-multiples)
+  slippagePrice?: number; // Slippage price diff relative to stop
+  slippageEur?: number; // Estimated monetary cost of slippage in EUR
+  stateHistory?: Array<{
+    timestamp: string;
+    status: 'OPEN' | 'CLOSED';
+    price: number;
+    reason: string;
+    notes?: string;
+  }>;
   softCutoffActive?: boolean;
   softCutoffExtendedAt?: string;
   isBreakevenLocked?: boolean;
