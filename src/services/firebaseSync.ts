@@ -353,7 +353,8 @@ export async function batchUploadTradesToCloud(
 export function subscribeToUserCloudData(
   userId: string,
   onSettings: (data: CloudSystemSettings) => void,
-  onTrades: (trades: TradeJournalEntry[]) => void
+  onTrades: (trades: TradeJournalEntry[]) => void,
+  onEmpty?: () => void
 ): () => void {
   if (!db) {
     return () => {};
@@ -374,6 +375,8 @@ export function subscribeToUserCloudData(
           underlyings: d.underlyings || undefined,
           updatedAt: d.updatedAt || new Date().toISOString(),
         });
+      } else if (onEmpty && !snap.metadata.fromCache) {
+        onEmpty();
       }
     },
     (err) => {

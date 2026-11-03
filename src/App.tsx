@@ -357,11 +357,14 @@ export default function App() {
 
   const parametersRef = React.useRef(parameters);
   const lastAppliedRemoteVersionRef = React.useRef<number | null>(null);
+  const cloudSnapshotReceivedRef = React.useRef(false);
+  const currentUserRef = React.useRef<User | null>(null);
 
   // Sync parameters & proposal to localStorage & Shared Server
   useEffect(() => {
     parametersRef.current = parameters;
     localStorage.setItem('intraday_radar_parameters', JSON.stringify(parameters));
+    if (currentUserRef.current && !cloudSnapshotReceivedRef.current) return;
     if (!isRemoteSyncingRef.current && hasInitialSyncCompletedRef.current) {
       if (!shouldPushLocalParameters(parameters, lastAppliedRemoteVersionRef.current)) return;
       pushSharedAppState({ parameters });
@@ -525,11 +528,14 @@ export default function App() {
       }
 
       setCurrentUser(user);
+      currentUserRef.current = user;
+      cloudSnapshotReceivedRef.current = false;
       if (user) {
         setCloudSyncStatus('SYNCING');
         unsubData = subscribeToUserCloudData(
           user.uid,
           (cloudSettings) => {
+            cloudSnapshotReceivedRef.current = true;
             if (shouldApplyCloudParameters(parametersRef.current, cloudSettings.parameters)) {
               setParameters(sanitizeScoreParameters(cloudSettings.parameters));
               lastAppliedRemoteVersionRef.current = cloudSettings.parameters.version;
@@ -567,6 +573,9 @@ export default function App() {
               return merged;
             });
             setCloudSyncStatus('SYNCED');
+          },
+          () => {
+            cloudSnapshotReceivedRef.current = true;
           }
         );
       } else {
