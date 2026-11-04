@@ -27,6 +27,7 @@ import {
 } from './src/utils/calculator';
 import { getExchangeDateStr, getMarketTime } from './src/utils/timezone';
 import { TRADING_PARAMS } from './src/config/tradingParams';
+import { VWAP_PROMPT_BLOCK } from './src/config/vwapPrompt';
 import { AILearnedInsight, VwapSignalState } from './src/types/radar';
 import { runNightlyLearning } from './scripts/nightly_learning';
 
@@ -2553,7 +2554,7 @@ DATI SOTTOSTANTE:
 - Relative Volume (RVOL): ${candidate.rvol ?? 'dato non disponibile'}
 - ATR(14) Giornaliero: ${candidate.atr14 ?? 'dato non disponibile'}
 - Range Ieri: Min ${candidate.prevLow ?? 'nd'} - Max ${candidate.prevHigh ?? 'nd'}
-- VWAP di sessione: ${candidate.vwapState ? `${candidate.vwapState.state} | distanza ${candidate.vwapState.distAtr ?? 'nd'} ATR | pendenza ${candidate.vwapState.slopeAtr ?? 'nd'} ATR | coverage ${candidate.vwapState.coverage ?? 'nd'} | flag ${(candidate.vwapState.flags || []).join(',') || 'nessuno'}` : 'dato non disponibile'}
+- VWAP di sessione: ${candidate.vwapState ? `${candidate.vwapState.state} | distanza ${candidate.vwapState.distAtr ?? 'nd'} ATR | pendenza ${candidate.vwapState.slopeAtr ?? 'nd'} ATR | coverage ${candidate.vwapState.coverage ?? 'nd'} | volume ${candidate.vwapState.volumeRatio ?? 'nd'}x media 5m | flag ${(candidate.vwapState.flags || []).join(',') || 'nessuno'}` : 'dato non disponibile'}
 - Futures Indice Riferimento: ${JSON.stringify(futures || {})}
 
 NOTIZIE REALI RACCOLTE:
@@ -2564,7 +2565,7 @@ ${realNews
   )
   .join('\n\n')}
 
-Lettura VWAP di sessione: ABOVE/BELOW = prezzo sopra/sotto la VWAP, PULLBACK_HOLD = ritorno alla VWAP con tenuta, RECLAIM = recupero con volumi, REJECT = respinta con volumi; distanza e pendenza sono in ATR 5m e coverage bassa rende lo stato poco affidabile. E' contesto, non una direttiva vincolante.
+${VWAP_PROMPT_BLOCK}
 Istruzione: Valuta il catalizzatore qualitativo e rispondi in JSON:
 decisione: "TRADE" oppure "NESSUN_TRADE" (usa NESSUN_TRADE solo per fattori ostativi gravi come utili imminenti o rischi fatali)
 direzione: "LONG" oppure "SHORT" oppure "NESSUNA"
@@ -2644,6 +2645,11 @@ newsBonusScore: numero intero da 0 a 15 (punti bonus aggiuntivi per forza del ca
           newsBonusScore: {
             type: Type.INTEGER,
             description: 'Punti bonus da 0 a 15 assegnati per il catalizzatore/notizia',
+          },
+          confidenza: {
+            type: Type.INTEGER,
+            description:
+              'Confidenza 0-100 sul setup: abbassala se lo stato VWAP e contrario, non rifiutare il setup',
           },
         },
         required: [
