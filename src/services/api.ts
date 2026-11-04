@@ -9,13 +9,29 @@ import {
 } from '../types/radar';
 import { auth } from './firebaseSync';
 
+// IPOTESI (nessun valore preesistente): timeout espliciti lato client.
+const API_TIMEOUT_MS = 20000;
+const AI_TIMEOUT_MS = 45000;
+
+function timeoutForUrl(input: RequestInfo | URL): number {
+  const url = String(input);
+  return /\/api\/(ai\/|analyze-catalyst)/.test(url) ? AI_TIMEOUT_MS : API_TIMEOUT_MS;
+}
+
+// AUDIT D3: una richiesta senza risposta entro il timeout fallisce con un errore esplicito,
+// invece di restare appesa o restituire un payload vuoto interpretabile come dato valido.
+function withTimeout(init: RequestInit, timeoutMs: number): RequestInit {
+  if (init.signal) return init;
+  return { ...init, signal: AbortSignal.timeout(timeoutMs) };
+}
+
 async function fetchWithFirebaseAuth(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
   const currentUser = auth?.currentUser;
   if (currentUser) {
     headers.set('Authorization', `Bearer ${await currentUser.getIdToken()}`);
   }
-  return fetch(input, { ...init, headers });
+  return fetch(input, { ...withTimeout(init, timeoutForUrl(input)), headers });
 }
 
 async function safeJson<T>(res: Response, defaultErrMsg: string): Promise<T> {
@@ -34,13 +50,13 @@ async function safeJson<T>(res: Response, defaultErrMsg: string): Promise<T> {
 }
 
 export async function fetchSessionInfo(): Promise<SessionInfo> {
-  const res = await fetch('/api/session');
+  const res = await fetch('/api/session', withTimeout({}, timeoutForUrl('/api/session')));
   return safeJson<SessionInfo>(res, 'Errore durante il recupero della sessione');
 }
 
 export async function fetchMacroCalendar(): Promise<MacroCalendarState> {
   try {
-    const res = await fetch('/api/macro-calendar');
+    const res = await fetch('/api/macro-calendar', withTimeout({}, timeoutForUrl('/api/macro-calendar')));
     if (!res.ok) {
       return { events: [], activeBlackoutEvent: null, isBlackoutActive: false, spreadWarningTradeRepublic: null };
     }
@@ -52,7 +68,7 @@ export async function fetchMacroCalendar(): Promise<MacroCalendarState> {
 
 export async function fetchBenchmarkFutures(forceRefresh: boolean = false): Promise<any> {
   const url = forceRefresh ? `/api/futures?refresh=true&_=${Date.now()}` : '/api/futures';
-  const res = await fetch(url);
+  const res = await fetch(url, withTimeout({}, timeoutForUrl(url)));
   return safeJson<any>(res, 'Errore durante il recupero dei futures');
 }
 
@@ -61,17 +77,20 @@ export async function fetchMarketData(
   forceRefresh: boolean = false
 ): Promise<RawQuoteData[]> {
   const url = forceRefresh ? `/api/market-data?refresh=true&_=${Date.now()}` : '/api/market-data';
-  const res = await fetch(url, {
+  const res = await fetch(url, withTimeout({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ underlyings, refresh: forceRefresh }),
-  });
+  }, timeoutForUrl(url)));
   const json = await safeJson<{ data: RawQuoteData[] }>(res, 'Errore durante il recupero dei dati di mercato');
   return json.data || [];
 }
 
 export async function fetchTickerNews(ticker: string, name: string): Promise<NewsItem[]> {
-  const res = await fetch(`/api/news/${encodeURIComponent(ticker)}?name=${encodeURIComponent(name)}`);
+  const res = await fetch(
+    `/api/news/${encodeURIComponent(ticker)}?name=${encodeURIComponent(name)}`,
+    withTimeout({}, API_TIMEOUT_MS)
+  );
   if (!res.ok) return [];
   const contentType = res.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) return [];

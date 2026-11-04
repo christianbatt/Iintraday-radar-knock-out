@@ -621,6 +621,24 @@ function calculateWilderRsi(closes: number[], period: number = 14): number | nul
   return +(100 - 100 / (1 + rs)).toFixed(1);
 }
 
+/**
+ * AUDIT D3: timeout esplicito su ogni fetch verso API esterne.
+ * IPOTESI: 10000 ms di default (nessun valore preesistente). Un timeout produce un errore
+ * esplicito (DOMException/AbortError), mai una risposta vuota trattata come dato valido.
+ * Un init.signal gia' presente (timeout dedicato del chiamante) ha la precedenza.
+ */
+const EXTERNAL_FETCH_TIMEOUT_MS = 10000;
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs: number = EXTERNAL_FETCH_TIMEOUT_MS
+): Promise<globalThis.Response> {
+  // Nota: in questo file `Response` e' quello di Express; qui serve il Response di fetch.
+  if (init.signal) return fetch(url, init);
+  return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+}
+
 // Fetch real live EUR/USD exchange rate from Yahoo Finance feed (no hardcoded fallback)
 async function getLiveEurUsdRate(): Promise<number> {
   const cacheKey = 'fx:EURUSD';
@@ -628,7 +646,7 @@ async function getLiveEurUsdRate(): Promise<number> {
   if (cached) return cached.data;
 
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X?interval=1d&range=1d&_=${Date.now()}`;
-  const resp = await fetch(url, {
+  const resp = await fetchWithTimeout(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', Accept: 'application/json' },
   });
   if (!resp.ok) {
@@ -651,7 +669,7 @@ async function getLiveEurUsdRate(): Promise<number> {
 async function fetchWarmup5mBars(ticker: string, range: string): Promise<IndicatorBarInput[]> {
   const ySymbol = ticker.includes('.') ? ticker : `${ticker}`;
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}?interval=5m&range=${encodeURIComponent(range)}&includePrePost=true&_=${Date.now()}`;
-  const resp = await fetch(url, {
+  const resp = await fetchWithTimeout(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
     signal: AbortSignal.timeout(6000),
   });
@@ -713,7 +731,7 @@ async function getIntraday5mMetrics(
   try {
     const ySymbol = ticker.includes('.') ? ticker : `${ticker}`;
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}?interval=5m&range=60d&includePrePost=true&_=${Date.now()}`;
-    const resp = await fetch(url, {
+    const resp = await fetchWithTimeout(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
       signal: AbortSignal.timeout(6000),
     });
@@ -1177,7 +1195,7 @@ async function fetchQuoteForTicker(
   if (finnhubKey) {
     try {
       const cleanTicker = queryTicker.replace('.DE', '').replace('.MI', '').replace('.PA', '').replace('.AS', '');
-      const resp = await fetch(
+      const resp = await fetchWithTimeout(
         `https://finnhub.io/api/v1/quote?symbol=${cleanTicker}&token=${finnhubKey}`
       );
       if (resp.ok) {
@@ -1201,7 +1219,7 @@ async function fetchQuoteForTicker(
     const ySymbol = queryTicker.includes('.') ? queryTicker : `${queryTicker}`;
     const nocache = Date.now();
     const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}?interval=1d&range=1mo&includePrePost=true&_=${nocache}`;
-    const yResp = await fetch(yUrl, {
+    const yResp = await fetchWithTimeout(yUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
         Accept: 'application/json',
@@ -1260,7 +1278,7 @@ async function fetchQuoteForTicker(
         if (market === 'US' && (!pmVol || !preMarketP || preMarketP === prevC)) {
           try {
             const pmUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}?interval=5m&range=1d&includePrePost=true&_=${Date.now()}`;
-            const pmResp = await fetch(pmUrl, {
+            const pmResp = await fetchWithTimeout(pmUrl, {
               headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
             });
             if (pmResp.ok) {
@@ -1542,7 +1560,7 @@ async function getFutures(bypassCache: boolean = false) {
     try {
       const nocache = Date.now();
       const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5d&_=${nocache}`;
-      const resp = await fetch(url, {
+      const resp = await fetchWithTimeout(url, {
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
       });
       if (resp.ok) {
@@ -1618,7 +1636,7 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
       const cleanTicker = queryTicker.split('.')[0];
       const today = new Date().toISOString().split('T')[0];
       const yesterday = new Date(Date.now() - 86400000 * 2).toISOString().split('T')[0];
-      const resp = await fetch(
+      const resp = await fetchWithTimeout(
         `https://finnhub.io/api/v1/company-news?symbol=${cleanTicker}&from=${yesterday}&to=${today}&token=${finnhubKey}`
       );
       if (resp.ok) {
@@ -1649,7 +1667,7 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
     try {
       const query = encodeURIComponent(`${searchName} ${isSpaceX ? 'SpaceX' : ticker} borsa`);
       const rssUrl = `https://news.google.com/rss/search?q=${query}&hl=it&gl=IT&ceid=IT:it`;
-      const rssResp = await fetch(rssUrl, {
+      const rssResp = await fetchWithTimeout(rssUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         },
@@ -1717,7 +1735,7 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
     try {
       const usQuery = encodeURIComponent(`${searchName} ${isSpaceX ? 'SpaceX' : ticker} stock`);
       const usRssUrl = `https://news.google.com/rss/search?q=${usQuery}&hl=en-US&gl=US&ceid=US:en`;
-      const usResp = await fetch(usRssUrl, {
+      const usResp = await fetchWithTimeout(usRssUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         },
@@ -1836,7 +1854,7 @@ async function fetchFinanceCalendarToday(): Promise<{ rawEvents: any[]; marketCl
     const timeoutId = setTimeout(() => controller.abort(), 4000);
     // Countries: US (United States), EU (Euro area), DE (Germany)
     const url = 'https://www.financecalendar.com/wp-json/fc/v1/today?country=US,EU,DE&impact=high';
-    const resp = await fetch(url, {
+    const resp = await fetchWithTimeout(url, {
       signal: controller.signal,
       headers: {
         Accept: 'application/json',
@@ -2553,7 +2571,7 @@ async function callOpenRouterModel(
       payload.model = modelOrModels;
     }
 
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const res = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey.trim()}`,
@@ -2697,7 +2715,7 @@ app.post('/api/test-openrouter', requireServerApiKey, async (req: Request, res: 
     for (const model of modelsToTest) {
       const t0 = Date.now();
       try {
-        const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        const resp = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${rawKey}`,
