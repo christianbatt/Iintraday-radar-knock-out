@@ -2,7 +2,8 @@
  * Indicatori di setup su barre 5m - funzioni pure, nessun I/O.
  *
  * Regole comuni (TUTTE IPOTESI, vedi TRADING_PARAMS.IND_* / ST_* / ADX_* / STOCH_RSI_* / PSAR_*):
- * - input: barre 5m della sessione regolare corrente + sessione regolare precedente;
+ * - input: barre 5m della sessione regolare corrente + fino a WARMUP_MAX_PRIOR_SESSIONS
+ *   sessioni regolari precedenti realmente presenti nel feed (festivita' escluse, nessuna barra inventata);
  * - after-market escluso e barre incomplete scartate;
  * - ogni indicatore restituisce status OK oppure UNKNOWN con reason esplicita
  *   (INSUFFICIENT_BARS, NAN, STALE, AFTER_HOURS): nessun valore di default inventato.
@@ -73,6 +74,103 @@ export function filterRegularSessionBars(
       seen.add(b.t);
       return true;
     });
+}
+
+/** Data locale di scambio (YYYY-MM-DD) nel fuso del mercato. */
+export function exchangeDate(tsMs: number, market: 'EU' | 'US'): string {
+  const timeZone = market === 'EU' ? 'Europe/Rome' : 'America/New_York';
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(tsMs));
+}
+
+/**
+ * Selezione della serie di warm-up: sessione regolare corrente + fino a
+ * WARMUP_MAX_PRIOR_SESSIONS sessioni regolari precedenti disponibili nel feed.
+ * Le sessioni mancanti (festivi, feed parziale) vengono saltate: si usano le sessioni
+ * realmente presenti, senza inventare barre. Nessuna rinormalizzazione dei punteggi.
+ */
+export function selectWarmupBars(
+  bars: readonly IndicatorBarInput[],
+  market: 'EU' | 'US',
+  options: { maxPriorSessions?: number } = {}
+): { bars: IndicatorBarInput[]; priorSessionsUsed: number; sessionsUsed: string[] } {
+  const maxPrior = Math.max(0, options.maxPriorSessions ?? TRADING_PARAMS.WARMUP_MAX_PRIOR_SESSIONS);
+  const prepared = filterRegularSessionBars(bars, market);
+  if (prepared.length === 0) return { bars: [], priorSessionsUsed: 0, sessionsUsed: [] };
+
+  const order: string[] = [];
+  const byDate = new Map<string, IndicatorBarInput[]>();
+  for (const bar of prepared) {
+    const date = exchangeDate(bar.t, market);
+    let group = byDate.get(date);
+    if (!group) {
+      group = [];
+      byDate.set(date, group);
+      order.push(date);
+    }
+    group.push(bar);
+  }
+
+  const used = order.slice(Math.max(0, order.length - (maxPrior + 1)));
+  return {
+    bars: used.flatMap((date) => byDate.get(date) ?? []),
+    priorSessionsUsed: Math.max(0, used.length - 1),
+    sessionsUsed: used,
+  };
+}
+
+export interface WarmupSeriesResult {
+  bars: IndicatorBarInput[];
+  rangeUsed: string;
+  fallbackUsed: boolean;
+  priorSessionsUsed: number;
+  completeBars: number;
+}
+
+/**
+ * Carica la serie 5m per gli indicatori con il range dedicato WARMUP_RANGE_5M; se dopo il
+ * filtro le barre complete sono < IND_MIN_BARS richiede WARMUP_RANGE_FALLBACK_5M.
+ * `fetcher` e' iniettato: in produzione e' la chiamata a Yahoo, nei test e' un mock (nessuna rete).
+ * Nessuna imputazione: se anche il fallback non basta si restituisce la serie disponibile e
+ * gli indicatori restano UNKNOWN con la reason esplicita.
+ */
+export async function loadWarmupBars(
+  fetcher: (range: string) => Promise<readonly IndicatorBarInput[]>,
+  options: { market: 'EU' | 'US'; minBars?: number; maxPriorSessions?: number }
+): Promise<WarmupSeriesResult> {
+  const minBars = options.minBars ?? TRADING_PARAMS.IND_MIN_BARS;
+  const maxPriorSessions = options.maxPriorSessions ?? TRADING_PARAMS.WARMUP_MAX_PRIOR_SESSIONS;
+
+  const primaryRange = TRADING_PARAMS.WARMUP_RANGE_5M;
+  let selection = selectWarmupBars(await fetcher(primaryRange), options.market, { maxPriorSessions });
+  let rangeUsed = primaryRange;
+  let fallbackUsed = false;
+
+  if (selection.bars.length < minBars) {
+    const fallbackRange = TRADING_PARAMS.WARMUP_RANGE_FALLBACK_5M;
+    try {
+      const fallbackSelection = selectWarmupBars(await fetcher(fallbackRange), options.market, { maxPriorSessions });
+      if (fallbackSelection.bars.length >= selection.bars.length) {
+        selection = fallbackSelection;
+        rangeUsed = fallbackRange;
+        fallbackUsed = true;
+      }
+    } catch {
+      // fallback non disponibile: resta la serie primaria, nessun valore inventato
+    }
+  }
+
+  return {
+    bars: selection.bars,
+    rangeUsed,
+    fallbackUsed,
+    priorSessionsUsed: selection.priorSessionsUsed,
+    completeBars: selection.bars.length,
+  };
 }
 
 /** True Range su tutte le barre (indice 0 null: serve il close precedente). */
@@ -499,18 +597,33 @@ export function computePsar(
  */
 export function computeSetupIndicators(
   bars: readonly IndicatorBarInput[],
-  options: { market: 'EU' | 'US'; now?: Date; minBars?: number; maxStaleMin?: number }
+  options: {
+    market: 'EU' | 'US';
+    now?: Date;
+    minBars?: number;
+    maxStaleMin?: number;
+    maxPriorSessions?: number;
+    rangeUsed?: string | null;
+    priorSessionsUsed?: number;
+  }
 ): SetupIndicators {
   const now = options.now ?? new Date();
   const minBars = options.minBars ?? TRADING_PARAMS.IND_MIN_BARS;
   const maxStaleMin = options.maxStaleMin ?? TRADING_PARAMS.IND_MAX_STALE_MIN;
-  const prepared = filterRegularSessionBars(bars, options.market);
+  const selection = selectWarmupBars(bars, options.market, { maxPriorSessions: options.maxPriorSessions });
+  const prepared = selection.bars;
+  const warmupMeta = {
+    rangeUsed: options.rangeUsed ?? null,
+    priorSessionsUsed: options.priorSessionsUsed ?? selection.priorSessionsUsed,
+    recentBars: prepared.slice(-12).map((b) => ({ t: b.t, h: b.h, l: b.l, c: b.c })),
+  };
 
   if (prepared.length < minBars) {
     const reason: IndicatorUnknownReason = prepared.length === 0 ? 'AFTER_HOURS' : 'INSUFFICIENT_BARS';
     const unknown = <T extends { status: 'UNKNOWN'; reason: IndicatorUnknownReason }>(extra: T) => extra;
     return {
       barsUsed: prepared.length,
+      ...warmupMeta,
       atr: { value: null, status: 'UNKNOWN', reason },
       supertrend: { status: 'UNKNOWN', reason, direction: 0, barsSinceFlip: null, value: null },
       adx: { status: 'UNKNOWN', reason, value: null, plusDI: null, minusDI: null },
@@ -530,6 +643,7 @@ export function computeSetupIndicators(
 
   return {
     barsUsed: prepared.length,
+    ...warmupMeta,
     atr:
       lastAtr != null && Number.isFinite(lastAtr) && !stale
         ? { value: +lastAtr.toFixed(6), status: 'OK', reason: null }

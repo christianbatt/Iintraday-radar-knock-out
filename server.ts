@@ -25,13 +25,13 @@ import {
   calculateAtr5m,
   VwapBar,
 } from './src/utils/calculator';
-import { computeVwapDataQuality, formatVwapDataQualityScan, calculateCandidateScore } from './src/utils/calculator';
-import { computeSetupIndicators } from './src/utils/indicators';
+import { computeVwapDataQuality, formatVwapDataQualityScan, calculateCandidateScore, adxThresholds } from './src/utils/calculator';
+import { computeSetupIndicators, loadWarmupBars, selectWarmupBars, WarmupSeriesResult } from './src/utils/indicators';
 import { getExchangeDateStr, getMarketTime } from './src/utils/timezone';
 import { TRADING_PARAMS } from './src/config/tradingParams';
 import { VWAP_PROMPT_BLOCK } from './src/config/vwapPrompt';
 import { SETUP_PROMPT_BLOCK } from './src/config/setupPrompt';
-import { AILearnedInsight, VwapSignalState, VwapDataQuality, SetupIndicators } from './src/types/radar';
+import { AILearnedInsight, VwapSignalState, VwapDataQuality, SetupIndicators, IndicatorBarInput } from './src/types/radar';
 import { runNightlyLearning } from './scripts/nightly_learning';
 
 dotenv.config();
@@ -626,6 +626,31 @@ async function getLiveEurUsdRate(): Promise<number> {
 }
 
 // Fetch real 5-minute Intraday RSI, 20-minute RVOL, ORB levels & Synthetic Order Flow
+/**
+ * Barre 5m per la serie di warm-up degli indicatori (range dedicato, IPOTESI).
+ * Errore esplicito sul feed: il chiamante decide il fallback, nessun dato inventato.
+ */
+async function fetchWarmup5mBars(ticker: string, range: string): Promise<IndicatorBarInput[]> {
+  const ySymbol = ticker.includes('.') ? ticker : `${ticker}`;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}?interval=5m&range=${encodeURIComponent(range)}&includePrePost=true&_=${Date.now()}`;
+  const resp = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    signal: AbortSignal.timeout(6000),
+  });
+  if (!resp.ok) throw new Error(`FEED_ERROR:HTTP ${resp.status}`);
+  const json = await resp.json();
+  const timestamps: number[] = json?.chart?.result?.[0]?.timestamp || [];
+  const quote = json?.chart?.result?.[0]?.indicators?.quote?.[0];
+  return timestamps.map((t, i) => ({
+    t: t * 1000,
+    o: quote?.open?.[i],
+    h: quote?.high?.[i],
+    l: quote?.low?.[i],
+    c: quote?.close?.[i],
+    v: quote?.volume?.[i],
+  })) as IndicatorBarInput[];
+}
+
 async function getIntraday5mMetrics(
   ticker: string,
   market: 'EU' | 'US' = 'EU'
@@ -1012,20 +1037,45 @@ async function getIntraday5mMetrics(
     }
     if (!vwapDataQuality) vwapDataQuality = { ok: false, reason: 'FEED_ERROR', coverage: 0 };
 
-    // Indicatori di setup 5m (IPOTESI): sessione corrente + sessione precedente, solo barre chiuse regolari.
-    // Se il feed non basta restano UNKNOWN con motivo esplicito: nessun valore inventato.
+    // Indicatori di setup 5m (IPOTESI): sessione regolare corrente + sessioni precedenti disponibili.
+    // Serie dedicata con WARMUP_RANGE_5M (fallback WARMUP_RANGE_FALLBACK_5M se le barre complete
+    // sono < IND_MIN_BARS); se il feed dedicato fallisce si usa la serie 60d gia' in memoria.
+    // Nessuna imputazione: barre insufficienti = UNKNOWN con reason esplicita.
     let setupIndicators: SetupIndicators | null = null;
     try {
       const tsInd: number[] = json?.chart?.result?.[0]?.timestamp || [];
-      const indicatorBars = tsInd.map((t, i) => ({
+      const inMemoryBars = tsInd.map((t, i) => ({
         t: t * 1000,
         o: rawQuotes?.open?.[i],
         h: rawQuotes?.high?.[i],
         l: rawQuotes?.low?.[i],
         c: rawQuotes?.close?.[i],
         v: rawQuotes?.volume?.[i],
-      }));
-      setupIndicators = computeSetupIndicators(indicatorBars as any, { market, now: new Date() });
+      })) as IndicatorBarInput[];
+
+      let warmup: WarmupSeriesResult | null = null;
+      try {
+        warmup = await loadWarmupBars((range) => fetchWarmup5mBars(ticker, range), { market });
+      } catch {
+        warmup = null;
+      }
+      if (!warmup) {
+        const selection = selectWarmupBars(inMemoryBars, market);
+        warmup = {
+          bars: selection.bars,
+          rangeUsed: '60d (serie gia in memoria)',
+          fallbackUsed: false,
+          priorSessionsUsed: selection.priorSessionsUsed,
+          completeBars: selection.bars.length,
+        };
+      }
+
+      setupIndicators = computeSetupIndicators(warmup.bars, {
+        market,
+        now: new Date(),
+        rangeUsed: warmup.rangeUsed,
+        priorSessionsUsed: warmup.priorSessionsUsed,
+      });
     } catch {
       setupIndicators = null;
     }
@@ -2002,6 +2052,88 @@ app.post('/api/market-data', async (req: Request, res: Response) => {
         return `${market} n=${rows.length} sopra-soglia(>=${threshold}):${above} veti:${vetoed} dist ${dist}`;
       };
       console.log(`[Score distribution] scan ALL | ${summarize('EU')} | ${summarize('US')}`);
+
+      // Log warm-up (IPOTESI): per mercato candidati con WARMUP_INCOMPLETE, UNKNOWN per
+      // indicatore e per reason, sessioni precedenti effettivamente usate.
+      const warmupSummary = (market: 'EU' | 'US') => {
+        const rows = scanScores.filter((r) => r.quote.market === market);
+        const incomplete = rows.filter((r) => r.score.warmupIncomplete).length;
+        const unknown: Record<string, number> = {};
+        const reasons: Record<string, number> = {};
+        const priorSessions: Record<string, number> = {};
+        for (const { quote } of rows) {
+          const ind = quote.setupIndicators;
+          for (const key of ['supertrend', 'adx', 'stochRsi'] as const) {
+            const snap = ind?.[key];
+            if (!snap || snap.status !== 'OK') {
+              unknown[key] = (unknown[key] ?? 0) + 1;
+              const reason = snap?.reason ?? 'NO_FEED';
+              reasons[reason] = (reasons[reason] ?? 0) + 1;
+            }
+          }
+          const used = ind?.priorSessionsUsed ?? 0;
+          const key = used >= 2 ? '2+' : String(used);
+          priorSessions[key] = (priorSessions[key] ?? 0) + 1;
+        }
+        return `${market} n=${rows.length} warmupIncomplete:${incomplete} UNKNOWN ${JSON.stringify(unknown)} reason ${JSON.stringify(reasons)} sessioni-precedenti ${JSON.stringify(priorSessions)}`;
+      };
+      console.log(`[Warmup] scan ALL | ${warmupSummary('EU')} | ${warmupSummary('US')}`);
+
+      // Log per il replay del veto ADX (scripts/adx_veto_replay.ts): un record JSON per veto.
+      const vetoRecords = scanScores
+        .filter((r) => r.score.veto === 'ADX_BELOW_MARKET_THRESHOLD')
+        .map(({ quote }) => {
+          const direction: 'LONG' | 'SHORT' = (quote.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT';
+          const entry = quote.currentPrice ?? null;
+          const stop = (quote as { S?: number | null }).S ?? null;
+          const t1 =
+            entry != null && stop != null
+              ? +(entry + (direction === 'LONG' ? 1 : -1) * TRADING_PARAMS.T1_R * Math.abs(entry - stop)).toFixed(4)
+              : null;
+          const now = new Date();
+          const etTime = new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'America/New_York',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          }).format(now);
+          const localTime = new Intl.DateTimeFormat('it-IT', {
+            timeZone: 'Europe/Rome',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          }).format(now);
+          const adx = quote.setupIndicators?.adx;
+          return {
+            ts: now.getTime(),
+            ticker: quote.ticker,
+            market: quote.market,
+            direction,
+            etTime,
+            localTime,
+            adx: adx?.value ?? null,
+            plusDI: adx?.plusDI ?? null,
+            minusDI: adx?.minusDI ?? null,
+            threshold: adxThresholds(quote.market).min,
+            entry,
+            stop,
+            t1,
+            bars: quote.setupIndicators?.recentBars ?? [],
+          };
+        });
+      if (vetoRecords.length > 0) {
+        try {
+          const logDir = path.join(process.cwd(), 'logs');
+          fs.mkdirSync(logDir, { recursive: true });
+          fs.appendFileSync(
+            path.join(logDir, 'adx_veto_log.jsonl'),
+            vetoRecords.map((record) => JSON.stringify(record)).join('\n') + '\n',
+            'utf-8'
+          );
+        } catch {
+          // log best-effort: nessun impatto sul servizio
+        }
+      }
     } catch (err: any) {
       console.log(`[Setup score] log non disponibile: ${err?.message || err}`);
     }

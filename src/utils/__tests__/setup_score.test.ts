@@ -249,11 +249,11 @@ describe('Setup score - veti', () => {
     supertrend: { status: 'OK', reason: null, direction: -1, barsSinceFlip: 1, value: 104 },
   });
 
-  it('S9: ADX < 20 blocca il setup con veto ADX_BELOW_20', () => {
+  it('S9: ADX 15 sotto la soglia US (20) blocca il setup con veto ADX_BELOW_MARKET_THRESHOLD', () => {
     const score = calculateCandidateScore(longQuote({ setupIndicators: adxWeak() }), 0.5, null);
-    assert.ok(score.vetoReasons?.includes('ADX_BELOW_20'), `veti: ${score.vetoReasons}`);
+    assert.ok(score.vetoReasons?.includes('ADX_BELOW_MARKET_THRESHOLD'), `veti: ${score.vetoReasons}`);
     assert.strictEqual(score.adxScore, 0);
-    assert.strictEqual(score.veto, 'ADX_BELOW_20');
+    assert.strictEqual(score.veto, 'ADX_BELOW_MARKET_THRESHOLD');
   });
 
   it('S10: Supertrend contrario blocca il setup con veto SUPERTREND_OPPOSED', () => {
