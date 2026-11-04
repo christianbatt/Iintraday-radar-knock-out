@@ -1287,6 +1287,19 @@ export function calculateKnockOutBarrierGuard(
   };
 }
 
+/**
+ * AUDIT P1-10: la direzione operativa deve essere la stessa usata da score e veto.
+ * Il catalyst esplicito (LONG/SHORT) prevale sul segno del gap; senza catalyst decide il gap.
+ */
+function candidateOperationalDirection(
+  quote: RawQuoteData,
+  catalyst?: GeminiCatalystAnalysis | null
+): 'LONG' | 'SHORT' {
+  if (catalyst?.direzione === 'LONG') return 'LONG';
+  if (catalyst?.direzione === 'SHORT') return 'SHORT';
+  return (quote.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT';
+}
+
 export function rankMarketCandidates(
   quotes: RawQuoteData[],
   market: 'EU' | 'US',
@@ -1303,7 +1316,10 @@ export function rankMarketCandidates(
 
   if (TRADING_PARAMS.VWAP_HARD_GATE) {
     marketQuotes = marketQuotes.filter((q) =>
-      passesVwapHardGate(q.vwapState ?? null, (q.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT')
+      passesVwapHardGate(
+        q.vwapState ?? null,
+        candidateOperationalDirection(q, options?.catalystCache?.[q.ticker])
+      )
     );
   }
 
@@ -1316,7 +1332,8 @@ export function rankMarketCandidates(
 
   const scored = marketQuotes.map((quote) => {
     const catalystOrNews = options?.catalystCache?.[quote.ticker] || options?.newsCache?.[quote.ticker];
-    const dir: 'LONG' | 'SHORT' = (quote.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT';
+    // AUDIT P1-10: direzione allineata a quella del catalyst (score e veto).
+    const dir = candidateOperationalDirection(quote, options?.catalystCache?.[quote.ticker]);
     const knockOutGuard = calculateKnockOutBarrierGuard(quote, dir);
     return {
       quote,
