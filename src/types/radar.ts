@@ -22,6 +22,8 @@ export interface RawQuoteData {
   todayLow?: number | null;
   vwap?: number | null;
   vwapState?: VwapSignalState | null;
+  lastBarVolume?: number | null; // volume della barra 5m piu' recente della sessione (getIntraday5mMetrics)
+  lastBarTime?: number | null; // timestamp unix (secondi) della stessa barra, usato dal VWAP scoring
   ema20Daily?: number | null;
   avgVolume20d: number | null;
   preMarketVolume: number | null;

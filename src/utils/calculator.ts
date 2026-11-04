@@ -617,7 +617,8 @@ export const MIN_QUALIFICATION_THRESHOLDS = {
 export function calculateCandidateScore(
   quote: RawQuoteData,
   benchmarkFuturesChangePercent: number | null | undefined,
-  newsOrCatalyst?: GeminiCatalystAnalysis | NewsItem[] | number | null
+  newsOrCatalyst?: GeminiCatalystAnalysis | NewsItem[] | number | null,
+  vwapBar?: VwapBarContext
 ): ScoreBreakdown {
   const details: string[] = [];
   let gapScore = 0;
@@ -937,8 +938,15 @@ export function calculateCandidateScore(
   }
 
   // 10. VWAP DI SESSIONE (IPOTESI): voce separata del breakdown, -W..+W
-  const vwapContribution = calculateVwapScoreContribution(
+  // Il volume/timestamp della barra 5m arriva dal call site (getIntraday5mMetrics): se la barra
+  // e' fuori sessione o senza volume lo stato viene invalidato a UNKNOWN prima del contributo.
+  const effectiveVwapState = resolveVwapStateForScoring(
     quote.vwapState ?? null,
+    vwapBar,
+    quote.market
+  );
+  const vwapContribution = calculateVwapScoreContribution(
+    effectiveVwapState,
     isCandidateLong ? 'LONG' : 'SHORT'
   );
   const vwapScore = vwapContribution.score;
@@ -1169,7 +1177,10 @@ export function rankMarketCandidates(
     const knockOutGuard = calculateKnockOutBarrierGuard(quote, dir);
     return {
       quote,
-      score: calculateCandidateScore(quote, change, catalystOrNews),
+      score: calculateCandidateScore(quote, change, catalystOrNews, {
+        volume: quote.lastBarVolume ?? null,
+        barTime: quote.lastBarTime ?? null,
+      }),
       rank: 0,
       knockOutGuard,
     };
@@ -1221,7 +1232,10 @@ export function rankTopCandidates(
     const knockOutGuard = calculateKnockOutBarrierGuard(quote, dir);
     return {
       quote,
-      score: calculateCandidateScore(quote, change, catalystOrNews),
+      score: calculateCandidateScore(quote, change, catalystOrNews, {
+        volume: quote.lastBarVolume ?? null,
+        barTime: quote.lastBarTime ?? null,
+      }),
       rank: 0,
       knockOutGuard,
     };
@@ -3590,7 +3604,10 @@ export function generateFilteringAuditReport(
     const minGap = isEU ? parameters.minGapEurope : parameters.minGapUSA;
 
     const cat = catalystCache[q.ticker];
-    const scoreObj = calculateCandidateScore(q, change, cat);
+    const scoreObj = calculateCandidateScore(q, change, cat, {
+      volume: q.lastBarVolume ?? null,
+      barTime: q.lastBarTime ?? null,
+    });
     const score = scoreObj.total;
     const rsi = q.rsi5m ?? q.rsi14 ?? null;
     const gap = q.gapPercent ?? 0;
@@ -5116,6 +5133,54 @@ export function computeVwapState(
     flags,
     vwapLevel
   );
+}
+
+export interface VwapBarContext {
+  volume?: number | null; // volume della barra 5m piu' recente della sessione
+  barTime?: number | string | Date | null; // timestamp della stessa barra (secondi/ms unix o ISO)
+}
+
+function parseVwapBarTimeMs(barTime: number | string | Date | null | undefined): number | null {
+  if (barTime == null) return null;
+  if (barTime instanceof Date) return isNaN(barTime.getTime()) ? null : barTime.getTime();
+  if (typeof barTime === 'number') {
+    if (!isFinite(barTime) || barTime <= 0) return null;
+    return barTime > 1e11 ? barTime : barTime * 1000;
+  }
+  const ms = Date.parse(barTime);
+  return isNaN(ms) ? null : ms;
+}
+
+/**
+ * Stato VWAP usato dal punteggio, a partire da quote.vwapState e dalla barra 5m che lo ha generato.
+ * Se la barra e' fuori sessione regolare (prima delle 09:30 o dalle 16:00 ET in poi, EU fuori
+ * 09:00-17:30) o non ha volume, lo stato diventa UNKNOWN con flag AFTER_HOURS / THIN_BAR_VOLUME:
+ * nessun segnale VWAP in after-market e nessun contributo allo score.
+ * Senza dati di barra lo stato calcolato dal feed resta invariato (retrocompatibile).
+ */
+export function resolveVwapStateForScoring(
+  vwapState: VwapSignalState | null | undefined,
+  vwapBar: VwapBarContext | null | undefined,
+  market: 'EU' | 'US'
+): VwapSignalState | null {
+  if (!vwapState) return null;
+
+  const barMs = parseVwapBarTimeMs(vwapBar?.barTime);
+  if (barMs == null) return vwapState;
+
+  const marketTime = getMarketTime(market, new Date(barMs));
+  const startM = market === 'US' ? 570 : 540;
+  const endM = market === 'US' ? 960 : 1050;
+  const outsideRegular = marketTime.totalMinutes < startM || marketTime.totalMinutes >= endM;
+
+  const volume = vwapBar?.volume;
+  const thinBar = volume == null || !isFinite(volume) || volume <= 0;
+
+  if (!outsideRegular && !thinBar) return vwapState;
+
+  const flag = outsideRegular ? 'AFTER_HOURS' : 'THIN_BAR_VOLUME';
+  const flags = vwapState.flags.includes(flag) ? vwapState.flags : [...vwapState.flags, flag];
+  return { ...vwapState, state: 'UNKNOWN', flags };
 }
 
 const VWAP_BULLISH_STATES: VwapStateName[] = ['ABOVE', 'PULLBACK_HOLD_UP', 'RECLAIM_UP', 'REJECT_UP'];
