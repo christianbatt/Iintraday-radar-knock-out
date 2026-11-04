@@ -5659,7 +5659,9 @@ export function calculateVwapScoreContribution(
   const volumeRatio = vwapState.volumeRatio;
   const volTxt = volumeRatio != null ? `${volumeRatio.toFixed(2)}x` : 'nd';
   const distTxt = dist.toFixed(2);
-  const neutralPoints = weight <= 0 ? 0 : Math.round(weight / 2);
+  // IPOTESI (AUDIT P1-7): NEUTRAL non e' una conferma direzionale: vale 0 punti su 10
+  // (prima valeva weight/2 = 5/10, un bonus regalato a un segnale assente).
+  const neutralPoints = weight <= 0 ? 0 : 0;
 
   const neutral = (): VwapContribution => ({
     score: neutralPoints,
