@@ -114,7 +114,7 @@ export function selectWarmupBars(
   const regularAll = filterRegularSessionBars(bars, market);
   // Yahoo riporta l'apertura della barra: una barra e' chiusa (usabile) solo se
   // apertura + IND_BAR_MS <= T. Barre non ancora chiuse (in formazione) escludono
-  // every indicatore che le usa: non si calcola mai un indicatore su una barra in formazione.
+  // ogni indicatore che le usa: non si calcola mai un indicatore su una barra in formazione.
   const prepared = regularAll.filter((b) => b.t + IND_BAR_MS <= nowMs);
   const droppedFutureBars = regularAll.length - prepared.length;
   if (prepared.length === 0) {
