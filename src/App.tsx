@@ -33,6 +33,7 @@ import {
   updateExcludedSetupsWithLiveQuotes,
   runExcludedSetupsAutoAnalysis,
   isCandidateCompliantWithParameters,
+  applyOptimizationProposal,
   createJournalEntryFromSetup,
   checkQuoteStaleness,
   evaluateOpenPositionLifecycle,
@@ -1380,67 +1381,17 @@ export default function App() {
 
     if (!targetProposal || targetProposal.proposedChanges.length === 0) return;
 
-    const newParams: SystemParameters = {
-      ...parameters,
-      version: parameters.version + 1,
-      lastUpdated: new Date().toISOString(),
-    };
-
-    targetProposal.proposedChanges.forEach((change) => {
-      let numVal: number;
-      if (typeof change.proposedValue === 'number') {
-        numVal = change.proposedValue;
-      } else {
-        const rawStr = String(change.proposedValue ?? '').split('/')[0].trim();
-        numVal = parseFloat(rawStr.replace(/[^0-9.-]/g, ''));
-      }
-      if (change.parameterKey.includes('minScore') && numVal > 100) {
-        numVal = numVal > 1000 ? Math.round(numVal / 1000) : 90;
-      }
-
-      if (change.parameterKey === 'minScore') {
-        const val = !isNaN(numVal) ? Math.round(numVal) : newParams.minScore;
-        newParams.minScore = val;
-        if (market === 'EU') newParams.minScoreEurope = val;
-        else if (market === 'US') newParams.minScoreUSA = val;
-        else {
-          newParams.minScoreEurope = val;
-          newParams.minScoreUSA = Math.round(val * (TRADING_PARAMS.MIN_SCORE_US / TRADING_PARAMS.MIN_SCORE_EU));
-        }
-      } else if (change.parameterKey === 'minScoreEurope') {
-        newParams.minScoreEurope = !isNaN(numVal) ? Math.round(numVal) : newParams.minScoreEurope;
-      } else if (change.parameterKey === 'minScoreUSA') {
-        newParams.minScoreUSA = !isNaN(numVal) ? Math.round(numVal) : newParams.minScoreUSA;
-      } else if (change.parameterKey === 'minRvol') {
-        const val = !isNaN(numVal) ? numVal : newParams.minRvol;
-        newParams.minRvol = val;
-        if (market === 'EU') newParams.minRvolEurope = val;
-        else if (market === 'US') newParams.minRvolUSA = val;
-        else {
-          newParams.minRvolEurope = val;
-          newParams.minRvolUSA = +(val * 1.35).toFixed(2);
-        }
-      } else if (change.parameterKey === 'minRvolEurope') {
-        newParams.minRvolEurope = !isNaN(numVal) ? numVal : newParams.minRvolEurope;
-      } else if (change.parameterKey === 'minRvolUSA') {
-        newParams.minRvolUSA = !isNaN(numVal) ? numVal : newParams.minRvolUSA;
-      } else if (change.parameterKey === 'target1Multiplier') {
-        newParams.target1Multiplier = !isNaN(numVal) ? numVal : newParams.target1Multiplier;
-      } else if (change.parameterKey === 'target2Multiplier') {
-        newParams.target2Multiplier = !isNaN(numVal) ? numVal : newParams.target2Multiplier;
-      } else if (change.parameterKey === 'triggerOffsetPercent') {
-        newParams.triggerOffsetPercent = !isNaN(numVal) ? numVal : newParams.triggerOffsetPercent;
-      } else if (change.parameterKey === 'normalRiskMultiplier') {
-        newParams.normalRiskMultiplier = !isNaN(numVal) ? numVal : newParams.normalRiskMultiplier;
-      } else if (change.parameterKey === 'rsiFilterActive') {
-        newParams.rsiFilterActive = change.proposedValue === true || change.proposedValue === 'Attivo';
-        setRsiFilterActive(newParams.rsiFilterActive);
-      } else if (change.parameterKey === 'minGapEurope') {
-        newParams.minGapEurope = !isNaN(numVal) ? numVal : newParams.minGapEurope;
-      } else if (change.parameterKey === 'minGapUSA') {
-        newParams.minGapUSA = !isNaN(numVal) ? numVal : newParams.minGapUSA;
-      }
-    });
+    // AUDIT V12: unica sorgente di verita' per l'applicazione di una proposta accettata.
+    // Scrive i campi proposti nei SystemParameters ATTIVI (quelli usati dallo screening) e
+    // conserva i valori precedenti in parameterHistory: nulla viene sovrascritto senza traccia.
+    const { parameters: newParams, changes } = applyOptimizationProposal(
+      parameters,
+      targetProposal,
+      market ?? 'GLOBAL'
+    );
+    if (changes.some((c) => c.parameterKey === 'rsiFilterActive')) {
+      setRsiFilterActive(newParams.rsiFilterActive);
+    }
 
     const acceptedProposal: OptimizationProposal = {
       ...targetProposal,

@@ -1164,7 +1164,8 @@ export function calculateRsiFromPrices(closes: number[], period: number = 14): n
     avgLoss = (avgLoss * (p - 1) + loss) / p;
   }
 
-  // IPOTESI (AUDIT P1-9): serie piatta (nessun guadagno e nessuna perdita) -> RSI neutro 50.
+  // IPOTESI (AUDIT P1-9) - CONFERMATA dall'utente: serie piatta -> RSI neutro 50
+  // (prima 100 = ipercomprato artificiale, faceva scattare RSI_EXTREME senza movimento).
   if (avgGain === 0 && avgLoss === 0) return 50;
   if (avgLoss === 0) return 100;
   const rs = avgGain / avgLoss;
@@ -1215,6 +1216,158 @@ export function isCandidateCompliantWithParameters(
 
   return { compliant: reasons.length === 0, reasons };
 }
+
+export interface AppliedProposalChange {
+  parameterKey: keyof SystemParameters;
+  from: number | boolean;
+  to: number | boolean;
+}
+
+export interface ProposalApplicationResult {
+  parameters: SystemParameters;
+  changes: AppliedProposalChange[];
+}
+
+/**
+ * AUDIT V12: applica una proposta accettata ai SystemParameters ATTIVI, cioe' agli stessi
+ * oggetti letti da isCandidateCompliantWithParameters e rankMarketCandidates durante lo screening.
+ * Senza questo passaggio la proposta resta un suggerimento nell'UI e non cambia la selezione.
+ * I valori precedenti finiscono in parameterHistory: sono recuperabili e nulla viene cancellato.
+ * Un valore non numerico non viene applicato (nessun default inventato).
+ */
+export function applyOptimizationProposal(
+  parameters: SystemParameters,
+  proposal: {
+    id?: string | null;
+    proposedChanges: Array<{
+      parameterKey: keyof SystemParameters;
+      proposedValue: number | boolean | string;
+    }>;
+  },
+  market: 'EU' | 'US' | 'GLOBAL' = 'GLOBAL',
+  now: Date = new Date()
+): ProposalApplicationResult {
+  const next: SystemParameters = {
+    ...parameters,
+    version: parameters.version + 1,
+    lastUpdated: now.toISOString(),
+  };
+  const changes: AppliedProposalChange[] = [];
+
+  const numberFrom = (value: number | boolean | string): number => {
+    if (typeof value === 'number') return value;
+    const raw = String(value ?? '').split('/')[0].trim();
+    return parseFloat(raw.replace(/[^0-9.-]/g, ''));
+  };
+
+  const writeNumber = (key: keyof SystemParameters, value: number) => {
+    if (!Number.isFinite(value)) return;
+    const prev = next[key];
+    if (prev === value) return;
+    (next as unknown as Record<string, unknown>)[key as string] = value;
+    changes.push({ parameterKey: key, from: prev as number | boolean, to: value });
+  };
+
+  const writeBoolean = (key: keyof SystemParameters, value: boolean) => {
+    const prev = next[key];
+    if (prev === value) return;
+    (next as unknown as Record<string, unknown>)[key as string] = value;
+    changes.push({ parameterKey: key, from: prev as number | boolean, to: value });
+  };
+
+  for (const change of proposal.proposedChanges) {
+    const key = change.parameterKey;
+
+    if (key === 'rsiFilterActive') {
+      const raw = change.proposedValue;
+      writeBoolean('rsiFilterActive', raw === true || raw === 'true' || raw === 'Attivo');
+      continue;
+    }
+
+    let numVal = numberFrom(change.proposedValue);
+    if (String(key).includes('minScore') && numVal > 100) {
+      numVal = numVal > 1000 ? Math.round(numVal / 1000) : 90;
+    }
+
+    switch (key) {
+      case 'minScore': {
+        const val = Math.round(numVal);
+        writeNumber('minScore', val);
+        if (market === 'EU') writeNumber('minScoreEurope', val);
+        else if (market === 'US') writeNumber('minScoreUSA', val);
+        else {
+          writeNumber('minScoreEurope', val);
+          writeNumber(
+            'minScoreUSA',
+            Math.round(val * (TRADING_PARAMS.MIN_SCORE_US / TRADING_PARAMS.MIN_SCORE_EU))
+          );
+        }
+        break;
+      }
+      case 'minScoreEurope':
+        writeNumber('minScoreEurope', Math.round(numVal));
+        break;
+      case 'minScoreUSA':
+        writeNumber('minScoreUSA', Math.round(numVal));
+        break;
+      case 'minRvol': {
+        const val = numVal;
+        writeNumber('minRvol', val);
+        if (market === 'EU') writeNumber('minRvolEurope', val);
+        else if (market === 'US') writeNumber('minRvolUSA', val);
+        else {
+          writeNumber('minRvolEurope', val);
+          writeNumber('minRvolUSA', +(val * 1.35).toFixed(2)); // rapporto US/EU gia' usato dall'UI
+        }
+        break;
+      }
+      case 'minRvolEurope':
+        writeNumber('minRvolEurope', numVal);
+        break;
+      case 'minRvolUSA':
+        writeNumber('minRvolUSA', numVal);
+        break;
+      case 'minGapEurope':
+        writeNumber('minGapEurope', numVal);
+        break;
+      case 'minGapUSA':
+        writeNumber('minGapUSA', numVal);
+        break;
+      case 'minAvgVolume':
+        writeNumber('minAvgVolume', numVal);
+        break;
+      case 'target1Multiplier':
+        writeNumber('target1Multiplier', numVal);
+        break;
+      case 'target2Multiplier':
+        writeNumber('target2Multiplier', numVal);
+        break;
+      case 'triggerOffsetPercent':
+        writeNumber('triggerOffsetPercent', numVal);
+        break;
+      case 'normalRiskMultiplier':
+        writeNumber('normalRiskMultiplier', numVal);
+        break;
+      default:
+        break;
+    }
+  }
+
+  if (changes.length > 0) {
+    next.parameterHistory = [
+      ...(parameters.parameterHistory ?? []),
+      {
+        appliedAt: now.toISOString(),
+        version: next.version,
+        proposalId: proposal.id ?? null,
+        changes: changes.map((c) => ({ ...c })),
+      },
+    ];
+  }
+
+  return { parameters: next, changes };
+}
+
 
 /**
  * Calculates safety distance, safe barrier level, and max recommended leverage for Trade Republic Knock-Outs
@@ -5690,9 +5843,9 @@ export function calculateVwapScoreContribution(
   const volumeRatio = vwapState.volumeRatio;
   const volTxt = volumeRatio != null ? `${volumeRatio.toFixed(2)}x` : 'nd';
   const distTxt = dist.toFixed(2);
-  // IPOTESI (AUDIT P1-7): NEUTRAL non e' una conferma direzionale: vale 0 punti su 10
-  // (prima valeva weight/2 = 5/10, un bonus regalato a un segnale assente).
-  const neutralPoints = weight <= 0 ? 0 : 0;
+  // IPOTESI (AUDIT P1-7) - CONFERMATA dall'utente: NEUTRAL vale 0 punti su 10
+  // (prima weight/2 = 5/10, un bonus regalato a un segnale assente).
+  const neutralPoints = 0;
 
   const neutral = (): VwapContribution => ({
     score: neutralPoints,

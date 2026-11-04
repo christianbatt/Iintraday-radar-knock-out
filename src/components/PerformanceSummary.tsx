@@ -37,6 +37,9 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({
   entries,
   accountCapital,
 }) => {
+  // AUDIT D1: hook prima del return condizionale (regole degli hook React).
+  const [chartType, setChartType] = useState<'EQUITY_LINE' | 'PNL_AREA'>('EQUITY_LINE');
+
   // If no trades, display empty state with prompt
   if (entries.length === 0) {
     return (
@@ -53,8 +56,6 @@ export const PerformanceSummary: React.FC<PerformanceSummaryProps> = ({
       </div>
     );
   }
-
-  const [chartType, setChartType] = useState<'EQUITY_LINE' | 'PNL_AREA'>('EQUITY_LINE');
 
   // Chronological order for cumulative PnL progression
   const sortedEntries = [...entries].sort(
