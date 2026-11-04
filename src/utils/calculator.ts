@@ -2288,9 +2288,7 @@ export function generatePnLScenarios(
   stopDistance: number,
   potentialLossEur: number
 ): PnLScenario[] {
-  // AUDIT P1-3: la safety KO si calcola sul prezzo di entry operativo (E), non sul trigger (T).
-  const entryPrice =
-    setup.entryLevel ?? setup.candidate.currentPrice ?? setup.candidate.preMarketPrice ?? 0;
+  const entryPrice = setup.triggerLevel ?? setup.candidate.preMarketPrice ?? setup.candidate.currentPrice ?? 0;
   const isLong = setup.direction === 'LONG';
   const leverage = input.leverage || 1;
   const capital = input.accountCapital || 10000;
@@ -2484,7 +2482,10 @@ export function calculateKnockOutSafety(
   setup: ExecutionSetup,
   input: KnockOutCalculatorInput
 ): KnockOutSafetyCheck {
-  const entryPrice = setup.triggerLevel ?? setup.candidate.preMarketPrice ?? setup.candidate.currentPrice ?? 0;
+  // AUDIT P1-3: la safety KO si calcola sul prezzo di entry operativo (E), non sul trigger (T).
+  // E = entryLevel dello setup; se assente si usa il prezzo di mercato corrente, mai T.
+  const entryPrice =
+    setup.entryLevel ?? setup.candidate.currentPrice ?? setup.candidate.preMarketPrice ?? 0;
   const stopLoss = setup.stopLossLevel ?? 0;
   const barrierStrike = input.barrierStrike;
   const isLong = setup.direction === 'LONG';
