@@ -4549,11 +4549,14 @@ export function evaluateOpenPositionLifecycle(
     return { updatedTrade: trade, wasClosed: false };
   }
 
-  const livePrice =
-    quote?.currentPrice ??
-    quote?.preMarketPrice ??
-    quote?.prevClose ??
-    (trade.exitPrice > 0 ? trade.exitPrice : null);
+  // AUDIT P0-1: solo prezzi operativi (ultimo / pre-market). prevClose non e' un prezzo corrente:
+  // usarlo farebbe scattare target o stop su un livello statico di ieri.
+  // Senza prezzo operativo l'esito e' "non valutabile": nessuna chiusura, nessun PnL, nessun win rate.
+  const livePrice = quote?.currentPrice ?? quote?.preMarketPrice ?? null;
+
+  if (livePrice == null || !(livePrice > 0)) {
+    return { updatedTrade: trade, wasClosed: false };
+  }
 
   const isLong = trade.direction === 'LONG';
   const entry = trade.entryPrice;
