@@ -3,6 +3,7 @@ import {
   ScoredCandidate,
   RawQuoteData,
 } from '../types/radar';
+import { IndicatorBadges } from './IndicatorsPanel';
 import {
   TrendingUp,
   TrendingDown,
@@ -339,6 +340,15 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
                           </div>
                           <div className="text-[11px] text-slate-400 truncate max-w-[150px]">
                             {q.name}
+                          </div>
+                          <div className="mt-1 max-w-[260px]">
+                            <IndicatorBadges
+                              indicators={q.setupIndicators}
+                              vwapState={q.vwapState}
+                              veto={cand.score.veto}
+                              warmupIncomplete={cand.score.warmupIncomplete}
+                              direction={(q.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT'}
+                            />
                           </div>
                         </div>
                       </div>

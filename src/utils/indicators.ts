@@ -2,8 +2,10 @@
  * Indicatori di setup su barre 5m - funzioni pure, nessun I/O.
  *
  * Regole comuni (TUTTE IPOTESI, vedi TRADING_PARAMS.IND_* / ST_* / ADX_* / STOCH_RSI_* / PSAR_*):
- * - input: barre 5m della sessione regolare corrente + fino a WARMUP_MAX_PRIOR_SESSIONS
- *   sessioni regolari precedenti realmente presenti nel feed (festivita' escluse, nessuna barra inventata);
+ * - input: barre 5m della sessione regolare corrente fino a T + fino a WARMUP_MAX_PRIOR_SESSIONS
+ *   sessioni regolari gia' chiuse prima dell'apertura della sessione corrente
+ *   (festivita' e weekend saltati, mai una sessione futura);
+ * - nessun look-ahead: ogni barra con timestamp > T viene scartata prima del calcolo;
  * - after-market escluso e barre incomplete scartate;
  * - ogni indicatore restituisce status OK oppure UNKNOWN con reason esplicita
  *   (INSUFFICIENT_BARS, NAN, STALE, AFTER_HOURS): nessun valore di default inventato.
@@ -27,7 +29,7 @@ import type {
   StochRsiSnapshot,
   SupertrendSnapshot,
 } from '../types/radar';
-import { TRADING_PARAMS } from '../config/tradingParams';
+import { TRADING_PARAMS, adxThresholds } from '../config/tradingParams';
 
 const MINUTE_MS = 60_000;
 
@@ -88,19 +90,31 @@ export function exchangeDate(tsMs: number, market: 'EU' | 'US'): string {
 }
 
 /**
- * Selezione della serie di warm-up: sessione regolare corrente + fino a
- * WARMUP_MAX_PRIOR_SESSIONS sessioni regolari precedenti disponibili nel feed.
- * Le sessioni mancanti (festivi, feed parziale) vengono saltate: si usano le sessioni
- * realmente presenti, senza inventare barre. Nessuna rinormalizzazione dei punteggi.
+ * Selezione della serie di warm-up senza look-ahead:
+ * - solo barre con timestamp <= T: le barre future restituite dal feed vengono scartate;
+ * - sessione regolare corrente (barre fino a T) + fino a WARMUP_MAX_PRIOR_SESSIONS sessioni
+ *   regolari gia' chiuse prima dell'apertura corrente.
+ * Le sessioni mancanti (festivi, weekend) vengono saltate: si usa la sessione chiusa piu'
+ * recente realmente presente, mai una sessione futura. Nessuna barra inventata.
  */
 export function selectWarmupBars(
   bars: readonly IndicatorBarInput[],
   market: 'EU' | 'US',
-  options: { maxPriorSessions?: number } = {}
-): { bars: IndicatorBarInput[]; priorSessionsUsed: number; sessionsUsed: string[] } {
+  options: { maxPriorSessions?: number; now?: Date | number } = {}
+): {
+  bars: IndicatorBarInput[];
+  priorSessionsUsed: number;
+  sessionsUsed: string[];
+  droppedFutureBars: number;
+} {
   const maxPrior = Math.max(0, options.maxPriorSessions ?? TRADING_PARAMS.WARMUP_MAX_PRIOR_SESSIONS);
-  const prepared = filterRegularSessionBars(bars, market);
-  if (prepared.length === 0) return { bars: [], priorSessionsUsed: 0, sessionsUsed: [] };
+  const nowMs = options.now instanceof Date ? options.now.getTime() : options.now ?? Date.now();
+  const regularAll = filterRegularSessionBars(bars, market);
+  const prepared = regularAll.filter((b) => b.t <= nowMs);
+  const droppedFutureBars = regularAll.length - prepared.length;
+  if (prepared.length === 0) {
+    return { bars: [], priorSessionsUsed: 0, sessionsUsed: [], droppedFutureBars };
+  }
 
   const order: string[] = [];
   const byDate = new Map<string, IndicatorBarInput[]>();
@@ -120,6 +134,7 @@ export function selectWarmupBars(
     bars: used.flatMap((date) => byDate.get(date) ?? []),
     priorSessionsUsed: Math.max(0, used.length - 1),
     sessionsUsed: used,
+    droppedFutureBars,
   };
 }
 
@@ -129,6 +144,8 @@ export interface WarmupSeriesResult {
   fallbackUsed: boolean;
   priorSessionsUsed: number;
   completeBars: number;
+  /** Barre regolari scartate perche' successive a T (look-ahead): diagnostica della reason. */
+  droppedFutureBars: number;
 }
 
 /**
@@ -136,24 +153,29 @@ export interface WarmupSeriesResult {
  * filtro le barre complete sono < IND_MIN_BARS richiede WARMUP_RANGE_FALLBACK_5M.
  * `fetcher` e' iniettato: in produzione e' la chiamata a Yahoo, nei test e' un mock (nessuna rete).
  * Nessuna imputazione: se anche il fallback non basta si restituisce la serie disponibile e
- * gli indicatori restano UNKNOWN con la reason esplicita.
+ * gli indicatori restano UNKNOWN con la reason esplicita. `now` e' il tempo T dello scan:
+ * nessuna barra successiva a T entra nella serie.
  */
 export async function loadWarmupBars(
   fetcher: (range: string) => Promise<readonly IndicatorBarInput[]>,
-  options: { market: 'EU' | 'US'; minBars?: number; maxPriorSessions?: number }
+  options: { market: 'EU' | 'US'; minBars?: number; maxPriorSessions?: number; now?: Date }
 ): Promise<WarmupSeriesResult> {
   const minBars = options.minBars ?? TRADING_PARAMS.IND_MIN_BARS;
   const maxPriorSessions = options.maxPriorSessions ?? TRADING_PARAMS.WARMUP_MAX_PRIOR_SESSIONS;
+  const now = options.now;
 
   const primaryRange = TRADING_PARAMS.WARMUP_RANGE_5M;
-  let selection = selectWarmupBars(await fetcher(primaryRange), options.market, { maxPriorSessions });
+  let selection = selectWarmupBars(await fetcher(primaryRange), options.market, { maxPriorSessions, now });
   let rangeUsed = primaryRange;
   let fallbackUsed = false;
 
   if (selection.bars.length < minBars) {
     const fallbackRange = TRADING_PARAMS.WARMUP_RANGE_FALLBACK_5M;
     try {
-      const fallbackSelection = selectWarmupBars(await fetcher(fallbackRange), options.market, { maxPriorSessions });
+      const fallbackSelection = selectWarmupBars(await fetcher(fallbackRange), options.market, {
+        maxPriorSessions,
+        now,
+      });
       if (fallbackSelection.bars.length >= selection.bars.length) {
         selection = fallbackSelection;
         rangeUsed = fallbackRange;
@@ -170,6 +192,7 @@ export async function loadWarmupBars(
     fallbackUsed,
     priorSessionsUsed: selection.priorSessionsUsed,
     completeBars: selection.bars.length,
+    droppedFutureBars: selection.droppedFutureBars,
   };
 }
 
@@ -605,21 +628,32 @@ export function computeSetupIndicators(
     maxPriorSessions?: number;
     rangeUsed?: string | null;
     priorSessionsUsed?: number;
+    droppedFutureBars?: number;
   }
 ): SetupIndicators {
   const now = options.now ?? new Date();
   const minBars = options.minBars ?? TRADING_PARAMS.IND_MIN_BARS;
   const maxStaleMin = options.maxStaleMin ?? TRADING_PARAMS.IND_MAX_STALE_MIN;
-  const selection = selectWarmupBars(bars, options.market, { maxPriorSessions: options.maxPriorSessions });
+  const selection = selectWarmupBars(bars, options.market, {
+    maxPriorSessions: options.maxPriorSessions,
+    now,
+  });
   const prepared = selection.bars;
   const warmupMeta = {
     rangeUsed: options.rangeUsed ?? null,
     priorSessionsUsed: options.priorSessionsUsed ?? selection.priorSessionsUsed,
     recentBars: prepared.slice(-12).map((b) => ({ t: b.t, h: b.h, l: b.l, c: b.c })),
+    adxThreshold: adxThresholds(options.market),
   };
 
   if (prepared.length < minBars) {
-    const reason: IndicatorUnknownReason = prepared.length === 0 ? 'AFTER_HOURS' : 'INSUFFICIENT_BARS';
+    const droppedFutureBars = options.droppedFutureBars ?? selection.droppedFutureBars;
+    const reason: IndicatorUnknownReason =
+      prepared.length === 0
+        ? droppedFutureBars > 0
+          ? 'INSUFFICIENT_BARS'
+          : 'AFTER_HOURS'
+        : 'INSUFFICIENT_BARS';
     const unknown = <T extends { status: 'UNKNOWN'; reason: IndicatorUnknownReason }>(extra: T) => extra;
     return {
       barsUsed: prepared.length,

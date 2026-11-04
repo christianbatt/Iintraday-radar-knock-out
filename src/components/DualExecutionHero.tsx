@@ -9,6 +9,7 @@ import {
 import { calculateKnockOutSafety, createDefaultSafetyCheck } from '../utils/calculator';
 import { TRADING_PARAMS } from '../config/tradingParams';
 import { ImpliedVolatilityGauge } from './ImpliedVolatilityGauge';
+import { IndicatorBadges, ScoreBreakdownPanel } from './IndicatorsPanel';
 import { tradingAudio } from '../utils/audioAlert';
 import {
   ShieldAlert,
@@ -554,6 +555,20 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
         ) : (
           <div className="py-6 text-center text-slate-500 text-xs font-mono">
             Nessun candidato europeo o americano caricato nel paniere.
+          </div>
+        )}
+
+        {/* Indicatori di setup e breakdown score: solo campi del payload del candidato */}
+        {candidate && (
+          <div className="space-y-2">
+            <IndicatorBadges
+              indicators={candidate.quote?.setupIndicators}
+              vwapState={candidate.quote?.vwapState}
+              veto={candidate.score.veto}
+              warmupIncomplete={candidate.score.warmupIncomplete}
+              direction={(candidate.quote?.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT'}
+            />
+            <ScoreBreakdownPanel score={candidate.score} />
           </div>
         )}
 

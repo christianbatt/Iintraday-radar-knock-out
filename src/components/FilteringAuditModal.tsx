@@ -15,6 +15,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { FilteringAuditReport, ExclusionCategory } from '../types/radar';
+import { SETUP_VETO_LABELS } from '../config/setupLabels';
 
 interface FilteringAuditModalProps {
   isOpen: boolean;
@@ -252,6 +253,16 @@ export const FilteringAuditModal: React.FC<FilteringAuditModalProps> = ({
               </div>
             ))
           )}
+        </div>
+
+        {/* Legenda veti di setup (IPOTESI): reason code del payload -> etichetta italiana */}
+        <div className="px-3 sm:px-6 py-2 border-t border-slate-800 bg-slate-950/60 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-mono text-slate-400 shrink-0">
+          <span className="text-slate-500">Veti setup:</span>
+          {Object.entries(SETUP_VETO_LABELS).map(([code, label]) => (
+            <span key={code} title={label}>
+              <span className="text-rose-300">{code}</span> = {label}
+            </span>
+          ))}
         </div>
 
         {/* Footer with Optimizer CTA */}
