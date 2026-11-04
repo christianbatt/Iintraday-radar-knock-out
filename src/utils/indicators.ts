@@ -68,7 +68,8 @@ export function filterRegularSessionBars(
 ): IndicatorBarInput[] {
   const seen = new Set<number>();
   return bars
-    .filter((b) => Number.isFinite(b.t) && b.t > 0)
+    // AUDIT P1-4: una barra non databile (timestamp non finito o data invalida) non e' usabile.
+    .filter((b) => Number.isFinite(b.t) && b.t > 0 && Number.isFinite(new Date(b.t).getTime()))
     .filter((b) => isRegularSessionBar(b.t, market))
     .filter((b) => [b.o, b.h, b.l, b.c].every((v) => typeof v === 'number' && Number.isFinite(v)))
     .sort((a, b) => a.t - b.t)
