@@ -7,9 +7,16 @@ import { TRADING_PARAMS } from './tradingParams';
 export const SETUP_PROMPT_BLOCK =
   'INDICATORI DI SETUP 5m (gia calcolati dal codice, solo barre chiuse della sessione regolare):\n' +
   '- supertrend: direction (+1 long / -1 short) e barsSinceFlip. Direzione contraria al setup = veto.\n' +
-  '- adx: value con plusDI e minusDI. ADX < ' +
-  TRADING_PARAMS.ADX_MIN_TREND +
-  ' = trend assente, veto del setup.\n' +
+  '- adx: value con plusDI e minusDI. Soglie per mercato (min/strong): EU ' +
+  TRADING_PARAMS.ADX_MIN_TREND_EU +
+  '/' +
+  TRADING_PARAMS.ADX_STRONG_EU +
+  ', US ' +
+  TRADING_PARAMS.ADX_MIN_TREND_US +
+  '/' +
+  TRADING_PARAMS.ADX_STRONG_US +
+  '. ADX sotto la soglia minima del mercato = trend assente, veto del setup; DI contrario (+DI/-DI) = 0 punti senza veto.\n' +
+  '- warmupIncomplete: se true (Supertrend, ADX o StochRSI UNKNOWN) il candidato non e raccomandabile e non puo essere Top Pick, anche se resta visibile con il suo punteggio.\n' +
   '- stochRsi: k, d, lastCross (LONG/SHORT/NONE) e barsSinceCross; un incrocio conta solo entro ' +
   TRADING_PARAMS.STOCH_RSI_CROSS_LOOKBACK +
   ' barre chiuse.\n' +

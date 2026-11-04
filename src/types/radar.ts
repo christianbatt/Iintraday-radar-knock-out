@@ -141,6 +141,7 @@ export interface ScoreBreakdown {
   scoreBreakdown?: Record<string, number>; // Mappa componente -> punti interi
   veto?: SetupVetoReason | null; // Veto attivo: il setup va scartato indipendentemente dallo score
   vetoReasons?: SetupVetoReason[];
+  warmupIncomplete?: boolean; // WARMUP_INCOMPLETE: Supertrend/ADX/StochRSI UNKNOWN, nessuna raccomandazione
   rawTotal?: number; // Somma grezza pre-cap a 100 per tie-breaking quantitativo
   total: number;
   details: string[];
@@ -197,6 +198,9 @@ export interface PsarSnapshot {
 
 export interface SetupIndicators {
   barsUsed: number;
+  rangeUsed?: string | null; // range Yahoo usato per la serie di warm-up (diagnostica e PR)
+  priorSessionsUsed?: number; // sessioni regolari precedenti usate oltre alla corrente
+  recentBars?: { t: number; h: number; l: number; c: number }[]; // ultime barre regolari (replay veto ADX)
   atr: { value: number | null; status: IndicatorStatus; reason: IndicatorUnknownReason | null };
   supertrend: SupertrendSnapshot;
   adx: AdxSnapshot;
@@ -205,7 +209,7 @@ export interface SetupIndicators {
 }
 
 // Motivi di veto del setup (setup scartato indipendentemente dallo score)
-export type SetupVetoReason = 'ADX_BELOW_20' | 'SUPERTREND_OPPOSED' | 'VWAP_OPPOSED';
+export type SetupVetoReason = 'ADX_BELOW_MARKET_THRESHOLD' | 'SUPERTREND_OPPOSED' | 'VWAP_OPPOSED';
 
 export interface KnockOutBarrierGuard {
   safeDistanceAtr: number; // e.g. 1.5 * ATR

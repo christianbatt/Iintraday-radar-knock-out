@@ -144,8 +144,10 @@ export interface TradingParamsConfig {
   ST_FACTOR: number; // moltiplicatore ATR delle bande (alternativa 3.5 selezionabile)
   ST_FLIP_RECENT_BARS: number; // flip considerato "recente" entro N barre chiuse
   ADX_PERIOD: number;
-  ADX_MIN_TREND: number; // sotto questa soglia il trend e' assente: veto del setup
-  ADX_STRONG: number; // soglia di trend forte (punteggio pieno ADX)
+  ADX_MIN_TREND_EU: number; // IPOTESI: sotto questa soglia il trend e' assente in EU: veto del setup
+  ADX_MIN_TREND_US: number; // soglia US (invariata rispetto al precedente ADX_MIN_TREND 20)
+  ADX_STRONG_EU: number; // IPOTESI: trend forte EU (punteggio pieno ADX)
+  ADX_STRONG_US: number; // soglia di trend forte US (invariata rispetto al precedente ADX_STRONG 25)
   STOCH_RSI_RSI_LEN: number;
   STOCH_RSI_STOCH_LEN: number;
   STOCH_RSI_K: number;
@@ -160,6 +162,10 @@ export interface TradingParamsConfig {
   PSAR_MAX: number;
   IND_MIN_BARS: number; // barre 5m complete richieste (sessione precedente inclusa)
   IND_MAX_STALE_MIN: number; // ultima barra piu' vecchia di N minuti = serie STALE
+  WARMUP_RANGE_5M: string; // IPOTESI: range Yahoo della serie 5m usata dagli indicatori
+  WARMUP_RANGE_FALLBACK_5M: string; // IPOTESI: fallback se con WARMUP_RANGE_5M le barre complete sono < IND_MIN_BARS
+  WARMUP_MAX_PRIOR_SESSIONS: number; // IPOTESI: massimo sessioni regolari precedenti usate nel warm-up
+  WARMUP_INCOMPLETE: 'WARMUP_INCOMPLETE'; // flag del candidato con Supertrend/ADX/StochRSI UNKNOWN
   VWAP_VETO_ENABLED: boolean; // veto se VWAP contraria con volume confermato
 
   // Pesi dello score (somma = 100, TUTTE IPOTESI)
@@ -300,8 +306,10 @@ export const TRADING_PARAMS: TradingParamsConfig = {
   ST_FACTOR: 3, // alternativa 3.5 selezionabile
   ST_FLIP_RECENT_BARS: 6,
   ADX_PERIOD: 14,
-  ADX_MIN_TREND: 20,
-  ADX_STRONG: 25,
+  ADX_MIN_TREND_EU: 16, // IPOTESI: il 5m EU e' meno direzionale del US
+  ADX_MIN_TREND_US: 20, // invariato rispetto al precedente ADX_MIN_TREND
+  ADX_STRONG_EU: 20, // IPOTESI
+  ADX_STRONG_US: 25, // invariato rispetto al precedente ADX_STRONG
   STOCH_RSI_RSI_LEN: 14,
   STOCH_RSI_STOCH_LEN: 14,
   STOCH_RSI_K: 3,
@@ -316,6 +324,10 @@ export const TRADING_PARAMS: TradingParamsConfig = {
   PSAR_MAX: 0.2,
   IND_MIN_BARS: 60,
   IND_MAX_STALE_MIN: 15,
+  WARMUP_RANGE_5M: '5d', // IPOTESI: ~5 sessioni regolari di barre 5m
+  WARMUP_RANGE_FALLBACK_5M: '1mo', // IPOTESI: fallback se le barre complete sono < IND_MIN_BARS
+  WARMUP_MAX_PRIOR_SESSIONS: 5, // IPOTESI
+  WARMUP_INCOMPLETE: 'WARMUP_INCOMPLETE',
   VWAP_VETO_ENABLED: true,
 
   // Pesi dello score: somma esattamente 100 (test dedicato)
@@ -355,3 +367,13 @@ export const TRADING_PARAMS: TradingParamsConfig = {
 };
 
 export type TradingParams = typeof TRADING_PARAMS;
+
+/**
+ * Soglie ADX per mercato (IPOTESI): per ogni mercato MIN < STRONG, vincolo verificato dai test.
+ * EU piu' permissivo del US: 16/20 contro 20/25.
+ */
+export function adxThresholds(market: 'EU' | 'US'): { min: number; strong: number } {
+  return market === 'EU'
+    ? { min: TRADING_PARAMS.ADX_MIN_TREND_EU, strong: TRADING_PARAMS.ADX_STRONG_EU }
+    : { min: TRADING_PARAMS.ADX_MIN_TREND_US, strong: TRADING_PARAMS.ADX_STRONG_US };
+}

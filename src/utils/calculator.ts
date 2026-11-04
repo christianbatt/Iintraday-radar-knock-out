@@ -37,7 +37,9 @@ import {
   SetupIndicators,
   SetupVetoReason,
 } from '../types/radar';
-import { TRADING_PARAMS } from '../config/tradingParams';
+import { TRADING_PARAMS, adxThresholds } from '../config/tradingParams';
+
+export { adxThresholds };
 import { getMarketTime, getExchangeDateStr } from './timezone';
 
 export interface DailyBarInput {
@@ -635,6 +637,20 @@ export function scaleComponentToWeight(oldPoints: number, weight: number, oldMax
 }
 
 /**
+ * WARMUP_INCOMPLETE (IPOTESI): Supertrend, ADX o StochRSI UNKNOWN (o indicatori del tutto
+ * assenti). Il candidato resta visibile con il suo punteggio ma non puo essere Top Pick
+ * ne essere raccomandato dall'AI, e non riceve soglie piu' basse ne punti rinormalizzati.
+ */
+export function isWarmupIncomplete(indicators: SetupIndicators | null | undefined): boolean {
+  if (!indicators) return true;
+  return (
+    indicators.supertrend.status !== 'OK' ||
+    indicators.adx.status !== 'OK' ||
+    indicators.stochRsi.status !== 'OK'
+  );
+}
+
+/**
  * Veti del setup (IPOTESI): ADX di trend assente, Supertrend contrario, VWAP contraria
  * con volume confermato (solo se VWAP_VETO_ENABLED). Un veto scarta il candidato
  * indipendentemente dal punteggio.
@@ -642,7 +658,8 @@ export function scaleComponentToWeight(oldPoints: number, weight: number, oldMax
 export function evaluateSetupVetoes(
   direction: 'LONG' | 'SHORT',
   indicators: SetupIndicators | null | undefined,
-  vwapState: VwapSignalState | null | undefined
+  vwapState: VwapSignalState | null | undefined,
+  market: 'EU' | 'US' = 'US'
 ): SetupVetoReason[] {
   const reasons: SetupVetoReason[] = [];
   const dirSign = direction === 'LONG' ? 1 : -1;
@@ -653,8 +670,9 @@ export function evaluateSetupVetoes(
   }
 
   const adx = indicators?.adx;
-  if (adx?.status === 'OK' && adx.value != null && adx.value < TRADING_PARAMS.ADX_MIN_TREND) {
-    reasons.push('ADX_BELOW_20');
+  const adxMin = adxThresholds(market).min;
+  if (adx?.status === 'OK' && adx.value != null && adx.value < adxMin) {
+    reasons.push('ADX_BELOW_MARKET_THRESHOLD');
   }
 
   if (TRADING_PARAMS.VWAP_VETO_ENABLED && isVwapStateOpposed(vwapState, direction)) {
@@ -697,6 +715,7 @@ export function calculateCandidateScore(
       psarScore: 0,
       veto: null,
       vetoReasons: [],
+      warmupIncomplete: isWarmupIncomplete(quote.setupIndicators),
       rawTotal: 0,
       total: 0,
       details: ['Prezzo di mercato non disponibile dal feed: candidato non qualificabile.'],
@@ -966,21 +985,22 @@ export function calculateCandidateScore(
     );
   }
 
-  // 10b. ADX (max W_ADX): trend forte con DI allineato, trend debole = veto
+  // 10b. ADX (max W_ADX): soglie per mercato, DI allineato alla direzione del setup
   let adxScore = 0;
   const adx = indicators?.adx;
+  const adxThreshold = adxThresholds(quote.market);
   if (adx?.status === 'OK' && adx.value != null) {
     const diAligned = adx.plusDI != null && adx.minusDI != null && (dirSign === 1 ? adx.plusDI > adx.minusDI : adx.minusDI > adx.plusDI);
-    if (adx.value >= P.ADX_STRONG && diAligned) {
+    if (adx.value >= adxThreshold.strong && diAligned) {
       adxScore = P.W_ADX;
-      details.push(`ADX 5m ${adx.value.toFixed(1)} (+DI ${adx.plusDI?.toFixed(1)} / -DI ${adx.minusDI?.toFixed(1)}) | trend forte | +${adxScore}pt`);
-    } else if (adx.value >= P.ADX_MIN_TREND && adx.value < P.ADX_STRONG && diAligned) {
-      adxScore = Math.round(P.W_ADX * (4 / 7));
-      details.push(`ADX 5m ${adx.value.toFixed(1)} (+DI ${adx.plusDI?.toFixed(1)} / -DI ${adx.minusDI?.toFixed(1)}) | trend moderato | +${adxScore}pt`);
-    } else if (adx.value < P.ADX_MIN_TREND) {
-      details.push(`ADX 5m ${adx.value.toFixed(1)} < ${P.ADX_MIN_TREND}: trend assente | 0pt + veto`);
+      details.push(`ADX 5m ${adx.value.toFixed(1)} (+DI ${adx.plusDI?.toFixed(1)} / -DI ${adx.minusDI?.toFixed(1)}) | trend forte ${quote.market} (>= ${adxThreshold.strong}) | +${adxScore}pt`);
+    } else if (adx.value >= adxThreshold.min && diAligned) {
+      adxScore = Math.round((P.W_ADX * 4) / 7);
+      details.push(`ADX 5m ${adx.value.toFixed(1)} (+DI ${adx.plusDI?.toFixed(1)} / -DI ${adx.minusDI?.toFixed(1)}) | trend moderato ${quote.market} (${adxThreshold.min}-${adxThreshold.strong}) | +${adxScore}pt`);
+    } else if (adx.value < adxThreshold.min) {
+      details.push(`ADX 5m ${adx.value.toFixed(1)} < ${adxThreshold.min} (${quote.market}): trend assente | 0pt + veto ADX_BELOW_MARKET_THRESHOLD`);
     } else {
-      details.push(`ADX 5m ${adx.value.toFixed(1)} con DI contrario al setup: 0pt`);
+      details.push(`ADX 5m ${adx.value.toFixed(1)} con DI contrario al setup: 0pt (nessun veto, direzione coperta dal Supertrend)`);
     }
   } else if (adx) {
     details.push(`ADX 5m: UNKNOWN (${adx.reason}) | 0pt`);
@@ -1025,9 +1045,17 @@ export function calculateCandidateScore(
   const vwapLine = vwapContribution.detail;
   details.push(vwapLine);
 
-  // 12. VETI: indipendenti dallo score, scartano il setup
-  const vetoReasons = evaluateSetupVetoes(direction, indicators, effectiveVwapState);
+  // 12. VETI: indipendenti dallo score, scartano il setup (soglie ADX del mercato)
+  const vetoReasons = evaluateSetupVetoes(direction, indicators, effectiveVwapState, quote.market);
   for (const reason of vetoReasons) details.push(`VETO: ${reason} - setup scartato indipendentemente dallo score.`);
+
+  // 13. WARMUP_INCOMPLETE: indicatori di setup UNKNOWN -> nessuna raccomandazione, nessuna rinormalizzazione
+  const warmupIncomplete = isWarmupIncomplete(indicators);
+  if (warmupIncomplete) {
+    details.push(
+      `${P.WARMUP_INCOMPLETE}: Supertrend/ADX/StochRSI non tutti OK | candidato visibile ma non raccomandabile e non Top Pick | nessun punto rinormalizzato`
+    );
+  }
 
   const rawTotal =
     gapScore +
@@ -1080,6 +1108,7 @@ export function calculateCandidateScore(
     scoreBreakdown,
     veto: vetoReasons[0] ?? null,
     vetoReasons,
+    warmupIncomplete,
     vwapScore,
     vwapLine,
     rawTotal: +rawTotal.toFixed(1),
@@ -1378,29 +1407,33 @@ export function getDualTopCandidates(
   const params = options?.parameters;
   const isRsiActive = options?.rsiFilterActive ?? options?.parameters?.rsiFilterActive ?? false;
 
-  // Select top candidates that fully comply with active parameters (qualified)
+  // Select top candidates that fully comply with active parameters (qualified).
+  // WARMUP_INCOMPLETE escluso: resta nel radar ma non puo essere Top Pick.
+  const recommendableEU = rankedEU.filter((cand) => !cand.score.warmupIncomplete);
+  const recommendableUS = rankedUS.filter((cand) => !cand.score.warmupIncomplete);
+
   let topEU: ScoredCandidate | null = null;
-  if (params && rankedEU.length > 0) {
-    topEU = rankedEU.find((cand) => {
+  if (params && recommendableEU.length > 0) {
+    topEU = recommendableEU.find((cand) => {
       const check = isCandidateCompliantWithParameters(cand.quote, cand.score.total, params, isRsiActive);
       return check.compliant;
     }) || null;
   }
-  // Fallback to highest scored EU candidate if none passes all filters
-  if (!topEU && rankedEU.length > 0) {
-    topEU = rankedEU[0];
+  // Fallback to highest scored EU candidate if none passes all filters (mai un WARMUP_INCOMPLETE)
+  if (!topEU && recommendableEU.length > 0) {
+    topEU = recommendableEU[0];
   }
 
   let topUS: ScoredCandidate | null = null;
-  if (params && rankedUS.length > 0) {
-    topUS = rankedUS.find((cand) => {
+  if (params && recommendableUS.length > 0) {
+    topUS = recommendableUS.find((cand) => {
       const check = isCandidateCompliantWithParameters(cand.quote, cand.score.total, params, isRsiActive);
       return check.compliant;
     }) || null;
   }
-  // Fallback to highest scored US candidate if none passes all filters
-  if (!topUS && rankedUS.length > 0) {
-    topUS = rankedUS[0];
+  // Fallback to highest scored US candidate if none passes all filters (mai un WARMUP_INCOMPLETE)
+  if (!topUS && recommendableUS.length > 0) {
+    topUS = recommendableUS[0];
   }
 
   return {
