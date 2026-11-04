@@ -25,10 +25,11 @@ import {
   calculateAtr5m,
   VwapBar,
 } from './src/utils/calculator';
+import { computeVwapDataQuality, formatVwapDataQualityScan } from './src/utils/calculator';
 import { getExchangeDateStr, getMarketTime } from './src/utils/timezone';
 import { TRADING_PARAMS } from './src/config/tradingParams';
 import { VWAP_PROMPT_BLOCK } from './src/config/vwapPrompt';
-import { AILearnedInsight, VwapSignalState } from './src/types/radar';
+import { AILearnedInsight, VwapSignalState, VwapDataQuality } from './src/types/radar';
 import { runNightlyLearning } from './scripts/nightly_learning';
 
 dotenv.config();
@@ -539,6 +540,7 @@ export interface RawQuoteData {
   vwapState?: VwapSignalState | null;
   lastBarVolume?: number | null; // volume della barra 5m piu' recente della sessione (da getIntraday5mMetrics)
   lastBarTime?: number | null; // timestamp unix (secondi) della stessa barra
+  vwapDataQuality?: VwapDataQuality | null; // quality gate VWAP: se !ok il contributo e' 0
   gapPercent: number | null;
   rvol: number | null;
   impliedVolatility?: number | null;
@@ -640,6 +642,7 @@ async function getIntraday5mMetrics(
   vwapState?: VwapSignalState | null;
   lastBarVolume?: number | null;
   lastBarTime?: number | null;
+  vwapDataQuality?: VwapDataQuality | null;
 }> {
   const cacheKey = `metrics5m:${ticker}:${market}`;
   const cached = cache.get<{
@@ -655,6 +658,7 @@ async function getIntraday5mMetrics(
     vwapState?: VwapSignalState | null;
     lastBarVolume?: number | null;
     lastBarTime?: number | null;
+    vwapDataQuality?: VwapDataQuality | null;
   }>(cacheKey);
   if (cached) return cached.data;
 
@@ -665,7 +669,7 @@ async function getIntraday5mMetrics(
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
       signal: AbortSignal.timeout(6000),
     });
-    if (!resp.ok) return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null, orbBreakoutTimeLong: null, orbBreakoutTimeShort: null, vwapCumulative: null, vwapCumulativeWithPre: null, vwapCoverage: null, vwapState: null, lastBarVolume: null, lastBarTime: null };
+    if (!resp.ok) return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null, orbBreakoutTimeLong: null, orbBreakoutTimeShort: null, vwapCumulative: null, vwapCumulativeWithPre: null, vwapCoverage: null, vwapState: null, lastBarVolume: null, lastBarTime: null, vwapDataQuality: { ok: false, reason: `FEED_ERROR:HTTP ${resp.status}`, coverage: 0 } };
     const json = await resp.json();
     const rawQuotes = json?.chart?.result?.[0]?.indicators?.quote?.[0];
     const closes: number[] = rawQuotes?.close?.filter(
@@ -922,11 +926,13 @@ async function getIntraday5mMetrics(
     let vwapState: VwapSignalState | null = null;
     let lastBarVolume: number | null = null;
     let lastBarTime: number | null = null;
+    let vwapDataQuality: VwapDataQuality | null = null;
     try {
       const ts: number[] = json?.chart?.result?.[0]?.timestamp || [];
       if (ts.length > 0) {
         const bars: VwapBar[] = ts.map((t, i) => ({
           timestamp: t,
+          open: rawQuotes?.open?.[i] ?? null,
           high: rawQuotes?.high?.[i] ?? null,
           low: rawQuotes?.low?.[i] ?? null,
           close: rawQuotes?.close?.[i] ?? null,
@@ -963,10 +969,43 @@ async function getIntraday5mMetrics(
           nowMinutes,
           source: vwapSource,
         });
+
+        // Quality gate (IPOTESI): serie non affidabile -> stato UNKNOWN + DATA_QUALITY:<reason>, contributo 0.
+        const metaPrice = json?.chart?.result?.[0]?.meta?.regularMarketPrice;
+        const quality = computeVwapDataQuality(
+          bars,
+          {
+            currentPrice: typeof metaPrice === 'number' ? metaPrice : lastSessionBar?.close ?? null,
+            vwap: null,
+          },
+          market,
+          new Date()
+        );
+        vwapDataQuality = quality;
+        if (!quality.ok) {
+          const dqFlag = `DATA_QUALITY:${quality.reason ?? 'UNKNOWN'}`;
+          vwapState = vwapState
+            ? {
+                ...vwapState,
+                state: 'UNKNOWN',
+                coverage: quality.coverage,
+                flags: [dqFlag, ...vwapState.flags.filter((f) => !f.startsWith('DATA_QUALITY:'))],
+              }
+            : {
+                state: 'UNKNOWN',
+                distAtr: null,
+                slopeAtr: null,
+                coverage: quality.coverage,
+                volumeRatio: null,
+                flags: [dqFlag],
+                vwapLevel: null,
+              };
+        }
       }
     } catch {
       // lascia null
     }
+    if (!vwapDataQuality) vwapDataQuality = { ok: false, reason: 'FEED_ERROR', coverage: 0 };
 
     const result = {
       rsi5m,
@@ -984,6 +1023,7 @@ async function getIntraday5mMetrics(
       vwapState,
       lastBarVolume,
       lastBarTime,
+      vwapDataQuality,
     };
     cache.set(cacheKey, result, 25);
     return result;
@@ -1004,6 +1044,7 @@ async function getIntraday5mMetrics(
       vwapState: null,
       lastBarVolume: null,
       lastBarTime: null,
+      vwapDataQuality: { ok: false, reason: 'FEED_ERROR', coverage: 0 },
     };
   }
 }
@@ -1374,6 +1415,7 @@ async function fetchQuoteForTicker(
     vwapState: (await intraday5mPromise).vwapState ?? null,
     lastBarVolume: (await intraday5mPromise).lastBarVolume ?? null,
     lastBarTime: (await intraday5mPromise).lastBarTime ?? null,
+    vwapDataQuality: (await intraday5mPromise).vwapDataQuality ?? null,
     gapPercent,
     rvol: quoteData.rvol ?? (await intraday5mPromise).rvol ?? null,
     rvol20m: quoteData.rvol20m ?? (await intraday5mPromise).rvol20m,
@@ -1889,6 +1931,9 @@ app.post('/api/market-data', async (req: Request, res: Response) => {
         )
       )
     );
+
+    // Qualita' dati VWAP per scansione: solo log/report, nessun impatto su UI o punteggi.
+    console.log(formatVwapDataQualityScan('ALL', results));
 
     res.json({
       count: results.length,

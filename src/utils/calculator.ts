@@ -2,6 +2,7 @@ import {
   RawQuoteData,
   VwapSignalState,
   VwapStateName,
+  VwapDataQuality,
   ScoredCandidate,
   ScoreBreakdown,
   ExecutionSetup,
@@ -943,7 +944,8 @@ export function calculateCandidateScore(
   const effectiveVwapState = resolveVwapStateForScoring(
     quote.vwapState ?? null,
     vwapBar,
-    quote.market
+    quote.market,
+    quote.vwapDataQuality ?? null
   );
   const vwapContribution = calculateVwapScoreContribution(
     effectiveVwapState,
@@ -4850,6 +4852,7 @@ export function evaluateOpenPositionLifecycle(
 
 export interface VwapBar {
   timestamp: number; // secondi unix, inizio barra
+  open?: number | null; // apertura barra (usata dal quality gate, non dal VWAP)
   high: number | null;
   low: number | null;
   close: number | null;
@@ -4923,6 +4926,196 @@ export function computeSessionVwap(
     barsWithVolume,
     coverage: expected > 0 ? Math.min(1, barsWithVolume / expected) : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Quality gate dei dati VWAP: il VWAP contribuisce allo score SOLO se la serie e' affidabile.
+// Se il gate fallisce: state UNKNOWN, flag DATA_QUALITY:<reason>, contributo 0.
+// Tutte le soglie sono IPOTESI (TRADING_PARAMS.VWAP_*), da validare empiricamente.
+// ---------------------------------------------------------------------------
+
+export interface VwapQualityOptions {
+  feedError?: string | null; // es. 'HTTP 429' dal fetch Yahoo
+  vwapOverride?: number | null; // livello VWAP da validare (default: quote.vwap o VWAP calcolata)
+}
+
+/**
+ * Verifica la qualita' della serie 5m prima di dare un segnale VWAP.
+ * Ordine dei controlli (il primo che fallisce determina `reason`):
+ * a FEED_ERROR, b NON_FINITE, c OHLC_INCONSISTENT, d DUPLICATE_OR_UNSORTED, e GAP,
+ * f ZERO_VOLUME, g LOW_COVERAGE, h STALE, i OUT_OF_RANGE, j QUOTE_MISMATCH.
+ * I controlli strutturali (b, c) si applicano alle barre della sessione corrente dentro la
+ * finestra regolare, cioe' alla serie che alimenta la VWAP.
+ */
+export function computeVwapDataQuality(
+  bars: VwapBar[],
+  quote: { currentPrice?: number | null; vwap?: number | null } | null,
+  market: 'EU' | 'US',
+  now: Date,
+  options: VwapQualityOptions = {}
+): VwapDataQuality {
+  const fail = (reason: string, coverage = 0): VwapDataQuality => ({ ok: false, reason, coverage: +coverage.toFixed(3) });
+
+  // a. FEED_ERROR: richiesta fallita (es. 429) o nessuna barra restituita
+  if (options.feedError) return fail('FEED_ERROR');
+  if (!bars || bars.length === 0) return fail('FEED_ERROR');
+
+  const mtNow = getMarketTime(market, now);
+  const sessionDate = mtNow.dateFormatted;
+  const nowMinutes = mtNow.totalMinutes;
+  const openMinutes = market === 'US' ? 570 : 540;
+  const closeMinutes = market === 'US' ? 960 : 1050;
+  const upTo = Math.min(nowMinutes, closeMinutes);
+
+  type RawBar = {
+    timestamp: number;
+    minutes: number;
+    open: number | null;
+    high: number | null;
+    low: number | null;
+    close: number | null;
+    volume: number | null;
+  };
+  const sessionBars: RawBar[] = [];
+  for (const b of bars) {
+    const mt = getMarketTime(market, new Date(b.timestamp * 1000));
+    if (mt.dateFormatted !== sessionDate) continue;
+    if (mt.totalMinutes < openMinutes || mt.totalMinutes >= closeMinutes) continue;
+    sessionBars.push({
+      timestamp: b.timestamp,
+      minutes: mt.totalMinutes,
+      open: b.open ?? null,
+      high: b.high,
+      low: b.low,
+      close: b.close,
+      volume: b.volume,
+    });
+  }
+
+  // b. NON_FINITE: high/low/close/volume null o NaN, prezzi <= 0
+  for (const r of sessionBars) {
+    for (const n of [r.high, r.low, r.close, r.volume]) {
+      if (n == null || !isFinite(n) || isNaN(n)) return fail('NON_FINITE');
+    }
+    if ((r.high as number) <= 0 || (r.low as number) <= 0 || (r.close as number) <= 0) return fail('NON_FINITE');
+    if (r.open != null && (!isFinite(r.open) || isNaN(r.open) || r.open <= 0)) return fail('NON_FINITE');
+  }
+
+  // c. OHLC_INCONSISTENT: high < low, oppure open/close fuori da [low, high]
+  for (const r of sessionBars) {
+    const hi = r.high as number;
+    const lo = r.low as number;
+    const cl = r.close as number;
+    if (hi < lo) return fail('OHLC_INCONSISTENT');
+    if (cl < lo || cl > hi) return fail('OHLC_INCONSISTENT');
+    if (r.open != null && (r.open < lo || r.open > hi)) return fail('OHLC_INCONSISTENT');
+  }
+
+  // d. DUPLICATE_OR_UNSORTED: timestamp non strettamente crescenti
+  for (let i = 1; i < bars.length; i++) {
+    if (bars[i].timestamp <= bars[i - 1].timestamp) return fail('DUPLICATE_OR_UNSORTED');
+  }
+
+  const regular = sessionBars
+    .filter((r) => r.minutes < upTo)
+    .map((r) => {
+      const hi = r.high as number;
+      const lo = r.low as number;
+      const cl = r.close as number;
+      return {
+        timestamp: r.timestamp,
+        minutes: r.minutes,
+        high: hi,
+        low: lo,
+        close: cl,
+        volume: r.volume as number,
+        typical: (hi + lo + cl) / 3,
+      };
+    });
+
+  // e. GAP: buco interno nella griglia 5m della sessione prima della valutazione
+  for (let i = 1; i < regular.length; i++) {
+    if (regular[i].minutes - regular[i - 1].minutes > 5) return fail('GAP');
+  }
+
+  // f. ZERO_VOLUME: barre di sessione a volume 0 oltre la soglia tollerata (IPOTESI: 0)
+  const zeroVolumeBars = regular.filter((r) => r.volume === 0).length;
+  if (zeroVolumeBars > TRADING_PARAMS.VWAP_MAX_ZERO_VOLUME_BARS) return fail('ZERO_VOLUME');
+
+  // g. LOW_COVERAGE: barre presenti / barre attese dall'apertura alla valutazione
+  const expected = Math.max(0, Math.floor((upTo - openMinutes) / 5));
+  const coverage = expected > 0 ? Math.min(1, regular.length / expected) : 0;
+  if (coverage < TRADING_PARAMS.VWAP_MIN_COVERAGE) return fail('LOW_COVERAGE', coverage);
+
+  // h. STALE: ultima barra piu' vecchia di VWAP_MAX_STALE_MIN mentre la sessione e' aperta
+  const lastRegular = regular.length > 0 ? regular[regular.length - 1] : null;
+  if (
+    nowMinutes >= openMinutes &&
+    nowMinutes < closeMinutes &&
+    lastRegular != null &&
+    nowMinutes - lastRegular.minutes > TRADING_PARAMS.VWAP_MAX_STALE_MIN
+  ) {
+    return fail('STALE', coverage);
+  }
+
+  // i. OUT_OF_RANGE: il livello VWAP usato deve stare dentro [minimo, massimo] di sessione
+  let pv = 0;
+  let vol = 0;
+  let sessionLow = Infinity;
+  let sessionHigh = -Infinity;
+  for (const r of regular) {
+    if (r.volume > 0) {
+      pv += r.typical * r.volume;
+      vol += r.volume;
+    }
+    sessionLow = Math.min(sessionLow, r.low);
+    sessionHigh = Math.max(sessionHigh, r.high);
+  }
+  const computedVwap = vol > 0 ? pv / vol : null;
+  const quoteVwap = quote?.vwap != null && isFinite(quote.vwap) && quote.vwap > 0 ? quote.vwap : null;
+  const vwapLevel = options.vwapOverride ?? quoteVwap ?? computedVwap;
+  if (
+    vwapLevel != null &&
+    isFinite(vwapLevel) &&
+    sessionLow !== Infinity &&
+    (vwapLevel < sessionLow - TRADING_PARAMS.EPSILON || vwapLevel > sessionHigh + TRADING_PARAMS.EPSILON)
+  ) {
+    return fail('OUT_OF_RANGE', coverage);
+  }
+
+  // j. QUOTE_MISMATCH: ultima chiusura 5m troppo distante dal prezzo corrente della quote
+  const price = quote?.currentPrice;
+  if (price == null || !isFinite(price) || price <= 0) return fail('QUOTE_MISMATCH', coverage);
+  if (lastRegular != null && Math.abs(lastRegular.close - price) / price > TRADING_PARAMS.VWAP_MAX_QUOTE_DRIFT_PCT) {
+    return fail('QUOTE_MISMATCH', coverage);
+  }
+
+  return { ok: true, reason: null, coverage: +coverage.toFixed(3) };
+}
+
+/** Conteggio dei candidati per esito del quality gate (log di scansione). */
+export function summarizeVwapDataQuality(
+  quotes: Array<{ vwapDataQuality?: VwapDataQuality | null }>
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const q of quotes) {
+    const dq = q.vwapDataQuality;
+    const key = !dq ? 'missing' : dq.ok ? 'ok' : `DATA_QUALITY:${dq.reason ?? 'UNKNOWN'}`;
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
+}
+
+/** Riga di log per scansione: visibile nel report, non nella UI. */
+export function formatVwapDataQualityScan(
+  market: 'EU' | 'US' | 'ALL',
+  quotes: Array<{ vwapDataQuality?: VwapDataQuality | null }>
+): string {
+  const counts = summarizeVwapDataQuality(quotes);
+  const parts = Object.keys(counts)
+    .sort()
+    .map((k) => `${k}=${counts[k]}`);
+  return `[VWAP quality] scan ${market}: ${quotes.length} candidati | ${parts.join(' | ')}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -5171,8 +5364,25 @@ function parseVwapBarTimeMs(barTime: number | string | Date | null | undefined):
 export function resolveVwapStateForScoring(
   vwapState: VwapSignalState | null | undefined,
   vwapBar: VwapBarContext | null | undefined,
-  market: 'EU' | 'US'
+  market: 'EU' | 'US',
+  quality?: VwapDataQuality | null
 ): VwapSignalState | null {
+  // Quality gate: dati inaffidabili -> nessun segnale, motivo esplicito, contributo 0.
+  if (quality && !quality.ok) {
+    const flag = `DATA_QUALITY:${quality.reason ?? 'UNKNOWN'}`;
+    const base: VwapSignalState = vwapState ?? {
+      state: 'UNKNOWN',
+      distAtr: null,
+      slopeAtr: null,
+      coverage: quality.coverage,
+      volumeRatio: null,
+      flags: [],
+      vwapLevel: null,
+    };
+    const flags = base.flags.includes(flag) ? base.flags : [flag, ...base.flags];
+    return { ...base, state: 'UNKNOWN', coverage: quality.coverage, flags };
+  }
+
   if (!vwapState) return null;
 
   const barMs = parseVwapBarTimeMs(vwapBar?.barTime);
@@ -5228,6 +5438,8 @@ export function isVwapStateOpposed(
 }
 
 function pickVwapFlag(flags: string[]): string {
+  const dataQuality = flags.find((f) => f.startsWith('DATA_QUALITY:'));
+  if (dataQuality) return dataQuality;
   const priority = [
     'AFTER_HOURS',
     'LOW_VOLUME',

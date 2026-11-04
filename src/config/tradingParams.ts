@@ -113,6 +113,9 @@ export interface TradingParamsConfig {
   VWAP_AFTER_HOURS_VOL_RATIO: number;
   VWAP_SOURCE: 'session' | 'withPre';
   VWAP_MIN_COVERAGE: number;
+  VWAP_MAX_ZERO_VOLUME_BARS: number;
+  VWAP_MAX_STALE_MIN: number;
+  VWAP_MAX_QUOTE_DRIFT_PCT: number;
   VWAP_NEAR_ATR: number;
   VWAP_REJECT_VOL_MULT: number;
   VWAP_SLOPE_BARS: number;
@@ -231,7 +234,10 @@ export const TRADING_PARAMS: TradingParamsConfig = {
   VWAP_MIN_VOLUME_RATIO: 1.5, // IPOTESI: volume confermato solo se barra 5m >= 1.5x media 5m
   VWAP_AFTER_HOURS_VOL_RATIO: 0.1, // IPOTESI: volume barra < 10% della media di sessione = barra illiquida (after-market) -> stato UNKNOWN
   VWAP_SOURCE: 'session', // IPOTESI: 'session' (US 09:30-16:00 / EU 09:00-17:30) oppure 'withPre' (solo US, dalle 04:00 NY)
-  VWAP_MIN_COVERAGE: 0.8, // IPOTESI: sotto questa quota di barre con volume lo stato VWAP e' UNKNOWN
+  VWAP_MIN_COVERAGE: 0.8, // IPOTESI: sotto questa quota di barre presenti/attese lo stato VWAP e' UNKNOWN
+  VWAP_MAX_ZERO_VOLUME_BARS: 0, // IPOTESI: barre a volume 0 tollerate in sessione (0 = una sola barra a volume 0 invalida la serie)
+  VWAP_MAX_STALE_MIN: 10, // IPOTESI: ultima barra piu' vecchia di 10 minuti in sessione = serie STALE
+  VWAP_MAX_QUOTE_DRIFT_PCT: 0.005, // IPOTESI: scostamento massimo ammesso tra ultima chiusura 5m e prezzo quote (0.5%)
   VWAP_NEAR_ATR: 0.1, // IPOTESI: prossimita' alla VWAP per riconoscere un PULLBACK (in ATR 5m)
   VWAP_REJECT_VOL_MULT: 1.5, // IPOTESI: volume della barra >= 1.5x media 5m per validare RECLAIM/REJECT
   VWAP_SLOPE_BARS: 6, // IPOTESI: barre 5m indietro per il calcolo della pendenza (30 minuti)

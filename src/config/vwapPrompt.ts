@@ -16,5 +16,6 @@ export const VWAP_PROMPT_BLOCK =
   '- BELOW o REJECT con volume confermato: sostiene un bias short oppure blocca un long.\n' +
   '- PULLBACK: conta solo se tiene la VWAP, con volume confermato.\n' +
   '- UNCONFIRMED, UNKNOWN o AFTER_HOURS: scrivi "VWAP non disponibile" e non usarlo.\n' +
+  '- VWAP non affidabile (<reason>, es. DATA_QUALITY:STALE): non usarla e scrivi "VWAP non disponibile (<reason>)".\n' +
   '- Ogni setup raccomandato riporta lo stato VWAP nella riga "Motivo".\n' +
   '- Uno stato VWAP contrario abbassa solo la "Confidenza": non rifiuta mai un setup da solo.';

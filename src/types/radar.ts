@@ -23,7 +23,8 @@ export interface RawQuoteData {
   vwap?: number | null;
   vwapState?: VwapSignalState | null;
   lastBarVolume?: number | null; // volume della barra 5m piu' recente della sessione (getIntraday5mMetrics)
-  lastBarTime?: number | null; // timestamp unix (secondi) della stessa barra, usato dal VWAP scoring
+  lastBarTime?: number | null; // timestamp unix (secondi) della stessa barra
+  vwapDataQuality?: VwapDataQuality | null; // esito del quality gate VWAP (server -> scoring), usato dal VWAP scoring
   ema20Daily?: number | null;
   avgVolume20d: number | null;
   preMarketVolume: number | null;
@@ -97,6 +98,25 @@ export interface VwapSignalState {
   volumeRatio: number | null; // volume barra 5m piu' recente / media 5m della stessa serie
   flags: string[]; // es. LOW_VWAP_COVERAGE, WEAK_VWAP_BREAK, OPEN_WINDOW, ATR_MISSING
   vwapLevel: number | null; // livello VWAP usato (debug / prompt AI)
+}
+
+// Esito del quality gate sui dati VWAP (IPOTESI: vedi TRADING_PARAMS.VWAP_*)
+export type VwapDataQualityReason =
+  | 'FEED_ERROR'
+  | 'NON_FINITE'
+  | 'OHLC_INCONSISTENT'
+  | 'DUPLICATE_OR_UNSORTED'
+  | 'GAP'
+  | 'ZERO_VOLUME'
+  | 'LOW_COVERAGE'
+  | 'STALE'
+  | 'OUT_OF_RANGE'
+  | 'QUOTE_MISMATCH';
+
+export interface VwapDataQuality {
+  ok: boolean;
+  reason: VwapDataQualityReason | string | null;
+  coverage: number;
 }
 
 export interface ScoreBreakdown {
