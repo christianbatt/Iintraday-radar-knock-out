@@ -160,6 +160,7 @@ export interface TradingParamsConfig {
   PSAR_START: number;
   PSAR_STEP: number;
   PSAR_MAX: number;
+  IND_BAR_MS: number; // IPOTESI: durata della barra 5m in millisecondi (chiusura della barra = apertura + IND_BAR_MS)
   IND_MIN_BARS: number; // barre 5m complete richieste (sessione precedente inclusa)
   IND_MAX_STALE_MIN: number; // ultima barra piu' vecchia di N minuti = serie STALE
   WARMUP_RANGE_5M: string; // IPOTESI: range Yahoo della serie 5m usata dagli indicatori
@@ -322,6 +323,7 @@ export const TRADING_PARAMS: TradingParamsConfig = {
   PSAR_START: 0.02,
   PSAR_STEP: 0.02,
   PSAR_MAX: 0.2,
+  IND_BAR_MS: 5 * 60_000, // IPOTESI: durata della barra 5m (300s); chiusura = apertura + IND_BAR_MS
   IND_MIN_BARS: 60,
   IND_MAX_STALE_MIN: 15,
   WARMUP_RANGE_5M: '5d', // IPOTESI: ~5 sessioni regolari di barre 5m
@@ -364,7 +366,8 @@ export const TRADING_PARAMS: TradingParamsConfig = {
   VWAP_OPEN_WINDOW_MIN: 30, // IPOTESI: primi minuti di sessione in cui il contributo e' ridotto
   VWAP_OPEN_WEIGHT_FACTOR: 0.5, // IPOTESI: moltiplicatore del contributo nella finestra di apertura
   VWAP_HARD_GATE: false, // IPOTESI: true = scarta i candidati con stato VWAP contrario alla direzione (non validato: resta false)
-};
+}
+export const IND_BAR_MS = TRADING_PARAMS.IND_BAR_MS;
 
 export type TradingParams = typeof TRADING_PARAMS;
 
