@@ -102,8 +102,24 @@ export interface TradingParamsConfig {
     readonly NEWS: number;
     readonly TREND: number;
     readonly ORDER_FLOW: number;
+    readonly VWAP: number;
+    readonly SUPERTREND: number;
+    readonly ADX: number;
+    readonly STOCH_RSI: number;
+    readonly PSAR: number;
     readonly RAW_MAX: number;
     readonly CAPPED_MAX: number;
+  };
+
+  // Massimi legacy dei componenti storici: servono solo alla conversione proporzionale
+  // component = min(W_x, oldPoints * W_x / oldMax).
+  SCORE_LEGACY_MAX: {
+    readonly GAP: number;
+    readonly RVOL: number;
+    readonly LEVELS: number;
+    readonly FUTURES: number;
+    readonly NEWS: number;
+    readonly ORDER_FLOW: number;
   };
 
   // VWAP di sessione: contributo allo score e stato per candidato (TUTTE IPOTESI, da validare empiricamente)
@@ -122,6 +138,45 @@ export interface TradingParamsConfig {
   VWAP_OPEN_WINDOW_MIN: number;
   VWAP_OPEN_WEIGHT_FACTOR: number;
   VWAP_HARD_GATE: boolean;
+
+  // Indicatori di setup 5m (TUTTE IPOTESI: periodi e soglie da validare empiricamente)
+  ST_PERIOD: number; // periodo ATR del Supertrend
+  ST_FACTOR: number; // moltiplicatore ATR delle bande (alternativa 3.5 selezionabile)
+  ST_FLIP_RECENT_BARS: number; // flip considerato "recente" entro N barre chiuse
+  ADX_PERIOD: number;
+  ADX_MIN_TREND: number; // sotto questa soglia il trend e' assente: veto del setup
+  ADX_STRONG: number; // soglia di trend forte (punteggio pieno ADX)
+  STOCH_RSI_RSI_LEN: number;
+  STOCH_RSI_STOCH_LEN: number;
+  STOCH_RSI_K: number;
+  STOCH_RSI_D: number;
+  STOCH_RSI_LONG_CROSS_MAX: number; // incrocio long valido solo se K <= soglia
+  STOCH_RSI_SHORT_CROSS_MIN: number; // incrocio short valido solo se K >= soglia
+  STOCH_RSI_EXTREME_HI: number;
+  STOCH_RSI_EXTREME_LO: number;
+  STOCH_RSI_CROSS_LOOKBACK: number; // barre chiuse entro cui l'incrocio e' valido
+  PSAR_START: number;
+  PSAR_STEP: number;
+  PSAR_MAX: number;
+  IND_MIN_BARS: number; // barre 5m complete richieste (sessione precedente inclusa)
+  IND_MAX_STALE_MIN: number; // ultima barra piu' vecchia di N minuti = serie STALE
+  VWAP_VETO_ENABLED: boolean; // veto se VWAP contraria con volume confermato
+
+  // Pesi dello score (somma = 100, TUTTE IPOTESI)
+  W_GAP: number;
+  W_RVOL: number;
+  W_VWAP: number;
+  W_SUPERTREND: number;
+  W_ADX: number;
+  W_STOCH_RSI: number;
+  W_LEVELS: number;
+  W_FUTURES: number;
+  W_NEWS: number;
+  W_ORDER_FLOW: number;
+  W_LIQUIDITY: number;
+  W_PSAR: number;
+  W_RSI: number;
+  W_TREND: number;
 }
 
 export const TRADING_PARAMS: TradingParamsConfig = {
@@ -213,18 +268,71 @@ export const TRADING_PARAMS: TradingParamsConfig = {
   ORDER_FLOW_STRONG_PCT: 58,
   ORDER_FLOW_MOD_PCT: 53,
   SCORE_MAX_COMPONENTS: {
-    GAP: 25,
-    RVOL: 25,
+    GAP: 12,
+    RVOL: 14,
     LIQUIDITY: 0,
-    FUTURES: 20,
-    LEVELS: 10,
-    RSI: 10,
-    NEWS: 15,
-    TREND: 8,
-    ORDER_FLOW: 10,
-    RAW_MAX: 123,
+    FUTURES: 12,
+    LEVELS: 6,
+    RSI: 0,
+    NEWS: 10,
+    TREND: 0,
+    ORDER_FLOW: 8,
+    VWAP: 10,
+    SUPERTREND: 12,
+    ADX: 7,
+    STOCH_RSI: 9,
+    PSAR: 0,
+    RAW_MAX: 100,
     CAPPED_MAX: 100,
   },
+
+  SCORE_LEGACY_MAX: {
+    GAP: 25,
+    RVOL: 25,
+    LEVELS: 10,
+    FUTURES: 20,
+    NEWS: 15,
+    ORDER_FLOW: 10,
+  },
+
+  // Indicatori di setup 5m (TUTTE IPOTESI)
+  ST_PERIOD: 14,
+  ST_FACTOR: 3, // alternativa 3.5 selezionabile
+  ST_FLIP_RECENT_BARS: 6,
+  ADX_PERIOD: 14,
+  ADX_MIN_TREND: 20,
+  ADX_STRONG: 25,
+  STOCH_RSI_RSI_LEN: 14,
+  STOCH_RSI_STOCH_LEN: 14,
+  STOCH_RSI_K: 3,
+  STOCH_RSI_D: 3,
+  STOCH_RSI_LONG_CROSS_MAX: 50,
+  STOCH_RSI_SHORT_CROSS_MIN: 50,
+  STOCH_RSI_EXTREME_HI: 80,
+  STOCH_RSI_EXTREME_LO: 20,
+  STOCH_RSI_CROSS_LOOKBACK: 3,
+  PSAR_START: 0.02,
+  PSAR_STEP: 0.02,
+  PSAR_MAX: 0.2,
+  IND_MIN_BARS: 60,
+  IND_MAX_STALE_MIN: 15,
+  VWAP_VETO_ENABLED: true,
+
+  // Pesi dello score: somma esattamente 100 (test dedicato)
+  W_GAP: 12,
+  W_RVOL: 14,
+  W_VWAP: 10,
+  W_SUPERTREND: 12,
+  W_ADX: 7,
+  W_STOCH_RSI: 9,
+  W_LEVELS: 6,
+  W_FUTURES: 12,
+  W_NEWS: 10,
+  W_ORDER_FLOW: 8,
+  W_LIQUIDITY: 0,
+  W_PSAR: 0,
+  W_RSI: 0,
+  W_TREND: 0,
 
   // VWAP di sessione (contributo separato nello score + contesto per l'AI)
   // IPOTESI: 10 = 10% del punteggio massimo totale (CAPPED_MAX 100 ricavato dal codice: 0.10 * 100 = 10).

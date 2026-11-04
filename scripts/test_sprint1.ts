@@ -544,8 +544,9 @@ console.log('12.4 Assenza di notizie: PASS (0pt)');
 
 // 12.5 Bonus numerico esplicito valido
 const scoreExplicitValid = calculateCandidateScore(quoteAuth, 0.5, 10);
-if (scoreExplicitValid.newsScore !== 10) {
-  throw new Error(`12.5 Punteggio numerico esplicito 10 deve assegnare 10, ottenuto: ${scoreExplicitValid.newsScore}`);
+// I nuovi pesi normalizzano il bonus legacy 0..15 sul peso W_NEWS = 10: 10 legacy -> 7pt.
+if (scoreExplicitValid.newsScore !== 7) {
+  throw new Error(`12.5 Punteggio numerico esplicito 10 deve assegnare 7 (scalato su W_NEWS=10), ottenuto: ${scoreExplicitValid.newsScore}`);
 }
 const scoreObjectValid = calculateCandidateScore(quoteAuth, 0.5, {
   decisione: 'TRADE',
@@ -557,21 +558,21 @@ const scoreObjectValid = calculateCandidateScore(quoteAuth, 0.5, {
   fonti: [],
   newsBonusScore: 12,
 } as any);
-if (scoreObjectValid.newsScore !== 12) {
-  throw new Error(`12.5 newsBonusScore esplicito 12 deve assegnare 12, ottenuto: ${scoreObjectValid.newsScore}`);
+if (scoreObjectValid.newsScore !== 8) {
+  throw new Error(`12.5 newsBonusScore esplicito 12 deve assegnare 8 (scalato su W_NEWS=10), ottenuto: ${scoreObjectValid.newsScore}`);
 }
 console.log('12.5 Punteggio esplicito validato: PASS (10pt e 12pt)');
 
 // 12.6 Punteggio numerico esplicito fuori scala (vincolo 0..15)
 const scoreTooHigh = calculateCandidateScore(quoteAuth, 0.5, 99);
-if (scoreTooHigh.newsScore !== 15) {
-  throw new Error(`12.6 Bonus 99 deve essere vincolato a 15, ottenuto: ${scoreTooHigh.newsScore}`);
+if (scoreTooHigh.newsScore !== 10) {
+  throw new Error(`12.6 Bonus 99 deve essere vincolato a 10 (peso W_NEWS), ottenuto: ${scoreTooHigh.newsScore}`);
 }
 const scoreTooLow = calculateCandidateScore(quoteAuth, 0.5, -20);
 if (scoreTooLow.newsScore !== 0) {
   throw new Error(`12.6 Bonus -20 deve essere vincolato a 0, ottenuto: ${scoreTooLow.newsScore}`);
 }
-console.log('12.6 Punteggio numerico fuori scala clippato a [0, 15]: PASS');
+console.log('12.6 Punteggio numerico fuori scala clippato a [0, 10] (peso W_NEWS): PASS');
 
 console.log('\n================================================================');
 console.log('=== TUTTI I TEST DELLO SPRINT 1 HANNO AVUTO ESITO POSITIVO! ===');
