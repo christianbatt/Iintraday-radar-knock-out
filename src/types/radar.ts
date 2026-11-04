@@ -21,6 +21,9 @@ export interface RawQuoteData {
   todayHigh?: number | null;
   todayLow?: number | null;
   vwap?: number | null;
+  vwapState?: VwapSignalState | null;
+  lastBarVolume?: number | null; // volume della barra 5m piu' recente della sessione (getIntraday5mMetrics)
+  lastBarTime?: number | null; // timestamp unix (secondi) della stessa barra, usato dal VWAP scoring
   ema20Daily?: number | null;
   avgVolume20d: number | null;
   preMarketVolume: number | null;
@@ -75,6 +78,27 @@ export interface ImpliedVolatilityMetrics {
   implication: string;
 }
 
+// Stato VWAP di sessione per candidato (IPOTESI: vedi TRADING_PARAMS.VWAP_*)
+export type VwapStateName =
+  | 'ABOVE'
+  | 'BELOW'
+  | 'PULLBACK_HOLD_UP'
+  | 'PULLBACK_HOLD_DOWN'
+  | 'RECLAIM_UP'
+  | 'RECLAIM_DOWN'
+  | 'REJECT_UP'
+  | 'REJECT_DOWN'
+  | 'UNKNOWN';
+
+export interface VwapSignalState {
+  state: VwapStateName;
+  distAtr: number | null; // (prezzo - VWAP) / ATR 5m, con segno
+  slopeAtr: number | null; // (VWAP ora - VWAP N barre fa) / ATR 5m, con segno
+  coverage: number | null; // barre con volume / barre attese (da vwapCoverage)
+  flags: string[]; // es. LOW_VWAP_COVERAGE, WEAK_VWAP_BREAK, OPEN_WINDOW, ATR_MISSING
+  vwapLevel: number | null; // livello VWAP usato (debug / prompt AI)
+}
+
 export interface ScoreBreakdown {
   gapScore: number;
   rvolScore: number;
@@ -85,6 +109,7 @@ export interface ScoreBreakdown {
   newsScore?: number; // Bonus news & catalyst quality (+0 to +15pt)
   trendScore?: number; // Bonus Confluenza Trend Macro Daily EMA 20 (+0 to +8pt)
   orderFlowScore?: number; // Convalida Ordini Aggressivi Delta & VPOC (-10pt a +10pt)
+  vwapScore?: number; // Contributo VWAP di sessione (-W..+W, con W = TRADING_PARAMS.VWAP_SCORE_WEIGHT) [IPOTESI]
   rawTotal?: number; // Somma grezza pre-cap a 100 per tie-breaking quantitativo
   total: number;
   details: string[];

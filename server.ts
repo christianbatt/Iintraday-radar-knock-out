@@ -21,11 +21,13 @@ import {
   DailyBarInput,
   IntradayCandleInput,
   computeSessionVwap,
+  computeVwapState,
+  calculateAtr5m,
   VwapBar,
 } from './src/utils/calculator';
 import { getExchangeDateStr, getMarketTime } from './src/utils/timezone';
 import { TRADING_PARAMS } from './src/config/tradingParams';
-import { AILearnedInsight } from './src/types/radar';
+import { AILearnedInsight, VwapSignalState } from './src/types/radar';
 import { runNightlyLearning } from './scripts/nightly_learning';
 
 dotenv.config();
@@ -533,6 +535,9 @@ export interface RawQuoteData {
   vwapCumulative?: number | null;
   vwapCumulativeWithPre?: number | null;
   vwapCoverage?: number | null;
+  vwapState?: VwapSignalState | null;
+  lastBarVolume?: number | null; // volume della barra 5m piu' recente della sessione (da getIntraday5mMetrics)
+  lastBarTime?: number | null; // timestamp unix (secondi) della stessa barra
   gapPercent: number | null;
   rvol: number | null;
   impliedVolatility?: number | null;
@@ -631,6 +636,9 @@ async function getIntraday5mMetrics(
   vwapCumulative?: number | null;
   vwapCumulativeWithPre?: number | null;
   vwapCoverage?: number | null;
+  vwapState?: VwapSignalState | null;
+  lastBarVolume?: number | null;
+  lastBarTime?: number | null;
 }> {
   const cacheKey = `metrics5m:${ticker}:${market}`;
   const cached = cache.get<{
@@ -643,6 +651,9 @@ async function getIntraday5mMetrics(
     orbBreakoutTime: string | null;
     orbBreakoutTimeLong: string | null;
     orbBreakoutTimeShort: string | null;
+    vwapState?: VwapSignalState | null;
+    lastBarVolume?: number | null;
+    lastBarTime?: number | null;
   }>(cacheKey);
   if (cached) return cached.data;
 
@@ -653,7 +664,7 @@ async function getIntraday5mMetrics(
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
       signal: AbortSignal.timeout(6000),
     });
-    if (!resp.ok) return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null, orbBreakoutTimeLong: null, orbBreakoutTimeShort: null, vwapCumulative: null, vwapCumulativeWithPre: null, vwapCoverage: null };
+    if (!resp.ok) return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null, orbBreakoutTimeLong: null, orbBreakoutTimeShort: null, vwapCumulative: null, vwapCumulativeWithPre: null, vwapCoverage: null, vwapState: null, lastBarVolume: null, lastBarTime: null };
     const json = await resp.json();
     const rawQuotes = json?.chart?.result?.[0]?.indicators?.quote?.[0];
     const closes: number[] = rawQuotes?.close?.filter(
@@ -907,6 +918,9 @@ async function getIntraday5mMetrics(
     let vwapCumulative: number | null = null;
     let vwapCumulativeWithPre: number | null = null;
     let vwapCoverage: number | null = null;
+    let vwapState: VwapSignalState | null = null;
+    let lastBarVolume: number | null = null;
+    let lastBarTime: number | null = null;
     try {
       const ts: number[] = json?.chart?.result?.[0]?.timestamp || [];
       if (ts.length > 0) {
@@ -920,6 +934,14 @@ async function getIntraday5mMetrics(
         // Data di sessione = OGGI nel fuso del mercato (non l'ultima barra disponibile)
         const sessionDate = getExchangeDateStr(market, new Date());
         const nowMinutes = getMarketTime(market, new Date()).totalMinutes;
+
+        // Barra 5m piu' recente della sessione corrente: volume e timestamp servono al VWAP state
+        // e vengono passati al call site di calculateCandidateScore.
+        const lastSessionBar = [...bars]
+          .reverse()
+          .find((b) => getExchangeDateStr(market, new Date(b.timestamp * 1000)) === sessionDate);
+        lastBarVolume = lastSessionBar?.volume ?? null;
+        lastBarTime = lastSessionBar?.timestamp ?? null;
         const reg = computeSessionVwap(bars, market, sessionDate, { nowMinutes });
         vwapCumulative = reg.vwap != null ? +reg.vwap.toFixed(2) : null;
         vwapCoverage = reg.coverage != null ? +reg.coverage.toFixed(2) : null;
@@ -927,6 +949,19 @@ async function getIntraday5mMetrics(
           const pre = computeSessionVwap(bars, market, sessionDate, { includePreMarket: true, nowMinutes });
           vwapCumulativeWithPre = pre.vwap != null ? +pre.vwap.toFixed(2) : null;
         }
+        // Stato VWAP di sessione (IPOTESI): solo contesto + contributo score, nessun filtro se VWAP_HARD_GATE=false
+        const atr5m = calculateAtr5m(bars);
+        const vwapSource = TRADING_PARAMS.VWAP_SOURCE;
+        vwapState = computeVwapState(bars, {
+          market,
+          sessionDate,
+          atr5m,
+          vwapCumulative:
+            vwapSource === 'withPre' ? vwapCumulativeWithPre ?? vwapCumulative : vwapCumulative,
+          coverage: vwapCoverage,
+          nowMinutes,
+          source: vwapSource,
+        });
       }
     } catch {
       // lascia null
@@ -945,6 +980,9 @@ async function getIntraday5mMetrics(
       vwapCumulative,
       vwapCumulativeWithPre,
       vwapCoverage,
+      vwapState,
+      lastBarVolume,
+      lastBarTime,
     };
     cache.set(cacheKey, result, 25);
     return result;
@@ -962,6 +1000,9 @@ async function getIntraday5mMetrics(
       vwapCumulative: null,
       vwapCumulativeWithPre: null,
       vwapCoverage: null,
+      vwapState: null,
+      lastBarVolume: null,
+      lastBarTime: null,
     };
   }
 }
@@ -1329,6 +1370,9 @@ async function fetchQuoteForTicker(
     vwapCumulative: (await intraday5mPromise).vwapCumulative ?? null,
     vwapCumulativeWithPre: (await intraday5mPromise).vwapCumulativeWithPre ?? null,
     vwapCoverage: (await intraday5mPromise).vwapCoverage ?? null,
+    vwapState: (await intraday5mPromise).vwapState ?? null,
+    lastBarVolume: (await intraday5mPromise).lastBarVolume ?? null,
+    lastBarTime: (await intraday5mPromise).lastBarTime ?? null,
     gapPercent,
     rvol: quoteData.rvol ?? (await intraday5mPromise).rvol ?? null,
     rvol20m: quoteData.rvol20m ?? (await intraday5mPromise).rvol20m,
@@ -2509,6 +2553,7 @@ DATI SOTTOSTANTE:
 - Relative Volume (RVOL): ${candidate.rvol ?? 'dato non disponibile'}
 - ATR(14) Giornaliero: ${candidate.atr14 ?? 'dato non disponibile'}
 - Range Ieri: Min ${candidate.prevLow ?? 'nd'} - Max ${candidate.prevHigh ?? 'nd'}
+- VWAP di sessione: ${candidate.vwapState ? `${candidate.vwapState.state} | distanza ${candidate.vwapState.distAtr ?? 'nd'} ATR | pendenza ${candidate.vwapState.slopeAtr ?? 'nd'} ATR | coverage ${candidate.vwapState.coverage ?? 'nd'} | flag ${(candidate.vwapState.flags || []).join(',') || 'nessuno'}` : 'dato non disponibile'}
 - Futures Indice Riferimento: ${JSON.stringify(futures || {})}
 
 NOTIZIE REALI RACCOLTE:
@@ -2519,6 +2564,7 @@ ${realNews
   )
   .join('\n\n')}
 
+Lettura VWAP di sessione: ABOVE/BELOW = prezzo sopra/sotto la VWAP, PULLBACK_HOLD = ritorno alla VWAP con tenuta, RECLAIM = recupero con volumi, REJECT = respinta con volumi; distanza e pendenza sono in ATR 5m e coverage bassa rende lo stato poco affidabile. E' contesto, non una direttiva vincolante.
 Istruzione: Valuta il catalizzatore qualitativo e rispondi in JSON:
 decisione: "TRADE" oppure "NESSUN_TRADE" (usa NESSUN_TRADE solo per fattori ostativi gravi come utili imminenti o rischi fatali)
 direzione: "LONG" oppure "SHORT" oppure "NESSUNA"
