@@ -1164,7 +1164,8 @@ export function calculateRsiFromPrices(closes: number[], period: number = 14): n
     avgLoss = (avgLoss * (p - 1) + loss) / p;
   }
 
-  // IPOTESI (AUDIT P1-9): serie piatta (nessun guadagno e nessuna perdita) -> RSI neutro 50.
+  // IPOTESI (AUDIT P1-9) - CONFERMATA dall'utente: serie piatta -> RSI neutro 50
+  // (prima 100 = ipercomprato artificiale, faceva scattare RSI_EXTREME senza movimento).
   if (avgGain === 0 && avgLoss === 0) return 50;
   if (avgLoss === 0) return 100;
   const rs = avgGain / avgLoss;
@@ -5690,9 +5691,9 @@ export function calculateVwapScoreContribution(
   const volumeRatio = vwapState.volumeRatio;
   const volTxt = volumeRatio != null ? `${volumeRatio.toFixed(2)}x` : 'nd';
   const distTxt = dist.toFixed(2);
-  // IPOTESI (AUDIT P1-7): NEUTRAL non e' una conferma direzionale: vale 0 punti su 10
-  // (prima valeva weight/2 = 5/10, un bonus regalato a un segnale assente).
-  const neutralPoints = weight <= 0 ? 0 : 0;
+  // IPOTESI (AUDIT P1-7) - CONFERMATA dall'utente: NEUTRAL vale 0 punti su 10
+  // (prima weight/2 = 5/10, un bonus regalato a un segnale assente).
+  const neutralPoints = 0;
 
   const neutral = (): VwapContribution => ({
     score: neutralPoints,
