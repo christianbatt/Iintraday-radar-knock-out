@@ -418,7 +418,10 @@ export function wilderRsiSeries(closes: readonly number[], period: number): (num
   }
   let avgGain = gain / period;
   let avgLoss = loss / period;
-  out[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  // IPOTESI (AUDIT P1-9): guadagni e perdite entrambi nulli = serie piatta -> RSI neutro 50.
+  // Prima valeva 100 (ipercomprato artificiale) e faceva scattare il filtro RSI_EXTREME senza movimento.
+  const flatNeutral = avgGain === 0 && avgLoss === 0;
+  out[period] = flatNeutral ? 50 : avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
 
   for (let i = period + 1; i < closes.length; i++) {
     const diff = closes[i] - closes[i - 1];
@@ -426,7 +429,7 @@ export function wilderRsiSeries(closes: readonly number[], period: number): (num
     const l = diff < 0 ? Math.abs(diff) : 0;
     avgGain = (avgGain * (period - 1) + g) / period;
     avgLoss = (avgLoss * (period - 1) + l) / period;
-    out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+    out[i] = avgGain === 0 && avgLoss === 0 ? 50 : avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
   }
   return out;
 }

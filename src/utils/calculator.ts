@@ -1164,6 +1164,8 @@ export function calculateRsiFromPrices(closes: number[], period: number = 14): n
     avgLoss = (avgLoss * (p - 1) + loss) / p;
   }
 
+  // IPOTESI (AUDIT P1-9): serie piatta (nessun guadagno e nessuna perdita) -> RSI neutro 50.
+  if (avgGain === 0 && avgLoss === 0) return 50;
   if (avgLoss === 0) return 100;
   const rs = avgGain / avgLoss;
   return +(100 - 100 / (1 + rs)).toFixed(1);
