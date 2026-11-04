@@ -99,9 +99,10 @@ describe('Indicatori 5m - status, barre e sessione', () => {
   });
 
   it('I7: meno di IND_MIN_BARS barre -> UNKNOWN INSUFFICIENT_BARS (nessun valore inventato)', () => {
-    const short = BARS.slice(-10);
-    const ind = computeSetupIndicators(short, { market: 'US', now: new Date(short[short.length - 1].t + 60_000) });
-    assert.strictEqual(ind.barsUsed, 10);
+    const short = BARS.slice(-9);
+    // T = chiusura dell'ultima barra del mock: ogni barra del mock e' chiusa <= T.
+    const ind = computeSetupIndicators(short, { market: 'US', now: new Date(short[short.length - 1].t + 5 * 60_000) });
+    assert.strictEqual(ind.barsUsed, 9);
     allUnknown(ind, 'INSUFFICIENT_BARS');
     assert.strictEqual(ind.atr.value, null);
     assert.strictEqual(ind.supertrend.value, null);
@@ -148,17 +149,19 @@ describe('Indicatori 5m - status, barre e sessione', () => {
     const currentSessionStart = BARS.findIndex((b, i) => i > 0 && new Date(b.t).getUTCHours() === 14 && new Date(b.t).getUTCMinutes() === 30);
     assert.ok(currentSessionStart > 0, 'indice inizio sessione corrente non trovato');
     const previousSession = BARS.slice(0, currentSessionStart);
-    const firstFour = BARS.slice(currentSessionStart, currentSessionStart + 4); // 09:30, 09:35, 09:40, 09:45 ET
-    const at0945 = new Date(firstFour[firstFour.length - 1].t + 60_000);
+    // prendi 3 barre della sessione corrente: 09:30, 09:35, 09:40 ET.
+    // a T = chiusura dell'ultima (09:40 + 5m = 09:45 ET) tutte e 3 sono chiuse.
+    const firstThree = BARS.slice(currentSessionStart, currentSessionStart + 3); // 09:30, 09:35, 09:40 ET
+    const at0945 = new Date(firstThree[firstThree.length - 1].t + 5 * 60_000);
 
-    const withPrevious = computeSetupIndicators([...previousSession, ...firstFour], { market: 'US', now: at0945 });
+    const withPrevious = computeSetupIndicators([...previousSession, ...firstThree], { market: 'US', now: at0945 });
     assert.ok(withPrevious.barsUsed >= TRADING_PARAMS.IND_MIN_BARS);
     assert.strictEqual(withPrevious.supertrend.status, 'OK');
     assert.strictEqual(withPrevious.adx.status, 'OK');
     assert.strictEqual(withPrevious.stochRsi.status, 'OK');
 
-    const todayOnly = computeSetupIndicators(firstFour, { market: 'US', now: at0945 });
-    assert.strictEqual(todayOnly.barsUsed, 4);
+    const todayOnly = computeSetupIndicators(firstThree, { market: 'US', now: at0945 });
+    assert.strictEqual(todayOnly.barsUsed, 3);
     allUnknown(todayOnly, 'INSUFFICIENT_BARS');
   });
 

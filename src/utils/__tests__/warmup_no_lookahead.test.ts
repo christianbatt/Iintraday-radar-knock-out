@@ -74,7 +74,9 @@ const mockedFetcher = (ranges: Record<string, IndicatorBarInput[]>) => {
  */
 describe('Warm-up senza look-ahead (EU e US)', () => {
   for (const spec of SPECS) {
-    const now = new Date(sessionBars(spec, 2026, 10, 4, 2)[1].t + 60_000); // 09:05 locale del 4 novembre
+    // T = 09:05:30 locale: la barra delle 09:00 (chiusura 09:05) e' usabile, la 09:05
+    // (chiusura 09:10) no. Il timestamp Yahoo e' l'apertura, quindi usiamo x.5.
+    const now = new Date(sessionBars(spec, 2026, 10, 4, 2)[1].t + 30_000); // 09:05:30 locale del 4 novembre
     const current = sessionBars(spec, 2026, 10, 4, 2);
     const mostRecentClosed = sessionBars(spec, 2026, 10, 2); // lunedi 2 novembre, gia' chiusa
     const olderClosed = sessionBars(spec, 2026, 9, 30); // venerdi 30 ottobre
@@ -101,17 +103,64 @@ describe('Warm-up senza look-ahead (EU e US)', () => {
       assert.ok(ind.barsUsed >= P.IND_MIN_BARS);
     });
 
-    it(`${spec.market}: scan alle 09:05 -> nessuna barra con timestamp > 09:05`, async () => {
+    it(`${spec.market}: scan alle 09:05:30 -> la 09:00 e' chiusa (close 09:05 <= 09:05:30), la 09:05 no`, async () => {
       const { fetcher } = mockedFetcher({
         [P.WARMUP_RANGE_5M]: [...mostRecentClosed, ...current, ...futureSession],
       });
       const warmup = await loadWarmupBars(fetcher, { market: spec.market, now });
-      assert.strictEqual(warmup.completeBars, mostRecentClosed.length + 2);
-      assert.ok(warmup.bars.every((b) => b.t <= current[current.length - 1].t + 60_000 - 1 + 1));
+      // a T=09:05:30 solo la barra delle 09:00 e' chiusa (close 09:05 <= 09:05:30);
+      // la 09:05 ha chiusura 09:10 > T: in formazione, scartata.
+      assert.strictEqual(warmup.completeBars, mostRecentClosed.length + 1);
+      assert.ok(
+        warmup.bars.every((b) => b.t + 5 * 60_000 <= now.getTime()),
+        'nessuna barra con chiusura > T'
+      );
 
       const ind = computeSetupIndicators(warmup.bars, { market: spec.market, now });
+      assert.strictEqual(ind.barsUsed, mostRecentClosed.length + 1);
+      assert.strictEqual(ind.supertrend.status, 'OK');
+      assert.strictEqual(ind.adx.status, 'OK');
+      assert.strictEqual(ind.stochRsi.status, 'OK');
+      assert.strictEqual(ind.psar.status, 'OK');
+      assert.strictEqual(isWarmupIncomplete(ind), false);
+    });
+
+    it(`${spec.market}: scan alle 09:05:00 -> la 09:00 e' chiusa (close 09:05 <= 09:05), la 09:05 no`, async () => {
+      // T esatto = apertura della barra delle 09:05: la 09:00 ha chiusura 09:05 <= T (usabile),
+      // la 09:05 ha chiusura 09:10 > T (in formazione, scartata).
+      const t0905 = new Date(sessionBars(spec, 2026, 10, 4, 2)[1].t); // apertura 09:05 locale
+      const bars = [...mostRecentClosed, ...current, ...futureSession];
+      const selection = selectWarmupBars(bars, spec.market, { now: t0905 });
+      // solo la barra delle 09:00 e' chiusa <= 09:05
+      assert.strictEqual(selection.bars.length, mostRecentClosed.length + 1);
+      assert.strictEqual(selection.bars[selection.bars.length - 1].t, current[0].t);
+      assert.ok(selection.bars.every((b) => b.t + 5 * 60_000 <= t0905.getTime()));
+
+      const ind = computeSetupIndicators(bars, { market: spec.market, now: t0905 });
+      assert.strictEqual(ind.barsUsed, mostRecentClosed.length + 1);
+      assert.strictEqual(ind.supertrend.status, 'OK');
+      assert.strictEqual(ind.adx.status, 'OK');
+      assert.strictEqual(ind.stochRsi.status, 'OK');
+      assert.strictEqual(ind.psar.status, 'OK');
+      assert.strictEqual(isWarmupIncomplete(ind), false);
+    });
+
+    it(`${spec.market}: scan alle 09:10:00 -> entra la barra delle 09:05 (chiusura 09:10 <= 09:10)`, async () => {
+      const t0910 = new Date(sessionBars(spec, 2026, 10, 4, 2)[1].t + 5 * 60_000); // 09:10 locale
+      const bars = [...mostRecentClosed, ...current, ...futureSession];
+      const selection = selectWarmupBars(bars, spec.market, { now: t0910 });
+      // ora entrambe le barre sono chiuse: 09:00 (close 09:05) e 09:05 (close 09:10)
+      assert.strictEqual(selection.bars.length, mostRecentClosed.length + 2);
+      assert.strictEqual(selection.bars[selection.bars.length - 1].t, current[1].t);
+      assert.ok(selection.bars.every((b) => b.t + 5 * 60_000 <= t0910.getTime()));
+
+      const ind = computeSetupIndicators(bars, { market: spec.market, now: t0910 });
       assert.strictEqual(ind.barsUsed, mostRecentClosed.length + 2);
       assert.strictEqual(ind.supertrend.status, 'OK');
+      assert.strictEqual(ind.adx.status, 'OK');
+      assert.strictEqual(ind.stochRsi.status, 'OK');
+      assert.strictEqual(ind.psar.status, 'OK');
+      assert.strictEqual(isWarmupIncomplete(ind), false);
     });
 
     it(`${spec.market}: solo sessioni future -> UNKNOWN INSUFFICIENT_BARS + WARMUP_INCOMPLETE`, async () => {

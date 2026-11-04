@@ -5,7 +5,8 @@
  * - input: barre 5m della sessione regolare corrente fino a T + fino a WARMUP_MAX_PRIOR_SESSIONS
  *   sessioni regolari gia' chiuse prima dell'apertura della sessione corrente
  *   (festivita' e weekend saltati, mai una sessione futura);
- * - nessun look-ahead: ogni barra con timestamp > T viene scartata prima del calcolo;
+ * - nessun look-ahead: una barra e' usabile solo se la sua chiusura (apertura + IND_BAR_MS)
+ *   non supera T; le barre con chiusura > T vengono scartate prima del calcolo;
  * - after-market escluso e barre incomplete scartate;
  * - ogni indicatore restituisce status OK oppure UNKNOWN con reason esplicita
  *   (INSUFFICIENT_BARS, NAN, STALE, AFTER_HOURS): nessun valore di default inventato.
@@ -29,7 +30,7 @@ import type {
   StochRsiSnapshot,
   SupertrendSnapshot,
 } from '../types/radar';
-import { TRADING_PARAMS, adxThresholds } from '../config/tradingParams';
+import { adxThresholds, IND_BAR_MS, TRADING_PARAMS } from '../config/tradingParams';
 
 const MINUTE_MS = 60_000;
 
@@ -90,9 +91,10 @@ export function exchangeDate(tsMs: number, market: 'EU' | 'US'): string {
 }
 
 /**
- * Selezione della serie di warm-up senza look-ahead:
- * - solo barre con timestamp <= T: le barre future restituite dal feed vengono scartate;
- * - sessione regolare corrente (barre fino a T) + fino a WARMUP_MAX_PRIOR_SESSIONS sessioni
+ * Selezione della serie di warm-up senza look-ahead (solo barre chiuse):
+ * - una barra e' usabile solo se la sua chiusura (apertura + IND_BAR_MS) <= T;
+ *   le barre con chiusura > T vengono scartate e conteggiate in droppedFutureBars;
+ * - sessione regolare corrente (barre chiuse <= T) + fino a WARMUP_MAX_PRIOR_SESSIONS sessioni
  *   regolari gia' chiuse prima dell'apertura corrente.
  * Le sessioni mancanti (festivi, weekend) vengono saltate: si usa la sessione chiusa piu'
  * recente realmente presente, mai una sessione futura. Nessuna barra inventata.
@@ -110,7 +112,10 @@ export function selectWarmupBars(
   const maxPrior = Math.max(0, options.maxPriorSessions ?? TRADING_PARAMS.WARMUP_MAX_PRIOR_SESSIONS);
   const nowMs = options.now instanceof Date ? options.now.getTime() : options.now ?? Date.now();
   const regularAll = filterRegularSessionBars(bars, market);
-  const prepared = regularAll.filter((b) => b.t <= nowMs);
+  // Yahoo riporta l'apertura della barra: una barra e' chiusa (usabile) solo se
+  // apertura + IND_BAR_MS <= T. Barre non ancora chiuse (in formazione) escludono
+  // every indicatore che le usa: non si calcola mai un indicatore su una barra in formazione.
+  const prepared = regularAll.filter((b) => b.t + IND_BAR_MS <= nowMs);
   const droppedFutureBars = regularAll.length - prepared.length;
   if (prepared.length === 0) {
     return { bars: [], priorSessionsUsed: 0, sessionsUsed: [], droppedFutureBars };
@@ -615,8 +620,10 @@ export function computePsar(
 
 /**
  * Calcola il pacchetto indicatori usato dallo score e dal prompt AI.
- * Le barre after-market vengono escluse prima del calcolo; con meno di IND_MIN_BARS
- * barre regolari (sessione corrente + precedente) ogni indicatore e' UNKNOWN.
+ * Solo barre chiuse (apertura + IND_BAR_MS <= T) sono usate: il confronto con T e'
+ * centralizzato in selectWarmupBars, quindi nessun punto del codice confronta t con now
+ * direttamente. Le barre after-market e quelle non ancora chiuse vengono escluse prima del
+ * calcolo; con meno di IND_MIN_BARS barre regolari ogni indicatore e' UNKNOWN.
  */
 export function computeSetupIndicators(
   bars: readonly IndicatorBarInput[],

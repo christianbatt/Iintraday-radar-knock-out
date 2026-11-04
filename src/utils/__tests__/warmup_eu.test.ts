@@ -93,9 +93,12 @@ const baseQuote = (indicators: ReturnType<typeof computeSetupIndicators>): RawQu
 describe('Warm-up EU: indicatori dall apertura (IPOTESI)', () => {
   const previousSession = sessionBars(2026, 10, 2); // lunedi 2 novembre 2026
   const currentSession = sessionBars(2026, 10, 4, 2); // mercoledi 4 novembre, 09:00 e 09:05 Rome
-  const now0906 = new Date(currentSession[currentSession.length - 1].t + 60_000);
+  // T = chiusura della barra delle 09:05 (apertura + IND_BAR_MS): le barre W1/W2/W3 non
+  // testano la regola di chiusura, quindi usiamo un T dopo la chiusura per non
+  // interferire con la loro logica (W4 testa invece la regola di chiusura).
+  const now0906 = new Date(currentSession[currentSession.length - 1].t + 2 * 5 * 60_000 + 1000);
 
-  it('W1: EU con sessione precedente completa -> indicatori OK alle 09:05 Rome', async () => {
+  it('W1: EU con sessione precedente completa -> indicatori OK dopo la chiusura della barra delle 09:05', async () => {
     const { fetcher, calls } = mockedFetcher({ [P.WARMUP_RANGE_5M]: [...previousSession, ...currentSession] });
     const warmup = await loadWarmupBars(fetcher, { market: 'EU' });
 
@@ -172,19 +175,25 @@ describe('Warm-up EU: indicatori dall apertura (IPOTESI)', () => {
   });
 
   it('W4: barre insufficienti anche dopo il fallback -> UNKNOWN INSUFFICIENT_BARS, nessuna imputazione', async () => {
+    // CORREZIONE BUG (non adattamento del test): il filtro precedente (b.t <= T) contava
+    // anche barre ancora in formazione, quindi con 10 barre e T dopo l'ultima apertura il
+    // test passava come se tutte e 10 fossero chiuse. Ora la regola e' "chiusura <= T"
+    // (apertura + IND_BAR_MS): a T = 09:06 (short[1].t + 60s) solo la barra delle 09:00
+    // e' chiusa (chiusura 09:05 <= 09:06); la 09:05 e' in formazione (chiusura 09:10 > T).
+    // Il vecchio filtro contava la 09:05 in formazione come usabile: bug, non adattamento.
     const short = sessionBars(2026, 10, 4, 10);
     const { fetcher } = mockedFetcher({
       [P.WARMUP_RANGE_5M]: short,
       [P.WARMUP_RANGE_FALLBACK_5M]: short,
     });
-    // T dopo l ultima barra del mock: nessuna barra del mock e' futura rispetto a T
-    const nowAfterShort = new Date(short[short.length - 1].t + 60_000);
+    // T = 09:06 locale = apertura della barra delle 09:05 + 60s: la 09:00 e' chiusa, la 09:05 no.
+    const nowAfterShort = new Date(short[1].t + 60_000);
     const warmup = await loadWarmupBars(fetcher, { market: 'EU', now: nowAfterShort });
-    assert.strictEqual(warmup.completeBars, 10);
+    assert.strictEqual(warmup.completeBars, 1, "a T=09:06 solo la barra delle 09:00 e' chiusa");
     assert.ok(warmup.completeBars < P.IND_MIN_BARS);
 
     const ind = computeSetupIndicators(warmup.bars, { market: 'EU', now: nowAfterShort });
-    assert.strictEqual(ind.barsUsed, 10);
+    assert.strictEqual(ind.barsUsed, 1, "a T=09:06 solo la barra delle 09:00 e' chiusa");
     assert.strictEqual(ind.supertrend.status, 'UNKNOWN');
     assert.strictEqual(ind.supertrend.reason, 'INSUFFICIENT_BARS');
     assert.strictEqual(ind.adx.reason, 'INSUFFICIENT_BARS');
