@@ -4564,8 +4564,13 @@ export function evaluateOpenPositionLifecycle(
   const target1 = trade.target1;
   const market = trade.market || (trade.session === 'US' ? 'US' : 'EU');
 
-  const riskDist = Math.abs(entry - stop) > 0 ? Math.abs(entry - stop) : entry > 0 ? entry * 0.005 : 1;
-  const targetDist = Math.abs(target1 - entry) > 0 ? Math.abs(target1 - entry) : riskDist * TRADING_PARAMS.T1_R;
+  // AUDIT P0-2: nessun fallback sintetico (0.5% di entry / 1.6R). Un setup con entry == stop
+  // o T1 == entry e' invalido: non si valuta (nessun esito, nessun PnL), non si inventa un rischio.
+  const riskDist = Math.abs(entry - stop);
+  const targetDist = Math.abs(target1 - entry);
+  if (!(entry > 0) || !(riskDist > 0) || !(targetDist > 0)) {
+    return { updatedTrade: trade, wasClosed: false };
+  }
 
   // Fallback capital and risk amount: non bloccare mai il monitoraggio se riskAmountEur manca
   const fallbackCap = options?.accountCapital && options.accountCapital > 0 ? options.accountCapital : 10000;
