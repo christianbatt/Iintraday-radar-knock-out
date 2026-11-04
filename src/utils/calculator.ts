@@ -4826,8 +4826,9 @@ export function evaluateOpenPositionLifecycle(
 }
 
 // ---------------------------------------------------------------------------
-// Session VWAP cumulativa di sessione (LOGGING-ONLY)
-// Solo calcolo + esposizione nel payload: NON usata in segnali, filtri o prompt AI.
+// Session VWAP cumulativa di sessione
+// Calcolo + esposizione nel payload; alimenta lo stato VWAP di computeVwapState (contributo allo score).
+// Con il default TRADING_PARAMS.VWAP_SCORE_WEIGHT = 0 il contributo allo score resta nullo.
 // `getMarketTime` e' gia' importato in testa al modulo da './timezone'.
 // ---------------------------------------------------------------------------
 
@@ -4850,6 +4851,24 @@ export interface SessionVwapResult {
 // VWAP cumulativa di sessione: sum(typical * volume) / sum(volume), typical = (H+L+C)/3
 // Finestre (minuti dal mezzanotte, fuso del mercato, fine esclusa):
 // US regolare 570-960 (09:30-16:00 NY); US con pre-market 240-960 (04:00-16:00 NY); EU 540-1050 (09:00-17:30 Roma)
+/**
+ * Definizione della VWAP usata dal progetto
+ * -----------------------------------------
+ * Formula: sum(typical_i * volume_i) / sum(volume_i)  con  typical_i = (high_i + low_i + close_i) / 3.
+ * Fonte volumi: barre a 5 minuti del feed Yahoo Finance (chart 5m, `indicators.quote[0].volume`),
+ *   gli stessi high/low/close usati per il prezzo: nessun volume sintetico, stimato o da proxy.
+ * Ancora temporale: il timestamp di ogni barra e' l'INIZIO della barra (Unix secondi) e la barra
+ *   viene attribuita alla sessione leggendo l'orario LOCALE di mercato via Intl
+ *   (America/New_York per US, Europe/Rome per EU), mai UTC.
+ * Pre/post mercato: le barre entrano solo nella finestra scelta, con fine esclusa:
+ *   - US sessione regolare 570-960 minuti locali (09:30-16:00 ET);
+ *   - US con pre-market 240-960 (04:00-16:00 ET), solo con includePreMarket o VWAP_SOURCE = 'withPre';
+ *   - EU 540-1050 (09:00-17:30 Roma).
+ *   Il post-market (dalle 16:00 ET in poi) e' sempre escluso; per i segnali (computeVwapState) una barra
+ *   piu' recente fuori sessione regolare, o troppo illiquida, produce state = UNKNOWN con flag AFTER_HOURS.
+ * Attenzione: il campo numerico `quote.vwap` NON usa questa formula. E' il prezzo tipico
+ *   (todayHigh + todayLow + currentPrice) / 3, senza volumi e senza cumulazione (vedi server.ts).
+ */
 export function computeSessionVwap(
   bars: VwapBar[],
   market: 'EU' | 'US',
@@ -5019,6 +5038,37 @@ export function computeVwapState(
   if (coverage == null || coverage < p.minCoverage) {
     if (coverage != null && coverage < p.minCoverage) flags.push('LOW_VWAP_COVERAGE');
     return buildVwapState('UNKNOWN', distAtr, slopeAtr, coverage, flags, vwapLevel);
+  }
+
+  // Regola after-hours (IPOTESI): nessun segnale VWAP fuori dalla sessione regolare o su barra illiquida.
+  // Si guarda l'ultima barra disponibile per la sessione, anche quando e' esclusa dalla finestra di calcolo.
+  let latestSessionBar: { minutes: number; volume: number } | null = null;
+  for (const b of bars) {
+    if (b.high == null || b.low == null || b.close == null) continue;
+    const mt = getMarketTime(options.market, new Date(b.timestamp * 1000));
+    if (mt.dateFormatted !== options.sessionDate) continue;
+    const v = b.volume != null && b.volume > 0 ? b.volume : 0;
+    if (latestSessionBar == null || mt.totalMinutes >= latestSessionBar.minutes) {
+      latestSessionBar = { minutes: mt.totalMinutes, volume: v };
+    }
+  }
+
+  if (latestSessionBar != null) {
+    const regularStart = options.market === 'US' ? 570 : 540;
+    const regularEnd = options.market === 'US' ? 960 : 1050;
+    const volsForRatio = series.map((s) => s.volume).filter((v) => v > 0);
+    const avgVolForRatio =
+      volsForRatio.length > 0 ? volsForRatio.reduce((a, b) => a + b, 0) / volsForRatio.length : 0;
+    const outsideRegular =
+      latestSessionBar.minutes < regularStart || latestSessionBar.minutes >= regularEnd;
+    const thinVolume =
+      latestSessionBar.volume === 0 ||
+      (avgVolForRatio > 0 &&
+        latestSessionBar.volume < avgVolForRatio * TRADING_PARAMS.VWAP_AFTER_HOURS_VOL_RATIO);
+    if (outsideRegular || thinVolume) {
+      flags.push('AFTER_HOURS');
+      return buildVwapState('UNKNOWN', distAtr, slopeAtr, coverage, flags, vwapLevel);
+    }
   }
   if (atr == null || last == null || series.length < 2 || vwapNow == null) {
     return buildVwapState('UNKNOWN', distAtr, slopeAtr, coverage, flags, vwapLevel);

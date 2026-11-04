@@ -108,6 +108,7 @@ export interface TradingParamsConfig {
 
   // VWAP di sessione: contributo allo score e stato per candidato (TUTTE IPOTESI, da validare empiricamente)
   VWAP_SCORE_WEIGHT: number;
+  VWAP_AFTER_HOURS_VOL_RATIO: number;
   VWAP_SOURCE: 'session' | 'withPre';
   VWAP_MIN_COVERAGE: number;
   VWAP_NEAR_ATR: number;
@@ -221,7 +222,8 @@ export const TRADING_PARAMS: TradingParamsConfig = {
   },
 
   // VWAP di sessione (contributo separato nello score + contesto per l'AI)
-  VWAP_SCORE_WEIGHT: 0.15, // IPOTESI: peso del contributo VWAP in punti score (-W..+W)
+  VWAP_SCORE_WEIGHT: 0, // IPOTESI: DEFAULT 0 = nessun impatto sullo score finche' il test di parita' non e' validato (0.15 usato solo nelle prove)
+  VWAP_AFTER_HOURS_VOL_RATIO: 0.1, // IPOTESI: volume barra < 10% della media di sessione = barra illiquida (after-market) -> stato UNKNOWN
   VWAP_SOURCE: 'session', // IPOTESI: 'session' (US 09:30-16:00 / EU 09:00-17:30) oppure 'withPre' (solo US, dalle 04:00 NY)
   VWAP_MIN_COVERAGE: 0.8, // IPOTESI: sotto questa quota di barre con volume lo stato VWAP e' UNKNOWN
   VWAP_NEAR_ATR: 0.1, // IPOTESI: prossimita' alla VWAP per riconoscere un PULLBACK_HOLD (in ATR 5m)
