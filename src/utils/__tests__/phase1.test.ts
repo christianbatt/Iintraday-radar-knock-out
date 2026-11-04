@@ -77,6 +77,25 @@ export function createBaseFixtureQuote(overrides: Partial<RawQuoteData> = {}): R
     rsi14: 55,
     rsi5m: 55,
     orderFlow: null,
+    // Contesto tecnico allineato long (IPOTESI): Supertrend 12 + ADX 7 + StochRSI 9 + VWAP 10.
+    // Serve a mantenere la fixture base sopra MIN_SCORE_EU 48 con i nuovi pesi.
+    setupIndicators: {
+      barsUsed: 120,
+      atr: { value: 1.3, status: 'OK', reason: null },
+      supertrend: { status: 'OK', reason: null, direction: 1, barsSinceFlip: 2, value: 99.5 },
+      adx: { status: 'OK', reason: null, value: 28, plusDI: 30, minusDI: 12 },
+      stochRsi: { status: 'OK', reason: null, k: 45, d: 40, lastCross: 'LONG', barsSinceCross: 1 },
+      psar: { status: 'OK', reason: null, value: 99.2, direction: 1, barsSinceFlip: 4 },
+    },
+    vwapState: {
+      state: 'ABOVE',
+      distAtr: 0.5,
+      slopeAtr: 0.1,
+      coverage: 1,
+      volumeRatio: 2.1,
+      flags: [],
+      vwapLevel: 100,
+    },
     timestamp: BASE_NOW_ROME.toISOString(),
     source: 'Fixture Fase D',
   };
@@ -702,22 +721,25 @@ function runAllTests() {
 
   // T27 | score senza liquidità = 47 | G11 PUNTEGGIO SOTTO SOGLIA
   {
-    // Componenti reali: gap=20 (ratio 0.60), rvol=14 (1.20), fut=4 (-0.30%), lvl=7 (100.10 >= 100.20*0.995), rsi=0, news=0, trend=2 (sotto ema20), of=0 -> Totale = 47
+    // Nuovi pesi: gap=12 (ratio 0.80), rvol=8 (1.20), fut=12 (+0.30 allineato), lvl=6 (breakout prevHigh),
+    // news=9 (bonus legacy 14 scalato su W_NEWS 10), indicatori/VWAP assenti -> Totale = 47
     const q47 = createBaseFixtureQuote({
       prevClose: 100.00,
       todayOpen: 100.60,
-      gapPercent: 0.60,
+      gapPercent: 0.80,
       atr14: 1.00,
       rvol: 1.20,
       rvol20m: null,
-      prevHigh: 100.20,
+      prevHigh: 100.00,
       prevLow: 99.00,
       rsi5m: null,
       rsi14: null,
-      ema20Daily: 101.00,
+      ema20Daily: null,
       orderFlow: null,
+      setupIndicators: null,
+      vwapState: null,
     });
-    const cand47 = buildCandidateFromQuote(q47, -0.30, null);
+    const cand47 = buildCandidateFromQuote(q47, 0.30, 14);
     const setup = buildExecutionSetup(cand47, null, 'EU', undefined, { currentTime: BASE_NOW_ROME });
     const g11 = setup.gateResults?.['G11'];
     const targetScore = TRADING_PARAMS.MIN_SCORE_EU - 1;
@@ -738,11 +760,12 @@ function runAllTests() {
 
   // T28 | score senza liquidità = 48 | G11 passa
   {
-    // Componenti reali: gap=20 (ratio 0.60), rvol=14 (1.20), fut=4 (-0.30%), lvl=10 (100.10 >= prevHigh 100.00), rsi=0, news=0, trend=0 (ema20 null), of=0 -> Totale = 48
+    // Nuovi pesi: gap=12, rvol=8 (1.20), fut=12 (+0.30 allineato), lvl=6 (breakout prevHigh),
+    // news=10 (bonus legacy 15 scalato su W_NEWS 10), indicatori/VWAP assenti -> Totale = 48
     const q48 = createBaseFixtureQuote({
       prevClose: 100.00,
       todayOpen: 100.60,
-      gapPercent: 0.60,
+      gapPercent: 0.80,
       atr14: 1.00,
       rvol: 1.20,
       rvol20m: null,
@@ -752,8 +775,10 @@ function runAllTests() {
       rsi14: null,
       ema20Daily: null,
       orderFlow: null,
+      setupIndicators: null,
+      vwapState: null,
     });
-    const cand48 = buildCandidateFromQuote(q48, -0.30, null);
+    const cand48 = buildCandidateFromQuote(q48, 0.30, 15);
     const setup = buildExecutionSetup(cand48, null, 'EU', undefined, { currentTime: BASE_NOW_ROME });
     const g11 = setup.gateResults?.['G11'];
     const passed =
@@ -770,7 +795,7 @@ function runAllTests() {
     );
   }
 
-  // T29 | componenti 25, 25, 0, 20, 10, 10, 15, 8, 10 | raw 123, liquidityScore 0, total 100 (cap invariato)
+  // T29 | componenti 12, 14, 0, 12, 6, 0, 10, 0, 8 + Supertrend 12 + ADX 7 + StochRSI 9 + VWAP 10 | raw 100, total 100
   {
     const qMax = createBaseFixtureQuote({
       prevClose: 100.00,
@@ -795,20 +820,26 @@ function runAllTests() {
     });
     const scoreMax = calculateCandidateScore(qMax, 0.50, 15);
     const passed =
-      scoreMax.gapScore === 25 &&
-      scoreMax.rvolScore === 25 &&
+      scoreMax.gapScore === 12 &&
+      scoreMax.rvolScore === 14 &&
       scoreMax.liquidityScore === 0 &&
-      scoreMax.futuresScore === 20 &&
-      scoreMax.levelScore === 10 &&
-      scoreMax.rsiScore === 10 &&
-      scoreMax.newsScore === 15 &&
-      scoreMax.trendScore === 8 &&
-      scoreMax.orderFlowScore === 10 &&
-      scoreMax.rawTotal === 123 &&
+      scoreMax.futuresScore === 12 &&
+      scoreMax.levelScore === 6 &&
+      scoreMax.rsiScore === 0 &&
+      scoreMax.newsScore === 10 &&
+      scoreMax.trendScore === 0 &&
+      scoreMax.orderFlowScore === 8 &&
+      scoreMax.supertrendScore === 12 &&
+      scoreMax.adxScore === 7 &&
+      scoreMax.stochRsiScore === 9 &&
+      scoreMax.psarScore === 0 &&
+      scoreMax.vwapScore === 10 &&
+      scoreMax.veto === null &&
+      scoreMax.rawTotal === 100 &&
       scoreMax.total === 100;
     recordTest(
       'T29',
-      'componenti 25, 25, 0, 20, 10, 10, 15, 8, 10 -> raw 123, liquidityScore 0, total 100',
+      'componenti 12, 14, 0, 12, 6, 0, 10, 0, 8 + 12/7/9 + VWAP 10 -> raw 100, total 100',
       {
         components: [
           scoreMax.gapScore,
@@ -820,9 +851,13 @@ function runAllTests() {
           scoreMax.newsScore,
           scoreMax.trendScore,
           scoreMax.orderFlowScore,
+          scoreMax.supertrendScore,
+          scoreMax.adxScore,
+          scoreMax.stochRsiScore,
+          scoreMax.vwapScore,
         ],
       },
-      { rawTotal: 123, liquidityScore: 0, total: 100 },
+      { rawTotal: 100, liquidityScore: 0, total: 100 },
       { rawTotal: scoreMax.rawTotal, liquidityScore: scoreMax.liquidityScore, total: scoreMax.total },
       passed
     );
@@ -843,22 +878,22 @@ function runAllTests() {
     );
   }
 
-  // T31 | futures con variazione 0.10% | 12 punti futures
+  // T31 | futures con variazione 0.10% | 7 punti futures (12 legacy scalati su W_FUTURES)
   {
     const q = createBaseFixtureQuote();
     const scoreNeutralFut = calculateCandidateScore(q, 0.10, null);
-    const passed = scoreNeutralFut.futuresScore === 12;
+    const passed = scoreNeutralFut.futuresScore === 7;
     recordTest(
       'T31',
-      'futures con variazione 0.10% (<= banda 0.15%) -> 12 punti futures',
+      'futures con variazione 0.10% (<= banda 0.15%) -> 7 punti futures (peso W_FUTURES 12)',
       { benchmarkFuturesChangePercent: 0.10, neutralBand: TRADING_PARAMS.FUT_NEUTRAL_BAND },
-      { futuresScore: 12 },
+      { futuresScore: 7 },
       { futuresScore: scoreNeutralFut.futuresScore },
       passed
     );
   }
 
-  // T32 | ATR% 1.00, gap +0.75% | 25 punti gap
+  // T32 | ATR% 1.00, gap +0.75% | 12 punti gap (25 legacy scalati su W_GAP)
   {
     const q = createBaseFixtureQuote({
       prevClose: 100.00,
@@ -867,18 +902,18 @@ function runAllTests() {
       gapPercent: 0.75,
     });
     const score = calculateCandidateScore(q, BASE_FUTURES_CHANGE, null);
-    const passed = score.gapScore === 25;
+    const passed = score.gapScore === 12;
     recordTest(
       'T32',
-      'ATR% 1.00, gap +0.75% (ratio 0.75) -> 25 punti gap',
+      'ATR% 1.00, gap +0.75% (ratio 0.75) -> 12 punti gap (peso W_GAP)',
       { atrPct: 1.00, gapPercent: 0.75, ratio: 0.75 },
-      { gapScore: 25 },
+      { gapScore: 12 },
       { gapScore: score.gapScore },
       passed
     );
   }
 
-  // T33 | ATR% 1.00, gap +0.149% | 2 punti gap
+  // T33 | ATR% 1.00, gap +0.149% | 1 punto gap (2 legacy scalati su W_GAP)
   {
     const q = createBaseFixtureQuote({
       prevClose: 100.00,
@@ -887,12 +922,12 @@ function runAllTests() {
       gapPercent: 0.149,
     });
     const score = calculateCandidateScore(q, BASE_FUTURES_CHANGE, null);
-    const passed = score.gapScore === 2;
+    const passed = score.gapScore === 1;
     recordTest(
       'T33',
-      'ATR% 1.00, gap +0.149% (ratio 0.149 < 0.15) -> 2 punti gap',
+      'ATR% 1.00, gap +0.149% (ratio 0.149 < 0.15) -> 1 punto gap',
       { atrPct: 1.00, gapPercent: 0.149, ratio: 0.149 },
-      { gapScore: 2 },
+      { gapScore: 1 },
       { gapScore: score.gapScore },
       passed
     );
@@ -1310,22 +1345,25 @@ function runAllTests() {
   {
     const originalMinEU = TRADING_PARAMS.MIN_SCORE_EU;
     try {
-      // Candidato con punteggio reale 49: gap=20, rvol=14, fut=4, lvl=7, rsi=2, news=0, trend=2, of=0 -> 49
+      // Punteggio reale 49 con i nuovi pesi: gap=12 (0.80), rvol=14 (2.00), fut=12 (+0.30),
+      // lvl=6 (breakout prevHigh), news=5 (bonus legacy 8), indicatori/VWAP assenti -> 49
       const q49 = createBaseFixtureQuote({
         prevClose: 100.00,
         todayOpen: 100.60,
-        gapPercent: 0.60,
+        gapPercent: 0.80,
         atr14: 1.00,
-        rvol: 1.20,
+        rvol: 2.00,
         rvol20m: null,
-        prevHigh: 100.20,
+        prevHigh: 100.00,
         prevLow: 99.00,
         rsi5m: 35,
         rsi14: 35,
-        ema20Daily: 101.00,
+        ema20Daily: null,
         orderFlow: null,
+        setupIndicators: null,
+        vwapState: null,
       });
-      const cand49 = buildCandidateFromQuote(q49, -0.30, null);
+      const cand49 = buildCandidateFromQuote(q49, 0.30, 8);
       const setupBefore = buildExecutionSetup(cand49, null, 'EU', undefined, {
         currentTime: BASE_NOW_ROME,
       });
@@ -1422,21 +1460,24 @@ function runAllTests() {
   // viene bloccato da Gate G11 e isCandidateCompliantWithParameters restituisce false
   // -------------------------------------------------------------
   {
+    // Punteggio reale 49 con i nuovi pesi (stessa costruzione di T46)
     const q49 = createBaseFixtureQuote({
       prevClose: 100.00,
       todayOpen: 100.60,
-      gapPercent: 0.60,
+      gapPercent: 0.80,
       atr14: 1.00,
-      rvol: 1.20,
+      rvol: 2.00,
       rvol20m: null,
-      prevHigh: 100.20,
+      prevHigh: 100.00,
       prevLow: 99.00,
       rsi5m: 35,
       rsi14: 35,
-      ema20Daily: 101.00,
+      ema20Daily: null,
       orderFlow: null,
+      setupIndicators: null,
+      vwapState: null,
     });
-    const cand49 = buildCandidateFromQuote(q49, -0.30, null);
+    const cand49 = buildCandidateFromQuote(q49, 0.30, 8);
 
     const setupDefault = buildExecutionSetup(cand49, null, 'EU', DEFAULT_SYSTEM_PARAMETERS, {
       currentTime: BASE_NOW_ROME,

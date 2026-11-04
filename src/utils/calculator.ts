@@ -34,6 +34,8 @@ import {
   EntryMode,
   MacroEvent,
   SessionInfo,
+  SetupIndicators,
+  SetupVetoReason,
 } from '../types/radar';
 import { TRADING_PARAMS } from '../config/tradingParams';
 import { getMarketTime, getExchangeDateStr } from './timezone';
@@ -615,6 +617,57 @@ export const MIN_QUALIFICATION_THRESHOLDS = {
   minAvgVolume: DEFAULT_SYSTEM_PARAMETERS.minAvgVolume,
 };
 
+/**
+ * Conversione proporzionale dei componenti storici nel nuovo peso:
+ * component = min(W_x, oldPoints * W_x / oldMax), arrotondato all'intero.
+ * Vale anche per i contributi negativi (order flow contrario).
+ */
+export function scaleComponentToWeight(oldPoints: number, weight: number, oldMax: number): number {
+  if (
+    !Number.isFinite(oldPoints) ||
+    !Number.isFinite(weight) ||
+    !Number.isFinite(oldMax) ||
+    oldMax <= 0
+  ) {
+    return 0;
+  }
+  return Math.round(Math.min(weight, (oldPoints * weight) / oldMax));
+}
+
+/**
+ * Veti del setup (IPOTESI): ADX di trend assente, Supertrend contrario, VWAP contraria
+ * con volume confermato (solo se VWAP_VETO_ENABLED). Un veto scarta il candidato
+ * indipendentemente dal punteggio.
+ */
+export function evaluateSetupVetoes(
+  direction: 'LONG' | 'SHORT',
+  indicators: SetupIndicators | null | undefined,
+  vwapState: VwapSignalState | null | undefined
+): SetupVetoReason[] {
+  const reasons: SetupVetoReason[] = [];
+  const dirSign = direction === 'LONG' ? 1 : -1;
+
+  const st = indicators?.supertrend;
+  if (st?.status === 'OK' && st.direction !== 0 && st.direction !== dirSign) {
+    reasons.push('SUPERTREND_OPPOSED');
+  }
+
+  const adx = indicators?.adx;
+  if (adx?.status === 'OK' && adx.value != null && adx.value < TRADING_PARAMS.ADX_MIN_TREND) {
+    reasons.push('ADX_BELOW_20');
+  }
+
+  if (TRADING_PARAMS.VWAP_VETO_ENABLED && isVwapStateOpposed(vwapState, direction)) {
+    const confirmed =
+      vwapState?.volumeRatio != null &&
+      Number.isFinite(vwapState.volumeRatio) &&
+      vwapState.volumeRatio >= TRADING_PARAMS.VWAP_MIN_VOLUME_RATIO;
+    if (confirmed) reasons.push('VWAP_OPPOSED');
+  }
+
+  return reasons;
+}
+
 export function calculateCandidateScore(
   quote: RawQuoteData,
   benchmarkFuturesChangePercent: number | null | undefined,
@@ -622,12 +675,8 @@ export function calculateCandidateScore(
   vwapBar?: VwapBarContext
 ): ScoreBreakdown {
   const details: string[] = [];
-  let gapScore = 0;
-  let rvolScore = 0;
-  let liquidityScore = 0;
-  let futuresScore = 0;
-  let levelScore = 0;
-  let rsiScore = 0;
+  const P = TRADING_PARAMS;
+  const LEGACY = P.SCORE_LEGACY_MAX;
 
   // If essential price data is missing from exchange, candidate receives 0 score
   const price = quote.currentPrice ?? quote.preMarketPrice;
@@ -642,6 +691,12 @@ export function calculateCandidateScore(
       newsScore: 0,
       trendScore: 0,
       orderFlowScore: 0,
+      supertrendScore: 0,
+      adxScore: 0,
+      stochRsiScore: 0,
+      psarScore: 0,
+      veto: null,
+      vetoReasons: [],
       rawTotal: 0,
       total: 0,
       details: ['Prezzo di mercato non disponibile dal feed: candidato non qualificabile.'],
@@ -654,10 +709,13 @@ export function calculateCandidateScore(
     if (dir === 'LONG') isCandidateLong = true;
     else if (dir === 'SHORT') isCandidateLong = false;
   }
+  const direction: 'LONG' | 'SHORT' = isCandidateLong ? 'LONG' : 'SHORT';
+  const dirSign: 1 | -1 = isCandidateLong ? 1 : -1;
 
-  const eps = TRADING_PARAMS.EPSILON;
+  const eps = P.EPSILON;
 
-  // 1. GAP SCORE (max 25) - Normalized by Volatility (ATR-scaled Gap)
+  // 1. GAP (legacy max 25 -> peso W_GAP) - Normalized by Volatility (ATR-scaled Gap)
+  let gapLegacy = 0;
   const cIeri = quote.prevClose;
   const oOggi = quote.todayOpen ?? price;
   if (quote.atr14 != null && quote.atr14 > 0 && cIeri != null && cIeri > 0) {
@@ -667,293 +725,309 @@ export function calculateCandidateScore(
     const gapToAtrRatio = absGap / atrPct;
 
     let matchedTier = false;
-    for (const tier of TRADING_PARAMS.GAP_ATR_TIERS) {
+    for (const tier of P.GAP_ATR_TIERS) {
       if (gapToAtrRatio + eps >= tier.minRatio) {
-        gapScore = tier.points;
+        gapLegacy = tier.points;
         matchedTier = true;
         break;
       }
     }
-    if (!matchedTier) {
-      gapScore = TRADING_PARAMS.GAP_ATR_MIN_POINTS;
-    }
+    if (!matchedTier) gapLegacy = P.GAP_ATR_MIN_POINTS;
+    const gapScore = scaleComponentToWeight(gapLegacy, P.W_GAP, LEGACY.GAP);
     details.push(
-      `Gap normalizzato per ATR (${gapToAtrRatio.toFixed(2)}x ATR | ${absGap.toFixed(2)}% vs ATR ${atrPct.toFixed(2)}%): +${gapScore}pt`
+      `Gap normalizzato per ATR (${gapToAtrRatio.toFixed(2)}x ATR | ${absGap.toFixed(2)}% vs ATR ${atrPct.toFixed(2)}%): +${gapScore}pt (peso ${P.W_GAP})`
     );
   } else {
-    gapScore = 0;
-    details.push('ATR(14) o Close ieri non disponibile dal feed: 0pt (nessun punteggio per dati mancanti)');
+    details.push(`ATR(14) o Close ieri non disponibile dal feed: 0pt (nessun punteggio per dati mancanti)`);
   }
+  const gapScore = scaleComponentToWeight(gapLegacy, P.W_GAP, LEGACY.GAP);
 
-  // 2. RVOL SCORE (max 25) - Only from real volume
+  // 2. RVOL (legacy max 25 -> peso W_RVOL) - Only from real volume
+  let rvolLegacy = 0;
   if (quote.rvol != null) {
     const rvol = quote.rvol;
     let matchedRvol = false;
-    for (const tier of TRADING_PARAMS.RVOL_TIERS) {
+    for (const tier of P.RVOL_TIERS) {
       if (rvol + eps >= tier.minRvol) {
-        rvolScore = tier.points;
+        rvolLegacy = tier.points;
         matchedRvol = true;
         break;
       }
     }
-    if (!matchedRvol) {
-      rvolScore = TRADING_PARAMS.RVOL_MIN_POINTS;
-    }
-    details.push(`Relative Volume (RVOL ${rvol.toFixed(2)}x): +${rvolScore}pt`);
+    if (!matchedRvol) rvolLegacy = P.RVOL_MIN_POINTS;
 
-    if (quote.rvol20m != null) {
-      if (quote.rvol20m + eps >= TRADING_PARAMS.RVOL_SPIKE_20M_THRESHOLD) {
-        if (rvolScore < TRADING_PARAMS.SCORE_MAX_COMPONENTS.RVOL) {
-          rvolScore = Math.min(
-            TRADING_PARAMS.SCORE_MAX_COMPONENTS.RVOL,
-            rvolScore + TRADING_PARAMS.RVOL_SPIKE_20M_BONUS
-          );
-          details.push(`🔥 Spike Volumi ultimi 20m (${quote.rvol20m.toFixed(2)}x vs media 20m): +${TRADING_PARAMS.RVOL_SPIKE_20M_BONUS}pt.`);
-        } else {
-          details.push(`🔥 Spike Volumi ultimi 20m (${quote.rvol20m.toFixed(2)}x vs media mobile 20m): forte afflusso istituzionale.`);
-        }
-      }
-    }
-  } else {
-    rvolScore = 0;
-    details.push('Relative Volume (RVOL N/D): +0pt (punteggio neutro)');
-  }
-
-  // 3. LIQUIDITÀ GATE G1 (Esclusa dal calcolo punteggio, 0pt)
-  liquidityScore = TRADING_PARAMS.SCORE_MAX_COMPONENTS.LIQUIDITY;
-  details.push('Liquidità verificata come Gate G1 (esclusa dal calcolo del punteggio, 0pt).');
-
-  // 4. FUTURES COHERENCE (max 20)
-  if (benchmarkFuturesChangePercent == null || isNaN(benchmarkFuturesChangePercent)) {
-    futuresScore = TRADING_PARAMS.FUT_SCORE_MISSING;
-    details.push('Dati futures benchmark non disponibili: 0pt');
-  } else if (Math.abs(benchmarkFuturesChangePercent) <= TRADING_PARAMS.FUT_NEUTRAL_BAND + eps) {
-    futuresScore = TRADING_PARAMS.FUT_SCORE_NEUTRAL;
-    details.push(
-      `Futures indice neutrali (|chg| <= ${TRADING_PARAMS.FUT_NEUTRAL_BAND}% | ${benchmarkFuturesChangePercent.toFixed(2)}%): +${futuresScore}pt`
-    );
-  } else {
-    const isFuturesGreen = benchmarkFuturesChangePercent > TRADING_PARAMS.FUT_NEUTRAL_BAND;
-    const isFuturesRed = benchmarkFuturesChangePercent < -TRADING_PARAMS.FUT_NEUTRAL_BAND;
-    if ((isCandidateLong && isFuturesGreen) || (!isCandidateLong && isFuturesRed)) {
-      futuresScore = TRADING_PARAMS.FUT_SCORE_ALIGNED;
-      details.push(
-        `Allineamento totale titolo/futures indice (${benchmarkFuturesChangePercent > 0 ? '+' : ''}${benchmarkFuturesChangePercent.toFixed(2)}%): +${futuresScore}pt`
-      );
-    } else {
-      futuresScore = TRADING_PARAMS.FUT_SCORE_DIVERGENT;
-      details.push(
-        `Divergenza con futures indice (${benchmarkFuturesChangePercent > 0 ? '+' : ''}${benchmarkFuturesChangePercent.toFixed(2)}%): +${futuresScore}pt`
-      );
-    }
-  }
-
-  // 5. KEY LEVELS PROXIMITY (max 10) - Real yesterday High / Low
-  const prevHigh = quote.prevHigh;
-  const prevLow = quote.prevLow;
-  const proxFactor = TRADING_PARAMS.LEVEL_PROXIMITY_FACTOR;
-
-  if (price > 0 && prevHigh != null && prevLow != null) {
-    if (isCandidateLong && price + eps >= prevHigh) {
-      levelScore = 10;
-      details.push(`Rottura/apertura sopra il Massimo reale di ieri (${prevHigh.toFixed(2)}): +10pt`);
-    } else if (!isCandidateLong && price - eps <= prevLow) {
-      levelScore = 10;
-      details.push(`Rottura/apertura sotto il Minimo reale di ieri (${prevLow.toFixed(2)}): +10pt`);
-    } else if (isCandidateLong && price + eps >= prevHigh * (1 - proxFactor)) {
-      levelScore = 7;
-      details.push(`Prezzo a ridosso del Massimo di ieri (${prevHigh.toFixed(2)}): +7pt`);
-    } else if (!isCandidateLong && price - eps <= prevLow * (1 + proxFactor)) {
-      levelScore = 7;
-      details.push(`Prezzo a ridosso del Minimo di ieri (${prevLow.toFixed(2)}): +7pt`);
-    } else {
-      levelScore = 5;
-      details.push(`Prezzo all'interno del range di ieri: +5pt`);
-    }
-  } else {
-    levelScore = 0;
-    details.push('Livelli High/Low ieri non disponibili: 0pt');
-  }
-
-  // 6. RSI MOMENTUM & TURBO KO QUALITY (max 10)
-  const activeRsi = quote.rsi5m ?? quote.rsi14;
-  const rsiTimeframe = quote.rsi5m != null ? '5m Intraday' : '1D Daily';
-
-  if (activeRsi != null) {
-    if (isCandidateLong) {
-      if (activeRsi >= 46 && activeRsi <= 66) {
-        rsiScore = 10;
-        details.push(`RSI ${rsiTimeframe} (${activeRsi}) ottimale per Turbo Long (+10pt)`);
-      } else if (activeRsi > 66 && activeRsi <= 72) {
-        rsiScore = 6;
-        details.push(`RSI ${rsiTimeframe} (${activeRsi}) in accelerazione (+6pt)`);
-      } else if (activeRsi >= 40 && activeRsi < 46) {
-        rsiScore = 5;
-        details.push(`RSI ${rsiTimeframe} (${activeRsi}) neutrale (+5pt)`);
-      } else if (activeRsi > 72) {
-        rsiScore = 0;
-        details.push(`Allerta RSI ${rsiTimeframe} in Ipercomprato (${activeRsi}) (0pt)`);
-      } else {
-        rsiScore = 2;
-        details.push(`RSI ${rsiTimeframe} debole (${activeRsi}) (+2pt)`);
-      }
-    } else {
-      if (activeRsi >= 34 && activeRsi <= 54) {
-        rsiScore = 10;
-        details.push(`RSI ${rsiTimeframe} (${activeRsi}) ottimale per Turbo Short (+10pt)`);
-      } else if (activeRsi >= 28 && activeRsi < 34) {
-        rsiScore = 6;
-        details.push(`RSI ${rsiTimeframe} (${activeRsi}) ribassista (+6pt)`);
-      } else if (activeRsi > 54 && activeRsi <= 60) {
-        rsiScore = 5;
-        details.push(`RSI ${rsiTimeframe} (${activeRsi}) neutrale (+5pt)`);
-      } else if (activeRsi < 28) {
-        rsiScore = 0;
-        details.push(`Allerta RSI ${rsiTimeframe} in Ipervenduto (${activeRsi}) (0pt)`);
-      } else {
-        rsiScore = 2;
-        details.push(`RSI ${rsiTimeframe} rialzista (${activeRsi}) (+2pt)`);
-      }
-    }
-  } else {
-    rsiScore = 0;
-    details.push('RSI non disponibile dal feed: 0pt');
-  }
-
-  // 7. NEWS & CATALYST BONUS SCORE (+0 to +15pt)
-  // Rimosso bonus ingenuo da keyword ("target", "utili", "earnings", "guidance", "upgrade", "contratto", ecc.),
-  // array di fonti non vuoto e timestamp recenti senza riscontro direzionale.
-  let newsScore = 0;
-  if (typeof newsOrCatalyst === 'number') {
-    newsScore = Math.max(0, Math.min(TRADING_PARAMS.SCORE_MAX_COMPONENTS.NEWS, newsOrCatalyst));
-    details.push(`Bonus catalizzatore numerico esplicito: +${newsScore}pt`);
-  } else if (newsOrCatalyst && typeof newsOrCatalyst === 'object') {
-    if ('newsBonusScore' in newsOrCatalyst && typeof (newsOrCatalyst as any).newsBonusScore === 'number') {
-      const rawBonus = (newsOrCatalyst as any).newsBonusScore;
-      newsScore = Math.max(0, Math.min(TRADING_PARAMS.SCORE_MAX_COMPONENTS.NEWS, rawBonus));
-      details.push(
-        `Bonus catalizzatore verificato: +${newsScore}pt (vincolato a 0..${TRADING_PARAMS.SCORE_MAX_COMPONENTS.NEWS}pt)`
-      );
-    } else {
-      newsScore = 0;
-      if ('catalizzatore' in newsOrCatalyst) {
-        const cat = newsOrCatalyst as GeminiCatalystAnalysis;
-        const text = `${cat.catalizzatore || ''} ${(cat.punti_a_favore || []).join(' ')}`.toLowerCase();
-        if (
-          text.includes('earnings') ||
-          text.includes('utili') ||
-          text.includes('trimestrale') ||
-          text.includes('bilancio')
-        ) {
-          details.push(
-            '⚠️ Rilascio Utili/Earnings in giornata: bonus news neutralizzato a 0pt per rischio binario (nessun bonus keyword)'
-          );
-        } else {
-          details.push(
-            'Contributo notizie neutro (0pt): nessun bonus automatico da keyword, fonti o parole isolate'
-          );
-        }
-      } else {
+    if (quote.rvol20m != null && quote.rvol20m + eps >= P.RVOL_SPIKE_20M_THRESHOLD) {
+      if (rvolLegacy < LEGACY.RVOL) {
+        rvolLegacy = Math.min(LEGACY.RVOL, rvolLegacy + P.RVOL_SPIKE_20M_BONUS);
         details.push(
-          'Contributo notizie neutro (0pt): nessun bonus da parole isolate o timestamp recenti'
+          `🔥 Spike Volumi ultimi 20m (${quote.rvol20m.toFixed(2)}x vs media 20m): bonus ${P.RVOL_SPIKE_20M_BONUS}pt legacy.`
         );
       }
     }
+    const rvolScore = scaleComponentToWeight(rvolLegacy, P.W_RVOL, LEGACY.RVOL);
+    details.push(`Relative Volume (RVOL ${rvol.toFixed(2)}x): +${rvolScore}pt (peso ${P.W_RVOL})`);
   } else {
-    newsScore = 0;
+    details.push('Relative Volume (RVOL N/D): +0pt (punteggio neutro)');
+  }
+  const rvolScore = scaleComponentToWeight(rvolLegacy, P.W_RVOL, LEGACY.RVOL);
+
+  // 3. LIQUIDITÀ GATE G1 (Esclusa dal calcolo punteggio, 0pt)
+  const liquidityScore = P.SCORE_MAX_COMPONENTS.LIQUIDITY;
+  details.push('Liquidità verificata come Gate G1 (esclusa dal calcolo del punteggio, 0pt).');
+
+  // 4. FUTURES COHERENCE (legacy max 20 -> peso W_FUTURES)
+  let futuresLegacy = 0;
+  if (benchmarkFuturesChangePercent == null || isNaN(benchmarkFuturesChangePercent)) {
+    futuresLegacy = P.FUT_SCORE_MISSING;
+    details.push('Dati futures benchmark non disponibili: 0pt');
+  } else if (Math.abs(benchmarkFuturesChangePercent) <= P.FUT_NEUTRAL_BAND + eps) {
+    futuresLegacy = P.FUT_SCORE_NEUTRAL;
+    details.push(
+      `Futures indice neutrali (|chg| <= ${P.FUT_NEUTRAL_BAND}% | ${benchmarkFuturesChangePercent.toFixed(2)}%)`
+    );
+  } else {
+    const isFuturesGreen = benchmarkFuturesChangePercent > P.FUT_NEUTRAL_BAND;
+    const isFuturesRed = benchmarkFuturesChangePercent < -P.FUT_NEUTRAL_BAND;
+    if ((isCandidateLong && isFuturesGreen) || (!isCandidateLong && isFuturesRed)) {
+      futuresLegacy = P.FUT_SCORE_ALIGNED;
+      details.push(
+        `Allineamento totale titolo/futures indice (${benchmarkFuturesChangePercent > 0 ? '+' : ''}${benchmarkFuturesChangePercent.toFixed(2)}%)`
+      );
+    } else {
+      futuresLegacy = P.FUT_SCORE_DIVERGENT;
+      details.push(
+        `Divergenza con futures indice (${benchmarkFuturesChangePercent > 0 ? '+' : ''}${benchmarkFuturesChangePercent.toFixed(2)}%)`
+      );
+    }
+  }
+  const futuresScore = scaleComponentToWeight(futuresLegacy, P.W_FUTURES, LEGACY.FUTURES);
+  details.push(`Futures benchmark: +${futuresScore}pt (peso ${P.W_FUTURES})`);
+
+  // 5. KEY LEVELS PROXIMITY (legacy max 10 -> peso W_LEVELS) - Real yesterday High / Low
+  let levelLegacy = 0;
+  const prevHigh = quote.prevHigh;
+  const prevLow = quote.prevLow;
+  const proxFactor = P.LEVEL_PROXIMITY_FACTOR;
+
+  if (price > 0 && prevHigh != null && prevLow != null) {
+    if (isCandidateLong && price + eps >= prevHigh) {
+      levelLegacy = 10;
+      details.push(`Rottura/apertura sopra il Massimo reale di ieri (${prevHigh.toFixed(2)})`);
+    } else if (!isCandidateLong && price - eps <= prevLow) {
+      levelLegacy = 10;
+      details.push(`Rottura/apertura sotto il Minimo reale di ieri (${prevLow.toFixed(2)})`);
+    } else if (isCandidateLong && price + eps >= prevHigh * (1 - proxFactor)) {
+      levelLegacy = 7;
+      details.push(`Prezzo a ridosso del Massimo di ieri (${prevHigh.toFixed(2)})`);
+    } else if (!isCandidateLong && price - eps <= prevLow * (1 + proxFactor)) {
+      levelLegacy = 7;
+      details.push(`Prezzo a ridosso del Minimo di ieri (${prevLow.toFixed(2)})`);
+    } else {
+      levelLegacy = 5;
+      details.push(`Prezzo all'interno del range di ieri`);
+    }
+  } else {
+    details.push('Livelli High/Low ieri non disponibili: 0pt');
+  }
+  const levelScore = scaleComponentToWeight(levelLegacy, P.W_LEVELS, LEGACY.LEVELS);
+  if (levelLegacy > 0) details.push(`Livelli chiave: +${levelScore}pt (peso ${P.W_LEVELS})`);
+
+  // 6. RSI (escluso dallo score: W_RSI = 0, sostituito da StochRSI)
+  const rsiScore = 0;
+  details.push('RSI escluso dallo score (W_RSI=0): sostituito da StochRSI 5m.');
+
+  // 7. NEWS & CATALYST BONUS (legacy max 15 -> peso W_NEWS)
+  let newsLegacy = 0;
+  if (typeof newsOrCatalyst === 'number') {
+    newsLegacy = Math.max(0, Math.min(LEGACY.NEWS, newsOrCatalyst));
+    details.push(`Bonus catalizzatore numerico esplicito: ${newsLegacy}pt legacy`);
+  } else if (newsOrCatalyst && typeof newsOrCatalyst === 'object') {
+    if ('newsBonusScore' in newsOrCatalyst && typeof (newsOrCatalyst as any).newsBonusScore === 'number') {
+      newsLegacy = Math.max(0, Math.min(LEGACY.NEWS, (newsOrCatalyst as any).newsBonusScore));
+      details.push(`Bonus catalizzatore verificato: ${newsLegacy}pt legacy (vincolato a 0..${LEGACY.NEWS}pt)`);
+    } else if ('catalizzatore' in newsOrCatalyst) {
+      const cat = newsOrCatalyst as GeminiCatalystAnalysis;
+      const text = `${cat.catalizzatore || ''} ${(cat.punti_a_favore || []).join(' ')}`.toLowerCase();
+      if (
+        text.includes('earnings') ||
+        text.includes('utili') ||
+        text.includes('trimestrale') ||
+        text.includes('bilancio')
+      ) {
+        details.push(
+          '⚠️ Rilascio Utili/Earnings in giornata: bonus news neutralizzato a 0pt per rischio binario (nessun bonus keyword)'
+        );
+      } else {
+        details.push(
+          'Contributo notizie neutro (0pt): nessun bonus automatico da keyword, fonti o parole isolate'
+        );
+      }
+    } else {
+      details.push('Contributo notizie neutro (0pt): nessun bonus da parole isolate o timestamp recenti');
+    }
+  } else {
     details.push('Nessuna notizia o catalizzatore verificato: 0pt');
   }
 
-  if (newsScore > 0 && typeof newsOrCatalyst === 'object' && newsOrCatalyst !== null && 'direzione' in newsOrCatalyst) {
+  if (
+    newsLegacy > 0 &&
+    typeof newsOrCatalyst === 'object' &&
+    newsOrCatalyst !== null &&
+    'direzione' in newsOrCatalyst
+  ) {
     const catDir = (newsOrCatalyst as GeminiCatalystAnalysis).direzione;
     const isContrarian =
-      (catDir === 'LONG' && ((quote.gapPercent ?? 0) < -0.3 || (quote.vwap != null && price != null && price < quote.vwap * (1 - proxFactor)))) ||
-      (catDir === 'SHORT' && ((quote.gapPercent ?? 0) > 0.3 || (quote.vwap != null && price != null && price > quote.vwap * (1 + proxFactor))));
+      (catDir === 'LONG' &&
+        ((quote.gapPercent ?? 0) < -0.3 || (quote.vwap != null && price != null && price < quote.vwap * (1 - proxFactor)))) ||
+      (catDir === 'SHORT' &&
+        ((quote.gapPercent ?? 0) > 0.3 || (quote.vwap != null && price != null && price > quote.vwap * (1 + proxFactor))));
     if (isContrarian) {
-      const reducedBonus = Math.min(3, Math.floor(newsScore * 0.25));
-      details.push(`⚠️ Notizia ${catDir} in contrasto con azione di prezzo: bonus ridotto a +${reducedBonus}pt`);
-      newsScore = reducedBonus;
+      const reducedBonus = Math.min(3, Math.floor(newsLegacy * 0.25));
+      details.push(`⚠️ Notizia ${catDir} in contrasto con azione di prezzo: bonus ridotto a ${reducedBonus}pt legacy`);
+      newsLegacy = reducedBonus;
     }
   }
+  const newsScore = scaleComponentToWeight(newsLegacy, P.W_NEWS, LEGACY.NEWS);
+  details.push(`Catalizzatore/news: +${newsScore}pt (peso ${P.W_NEWS})`);
 
-  if (newsScore === 0) {
-    details.push('Contributo finale catalizzatore: 0pt bonus');
-  }
+  // 8. TREND MACRO EMA(20) daily (escluso dallo score: W_TREND = 0)
+  const trendScore = 0;
+  details.push('Confluenza EMA20 daily esclusa dallo score (W_TREND=0).');
 
-  // 8. CONFLUENZA TREND MACRO DAILY EMA(20) (+0 to +8pt)
-  let trendScore = 0;
-  if (quote.ema20Daily != null && quote.ema20Daily > 0) {
-    const isAboveEma = price + eps >= quote.ema20Daily;
-    if ((isCandidateLong && isAboveEma) || (!isCandidateLong && !isAboveEma)) {
-      trendScore = TRADING_PARAMS.SCORE_MAX_COMPONENTS.TREND;
-      details.push(`Confluenza Trend Macro EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +8pt`);
-    } else {
-      trendScore = 2;
-      details.push(`Controtendenza Macro EMA(20) daily (${quote.ema20Daily.toFixed(2)}): +2pt`);
-    }
-  } else {
-    trendScore = 0;
-    details.push('Trend Macro EMA(20) daily non disponibile: 0pt');
-  }
-
-  // 9. CONVALIDA ORDER FLOW SYNTHETIC L2 & DELTA / VPOC (-10pt a +10pt)
-  let orderFlowScore = 0;
+  // 9. ORDER FLOW L2 (-legacy..+legacy -> peso W_ORDER_FLOW)
+  let orderFlowLegacy = 0;
   const of = quote.orderFlow;
-  const strongOfPct = TRADING_PARAMS.ORDER_FLOW_STRONG_PCT;
-  const modOfPct = TRADING_PARAMS.ORDER_FLOW_MOD_PCT;
+  const strongOfPct = P.ORDER_FLOW_STRONG_PCT;
+  const modOfPct = P.ORDER_FLOW_MOD_PCT;
   if (of) {
     if (of.flowQuality === 'ABSORPTION_TRAP' || of.cvdTrend === 'ABSORPTION_TRAP') {
-      orderFlowScore = -10;
-      details.push(`⚠️ Trappola di Assorbimento Delta (-10pt)`);
+      orderFlowLegacy = -10;
+      details.push(`⚠️ Trappola di Assorbimento Delta`);
     } else if (isCandidateLong) {
       if (of.buyerVolumePercent >= strongOfPct && of.cvdTrend === 'EXPANDING_UP' && of.isPriceAboveVpoc) {
-        orderFlowScore = 10;
-        details.push(`🔥 Order Flow Bullish Istituzionale (+10pt)`);
+        orderFlowLegacy = 10;
+        details.push(`🔥 Order Flow Bullish Istituzionale`);
       } else if (of.buyerVolumePercent >= modOfPct && of.cvdTrend !== 'EXPANDING_DOWN') {
-        orderFlowScore = 6;
-        details.push(`Order Flow a Favore (+6pt)`);
+        orderFlowLegacy = 6;
+        details.push(`Order Flow a Favore`);
       } else if (of.sellerVolumePercent >= strongOfPct) {
-        orderFlowScore = -6;
-        details.push(`Allerta Delta Contrario (-6pt)`);
+        orderFlowLegacy = -6;
+        details.push(`Allerta Delta Contrario`);
       } else {
-        orderFlowScore = 2;
-        details.push(`Order Flow Bilanciato (+2pt)`);
+        orderFlowLegacy = 2;
+        details.push(`Order Flow Bilanciato`);
       }
     } else {
       if (of.sellerVolumePercent >= strongOfPct && of.cvdTrend === 'EXPANDING_DOWN' && of.isPriceAboveVpoc === false) {
-        orderFlowScore = 10;
-        details.push(`🔥 Order Flow Bearish Istituzionale (+10pt)`);
+        orderFlowLegacy = 10;
+        details.push(`🔥 Order Flow Bearish Istituzionale`);
       } else if (of.sellerVolumePercent >= modOfPct && of.cvdTrend !== 'EXPANDING_UP') {
-        orderFlowScore = 6;
-        details.push(`Order Flow a Favore (+6pt)`);
+        orderFlowLegacy = 6;
+        details.push(`Order Flow a Favore`);
       } else if (of.buyerVolumePercent >= strongOfPct) {
-        orderFlowScore = -6;
-        details.push(`Allerta Delta Contrario (-6pt)`);
+        orderFlowLegacy = -6;
+        details.push(`Allerta Delta Contrario`);
       } else {
-        orderFlowScore = 2;
-        details.push(`Order Flow Bilanciato (+2pt)`);
+        orderFlowLegacy = 2;
+        details.push(`Order Flow Bilanciato`);
       }
     }
-  } else {
-    orderFlowScore = 0;
+  }
+  const orderFlowScore = scaleComponentToWeight(orderFlowLegacy, P.W_ORDER_FLOW, LEGACY.ORDER_FLOW);
+  if (of) details.push(`Order Flow: ${orderFlowScore >= 0 ? '+' : ''}${orderFlowScore}pt (peso ${P.W_ORDER_FLOW})`);
+
+  // 10. INDICATORI DI SETUP 5m: Supertrend, ADX, StochRSI (IPOTESI, barre chiuse sessione regolare)
+  const indicators: SetupIndicators | null | undefined = quote.setupIndicators;
+  if (!indicators) {
+    details.push('Indicatori 5m non disponibili: Supertrend/ADX/StochRSI 0pt (dato assente, non segnale negativo).');
   }
 
-  // 10. VWAP DI SESSIONE (IPOTESI): voce separata del breakdown, -W..+W
-  // Il volume/timestamp della barra 5m arriva dal call site (getIntraday5mMetrics): se la barra
-  // e' fuori sessione o senza volume lo stato viene invalidato a UNKNOWN prima del contributo.
+  // 10a. Supertrend (max W_SUPERTREND)
+  let supertrendScore = 0;
+  const st = indicators?.supertrend;
+  if (st?.status === 'OK' && st.direction === dirSign) {
+    const recent = st.barsSinceFlip != null && st.barsSinceFlip <= P.ST_FLIP_RECENT_BARS;
+    supertrendScore = recent ? P.W_SUPERTREND : Math.round(P.W_SUPERTREND / 2);
+    details.push(
+      `Supertrend 5m: ${dirSign === 1 ? 'LONG' : 'SHORT'} | flip ${st.barsSinceFlip ?? 'nd'} barre fa | +${supertrendScore}pt`
+    );
+  } else if (st?.status === 'OK' && st.direction !== 0) {
+    details.push(`Supertrend 5m contrario al setup (direction ${st.direction}): 0pt + veto`);
+  } else if (st) {
+    details.push(`Supertrend 5m: UNKNOWN (${st.reason}) | 0pt`);
+  }
+  const psarScore = P.SCORE_MAX_COMPONENTS.PSAR; // sempre 0: PSAR = stop e uscita
+  if (indicators?.psar) {
+    const ps = indicators.psar;
+    details.push(
+      ps.status === 'OK'
+        ? `PSAR: ${ps.value ?? 'nd'} ${ps.direction === 1 ? 'LONG' : ps.direction === -1 ? 'SHORT' : 'nd'} | 0pt (stop e uscita)`
+        : `PSAR: UNKNOWN (${ps.reason}) | 0pt (stop e uscita)`
+    );
+  }
+
+  // 10b. ADX (max W_ADX): trend forte con DI allineato, trend debole = veto
+  let adxScore = 0;
+  const adx = indicators?.adx;
+  if (adx?.status === 'OK' && adx.value != null) {
+    const diAligned = adx.plusDI != null && adx.minusDI != null && (dirSign === 1 ? adx.plusDI > adx.minusDI : adx.minusDI > adx.plusDI);
+    if (adx.value >= P.ADX_STRONG && diAligned) {
+      adxScore = P.W_ADX;
+      details.push(`ADX 5m ${adx.value.toFixed(1)} (+DI ${adx.plusDI?.toFixed(1)} / -DI ${adx.minusDI?.toFixed(1)}) | trend forte | +${adxScore}pt`);
+    } else if (adx.value >= P.ADX_MIN_TREND && adx.value < P.ADX_STRONG && diAligned) {
+      adxScore = Math.round(P.W_ADX * (4 / 7));
+      details.push(`ADX 5m ${adx.value.toFixed(1)} (+DI ${adx.plusDI?.toFixed(1)} / -DI ${adx.minusDI?.toFixed(1)}) | trend moderato | +${adxScore}pt`);
+    } else if (adx.value < P.ADX_MIN_TREND) {
+      details.push(`ADX 5m ${adx.value.toFixed(1)} < ${P.ADX_MIN_TREND}: trend assente | 0pt + veto`);
+    } else {
+      details.push(`ADX 5m ${adx.value.toFixed(1)} con DI contrario al setup: 0pt`);
+    }
+  } else if (adx) {
+    details.push(`ADX 5m: UNKNOWN (${adx.reason}) | 0pt`);
+  }
+
+  // 10c. StochRSI (max W_STOCH_RSI): incrocio valido allineato, altrimenti solo K allineato a D
+  let stochRsiScore = 0;
+  const sr = indicators?.stochRsi;
+  if (sr?.status === 'OK' && sr.k != null && sr.d != null) {
+    const crossAligned =
+      sr.lastCross === direction &&
+      sr.barsSinceCross != null &&
+      sr.barsSinceCross <= P.STOCH_RSI_CROSS_LOOKBACK &&
+      (direction === 'LONG'
+        ? sr.k <= P.STOCH_RSI_LONG_CROSS_MAX && sr.k < P.STOCH_RSI_EXTREME_HI
+        : sr.k >= P.STOCH_RSI_SHORT_CROSS_MIN && sr.k > P.STOCH_RSI_EXTREME_LO);
+    const kAligned = direction === 'LONG' ? sr.k > sr.d : sr.k < sr.d;
+    if (crossAligned) {
+      stochRsiScore = P.W_STOCH_RSI;
+      details.push(
+        `StochRSI K ${sr.k.toFixed(1)} / D ${sr.d.toFixed(1)} | incrocio ${sr.lastCross} ${sr.barsSinceCross} barre fa | +${stochRsiScore}pt`
+      );
+    } else if (kAligned) {
+      stochRsiScore = Math.round(P.W_STOCH_RSI * (3 / 9));
+      details.push(`StochRSI K ${sr.k.toFixed(1)} / D ${sr.d.toFixed(1)} | K allineato senza incrocio recente | +${stochRsiScore}pt`);
+    } else {
+      details.push(`StochRSI K ${sr.k.toFixed(1)} / D ${sr.d.toFixed(1)} | non allineato | 0pt`);
+    }
+  } else if (sr) {
+    details.push(`StochRSI: UNKNOWN (${sr.reason}) | 0pt`);
+  }
+
+  // 11. VWAP DI SESSIONE (0..W_VWAP): logica con quality gate, contributo mai negativo
   const effectiveVwapState = resolveVwapStateForScoring(
     quote.vwapState ?? null,
     vwapBar,
     quote.market,
     quote.vwapDataQuality ?? null
   );
-  const vwapContribution = calculateVwapScoreContribution(
-    effectiveVwapState,
-    isCandidateLong ? 'LONG' : 'SHORT'
-  );
+  const vwapContribution = calculateVwapScoreContribution(effectiveVwapState, direction);
   const vwapScore = vwapContribution.score;
   const vwapLine = vwapContribution.detail;
   details.push(vwapLine);
+
+  // 12. VETI: indipendenti dallo score, scartano il setup
+  const vetoReasons = evaluateSetupVetoes(direction, indicators, effectiveVwapState);
+  for (const reason of vetoReasons) details.push(`VETO: ${reason} - setup scartato indipendentemente dallo score.`);
 
   const rawTotal =
     gapScore +
@@ -965,11 +1039,29 @@ export function calculateCandidateScore(
     newsScore +
     trendScore +
     orderFlowScore +
+    supertrendScore +
+    adxScore +
+    stochRsiScore +
+    psarScore +
     vwapScore;
-  const total = Math.max(
-    0,
-    Math.min(TRADING_PARAMS.SCORE_MAX_COMPONENTS.CAPPED_MAX, Math.round(rawTotal))
-  );
+  const total = Math.max(0, Math.min(P.SCORE_MAX_COMPONENTS.CAPPED_MAX, Math.round(rawTotal)));
+
+  const scoreBreakdown: Record<string, number> = {
+    gap: gapScore,
+    rvol: rvolScore,
+    vwap: vwapScore,
+    supertrend: supertrendScore,
+    adx: adxScore,
+    stochRsi: stochRsiScore,
+    psar: psarScore,
+    levels: levelScore,
+    futures: futuresScore,
+    news: newsScore,
+    orderFlow: orderFlowScore,
+    liquidity: liquidityScore,
+    rsi: rsiScore,
+    trend: trendScore,
+  };
 
   return {
     gapScore,
@@ -981,6 +1073,13 @@ export function calculateCandidateScore(
     newsScore,
     trendScore,
     orderFlowScore,
+    supertrendScore,
+    adxScore,
+    stochRsiScore,
+    psarScore,
+    scoreBreakdown,
+    veto: vetoReasons[0] ?? null,
+    vetoReasons,
     vwapScore,
     vwapLine,
     rawTotal: +rawTotal.toFixed(1),
@@ -1187,7 +1286,8 @@ export function rankMarketCandidates(
     };
   });
 
-  scored.sort((a, b) => {
+  const eligible = scored.filter((item) => item.score.veto == null);
+  eligible.sort((a, b) => {
     if (b.score.total !== a.score.total) return b.score.total - a.score.total;
     const rawB = b.score.rawTotal ?? b.score.total;
     const rawA = a.score.rawTotal ?? a.score.total;
@@ -1198,7 +1298,7 @@ export function rankMarketCandidates(
     return Math.abs(b.quote.gapPercent ?? 0) - Math.abs(a.quote.gapPercent ?? 0);
   });
 
-  return scored.map((item, index) => ({
+  return eligible.map((item, index) => ({
     ...item,
     rank: index + 1,
   }));
@@ -1242,7 +1342,8 @@ export function rankTopCandidates(
     };
   });
 
-  scored.sort((a, b) => {
+  const eligible = scored.filter((item) => item.score.veto == null);
+  eligible.sort((a, b) => {
     if (b.score.total !== a.score.total) return b.score.total - a.score.total;
     const rawB = b.score.rawTotal ?? b.score.total;
     const rawA = a.score.rawTotal ?? a.score.total;
@@ -1253,7 +1354,7 @@ export function rankTopCandidates(
     return Math.abs(b.quote.gapPercent ?? 0) - Math.abs(a.quote.gapPercent ?? 0);
   });
 
-  return scored.map((item, index) => ({
+  return eligible.map((item, index) => ({
     ...item,
     rank: index + 1,
   }));
@@ -5137,6 +5238,7 @@ export interface VwapScoreOptions {
   hardGate?: boolean;
   neutralBandAtr?: number;
   minVolumeRatio?: number;
+  vetoEnabled?: boolean; // VWAP_VETO_ENABLED: stato contrario con volume confermato = veto
 }
 
 // ATR approssimato sulle barre 5m della sessione (media semplice dei range H-L)
@@ -5479,7 +5581,7 @@ export function calculateVwapScoreContribution(
   const neutralBand = options.neutralBandAtr ?? TRADING_PARAMS.VWAP_NEUTRAL_BAND_ATR;
   const minVolumeRatio = options.minVolumeRatio ?? TRADING_PARAMS.VWAP_MIN_VOLUME_RATIO;
   const openFactor = options.openWeightFactor ?? TRADING_PARAMS.VWAP_OPEN_WEIGHT_FACTOR;
-  const hardGate = options.hardGate ?? TRADING_PARAMS.VWAP_HARD_GATE;
+  const vetoEnabled = options.vetoEnabled ?? TRADING_PARAMS.VWAP_VETO_ENABLED;
 
   const unknown = (flag: string): VwapContribution => ({
     score: 0,
@@ -5497,15 +5599,16 @@ export function calculateVwapScoreContribution(
   const volumeRatio = vwapState.volumeRatio;
   const volTxt = volumeRatio != null ? `${volumeRatio.toFixed(2)}x` : 'nd';
   const distTxt = dist.toFixed(2);
+  const neutralPoints = weight <= 0 ? 0 : Math.round(weight / 2);
 
-  if (Math.abs(dist) < neutralBand) {
-    return {
-      score: 0,
-      state: 'NEUTRAL',
-      detail: `VWAP: NEUTRAL | dist ${distTxt} ATR | vol ${volTxt} | contributo 0/${weight}`,
-      gated: false,
-    };
-  }
+  const neutral = (): VwapContribution => ({
+    score: neutralPoints,
+    state: 'NEUTRAL',
+    detail: `VWAP: NEUTRAL | dist ${distTxt} ATR | vol ${volTxt} | contributo ${neutralPoints}/${weight}`,
+    gated: false,
+  });
+
+  if (Math.abs(dist) < neutralBand) return neutral();
 
   if (volumeRatio == null || !isFinite(volumeRatio) || volumeRatio < minVolumeRatio) {
     return {
@@ -5517,34 +5620,28 @@ export function calculateVwapScoreContribution(
   }
 
   const sign = vwapStateSign(vwapState);
-  if (sign === 0) {
+  if (sign === 0) return neutral();
+
+  const dirSign = direction === 'LONG' ? 1 : -1;
+
+  // Stato contrario con volume confermato: contributo 0 (mai negativo) + veto se abilitato.
+  if (sign * dirSign < 0) {
     return {
       score: 0,
-      state: 'NEUTRAL',
-      detail: `VWAP: NEUTRAL | dist ${distTxt} ATR | vol ${volTxt} | contributo 0/${weight}`,
-      gated: false,
+      state: vwapState.state,
+      detail: `VWAP: ${vwapState.state} | dist ${distTxt} ATR | vol ${volTxt} | contraria al setup | contributo 0/${weight}`,
+      gated: vetoEnabled,
     };
   }
 
-  const dirSign = direction === 'LONG' ? 1 : -1;
-  let magnitude = 0;
-  if (vwapState.state === 'ABOVE' || vwapState.state === 'RECLAIM') {
-    magnitude = weight * Math.min(1, Math.abs(dist));
-  } else if (vwapState.state === 'BELOW' || vwapState.state === 'REJECT') {
-    magnitude = weight;
-  } else if (vwapState.state === 'PULLBACK') {
-    magnitude = weight / 2;
-  }
-
   const openWindow = vwapState.flags.includes('OPEN_WINDOW');
-  const score = +(sign * dirSign * magnitude * (openWindow ? openFactor : 1)).toFixed(2);
-  const signed = score >= 0 ? `+${score}` : `${score}`;
+  const points = weight <= 0 ? 0 : Math.max(1, Math.round(weight * (openWindow ? openFactor : 1)));
 
   return {
-    score,
+    score: points,
     state: vwapState.state,
-    detail: `VWAP: ${vwapState.state} | dist ${distTxt} ATR | vol ${volTxt} | contributo ${signed}/${weight}`,
-    gated: hardGate && sign * dirSign < 0,
+    detail: `VWAP: ${vwapState.state} | dist ${distTxt} ATR | vol ${volTxt} | contributo ${points}/${weight}`,
+    gated: false,
   };
 }
 

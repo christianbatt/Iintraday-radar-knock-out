@@ -25,11 +25,13 @@ import {
   calculateAtr5m,
   VwapBar,
 } from './src/utils/calculator';
-import { computeVwapDataQuality, formatVwapDataQualityScan } from './src/utils/calculator';
+import { computeVwapDataQuality, formatVwapDataQualityScan, calculateCandidateScore } from './src/utils/calculator';
+import { computeSetupIndicators } from './src/utils/indicators';
 import { getExchangeDateStr, getMarketTime } from './src/utils/timezone';
 import { TRADING_PARAMS } from './src/config/tradingParams';
 import { VWAP_PROMPT_BLOCK } from './src/config/vwapPrompt';
-import { AILearnedInsight, VwapSignalState, VwapDataQuality } from './src/types/radar';
+import { SETUP_PROMPT_BLOCK } from './src/config/setupPrompt';
+import { AILearnedInsight, VwapSignalState, VwapDataQuality, SetupIndicators } from './src/types/radar';
 import { runNightlyLearning } from './scripts/nightly_learning';
 
 dotenv.config();
@@ -540,7 +542,8 @@ export interface RawQuoteData {
   vwapState?: VwapSignalState | null;
   lastBarVolume?: number | null; // volume della barra 5m piu' recente della sessione (da getIntraday5mMetrics)
   lastBarTime?: number | null; // timestamp unix (secondi) della stessa barra
-  vwapDataQuality?: VwapDataQuality | null; // quality gate VWAP: se !ok il contributo e' 0
+  vwapDataQuality?: VwapDataQuality | null;
+  setupIndicators?: SetupIndicators | null; // quality gate VWAP: se !ok il contributo e' 0
   gapPercent: number | null;
   rvol: number | null;
   impliedVolatility?: number | null;
@@ -643,6 +646,7 @@ async function getIntraday5mMetrics(
   lastBarVolume?: number | null;
   lastBarTime?: number | null;
   vwapDataQuality?: VwapDataQuality | null;
+  setupIndicators?: SetupIndicators | null;
 }> {
   const cacheKey = `metrics5m:${ticker}:${market}`;
   const cached = cache.get<{
@@ -659,6 +663,7 @@ async function getIntraday5mMetrics(
     lastBarVolume?: number | null;
     lastBarTime?: number | null;
     vwapDataQuality?: VwapDataQuality | null;
+  setupIndicators?: SetupIndicators | null;
   }>(cacheKey);
   if (cached) return cached.data;
 
@@ -669,7 +674,7 @@ async function getIntraday5mMetrics(
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
       signal: AbortSignal.timeout(6000),
     });
-    if (!resp.ok) return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null, orbBreakoutTimeLong: null, orbBreakoutTimeShort: null, vwapCumulative: null, vwapCumulativeWithPre: null, vwapCoverage: null, vwapState: null, lastBarVolume: null, lastBarTime: null, vwapDataQuality: { ok: false, reason: `FEED_ERROR:HTTP ${resp.status}`, coverage: 0 } };
+    if (!resp.ok) return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null, orbBreakoutTimeLong: null, orbBreakoutTimeShort: null, vwapCumulative: null, vwapCumulativeWithPre: null, vwapCoverage: null, vwapState: null, lastBarVolume: null, lastBarTime: null, vwapDataQuality: { ok: false, reason: `FEED_ERROR:HTTP ${resp.status}`, coverage: 0 }, setupIndicators: null };
     const json = await resp.json();
     const rawQuotes = json?.chart?.result?.[0]?.indicators?.quote?.[0];
     const closes: number[] = rawQuotes?.close?.filter(
@@ -1007,6 +1012,24 @@ async function getIntraday5mMetrics(
     }
     if (!vwapDataQuality) vwapDataQuality = { ok: false, reason: 'FEED_ERROR', coverage: 0 };
 
+    // Indicatori di setup 5m (IPOTESI): sessione corrente + sessione precedente, solo barre chiuse regolari.
+    // Se il feed non basta restano UNKNOWN con motivo esplicito: nessun valore inventato.
+    let setupIndicators: SetupIndicators | null = null;
+    try {
+      const tsInd: number[] = json?.chart?.result?.[0]?.timestamp || [];
+      const indicatorBars = tsInd.map((t, i) => ({
+        t: t * 1000,
+        o: rawQuotes?.open?.[i],
+        h: rawQuotes?.high?.[i],
+        l: rawQuotes?.low?.[i],
+        c: rawQuotes?.close?.[i],
+        v: rawQuotes?.volume?.[i],
+      }));
+      setupIndicators = computeSetupIndicators(indicatorBars as any, { market, now: new Date() });
+    } catch {
+      setupIndicators = null;
+    }
+
     const result = {
       rsi5m,
       rvol: orbRvol,
@@ -1024,6 +1047,7 @@ async function getIntraday5mMetrics(
       lastBarVolume,
       lastBarTime,
       vwapDataQuality,
+      setupIndicators,
     };
     cache.set(cacheKey, result, 25);
     return result;
@@ -1045,6 +1069,7 @@ async function getIntraday5mMetrics(
       lastBarVolume: null,
       lastBarTime: null,
       vwapDataQuality: { ok: false, reason: 'FEED_ERROR', coverage: 0 },
+      setupIndicators: null,
     };
   }
 }
@@ -1416,6 +1441,7 @@ async function fetchQuoteForTicker(
     lastBarVolume: (await intraday5mPromise).lastBarVolume ?? null,
     lastBarTime: (await intraday5mPromise).lastBarTime ?? null,
     vwapDataQuality: (await intraday5mPromise).vwapDataQuality ?? null,
+    setupIndicators: (await intraday5mPromise).setupIndicators ?? null,
     gapPercent,
     rvol: quoteData.rvol ?? (await intraday5mPromise).rvol ?? null,
     rvol20m: quoteData.rvol20m ?? (await intraday5mPromise).rvol20m,
@@ -1934,6 +1960,51 @@ app.post('/api/market-data', async (req: Request, res: Response) => {
 
     // Qualita' dati VWAP per scansione: solo log/report, nessun impatto su UI o punteggi.
     console.log(formatVwapDataQualityScan('ALL', results));
+
+    // Log di scan (IPOTESI): per candidato breakdown, veti e stati indicatori; poi distribuzione punteggi.
+    try {
+      const futuresScan = await getFutures();
+      const changeFor = (market: 'EU' | 'US') =>
+        market === 'EU'
+          ? (typeof futuresScan?.europe?.dax?.changePercent === 'number' ? futuresScan.europe.dax.changePercent : null)
+          : (typeof futuresScan?.usa?.sp500?.changePercent === 'number' ? futuresScan.usa.sp500.changePercent : null);
+      const scanScores = results.map((quote) => ({
+        quote,
+        score: calculateCandidateScore(quote, changeFor(quote.market), null, {
+          volume: quote.lastBarVolume ?? null,
+          barTime: quote.lastBarTime ?? null,
+        }),
+      }));
+      for (const { quote, score } of scanScores) {
+        const ind = quote.setupIndicators;
+        const indTxt = ind
+          ? `ST ${ind.supertrend.status}${ind.supertrend.status === 'OK' ? `(dir ${ind.supertrend.direction}, flip ${ind.supertrend.barsSinceFlip ?? 'nd'})` : ''} | ADX ${ind.adx.status}${ind.adx.status === 'OK' ? `(${ind.adx.value})` : ''} | StochRSI ${ind.stochRsi.status}${ind.stochRsi.status === 'OK' ? `(K ${ind.stochRsi.k}/D ${ind.stochRsi.d}, ${ind.stochRsi.lastCross})` : ''} | PSAR ${ind.psar.status}`
+          : 'indicatori non disponibili';
+        console.log(
+          `[Setup score] ${quote.ticker}: ${score.total}/100 | veto ${score.veto ?? 'nessuno'} | ${indTxt} | breakdown ${JSON.stringify(score.scoreBreakdown)}`
+        );
+      }
+      const summarize = (market: 'EU' | 'US') => {
+        const rows = scanScores.filter((r) => r.quote.market === market);
+        const totals = rows.map((r) => r.score.total);
+        const threshold = market === 'EU' ? TRADING_PARAMS.MIN_SCORE_EU : TRADING_PARAMS.MIN_SCORE_US;
+        const above = rows.filter((r) => r.score.veto == null && r.score.total >= threshold).length;
+        const vetoed = rows.filter((r) => r.score.veto != null).length;
+        const buckets = [0, 40, 50, 60, 70, 80, 90, 100];
+        const dist = buckets
+          .slice(0, -1)
+          .map((min, i) => {
+            const max = buckets[i + 1];
+            const n = totals.filter((t) => t >= min && t < max).length;
+            return `${min}-${max - 1}:${n}`;
+          })
+          .join(' ');
+        return `${market} n=${rows.length} sopra-soglia(>=${threshold}):${above} veti:${vetoed} dist ${dist}`;
+      };
+      console.log(`[Score distribution] scan ALL | ${summarize('EU')} | ${summarize('US')}`);
+    } catch (err: any) {
+      console.log(`[Setup score] log non disponibile: ${err?.message || err}`);
+    }
 
     res.json({
       count: results.length,
@@ -2589,6 +2660,15 @@ REGOLE TASSATIVE:
         : ''
     }`;
 
+    const futuresChangeForCandidate =
+      candidate.market === 'EU'
+        ? (typeof futures?.europe?.dax?.changePercent === 'number' ? futures.europe.dax.changePercent : null)
+        : (typeof futures?.usa?.sp500?.changePercent === 'number' ? futures.usa.sp500.changePercent : null);
+    const candidateSetupScore = calculateCandidateScore(candidate, futuresChangeForCandidate, null, {
+      volume: candidate.lastBarVolume ?? null,
+      barTime: candidate.lastBarTime ?? null,
+    });
+
     const userPrompt = `Analizza questo candidato per la sessione odierna basandoti ESCLUSIVAMENTE sulle notizie reali fornite:
 DATI SOTTOSTANTE:
 - Ticker: ${candidate.ticker} (${candidate.name})
@@ -2600,6 +2680,20 @@ DATI SOTTOSTANTE:
 - ATR(14) Giornaliero: ${candidate.atr14 ?? 'dato non disponibile'}
 - Range Ieri: Min ${candidate.prevLow ?? 'nd'} - Max ${candidate.prevHigh ?? 'nd'}
 - VWAP di sessione: ${candidate.vwapState ? `${candidate.vwapState.state} | distanza ${candidate.vwapState.distAtr ?? 'nd'} ATR | pendenza ${candidate.vwapState.slopeAtr ?? 'nd'} ATR | coverage ${candidate.vwapState.coverage ?? 'nd'} | volume ${candidate.vwapState.volumeRatio ?? 'nd'}x media 5m | flag ${(candidate.vwapState.flags || []).join(',') || 'nessuno'}` : 'dato non disponibile'}
+- Supertrend 5m: ${candidate.setupIndicators?.supertrend
+        ? `${candidate.setupIndicators.supertrend.status}${candidate.setupIndicators.supertrend.status === 'OK' ? ` | direction ${candidate.setupIndicators.supertrend.direction} | flip ${candidate.setupIndicators.supertrend.barsSinceFlip ?? 'nd'} barre fa` : ` | motivo ${candidate.setupIndicators.supertrend.reason}`}`
+        : 'dato non disponibile'}
+- ADX 5m: ${candidate.setupIndicators?.adx
+        ? `${candidate.setupIndicators.adx.status}${candidate.setupIndicators.adx.status === 'OK' ? ` | value ${candidate.setupIndicators.adx.value} | plusDI ${candidate.setupIndicators.adx.plusDI} | minusDI ${candidate.setupIndicators.adx.minusDI}` : ` | motivo ${candidate.setupIndicators.adx.reason}`}`
+        : 'dato non disponibile'}
+- StochRSI 5m: ${candidate.setupIndicators?.stochRsi
+        ? `${candidate.setupIndicators.stochRsi.status}${candidate.setupIndicators.stochRsi.status === 'OK' ? ` | k ${candidate.setupIndicators.stochRsi.k} | d ${candidate.setupIndicators.stochRsi.d} | lastCross ${candidate.setupIndicators.stochRsi.lastCross} | barsSinceCross ${candidate.setupIndicators.stochRsi.barsSinceCross ?? 'nd'}` : ` | motivo ${candidate.setupIndicators.stochRsi.reason}`}`
+        : 'dato non disponibile'}
+- PSAR 5m: ${candidate.setupIndicators?.psar
+        ? `${candidate.setupIndicators.psar.status}${candidate.setupIndicators.psar.status === 'OK' ? ` | value ${candidate.setupIndicators.psar.value} | direction ${candidate.setupIndicators.psar.direction}` : ` | motivo ${candidate.setupIndicators.psar.reason}`}`
+        : 'dato non disponibile'}
+- Score breakdown: ${JSON.stringify(candidateSetupScore.scoreBreakdown)} | totale ${candidateSetupScore.total}/100
+- Veto setup: ${candidateSetupScore.veto ?? 'nessuno'}
 - Futures Indice Riferimento: ${JSON.stringify(futures || {})}
 
 NOTIZIE REALI RACCOLTE:
@@ -2611,6 +2705,8 @@ ${realNews
   .join('\n\n')}
 
 ${VWAP_PROMPT_BLOCK}
+
+${SETUP_PROMPT_BLOCK}
 Istruzione: Valuta il catalizzatore qualitativo e rispondi in JSON:
 decisione: "TRADE" oppure "NESSUN_TRADE" (usa NESSUN_TRADE solo per fattori ostativi gravi come utili imminenti o rischi fatali)
 direzione: "LONG" oppure "SHORT" oppure "NESSUNA"

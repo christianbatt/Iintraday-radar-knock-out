@@ -117,16 +117,18 @@ describe('VWAP - rilevazione stato (nomi finali)', () => {
     assert.ok(calculateVwapScoreContribution(s, 'LONG').score > 0);
   });
 
-  it('T2: serie ribassista -> BELOW e contributo negativo per LONG', () => {
+  it('T2: serie ribassista -> BELOW e contributo 0 (mai negativo) con veto per LONG', () => {
     const s = stateOf(fallingBars());
     assert.strictEqual(s.state, 'BELOW');
-    assert.ok(calculateVwapScoreContribution(s, 'LONG').score < 0);
+    const c = calculateVwapScoreContribution(s, 'LONG');
+    assert.strictEqual(c.score, 0);
+    assert.strictEqual(c.gated, true);
   });
 
   it('T3: ritorno alla VWAP con tenuta -> PULLBACK', () => {
     const s = stateOf(pullbackBars());
     assert.strictEqual(s.state, 'PULLBACK');
-    assert.strictEqual(calculateVwapScoreContribution(s, 'LONG').score, +(W / 2).toFixed(2));
+    assert.strictEqual(calculateVwapScoreContribution(s, 'LONG').score, +W);
   });
 
   it('T4: recupero con volume -> RECLAIM', () => {
@@ -135,10 +137,12 @@ describe('VWAP - rilevazione stato (nomi finali)', () => {
     assert.ok(calculateVwapScoreContribution(s, 'LONG').score > 0);
   });
 
-  it('T5: respinta con volume -> REJECT', () => {
+  it('T5: respinta con volume -> REJECT con contributo 0 e veto per LONG', () => {
     const s = stateOf(rejectBars());
     assert.strictEqual(s.state, 'REJECT');
-    assert.ok(calculateVwapScoreContribution(s, 'LONG').score < 0);
+    const c = calculateVwapScoreContribution(s, 'LONG');
+    assert.strictEqual(c.score, 0);
+    assert.strictEqual(c.gated, true);
   });
 });
 
@@ -162,9 +166,10 @@ describe('VWAP - regola after-hours e qualita dati', () => {
 });
 
 describe('VWAP - gate e score', () => {
-  it('T8: VWAP_HARD_GATE = false (default) non scarta nessuno; con gate attivo scarta il contrario', () => {
+  it('T8: VWAP contraria con volume confermato viene scartata dal veto; hard gate resta invariato', () => {
     const opposed = stateOf(fallingBars());
     assert.strictEqual(TRADING_PARAMS.VWAP_HARD_GATE, false);
+    assert.strictEqual(TRADING_PARAMS.VWAP_VETO_ENABLED, true);
     assert.strictEqual(passesVwapHardGate(opposed, 'LONG'), true);
     assert.strictEqual(passesVwapHardGate(opposed, 'LONG', { hardGate: true }), false);
     assert.strictEqual(passesVwapHardGate(opposed, 'SHORT', { hardGate: true }), true);
@@ -173,7 +178,11 @@ describe('VWAP - gate e score', () => {
       baseQuote({ ticker: 'AAPL', vwapState: opposed }),
       baseQuote({ ticker: 'MSFT', vwapState: stateOf(risingBars()) }),
     ];
-    assert.strictEqual(rankMarketCandidates(quotes, 'US', 0.2).length, 2);
+    // Il veto VWAP (VWAP_VETO_ENABLED = true) scarta il candidato contrario con volume confermato.
+    const ranked = rankMarketCandidates(quotes, 'US', 0.2);
+    assert.strictEqual(ranked.length, 1);
+    assert.strictEqual(ranked[0].quote.ticker, 'MSFT');
+    assert.strictEqual(calculateCandidateScore(quotes[0], 0.2, null).veto, 'VWAP_OPPOSED');
 
     const original = TRADING_PARAMS.VWAP_HARD_GATE;
     TRADING_PARAMS.VWAP_HARD_GATE = true;

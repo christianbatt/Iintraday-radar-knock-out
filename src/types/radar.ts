@@ -25,6 +25,9 @@ export interface RawQuoteData {
   lastBarVolume?: number | null; // volume della barra 5m piu' recente della sessione (getIntraday5mMetrics)
   lastBarTime?: number | null; // timestamp unix (secondi) della stessa barra
   vwapDataQuality?: VwapDataQuality | null; // esito del quality gate VWAP (server -> scoring), usato dal VWAP scoring
+  setupIndicators?: SetupIndicators | null; // indicatori 5m (Supertrend, ADX, StochRSI, PSAR) calcolati dal server
+  scoreBreakdown?: Record<string, number> | null; // breakdown dello score usato nel contesto AI
+  setupVeto?: string | null; // reason del veto attivo sul setup, se presente
   ema20Daily?: number | null;
   avgVolume20d: number | null;
   preMarketVolume: number | null;
@@ -129,12 +132,80 @@ export interface ScoreBreakdown {
   newsScore?: number; // Bonus news & catalyst quality (+0 to +15pt)
   trendScore?: number; // Bonus Confluenza Trend Macro Daily EMA 20 (+0 to +8pt)
   orderFlowScore?: number; // Convalida Ordini Aggressivi Delta & VPOC (-10pt a +10pt)
-  vwapScore?: number; // Contributo VWAP di sessione (-W..+W, con W = TRADING_PARAMS.VWAP_SCORE_WEIGHT) [IPOTESI]
+  vwapScore?: number; // Contributo VWAP di sessione (0..W, mai negativo; W = TRADING_PARAMS.W_VWAP) [IPOTESI]
   vwapLine?: string; // Riga VWAP sempre presente nel breakdown
+  supertrendScore?: number; // Supertrend allineato (max W_SUPERTREND) [IPOTESI]
+  adxScore?: number; // Forza di trend ADX (max W_ADX) [IPOTESI]
+  stochRsiScore?: number; // StochRSI allineato (max W_STOCH_RSI) [IPOTESI]
+  psarScore?: number; // Sempre 0: PSAR serve allo stop e all'uscita, non allo score
+  scoreBreakdown?: Record<string, number>; // Mappa componente -> punti interi
+  veto?: SetupVetoReason | null; // Veto attivo: il setup va scartato indipendentemente dallo score
+  vetoReasons?: SetupVetoReason[];
   rawTotal?: number; // Somma grezza pre-cap a 100 per tie-breaking quantitativo
   total: number;
   details: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Indicatori di setup 5m (TUTTE IPOTESI: vedi TRADING_PARAMS.ST_* / ADX_* / STOCH_RSI_* / PSAR_*)
+// ---------------------------------------------------------------------------
+export type IndicatorStatus = 'OK' | 'UNKNOWN';
+
+export type IndicatorUnknownReason = 'INSUFFICIENT_BARS' | 'NAN' | 'STALE' | 'AFTER_HOURS';
+
+export interface IndicatorBarInput {
+  t: number; // timestamp unix in millisecondi
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+export interface SupertrendSnapshot {
+  status: IndicatorStatus;
+  reason: IndicatorUnknownReason | null;
+  direction: 1 | -1 | 0;
+  barsSinceFlip: number | null;
+  value: number | null;
+}
+
+export interface AdxSnapshot {
+  status: IndicatorStatus;
+  reason: IndicatorUnknownReason | null;
+  value: number | null;
+  plusDI: number | null;
+  minusDI: number | null;
+}
+
+export interface StochRsiSnapshot {
+  status: IndicatorStatus;
+  reason: IndicatorUnknownReason | null;
+  k: number | null;
+  d: number | null;
+  lastCross: 'LONG' | 'SHORT' | 'NONE';
+  barsSinceCross: number | null;
+}
+
+export interface PsarSnapshot {
+  status: IndicatorStatus;
+  reason: IndicatorUnknownReason | null;
+  value: number | null;
+  direction: 1 | -1 | 0;
+  barsSinceFlip: number | null;
+}
+
+export interface SetupIndicators {
+  barsUsed: number;
+  atr: { value: number | null; status: IndicatorStatus; reason: IndicatorUnknownReason | null };
+  supertrend: SupertrendSnapshot;
+  adx: AdxSnapshot;
+  stochRsi: StochRsiSnapshot;
+  psar: PsarSnapshot;
+}
+
+// Motivi di veto del setup (setup scartato indipendentemente dallo score)
+export type SetupVetoReason = 'ADX_BELOW_20' | 'SUPERTREND_OPPOSED' | 'VWAP_OPPOSED';
 
 export interface KnockOutBarrierGuard {
   safeDistanceAtr: number; // e.g. 1.5 * ATR

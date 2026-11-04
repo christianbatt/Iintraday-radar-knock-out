@@ -66,11 +66,11 @@ describe('VWAP scoring - pesi e parametri (IPOTESI)', () => {
 });
 
 describe('VWAP scoring - contributo per stato', () => {
-  it('T2: ABOVE con volume confermato -> +W scalato su distAtr (0.5 ATR = +5)', () => {
+  it('T2: ABOVE con volume confermato -> W pieno (contributo mai negativo)', () => {
     const c = calculateVwapScoreContribution(state({ state: 'ABOVE', distAtr: 0.5 }), 'LONG');
-    assert.strictEqual(c.score, +5);
+    assert.strictEqual(c.score, +10);
     assert.strictEqual(c.state, 'ABOVE');
-    assert.ok(c.detail.startsWith('VWAP: ABOVE | dist 0.50 ATR | vol 2.10x | contributo +5/10'), c.detail);
+    assert.ok(c.detail.startsWith('VWAP: ABOVE | dist 0.50 ATR | vol 2.10x | contributo 10/10'), c.detail);
   });
 
   it('T3: ABOVE con distAtr oltre 1 ATR -> cap a +W', () => {
@@ -78,30 +78,33 @@ describe('VWAP scoring - contributo per stato', () => {
     assert.strictEqual(c.score, +W);
   });
 
-  it('T4: RECLAIM con volume confermato -> +W scalato (0.4 ATR = +4)', () => {
+  it('T4: RECLAIM con volume confermato -> W pieno', () => {
     const c = calculateVwapScoreContribution(state({ state: 'RECLAIM', distAtr: 0.4 }), 'LONG');
-    assert.strictEqual(c.score, +4);
+    assert.strictEqual(c.score, +10);
   });
 
-  it('T5: PULLBACK con volume confermato -> +W/2', () => {
+  it('T5: PULLBACK con volume confermato -> W pieno', () => {
     const c = calculateVwapScoreContribution(state({ state: 'PULLBACK', distAtr: 0.6 }), 'LONG');
-    assert.strictEqual(c.score, +5);
+    assert.strictEqual(c.score, +10);
   });
 
-  it('T6: BELOW/REJECT con volume confermato -> -W per long, +W per short', () => {
+  it('T6: BELOW/REJECT con volume confermato -> 0 per long (con veto), +W per short', () => {
     const below = state({ state: 'BELOW', distAtr: -0.6 });
     const reject = state({ state: 'REJECT', distAtr: -0.4 });
-    assert.strictEqual(calculateVwapScoreContribution(below, 'LONG').score, -W);
+    const belowLong = calculateVwapScoreContribution(below, 'LONG');
+    const rejectLong = calculateVwapScoreContribution(reject, 'LONG');
+    assert.strictEqual(belowLong.score, 0);
+    assert.strictEqual(rejectLong.score, 0);
+    assert.strictEqual(belowLong.gated, true);
     assert.strictEqual(calculateVwapScoreContribution(below, 'SHORT').score, +W);
-    assert.strictEqual(calculateVwapScoreContribution(reject, 'LONG').score, -W);
     assert.strictEqual(calculateVwapScoreContribution(reject, 'SHORT').score, +W);
   });
 
-  it('T7: |distAtr| < banda neutra -> NEUTRAL, 0 punti e riga presente', () => {
+  it('T7: |distAtr| < banda neutra -> NEUTRAL, meta peso e riga presente', () => {
     const c = calculateVwapScoreContribution(state({ state: 'ABOVE', distAtr: 0.05 }), 'LONG');
-    assert.strictEqual(c.score, 0);
+    assert.strictEqual(c.score, 5);
     assert.strictEqual(c.state, 'NEUTRAL');
-    assert.ok(c.detail.startsWith('VWAP: NEUTRAL | dist 0.05 ATR | vol 2.10x | contributo 0/10'), c.detail);
+    assert.ok(c.detail.startsWith('VWAP: NEUTRAL | dist 0.05 ATR | vol 2.10x | contributo 5/10'), c.detail);
   });
 
   it('T8: volume non confermato (< 1.5x) -> UNCONFIRMED, 0 punti e riga presente', () => {
@@ -121,12 +124,13 @@ describe('VWAP scoring - contributo per stato', () => {
     assert.strictEqual(c.detail, 'VWAP: UNKNOWN (AFTER_HOURS) | contributo 0/10');
   });
 
-  it('T10: finestra di apertura -> contributo x VWAP_OPEN_WEIGHT_FACTOR', () => {
+  it('T10: stato contrario in finestra di apertura -> 0 punti e veto', () => {
     const c = calculateVwapScoreContribution(
       state({ state: 'BELOW', distAtr: -0.8, flags: ['OPEN_WINDOW'] }),
       'LONG'
     );
-    assert.strictEqual(c.score, -(W * TRADING_PARAMS.VWAP_OPEN_WEIGHT_FACTOR));
+    assert.strictEqual(c.score, 0);
+    assert.strictEqual(c.gated, true);
   });
 });
 
@@ -151,18 +155,22 @@ describe('VWAP scoring - integrazione nel breakdown', () => {
       (score.newsScore ?? 0) +
       (score.trendScore ?? 0) +
       (score.orderFlowScore ?? 0) +
-      (score.vwapScore ?? 0);
+      (score.vwapScore ?? 0) +
+      (score.supertrendScore ?? 0) +
+      (score.adxScore ?? 0) +
+      (score.stochRsiScore ?? 0) +
+      (score.psarScore ?? 0);
     assert.strictEqual(score.rawTotal, +sum.toFixed(1));
     assert.strictEqual(score.total, Math.max(0, Math.min(100, Math.round(sum))));
   });
 
-  it('T12: candidato ABOVE confermato -> contributo positivo visibile nel breakdown', () => {
+  it('T12: candidato ABOVE confermato -> contributo pieno visibile nel breakdown', () => {
     const score = calculateCandidateScore(
       baseQuote({ gapPercent: 1.0, vwapState: state({ state: 'ABOVE', distAtr: 0.5 }) }),
       0.30,
       null
     );
-    assert.strictEqual(score.vwapScore, +5);
+    assert.strictEqual(score.vwapScore, +10);
     assert.ok(score.vwapLine?.includes('VWAP: ABOVE'), score.vwapLine);
     assert.ok(score.details.some((d) => d.startsWith('VWAP: ABOVE | dist 0.50 ATR')));
   });
@@ -190,7 +198,11 @@ describe('VWAP scoring - integrazione nel breakdown', () => {
 
   it('T14: ranking -> ABOVE confermato batte un candidato identico con BELOW confermato', () => {
     const above = baseQuote({ ticker: 'AAA', vwapState: state({ state: 'ABOVE', distAtr: 0.8 }) });
-    const below = baseQuote({ ticker: 'BBB', vwapState: state({ state: 'BELOW', distAtr: -0.8 }) });
+    // Volume non confermato: nessun veto, contributo 0 (il candidato resta in classifica)
+    const below = baseQuote({
+      ticker: 'BBB',
+      vwapState: state({ state: 'BELOW', distAtr: -0.8, volumeRatio: 0.4 }),
+    });
     const ranked = rankMarketCandidates([below, above], 'US', 0.30);
     assert.strictEqual(ranked[0].quote.ticker, 'AAA');
     assert.ok((ranked[0].score.total ?? 0) > (ranked[1].score.total ?? 0));
