@@ -20,6 +20,8 @@ import {
   calculateOrbRvolFromBars,
   DailyBarInput,
   IntradayCandleInput,
+  computeSessionVwap,
+  VwapBar,
 } from './src/utils/calculator';
 import { getExchangeDateStr, getMarketTime } from './src/utils/timezone';
 import { TRADING_PARAMS } from './src/config/tradingParams';
@@ -528,6 +530,9 @@ export interface RawQuoteData {
   orbBreakoutTime?: string | null;
   orbBreakoutTimeLong?: string | null;
   orbBreakoutTimeShort?: string | null;
+  vwapCumulative?: number | null;
+  vwapCumulativeWithPre?: number | null;
+  vwapCoverage?: number | null;
   gapPercent: number | null;
   rvol: number | null;
   impliedVolatility?: number | null;
@@ -623,6 +628,9 @@ async function getIntraday5mMetrics(
   orbBreakoutTime: string | null;
   orbBreakoutTimeLong: string | null;
   orbBreakoutTimeShort: string | null;
+  vwapCumulative?: number | null;
+  vwapCumulativeWithPre?: number | null;
+  vwapCoverage?: number | null;
 }> {
   const cacheKey = `metrics5m:${ticker}:${market}`;
   const cached = cache.get<{
@@ -645,7 +653,7 @@ async function getIntraday5mMetrics(
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
       signal: AbortSignal.timeout(6000),
     });
-    if (!resp.ok) return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null, orbBreakoutTimeLong: null, orbBreakoutTimeShort: null };
+    if (!resp.ok) return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null, orbBreakoutTimeLong: null, orbBreakoutTimeShort: null, vwapCumulative: null, vwapCumulativeWithPre: null, vwapCoverage: null };
     const json = await resp.json();
     const rawQuotes = json?.chart?.result?.[0]?.indicators?.quote?.[0];
     const closes: number[] = rawQuotes?.close?.filter(
@@ -896,6 +904,34 @@ async function getIntraday5mMetrics(
       // ignore
     }
 
+    let vwapCumulative: number | null = null;
+    let vwapCumulativeWithPre: number | null = null;
+    let vwapCoverage: number | null = null;
+    try {
+      const ts: number[] = json?.chart?.result?.[0]?.timestamp || [];
+      if (ts.length > 0) {
+        const bars: VwapBar[] = ts.map((t, i) => ({
+          timestamp: t,
+          high: rawQuotes?.high?.[i] ?? null,
+          low: rawQuotes?.low?.[i] ?? null,
+          close: rawQuotes?.close?.[i] ?? null,
+          volume: rawQuotes?.volume?.[i] ?? null,
+        }));
+        // Data di sessione = OGGI nel fuso del mercato (non l'ultima barra disponibile)
+        const sessionDate = getExchangeDateStr(market, new Date());
+        const nowMinutes = getMarketTime(market, new Date()).totalMinutes;
+        const reg = computeSessionVwap(bars, market, sessionDate, { nowMinutes });
+        vwapCumulative = reg.vwap != null ? +reg.vwap.toFixed(2) : null;
+        vwapCoverage = reg.coverage != null ? +reg.coverage.toFixed(2) : null;
+        if (market === 'US') {
+          const pre = computeSessionVwap(bars, market, sessionDate, { includePreMarket: true, nowMinutes });
+          vwapCumulativeWithPre = pre.vwap != null ? +pre.vwap.toFixed(2) : null;
+        }
+      }
+    } catch {
+      // lascia null
+    }
+
     const result = {
       rsi5m,
       rvol: orbRvol,
@@ -906,6 +942,9 @@ async function getIntraday5mMetrics(
       orbBreakoutTime,
       orbBreakoutTimeLong,
       orbBreakoutTimeShort,
+      vwapCumulative,
+      vwapCumulativeWithPre,
+      vwapCoverage,
     };
     cache.set(cacheKey, result, 25);
     return result;
@@ -920,6 +959,9 @@ async function getIntraday5mMetrics(
       orbBreakoutTime: null,
       orbBreakoutTimeLong: null,
       orbBreakoutTimeShort: null,
+      vwapCumulative: null,
+      vwapCumulativeWithPre: null,
+      vwapCoverage: null,
     };
   }
 }
@@ -1284,6 +1326,9 @@ async function fetchQuoteForTicker(
     orbBreakoutTime: (await intraday5mPromise).orbBreakoutTime ?? null,
     orbBreakoutTimeLong: (await intraday5mPromise).orbBreakoutTimeLong ?? null,
     orbBreakoutTimeShort: (await intraday5mPromise).orbBreakoutTimeShort ?? null,
+    vwapCumulative: (await intraday5mPromise).vwapCumulative ?? null,
+    vwapCumulativeWithPre: (await intraday5mPromise).vwapCumulativeWithPre ?? null,
+    vwapCoverage: (await intraday5mPromise).vwapCoverage ?? null,
     gapPercent,
     rvol: quoteData.rvol ?? (await intraday5mPromise).rvol ?? null,
     rvol20m: quoteData.rvol20m ?? (await intraday5mPromise).rvol20m,
