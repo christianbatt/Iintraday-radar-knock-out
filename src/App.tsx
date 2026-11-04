@@ -1044,7 +1044,7 @@ export default function App() {
         return updated;
       } else {
         const candTicker = topCandidateEU?.quote.ticker || null;
-        if (!candTicker) return prev;
+        if (!candTicker || topCandidateEU?.score.warmupIncomplete) return prev;
         const updated: MarketFreezeState = {
           isFrozen: true,
           frozenTicker: candTicker,
@@ -1075,7 +1075,7 @@ export default function App() {
         return updated;
       } else {
         const candTicker = topCandidateUS?.quote.ticker || null;
-        if (!candTicker) return prev;
+        if (!candTicker || topCandidateUS?.score.warmupIncomplete) return prev;
         const updated: MarketFreezeState = {
           isFrozen: true,
           frozenTicker: candTicker,
@@ -1141,10 +1141,10 @@ export default function App() {
       setCatalystCache((prev) => ({ ...prev, [ticker]: res }));
 
       // Update setups if active candidate is either top EU or top US
-      if (topCandidateEU?.quote.ticker === ticker) {
+      if (!cand.score.warmupIncomplete && topCandidateEU?.quote.ticker === ticker) {
         setSetupEU(buildExecutionSetup(cand, res, 'EU', parameters, { entryMode: getActiveEntryMode('EU'), macroEvents: macroCalendar?.events }));
       }
-      if (topCandidateUS?.quote.ticker === ticker) {
+      if (!cand.score.warmupIncomplete && topCandidateUS?.quote.ticker === ticker) {
         setSetupUS(buildExecutionSetup(cand, res, 'US', parameters, { entryMode: getActiveEntryMode('US'), macroEvents: macroCalendar?.events }));
       }
     } catch (err) {
@@ -1156,6 +1156,10 @@ export default function App() {
 
   // Select alternative candidate from Live Radar and promote to setup
   const handleSelectCandidate = async (cand: ScoredCandidate) => {
+    if (cand.score.warmupIncomplete) {
+      console.warn(`Selezione bloccata: ${cand.quote.ticker} in warm-up incompleto`);
+      return;
+    }
     setSelectedCandidate(cand);
     let existingCat: GeminiCatalystAnalysis | null = catalystCache[cand.quote.ticker] || null;
     const market = cand.quote.market;
