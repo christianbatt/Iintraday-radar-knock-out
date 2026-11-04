@@ -5058,12 +5058,16 @@ export function computeSessionVwap(
   let vol = 0;
   let barsUsed = 0;
   let barsWithVolume = 0;
+  // AUDIT P1-6: limite temporale della valutazione (una barra entra solo se chiusa entro nowMinutes).
+  const upTo = Math.min(options.nowMinutes ?? endM, endM);
 
   for (const b of bars) {
     if (b.high == null || b.low == null || b.close == null) continue;
     const mt = getMarketTime(market, new Date(b.timestamp * 1000));
     if (mt.dateFormatted !== sessionDate) continue;
     if (mt.totalMinutes < startM || mt.totalMinutes >= endM) continue;
+    // AUDIT P1-6: barra in formazione o futura esclusa dalla VWAP (chiusura = apertura + 5m > now).
+    if (mt.totalMinutes + 5 > upTo) continue;
     barsUsed++;
     const v = b.volume != null && b.volume > 0 ? b.volume : 0;
     if (v === 0) continue;
@@ -5072,7 +5076,6 @@ export function computeSessionVwap(
     vol += v;
   }
 
-  const upTo = Math.min(options.nowMinutes ?? endM, endM);
   const expected = Math.max(0, Math.floor((upTo - startM) / 5));
 
   return {
@@ -5361,6 +5364,8 @@ export function computeVwapState(
     const mt = getMarketTime(options.market, new Date(b.timestamp * 1000));
     if (mt.dateFormatted !== options.sessionDate) continue;
     if (mt.totalMinutes < startM || mt.totalMinutes >= endM) continue;
+    // AUDIT P1-6: la VWAP di stato ignora la barra in formazione (chiusura > nowMinutes).
+    if (mt.totalMinutes + 5 > nowM) continue;
     const v = b.volume != null && b.volume > 0 ? b.volume : 0;
     const typical = (b.high + b.low + b.close) / 3;
     if (v > 0) {
