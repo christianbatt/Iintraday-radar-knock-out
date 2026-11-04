@@ -201,6 +201,7 @@ export interface SetupIndicators {
   rangeUsed?: string | null; // range Yahoo usato per la serie di warm-up (diagnostica e PR)
   priorSessionsUsed?: number; // sessioni regolari precedenti usate oltre alla corrente
   recentBars?: { t: number; h: number; l: number; c: number }[]; // ultime barre regolari (replay veto ADX)
+  adxThreshold?: { min: number; strong: number }; // soglie ADX applicate al mercato (calcolate dal server, IPOTESI)
   atr: { value: number | null; status: IndicatorStatus; reason: IndicatorUnknownReason | null };
   supertrend: SupertrendSnapshot;
   adx: AdxSnapshot;

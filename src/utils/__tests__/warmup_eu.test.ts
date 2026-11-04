@@ -177,11 +177,13 @@ describe('Warm-up EU: indicatori dall apertura (IPOTESI)', () => {
       [P.WARMUP_RANGE_5M]: short,
       [P.WARMUP_RANGE_FALLBACK_5M]: short,
     });
-    const warmup = await loadWarmupBars(fetcher, { market: 'EU' });
+    // T dopo l ultima barra del mock: nessuna barra del mock e' futura rispetto a T
+    const nowAfterShort = new Date(short[short.length - 1].t + 60_000);
+    const warmup = await loadWarmupBars(fetcher, { market: 'EU', now: nowAfterShort });
     assert.strictEqual(warmup.completeBars, 10);
     assert.ok(warmup.completeBars < P.IND_MIN_BARS);
 
-    const ind = computeSetupIndicators(warmup.bars, { market: 'EU', now: now0906 });
+    const ind = computeSetupIndicators(warmup.bars, { market: 'EU', now: nowAfterShort });
     assert.strictEqual(ind.barsUsed, 10);
     assert.strictEqual(ind.supertrend.status, 'UNKNOWN');
     assert.strictEqual(ind.supertrend.reason, 'INSUFFICIENT_BARS');

@@ -30,6 +30,7 @@ import {
   ExclusionCategory,
   AILearnedInsight,
 } from '../types/radar';
+import { SETUP_VETO_LABELS } from '../config/setupLabels';
 import {
   fetchAIMemory,
   triggerAISpecialization,
@@ -242,6 +243,16 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
             </div>
           </div>
         )}
+
+        {/* Legenda veti di setup (IPOTESI): reason code del payload -> etichetta italiana */}
+        <div className="shrink-0 mx-3 sm:mx-6 mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-mono text-slate-400">
+          <span className="text-slate-500">Veti setup:</span>
+          {Object.entries(SETUP_VETO_LABELS).map(([code, label]) => (
+            <span key={code} title={label}>
+              <span className="text-rose-300">{code}</span> = {label}
+            </span>
+          ))}
+        </div>
 
         {/* Tab Selector */}
         <div className="shrink-0 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 px-3 sm:px-6 pt-3 sm:pt-4 pb-2 border-b border-slate-800">

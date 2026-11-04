@@ -1055,7 +1055,7 @@ async function getIntraday5mMetrics(
 
       let warmup: WarmupSeriesResult | null = null;
       try {
-        warmup = await loadWarmupBars((range) => fetchWarmup5mBars(ticker, range), { market });
+        warmup = await loadWarmupBars((range) => fetchWarmup5mBars(ticker, range), { market, now: new Date() });
       } catch {
         warmup = null;
       }
@@ -1067,6 +1067,7 @@ async function getIntraday5mMetrics(
           fallbackUsed: false,
           priorSessionsUsed: selection.priorSessionsUsed,
           completeBars: selection.bars.length,
+          droppedFutureBars: selection.droppedFutureBars,
         };
       }
 
@@ -1075,6 +1076,7 @@ async function getIntraday5mMetrics(
         now: new Date(),
         rangeUsed: warmup.rangeUsed,
         priorSessionsUsed: warmup.priorSessionsUsed,
+        droppedFutureBars: warmup.droppedFutureBars,
       });
     } catch {
       setupIndicators = null;
