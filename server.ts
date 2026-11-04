@@ -279,6 +279,13 @@ function isValidApiKey(req: Request): boolean {
   });
 }
 
+/**
+ * AUDIT D2: interruttore esplicito per il vecchio comportamento "legacy" (nessuna credenziale
+ * -> sessione condivisa). Default OFF: le API protette sono fail-closed.
+ * IPOTESI: nome della variabile e default OFF (prima il fail-open era sempre attivo).
+ */
+const ALLOW_LEGACY_API_AUTH = process.env.ALLOW_LEGACY_API_AUTH === 'true';
+
 async function requireApiAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (isValidApiKey(req)) {
     res.locals.authenticatedUid = 'service-api-key';
@@ -289,15 +296,26 @@ async function requireApiAuth(req: Request, res: Response, next: NextFunction): 
   const authorization = req.get('authorization') || '';
   const tokenMatch = authorization.match(/^Bearer\s+(.+)$/i);
   if (!tokenMatch) {
-    // Unauthenticated web client / local preview: fall back to shared legacy session
-    res.locals.authenticatedUid = 'legacy';
-    next();
+    // AUDIT D2: fail-closed. Nessun header = richiesta non autenticata (401), non una sessione legacy.
+    if (ALLOW_LEGACY_API_AUTH) {
+      res.locals.authenticatedUid = 'legacy';
+      next();
+      return;
+    }
+    res.status(401).json({ error: 'Unauthorized', message: 'Bearer token required' });
     return;
   }
   if (!firebaseAdminAuth) {
-    // Firebase Admin not initialized on server: fall back to legacy session
-    res.locals.authenticatedUid = 'legacy';
-    next();
+    // AUDIT D2: senza Firebase Admin nessun token e' verificabile: 401, mai fail-open.
+    if (ALLOW_LEGACY_API_AUTH) {
+      res.locals.authenticatedUid = 'legacy';
+      next();
+      return;
+    }
+    res.status(401).json({
+      error: 'Unauthorized',
+      message: 'Auth backend not configured: Firebase Admin credentials missing',
+    });
     return;
   }
 
