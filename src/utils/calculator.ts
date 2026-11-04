@@ -1197,9 +1197,12 @@ export function isCandidateCompliantWithParameters(
   if (score + TRADING_PARAMS.EPSILON < minScore) {
     reasons.push(`Score ${score}/100 < ${minScore}/100 (${isEU ? 'EU' : 'US'})`);
   }
-  const rvol = quote.rvol != null ? quote.rvol : 1.0;
-  if (rvol < minRvol) {
-    reasons.push(`RVOL ${rvol.toFixed(2)}x < ${minRvol}x (${isEU ? 'EU' : 'US'})`);
+  // AUDIT P1-11: RVOL assente = volume NON confermato (prima valeva 1.0x e superava il filtro).
+  // Regola volume: barra >= 1.5x media 5m; senza dato la condizione non e' verificabile.
+  if (quote.rvol == null) {
+    reasons.push(`RVOL non confermato (dato assente): filtro volume >= ${minRvol}x non verificabile`);
+  } else if (quote.rvol < minRvol) {
+    reasons.push(`RVOL ${quote.rvol.toFixed(2)}x < ${minRvol}x (${isEU ? 'EU' : 'US'})`);
   }
   const absGap = Math.abs(quote.gapPercent ?? 0);
   if (absGap < minGap) {
@@ -3707,8 +3710,9 @@ export function generateFilteringAuditReport(
     if (candidate.score.total < minScore) return false;
 
     // 2. RVOL Gate
-    const rvol = q.rvol != null ? q.rvol : (isEU ? 1.0 : 1.0);
-    if (rvol < minRvol) return false;
+    // AUDIT P1-11: RVOL assente non e' 1.0x: volume non confermato -> non qualificato.
+    if (q.rvol == null) return false;
+    if (q.rvol < minRvol) return false;
 
     // 3. Gap Gate
     const absGap = Math.abs(q.gapPercent ?? 0);
