@@ -4798,3 +4798,67 @@ export function evaluateOpenPositionLifecycle(
   return { updatedTrade: trade, wasClosed: false };
 }
 
+// ---------------------------------------------------------------------------
+// Session VWAP cumulativa di sessione (LOGGING-ONLY)
+// Solo calcolo + esposizione nel payload: NON usata in segnali, filtri o prompt AI.
+// `getMarketTime` e' gia' importato in testa al modulo da './timezone'.
+// ---------------------------------------------------------------------------
+
+export interface VwapBar {
+  timestamp: number; // secondi unix, inizio barra
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  volume: number | null;
+}
+
+export interface SessionVwapResult {
+  vwap: number | null;
+  cumulativeVolume: number;
+  barsUsed: number;
+  barsWithVolume: number;
+  coverage: number | null; // barre con volume / barre attese fino a nowMinutes
+}
+
+// VWAP cumulativa di sessione: sum(typical * volume) / sum(volume), typical = (H+L+C)/3
+// Finestre (minuti dal mezzanotte, fuso del mercato, fine esclusa):
+// US regolare 570-960 (09:30-16:00 NY); US con pre-market 240-960 (04:00-16:00 NY); EU 540-1050 (09:00-17:30 Roma)
+export function computeSessionVwap(
+  bars: VwapBar[],
+  market: 'EU' | 'US',
+  sessionDate: string, // 'YYYY-MM-DD' nel fuso del mercato
+  options: { includePreMarket?: boolean; nowMinutes?: number } = {}
+): SessionVwapResult {
+  const includePre = market === 'US' && options.includePreMarket === true;
+  const startM = market === 'US' ? (includePre ? 240 : 570) : 540;
+  const endM = market === 'US' ? 960 : 1050;
+
+  let pv = 0;
+  let vol = 0;
+  let barsUsed = 0;
+  let barsWithVolume = 0;
+
+  for (const b of bars) {
+    if (b.high == null || b.low == null || b.close == null) continue;
+    const mt = getMarketTime(market, new Date(b.timestamp * 1000));
+    if (mt.dateFormatted !== sessionDate) continue;
+    if (mt.totalMinutes < startM || mt.totalMinutes >= endM) continue;
+    barsUsed++;
+    const v = b.volume != null && b.volume > 0 ? b.volume : 0;
+    if (v === 0) continue;
+    barsWithVolume++;
+    pv += ((b.high + b.low + b.close) / 3) * v;
+    vol += v;
+  }
+
+  const upTo = Math.min(options.nowMinutes ?? endM, endM);
+  const expected = Math.max(0, Math.floor((upTo - startM) / 5));
+
+  return {
+    vwap: vol > 0 ? pv / vol : null,
+    cumulativeVolume: vol,
+    barsUsed,
+    barsWithVolume,
+    coverage: expected > 0 ? Math.min(1, barsWithVolume / expected) : null,
+  };
+}
