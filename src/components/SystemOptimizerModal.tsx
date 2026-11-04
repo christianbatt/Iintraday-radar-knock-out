@@ -49,13 +49,14 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
   onRunAuditOnDemand,
   trades,
 }) => {
-  if (!isOpen) return null;
-
   const [activeTab, setActiveTab] = useState<'EU' | 'US'>('EU');
   const [postMortemReport, setPostMortemReport] = useState<DeskPostMortemReport | null>(null);
   const [isLoadingPostMortem, setIsLoadingPostMortem] = useState<boolean>(false);
   const [postMortemDirectivesAdded, setPostMortemDirectivesAdded] = useState<number>(0);
   const [postMortemError, setPostMortemError] = useState<string | null>(null);
+
+  // AUDIT D1: tutti gli hook stanno prima di ogni return condizionale (regole degli hook React).
+  if (!isOpen) return null;
 
   const euTrades = trades.filter((t) => t.market === 'EU' || t.session === 'EU' || (!t.market && !t.session));
   const usTrades = trades.filter((t) => t.market === 'US' || t.session === 'US');
