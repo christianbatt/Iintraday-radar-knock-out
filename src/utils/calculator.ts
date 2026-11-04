@@ -4642,13 +4642,9 @@ export function evaluateOpenPositionLifecycle(
     newMfe = Math.max(newMfe, tickR);
     newMae = Math.min(newMae, tickR);
 
-    // Also consider quote high/low if present
-    if (typeof quote?.todayHigh === 'number' && typeof quote?.todayLow === 'number') {
-      const highR = isLong ? (quote.todayHigh - entry) / riskDist : (entry - quote.todayHigh) / riskDist;
-      const lowR = isLong ? (quote.todayLow - entry) / riskDist : (entry - quote.todayLow) / riskDist;
-      newMfe = Math.max(newMfe, highR, lowR);
-      newMae = Math.min(newMae, highR, lowR);
-    }
+    // AUDIT P2-13: MFE/MAE solo nella finestra del trade (entry -> exit). todayHigh/todayLow
+    // sono estremi dell'intera sessione e includono l'escursione avvenuta PRIMA dell'ingresso:
+    // usarli gonfierebbe MFE/MAE con prezzi mai sperimentati dalla posizione.
   }
 
   newMfe = +newMfe.toFixed(2);
