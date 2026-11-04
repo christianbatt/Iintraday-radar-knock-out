@@ -2,6 +2,7 @@ import {
   RawQuoteData,
   VwapSignalState,
   VwapStateName,
+  VwapDataQuality,
   ScoredCandidate,
   ScoreBreakdown,
   ExecutionSetup,
@@ -943,17 +944,16 @@ export function calculateCandidateScore(
   const effectiveVwapState = resolveVwapStateForScoring(
     quote.vwapState ?? null,
     vwapBar,
-    quote.market
+    quote.market,
+    quote.vwapDataQuality ?? null
   );
   const vwapContribution = calculateVwapScoreContribution(
     effectiveVwapState,
     isCandidateLong ? 'LONG' : 'SHORT'
   );
   const vwapScore = vwapContribution.score;
-  details.push(
-    vwapContribution.detail ??
-      'VWAP di sessione non valutabile (stato UNKNOWN / coverage insufficiente): 0pt'
-  );
+  const vwapLine = vwapContribution.detail;
+  details.push(vwapLine);
 
   const rawTotal =
     gapScore +
@@ -982,6 +982,7 @@ export function calculateCandidateScore(
     trendScore,
     orderFlowScore,
     vwapScore,
+    vwapLine,
     rawTotal: +rawTotal.toFixed(1),
     total,
     details,
@@ -4851,6 +4852,7 @@ export function evaluateOpenPositionLifecycle(
 
 export interface VwapBar {
   timestamp: number; // secondi unix, inizio barra
+  open?: number | null; // apertura barra (usata dal quality gate, non dal VWAP)
   high: number | null;
   low: number | null;
   close: number | null;
@@ -4927,6 +4929,196 @@ export function computeSessionVwap(
 }
 
 // ---------------------------------------------------------------------------
+// Quality gate dei dati VWAP: il VWAP contribuisce allo score SOLO se la serie e' affidabile.
+// Se il gate fallisce: state UNKNOWN, flag DATA_QUALITY:<reason>, contributo 0.
+// Tutte le soglie sono IPOTESI (TRADING_PARAMS.VWAP_*), da validare empiricamente.
+// ---------------------------------------------------------------------------
+
+export interface VwapQualityOptions {
+  feedError?: string | null; // es. 'HTTP 429' dal fetch Yahoo
+  vwapOverride?: number | null; // livello VWAP da validare (default: quote.vwap o VWAP calcolata)
+}
+
+/**
+ * Verifica la qualita' della serie 5m prima di dare un segnale VWAP.
+ * Ordine dei controlli (il primo che fallisce determina `reason`):
+ * a FEED_ERROR, b NON_FINITE, c OHLC_INCONSISTENT, d DUPLICATE_OR_UNSORTED, e GAP,
+ * f ZERO_VOLUME, g LOW_COVERAGE, h STALE, i OUT_OF_RANGE, j QUOTE_MISMATCH.
+ * I controlli strutturali (b, c) si applicano alle barre della sessione corrente dentro la
+ * finestra regolare, cioe' alla serie che alimenta la VWAP.
+ */
+export function computeVwapDataQuality(
+  bars: VwapBar[],
+  quote: { currentPrice?: number | null; vwap?: number | null } | null,
+  market: 'EU' | 'US',
+  now: Date,
+  options: VwapQualityOptions = {}
+): VwapDataQuality {
+  const fail = (reason: string, coverage = 0): VwapDataQuality => ({ ok: false, reason, coverage: +coverage.toFixed(3) });
+
+  // a. FEED_ERROR: richiesta fallita (es. 429) o nessuna barra restituita
+  if (options.feedError) return fail('FEED_ERROR');
+  if (!bars || bars.length === 0) return fail('FEED_ERROR');
+
+  const mtNow = getMarketTime(market, now);
+  const sessionDate = mtNow.dateFormatted;
+  const nowMinutes = mtNow.totalMinutes;
+  const openMinutes = market === 'US' ? 570 : 540;
+  const closeMinutes = market === 'US' ? 960 : 1050;
+  const upTo = Math.min(nowMinutes, closeMinutes);
+
+  type RawBar = {
+    timestamp: number;
+    minutes: number;
+    open: number | null;
+    high: number | null;
+    low: number | null;
+    close: number | null;
+    volume: number | null;
+  };
+  const sessionBars: RawBar[] = [];
+  for (const b of bars) {
+    const mt = getMarketTime(market, new Date(b.timestamp * 1000));
+    if (mt.dateFormatted !== sessionDate) continue;
+    if (mt.totalMinutes < openMinutes || mt.totalMinutes >= closeMinutes) continue;
+    sessionBars.push({
+      timestamp: b.timestamp,
+      minutes: mt.totalMinutes,
+      open: b.open ?? null,
+      high: b.high,
+      low: b.low,
+      close: b.close,
+      volume: b.volume,
+    });
+  }
+
+  // b. NON_FINITE: high/low/close/volume null o NaN, prezzi <= 0
+  for (const r of sessionBars) {
+    for (const n of [r.high, r.low, r.close, r.volume]) {
+      if (n == null || !isFinite(n) || isNaN(n)) return fail('NON_FINITE');
+    }
+    if ((r.high as number) <= 0 || (r.low as number) <= 0 || (r.close as number) <= 0) return fail('NON_FINITE');
+    if (r.open != null && (!isFinite(r.open) || isNaN(r.open) || r.open <= 0)) return fail('NON_FINITE');
+  }
+
+  // c. OHLC_INCONSISTENT: high < low, oppure open/close fuori da [low, high]
+  for (const r of sessionBars) {
+    const hi = r.high as number;
+    const lo = r.low as number;
+    const cl = r.close as number;
+    if (hi < lo) return fail('OHLC_INCONSISTENT');
+    if (cl < lo || cl > hi) return fail('OHLC_INCONSISTENT');
+    if (r.open != null && (r.open < lo || r.open > hi)) return fail('OHLC_INCONSISTENT');
+  }
+
+  // d. DUPLICATE_OR_UNSORTED: timestamp non strettamente crescenti
+  for (let i = 1; i < bars.length; i++) {
+    if (bars[i].timestamp <= bars[i - 1].timestamp) return fail('DUPLICATE_OR_UNSORTED');
+  }
+
+  const regular = sessionBars
+    .filter((r) => r.minutes < upTo)
+    .map((r) => {
+      const hi = r.high as number;
+      const lo = r.low as number;
+      const cl = r.close as number;
+      return {
+        timestamp: r.timestamp,
+        minutes: r.minutes,
+        high: hi,
+        low: lo,
+        close: cl,
+        volume: r.volume as number,
+        typical: (hi + lo + cl) / 3,
+      };
+    });
+
+  // e. GAP: buco interno nella griglia 5m della sessione prima della valutazione
+  for (let i = 1; i < regular.length; i++) {
+    if (regular[i].minutes - regular[i - 1].minutes > 5) return fail('GAP');
+  }
+
+  // f. ZERO_VOLUME: barre di sessione a volume 0 oltre la soglia tollerata (IPOTESI: 0)
+  const zeroVolumeBars = regular.filter((r) => r.volume === 0).length;
+  if (zeroVolumeBars > TRADING_PARAMS.VWAP_MAX_ZERO_VOLUME_BARS) return fail('ZERO_VOLUME');
+
+  // g. LOW_COVERAGE: barre presenti / barre attese dall'apertura alla valutazione
+  const expected = Math.max(0, Math.floor((upTo - openMinutes) / 5));
+  const coverage = expected > 0 ? Math.min(1, regular.length / expected) : 0;
+  if (coverage < TRADING_PARAMS.VWAP_MIN_COVERAGE) return fail('LOW_COVERAGE', coverage);
+
+  // h. STALE: ultima barra piu' vecchia di VWAP_MAX_STALE_MIN mentre la sessione e' aperta
+  const lastRegular = regular.length > 0 ? regular[regular.length - 1] : null;
+  if (
+    nowMinutes >= openMinutes &&
+    nowMinutes < closeMinutes &&
+    lastRegular != null &&
+    nowMinutes - lastRegular.minutes > TRADING_PARAMS.VWAP_MAX_STALE_MIN
+  ) {
+    return fail('STALE', coverage);
+  }
+
+  // i. OUT_OF_RANGE: il livello VWAP usato deve stare dentro [minimo, massimo] di sessione
+  let pv = 0;
+  let vol = 0;
+  let sessionLow = Infinity;
+  let sessionHigh = -Infinity;
+  for (const r of regular) {
+    if (r.volume > 0) {
+      pv += r.typical * r.volume;
+      vol += r.volume;
+    }
+    sessionLow = Math.min(sessionLow, r.low);
+    sessionHigh = Math.max(sessionHigh, r.high);
+  }
+  const computedVwap = vol > 0 ? pv / vol : null;
+  const quoteVwap = quote?.vwap != null && isFinite(quote.vwap) && quote.vwap > 0 ? quote.vwap : null;
+  const vwapLevel = options.vwapOverride ?? quoteVwap ?? computedVwap;
+  if (
+    vwapLevel != null &&
+    isFinite(vwapLevel) &&
+    sessionLow !== Infinity &&
+    (vwapLevel < sessionLow - TRADING_PARAMS.EPSILON || vwapLevel > sessionHigh + TRADING_PARAMS.EPSILON)
+  ) {
+    return fail('OUT_OF_RANGE', coverage);
+  }
+
+  // j. QUOTE_MISMATCH: ultima chiusura 5m troppo distante dal prezzo corrente della quote
+  const price = quote?.currentPrice;
+  if (price == null || !isFinite(price) || price <= 0) return fail('QUOTE_MISMATCH', coverage);
+  if (lastRegular != null && Math.abs(lastRegular.close - price) / price > TRADING_PARAMS.VWAP_MAX_QUOTE_DRIFT_PCT) {
+    return fail('QUOTE_MISMATCH', coverage);
+  }
+
+  return { ok: true, reason: null, coverage: +coverage.toFixed(3) };
+}
+
+/** Conteggio dei candidati per esito del quality gate (log di scansione). */
+export function summarizeVwapDataQuality(
+  quotes: Array<{ vwapDataQuality?: VwapDataQuality | null }>
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const q of quotes) {
+    const dq = q.vwapDataQuality;
+    const key = !dq ? 'missing' : dq.ok ? 'ok' : `DATA_QUALITY:${dq.reason ?? 'UNKNOWN'}`;
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
+}
+
+/** Riga di log per scansione: visibile nel report, non nella UI. */
+export function formatVwapDataQualityScan(
+  market: 'EU' | 'US' | 'ALL',
+  quotes: Array<{ vwapDataQuality?: VwapDataQuality | null }>
+): string {
+  const counts = summarizeVwapDataQuality(quotes);
+  const parts = Object.keys(counts)
+    .sort()
+    .map((k) => `${k}=${counts[k]}`);
+  return `[VWAP quality] scan ${market}: ${quotes.length} candidati | ${parts.join(' | ')}`;
+}
+
+// ---------------------------------------------------------------------------
 // VWAP di sessione: stato per candidato e contributo allo score
 // Tutte le soglie sono IPOTESI (TRADING_PARAMS.VWAP_*), da validare empiricamente.
 // ---------------------------------------------------------------------------
@@ -4943,6 +5135,8 @@ export interface VwapScoreOptions {
   weight?: number;
   openWeightFactor?: number;
   hardGate?: boolean;
+  neutralBandAtr?: number;
+  minVolumeRatio?: number;
 }
 
 // ATR approssimato sulle barre 5m della sessione (media semplice dei range H-L)
@@ -4955,18 +5149,7 @@ export function calculateAtr5m(bars: VwapBar[], period: number = 14): number | n
   return atr > 0 ? atr : null;
 }
 
-function buildVwapState(
-  state: VwapStateName,
-  distAtr: number | null,
-  slopeAtr: number | null,
-  coverage: number | null,
-  flags: string[],
-  vwapLevel: number | null
-): VwapSignalState {
-  return { state, distAtr, slopeAtr, coverage, flags, vwapLevel };
-}
-
-// Riconosce un ritorno alla VWAP con tenuta (PULLBACK_HOLD), valutato sulla barra 5m piu' recente:
+// Riconosce un ritorno alla VWAP con tenuta (PULLBACK), valutato sulla barra 5m piu' recente:
 // il minimo (up) / massimo (down) tocca la VWAP entro VWAP_NEAR_ATR dalla parte giusta e la chiusura tiene.
 function hasVwapPullbackHold(
   last: { close: number; high: number; low: number },
@@ -5052,9 +5235,35 @@ export function computeVwapState(
 
   const vwapLevel = vwapNow != null ? +vwapNow.toFixed(2) : null;
 
+  // Volume relativo della barra 5m piu' recente rispetto alla media 5m della stessa serie
+  const volumesForRatio = series.map((s) => s.volume).filter((v) => v > 0);
+  const avgVolume5m =
+    volumesForRatio.length > 0
+      ? volumesForRatio.reduce((a, b) => a + b, 0) / volumesForRatio.length
+      : 0;
+  const volumeRatio =
+    last != null && avgVolume5m > 0 ? +(last.volume / avgVolume5m).toFixed(2) : null;
+
+  const mk = (
+    state: VwapStateName,
+    d: number | null,
+    sl: number | null,
+    cov: number | null,
+    fl: string[],
+    lvl: number | null
+  ): VwapSignalState => ({
+    state,
+    distAtr: d,
+    slopeAtr: sl,
+    coverage: cov,
+    volumeRatio,
+    flags: fl,
+    vwapLevel: lvl,
+  });
+
   if (coverage == null || coverage < p.minCoverage) {
     if (coverage != null && coverage < p.minCoverage) flags.push('LOW_VWAP_COVERAGE');
-    return buildVwapState('UNKNOWN', distAtr, slopeAtr, coverage, flags, vwapLevel);
+    return mk('UNKNOWN', distAtr, slopeAtr, coverage, flags, vwapLevel);
   }
 
   // Regola after-hours (IPOTESI): nessun segnale VWAP fuori dalla sessione regolare o su barra illiquida.
@@ -5084,11 +5293,11 @@ export function computeVwapState(
         latestSessionBar.volume < avgVolForRatio * TRADING_PARAMS.VWAP_AFTER_HOURS_VOL_RATIO);
     if (outsideRegular || thinVolume) {
       flags.push('AFTER_HOURS');
-      return buildVwapState('UNKNOWN', distAtr, slopeAtr, coverage, flags, vwapLevel);
+      return mk('UNKNOWN', distAtr, slopeAtr, coverage, flags, vwapLevel);
     }
   }
   if (atr == null || last == null || series.length < 2 || vwapNow == null) {
-    return buildVwapState('UNKNOWN', distAtr, slopeAtr, coverage, flags, vwapLevel);
+    return mk('UNKNOWN', distAtr, slopeAtr, coverage, flags, vwapLevel);
   }
 
   const prev = series[series.length - 2];
@@ -5102,30 +5311,24 @@ export function computeVwapState(
   const rejectedUp = last.low < vwapNow && last.close > vwapNow;
 
   if (rejectedDown || rejectedUp || crossedUp || crossedDown) {
-    const eventState: VwapStateName = rejectedDown
-      ? 'REJECT_DOWN'
-      : rejectedUp
-      ? 'REJECT_UP'
-      : crossedUp
-      ? 'RECLAIM_UP'
-      : 'RECLAIM_DOWN';
+    const eventState: VwapStateName = rejectedDown || rejectedUp ? 'REJECT' : 'RECLAIM';
     if (volumeOk) {
-      return buildVwapState(eventState, distAtr, slopeAtr, coverage, flags, vwapLevel);
+      return mk(eventState, distAtr, slopeAtr, coverage, flags, vwapLevel);
     }
     // Volume insufficiente: nessun evento riconosciuto, resta lo stato direzionale
     flags.push('WEAK_VWAP_BREAK');
     const fallback: VwapStateName = last.close >= vwapNow ? 'ABOVE' : 'BELOW';
-    return buildVwapState(fallback, distAtr, slopeAtr, coverage, flags, vwapLevel);
+    return mk(fallback, distAtr, slopeAtr, coverage, flags, vwapLevel);
   }
 
   if (last.close >= vwapNow && hasVwapPullbackHold(last, vwapNow, atr, p.nearAtr, 'up')) {
-    return buildVwapState('PULLBACK_HOLD_UP', distAtr, slopeAtr, coverage, flags, vwapLevel);
+    return mk('PULLBACK', distAtr, slopeAtr, coverage, flags, vwapLevel);
   }
   if (last.close <= vwapNow && hasVwapPullbackHold(last, vwapNow, atr, p.nearAtr, 'down')) {
-    return buildVwapState('PULLBACK_HOLD_DOWN', distAtr, slopeAtr, coverage, flags, vwapLevel);
+    return mk('PULLBACK', distAtr, slopeAtr, coverage, flags, vwapLevel);
   }
 
-  return buildVwapState(
+  return mk(
     last.close >= vwapNow ? 'ABOVE' : 'BELOW',
     distAtr,
     slopeAtr,
@@ -5161,8 +5364,25 @@ function parseVwapBarTimeMs(barTime: number | string | Date | null | undefined):
 export function resolveVwapStateForScoring(
   vwapState: VwapSignalState | null | undefined,
   vwapBar: VwapBarContext | null | undefined,
-  market: 'EU' | 'US'
+  market: 'EU' | 'US',
+  quality?: VwapDataQuality | null
 ): VwapSignalState | null {
+  // Quality gate: dati inaffidabili -> nessun segnale, motivo esplicito, contributo 0.
+  if (quality && !quality.ok) {
+    const flag = `DATA_QUALITY:${quality.reason ?? 'UNKNOWN'}`;
+    const base: VwapSignalState = vwapState ?? {
+      state: 'UNKNOWN',
+      distAtr: null,
+      slopeAtr: null,
+      coverage: quality.coverage,
+      volumeRatio: null,
+      flags: [],
+      vwapLevel: null,
+    };
+    const flags = base.flags.includes(flag) ? base.flags : [flag, ...base.flags];
+    return { ...base, state: 'UNKNOWN', coverage: quality.coverage, flags };
+  }
+
   if (!vwapState) return null;
 
   const barMs = parseVwapBarTimeMs(vwapBar?.barTime);
@@ -5183,47 +5403,149 @@ export function resolveVwapStateForScoring(
   return { ...vwapState, state: 'UNKNOWN', flags };
 }
 
-const VWAP_BULLISH_STATES: VwapStateName[] = ['ABOVE', 'PULLBACK_HOLD_UP', 'RECLAIM_UP', 'REJECT_UP'];
-const VWAP_BEARISH_STATES: VwapStateName[] = ['BELOW', 'PULLBACK_HOLD_DOWN', 'RECLAIM_DOWN', 'REJECT_DOWN'];
-
-export function isVwapStateAligned(state: VwapStateName, direction: 'LONG' | 'SHORT'): boolean {
-  return direction === 'LONG' ? VWAP_BULLISH_STATES.includes(state) : VWAP_BEARISH_STATES.includes(state);
+// Segno del segnale VWAP: +1 rialzista, -1 ribassista, 0 neutro/non valutabile.
+// ABOVE/BELOW sono intrinsecamente direzionali; PULLBACK/RECLAIM/REJECT usano il segno di distAtr.
+export function vwapStateSign(vwapState: VwapSignalState | null | undefined): -1 | 0 | 1 {
+  if (!vwapState) return 0;
+  if (
+    vwapState.state === 'UNKNOWN' ||
+    vwapState.state === 'NEUTRAL' ||
+    vwapState.state === 'UNCONFIRMED'
+  ) {
+    return 0;
+  }
+  if (vwapState.state === 'ABOVE') return 1;
+  if (vwapState.state === 'BELOW') return -1;
+  const dist = vwapState.distAtr;
+  if (dist == null || dist === 0) return 0;
+  return dist > 0 ? 1 : -1;
 }
 
-export function isVwapStateOpposed(state: VwapStateName, direction: 'LONG' | 'SHORT'): boolean {
-  return direction === 'LONG' ? VWAP_BEARISH_STATES.includes(state) : VWAP_BULLISH_STATES.includes(state);
+export function isVwapStateAligned(
+  vwapState: VwapSignalState | null | undefined,
+  direction: 'LONG' | 'SHORT'
+): boolean {
+  const sign = vwapStateSign(vwapState);
+  return direction === 'LONG' ? sign > 0 : sign < 0;
 }
 
-// Contributo VWAP allo score: +W allineato con pendenza a favore, +W/2 allineato con pendenza piatta/contraria,
-// -W contrario, 0 se UNKNOWN. Moltiplicato per VWAP_OPEN_WEIGHT_FACTOR nella finestra di apertura.
+export function isVwapStateOpposed(
+  vwapState: VwapSignalState | null | undefined,
+  direction: 'LONG' | 'SHORT'
+): boolean {
+  const sign = vwapStateSign(vwapState);
+  return direction === 'LONG' ? sign < 0 : sign > 0;
+}
+
+function pickVwapFlag(flags: string[]): string {
+  const dataQuality = flags.find((f) => f.startsWith('DATA_QUALITY:'));
+  if (dataQuality) return dataQuality;
+  const priority = [
+    'AFTER_HOURS',
+    'LOW_VOLUME',
+    'THIN_BAR_VOLUME',
+    'MISSING_VOLUME',
+    'LOW_VWAP_COVERAGE',
+    'WEAK_VWAP_BREAK',
+    'ATR_MISSING',
+  ];
+  for (const f of priority) if (flags.includes(f)) return f;
+  return 'UNKNOWN';
+}
+
+export interface VwapContribution {
+  score: number; // punti aggiunti a rawTotal
+  state: VwapStateName; // stato effettivo mostrato nel breakdown
+  detail: string; // riga VWAP sempre valorizzata
+  gated: boolean; // true solo con VWAP_HARD_GATE attivo e segnale contrario
+}
+
+/**
+ * Contributo VWAP allo score (IPOTESI, vedi TRADING_PARAMS.VWAP_*):
+ * - ABOVE/RECLAIM con volume confermato: +/- W scalato su |distAtr| fino a 1 ATR (cap a W)
+ * - PULLBACK con volume confermato e tenuta: +/- W/2
+ * - BELOW/REJECT con volume confermato: -/+ W pieno
+ * - |distAtr| < VWAP_NEUTRAL_BAND_ATR: NEUTRAL, 0
+ * - volume < VWAP_MIN_VOLUME_RATIO (o assente): UNCONFIRMED, 0
+ * - UNKNOWN (AFTER_HOURS, LOW_VOLUME, ...): 0, flag riportato
+ * La riga `detail` e' SEMPRE presente, anche a contributo 0.
+ */
 export function calculateVwapScoreContribution(
   vwapState: VwapSignalState | null | undefined,
   direction: 'LONG' | 'SHORT',
   options: VwapScoreOptions = {}
-): { score: number; detail: string | null; gated: boolean } {
+): VwapContribution {
   const weight = options.weight ?? TRADING_PARAMS.VWAP_SCORE_WEIGHT;
+  const neutralBand = options.neutralBandAtr ?? TRADING_PARAMS.VWAP_NEUTRAL_BAND_ATR;
+  const minVolumeRatio = options.minVolumeRatio ?? TRADING_PARAMS.VWAP_MIN_VOLUME_RATIO;
   const openFactor = options.openWeightFactor ?? TRADING_PARAMS.VWAP_OPEN_WEIGHT_FACTOR;
   const hardGate = options.hardGate ?? TRADING_PARAMS.VWAP_HARD_GATE;
 
-  if (!vwapState || vwapState.state === 'UNKNOWN') {
-    return { score: 0, detail: null, gated: false };
+  const unknown = (flag: string): VwapContribution => ({
+    score: 0,
+    state: 'UNKNOWN',
+    detail: `VWAP: UNKNOWN (${flag}) | contributo 0/${weight}`,
+    gated: false,
+  });
+
+  if (!vwapState) return unknown('MISSING_VWAP');
+  if (vwapState.state === 'UNKNOWN') return unknown(pickVwapFlag(vwapState.flags));
+
+  const dist = vwapState.distAtr;
+  if (dist == null || !isFinite(dist)) return unknown('ATR_MISSING');
+
+  const volumeRatio = vwapState.volumeRatio;
+  const volTxt = volumeRatio != null ? `${volumeRatio.toFixed(2)}x` : 'nd';
+  const distTxt = dist.toFixed(2);
+
+  if (Math.abs(dist) < neutralBand) {
+    return {
+      score: 0,
+      state: 'NEUTRAL',
+      detail: `VWAP: NEUTRAL | dist ${distTxt} ATR | vol ${volTxt} | contributo 0/${weight}`,
+      gated: false,
+    };
   }
 
-  const aligned = isVwapStateAligned(vwapState.state, direction);
-  const opposed = isVwapStateOpposed(vwapState.state, direction);
-  if (!aligned && !opposed) return { score: 0, detail: null, gated: false };
+  if (volumeRatio == null || !isFinite(volumeRatio) || volumeRatio < minVolumeRatio) {
+    return {
+      score: 0,
+      state: 'UNCONFIRMED',
+      detail: `VWAP: UNCONFIRMED | dist ${distTxt} ATR | vol ${volTxt} | contributo 0/${weight}`,
+      gated: false,
+    };
+  }
 
-  const slope = vwapState.slopeAtr ?? 0;
-  const slopeFavourable = direction === 'LONG' ? slope > 0 : slope < 0;
-  const base = aligned ? (slopeFavourable ? weight : weight / 2) : -weight;
+  const sign = vwapStateSign(vwapState);
+  if (sign === 0) {
+    return {
+      score: 0,
+      state: 'NEUTRAL',
+      detail: `VWAP: NEUTRAL | dist ${distTxt} ATR | vol ${volTxt} | contributo 0/${weight}`,
+      gated: false,
+    };
+  }
+
+  const dirSign = direction === 'LONG' ? 1 : -1;
+  let magnitude = 0;
+  if (vwapState.state === 'ABOVE' || vwapState.state === 'RECLAIM') {
+    magnitude = weight * Math.min(1, Math.abs(dist));
+  } else if (vwapState.state === 'BELOW' || vwapState.state === 'REJECT') {
+    magnitude = weight;
+  } else if (vwapState.state === 'PULLBACK') {
+    magnitude = weight / 2;
+  }
 
   const openWindow = vwapState.flags.includes('OPEN_WINDOW');
-  const score = +(base * (openWindow ? openFactor : 1)).toFixed(2);
-  const detail =
-    `VWAP di sessione ${vwapState.state} (dist ${vwapState.distAtr ?? 'nd'} ATR, slope ${vwapState.slopeAtr ?? 'nd'} ATR)` +
-    `: ${score >= 0 ? '+' : ''}${score}pt${openWindow ? ` (finestra apertura x${openFactor})` : ''}`;
+  const score = +(sign * dirSign * magnitude * (openWindow ? openFactor : 1)).toFixed(2);
+  const signed = score >= 0 ? `+${score}` : `${score}`;
 
-  return { score, detail, gated: hardGate && opposed };
+  return {
+    score,
+    state: vwapState.state,
+    detail: `VWAP: ${vwapState.state} | dist ${distTxt} ATR | vol ${volTxt} | contributo ${signed}/${weight}`,
+    gated: hardGate && sign * dirSign < 0,
+  };
 }
 
 export function passesVwapHardGate(
@@ -5234,5 +5556,5 @@ export function passesVwapHardGate(
   const hardGate = params?.hardGate ?? TRADING_PARAMS.VWAP_HARD_GATE;
   if (!hardGate) return true;
   if (!vwapState || vwapState.state === 'UNKNOWN') return true;
-  return !isVwapStateOpposed(vwapState.state, direction);
+  return !isVwapStateOpposed(vwapState, direction);
 }
