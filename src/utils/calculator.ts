@@ -4553,6 +4553,16 @@ export interface PositionEvaluationOptions {
  * - Chiusura di fine sessione (EOD) con motivo esplicito (EOD_CUTOFF)
  * - Tracciamento cronistoria transizioni di stato (stateHistory)
  */
+/**
+ * AUDIT P1-8: un R negativo e' sempre una perdita: mai BREAKEVEN (pareggio) ne' EXPIRED (scadenza).
+ * R < 0 -> LOSS; R >= 0.2 -> WIN; 0 <= R < 0.2 -> BREAKEVEN (pareggio tecnico).
+ */
+function classifyCutoffOutcome(r: number): 'WIN' | 'LOSS' | 'BREAKEVEN' {
+  if (r < 0) return 'LOSS';
+  if (r >= 0.2) return 'WIN';
+  return 'BREAKEVEN';
+}
+
 export function evaluateOpenPositionLifecycle(
   trade: TradeJournalEntry,
   quote: RawQuoteData | undefined,
@@ -4790,7 +4800,8 @@ export function evaluateOpenPositionLifecycle(
   const isUsEod = market === 'US' && (currentMinutes >= usEodCET || options?.sessionInfo?.cet?.marketStatusUS === 'CLOSED');
 
   if (options?.forceEod || isPastDay || isEuEod || isUsEod) {
-    const outcome = currentR >= 0.2 ? 'WIN' : currentR <= -0.2 ? 'LOSS' : 'EXPIRED';
+    // AUDIT P1-8: R negativo e' LOSS anche in chiusura EOD.
+    const outcome = currentR < 0 ? 'LOSS' : currentR >= 0.2 ? 'WIN' : 'EXPIRED';
     const notif = `🏁 Chiusura EOD: ${trade.ticker} chiuso al termine della sessione a ${effectiveLivePrice.toFixed(2)} (${currentR > 0 ? '+' : ''}${currentR}R).`;
     return closePosition(
       effectiveLivePrice,
@@ -4852,7 +4863,7 @@ export function evaluateOpenPositionLifecycle(
     // Condition 2: Hard Exit Ceiling reached
     if ((market === 'EU' && isEuHardCeiling) || (market === 'US' && isUsHardCeiling)) {
       const ceilingTimeStr = market === 'EU' ? '14:15' : '21:30';
-      const outcome = currentR >= 0.2 ? 'WIN' : 'BREAKEVEN';
+      const outcome = classifyCutoffOutcome(currentR);
       // US con momentum non negativo: scadenza temporale (CUTOFF_EXPIRED). EU invariato.
       const hardCeilingReason = market === 'US' && momentum >= 0 ? 'CUTOFF_EXPIRED' : 'SOFT_CUTOFF_HARD_EXIT';
       const notif = `⏰ Hard Ceiling Cutoff: ${trade.ticker} chiuso alle ${ceilingTimeStr} CET prima dei macro (+${currentR}R).`;
@@ -4897,7 +4908,7 @@ export function evaluateOpenPositionLifecycle(
         notification: `🛡️ Soft Cutoff Attivato: ${trade.ticker} è a +${currentR}R! Stop protetto a Pareggio (${entry.toFixed(2)}).`,
       };
     } else {
-      const outcome = Math.abs(currentR) < 0.2 ? 'BREAKEVEN' : currentR > 0 ? 'WIN' : 'EXPIRED';
+      const outcome = classifyCutoffOutcome(currentR);
       const notif = `⏰ Risoluzione Autonoma: ${trade.ticker} cutoff orario superato (+${currentR}R < +${softCutoffRThreshold}R). Chiusura disciplinata (${outcome}).`;
       return closePosition(
         effectiveLivePrice,
@@ -4912,7 +4923,7 @@ export function evaluateOpenPositionLifecycle(
     // Regole 2 & 3: US decisione dinamica al soft cutoff
     // Regola 3.1: R < softCutoffRThreshold (0.35) -> chiudi a mercato, motivo CUTOFF_EXPIRED
     if (currentR < softCutoffRThreshold) {
-      const outcome = Math.abs(currentR) < 0.2 ? 'BREAKEVEN' : currentR > 0 ? 'WIN' : 'EXPIRED';
+      const outcome = classifyCutoffOutcome(currentR);
       const notif = `⏰ Risoluzione Autonoma US: ${trade.ticker} cutoff superato (+${currentR}R < +${softCutoffRThreshold}R). Chiusura disciplinata (${outcome}).`;
       return closePosition(
         effectiveLivePrice,
@@ -4958,7 +4969,7 @@ export function evaluateOpenPositionLifecycle(
     // Regola 3.3: R >= softCutoffRThreshold e momentum >= 0 ma hard ceiling US raggiunto (21:30 CET)
     // -> chiusura per scadenza oraria, MAI come perdita di momentum
     if (momentum >= 0) {
-      const outcome = currentR >= 0.2 ? 'WIN' : 'BREAKEVEN';
+      const outcome = classifyCutoffOutcome(currentR);
       const notif = `⏰ Hard Ceiling Cutoff: ${trade.ticker} chiuso alle 21:30 CET per scadenza temporale (+${currentR}R).`;
       return closePosition(
         effectiveLivePrice,
@@ -4971,7 +4982,7 @@ export function evaluateOpenPositionLifecycle(
     }
 
     // Regola 3.4: R >= softCutoffRThreshold e momentum < 0 -> chiudi a mercato, motivo CUTOFF_MOMENTUM_LOSS
-    const outcome = currentR >= 0.2 ? 'WIN' : 'BREAKEVEN';
+    const outcome = classifyCutoffOutcome(currentR);
     const notif = `📉 Risoluzione Cutoff Momentum Loss: ${trade.ticker} a +${currentR}R ma con perdita di momentum (${momentum} < 0). Chiusura protettiva anticipata.`;
     return closePosition(
       effectiveLivePrice,
