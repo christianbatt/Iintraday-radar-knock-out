@@ -537,6 +537,7 @@ export interface SystemParameters {
   target2Multiplier: number; // e.g. 2.80 * normalRisk
   triggerOffsetPercent: number; // e.g. 0.20 (%)
   rsiFilterActive: boolean; // default false
+  parameterHistory?: ParameterHistoryEntry[]; // AUDIT V12: storico calibrazioni accettate
 }
 
 export interface ProposedParameterChange {
@@ -547,6 +548,15 @@ export interface ProposedParameterChange {
   unit?: string;
   reason: string;
   expectedBenefit: string;
+}
+
+// AUDIT V12: traccia le calibrazioni accettate. Serve a rendere recuperabile il valore
+// precedente di ogni parametro: nessuna accettazione sovrascrive senza lasciare traccia.
+export interface ParameterHistoryEntry {
+  appliedAt: string;
+  version: number;
+  proposalId?: string | null;
+  changes: { parameterKey: keyof SystemParameters; from: number | boolean; to: number | boolean }[];
 }
 
 export interface OptimizationMetrics {

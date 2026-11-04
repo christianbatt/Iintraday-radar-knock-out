@@ -13,6 +13,7 @@ import {
   calculateRsiFromPrices,
   DEFAULT_SYSTEM_PARAMETERS,
   evaluateOpenPositionLifecycle,
+  applyOptimizationProposal,
 } from '../calculator';
 import { wilderRsiSeries } from '../indicators';
 import { TRADING_PARAMS } from '../../config/tradingParams';
@@ -226,4 +227,56 @@ const sec = (iso: string) => Date.parse(iso) / 1000;
   assert.equal(res.updatedTrade.mae, 0, 'V13: MAE non usa todayLow (50)');
 }
 
-console.log('audit_residui: 6 gruppi di regressione OK (voci 6,7,9,10,11,13)');
+// ---------------------------------------------------------------- VOCE 12
+// Una proposta accettata scrive i parametri ATTIVI: la selezione cambia davvero.
+{
+  const baseParams = {
+    ...DEFAULT_SYSTEM_PARAMETERS,
+    minScore: 0,
+    minScoreEurope: 0,
+    minGapEurope: 0,
+    minRvol: 1.1,
+    minRvolEurope: 1.1,
+  };
+  const quote: any = {
+    ticker: 'DDD',
+    market: 'EU',
+    currentPrice: 100,
+    atr14: 1,
+    gapPercent: 0.5,
+    rsi5m: 50,
+    rvol: 1.2,
+  };
+
+  const before = isCandidateCompliantWithParameters(quote, 80, baseParams, false);
+  assert.equal(before.compliant, true, 'V12: con minRvol 1.1 il candidato a 1.2x e\' selezionabile');
+
+  const proposal = {
+    id: 'prop-v12',
+    proposedChanges: [
+      {
+        parameterKey: 'minRvol' as const,
+        proposedValue: '1.35x',
+      },
+    ],
+  };
+  const applied = applyOptimizationProposal(baseParams, proposal, 'EU');
+  assert.equal(applied.parameters.minRvolEurope, 1.35, 'V12: minRvol accettato finisce nei parametri EU attivi');
+  assert.equal(applied.parameters.version, baseParams.version + 1, 'V12: la versione avanza');
+
+  const history = applied.parameters.parameterHistory ?? [];
+  assert.equal(history.length, 1, 'V12: la calibrazione lascia una traccia');
+  const entry = history[0].changes.find((c) => c.parameterKey === 'minRvolEurope');
+  assert.ok(entry, 'V12: lo storico contiene la chiave modificata');
+  assert.equal(entry!.from, 1.1, 'V12: il valore precedente resta recuperabile');
+  assert.equal(entry!.to, 1.35, 'V12: il nuovo valore e\' tracciato');
+
+  const after = isCandidateCompliantWithParameters(quote, 80, applied.parameters, false);
+  assert.equal(
+    after.compliant,
+    false,
+    'V12: dopo l\'accettazione lo stesso candidato (1.2x < 1.35x) non passa piu\' la selezione'
+  );
+}
+
+console.log('audit_residui: 7 gruppi di regressione OK (voci 6,7,9,10,11,12,13)');

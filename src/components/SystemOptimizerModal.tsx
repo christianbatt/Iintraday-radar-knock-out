@@ -63,6 +63,11 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
   // If specific session has no trades but journal has trades, fall back to all available trades
   const activeSessionTrades = sessionTrades.length > 0 ? sessionTrades : trades;
   const activeSessionTradesCount = activeSessionTrades.length;
+  // AUDIT V12: ultima calibrazione accettata, con i valori precedenti recuperabili.
+  const lastHistory =
+    currentParameters.parameterHistory && currentParameters.parameterHistory.length > 0
+      ? currentParameters.parameterHistory[currentParameters.parameterHistory.length - 1]
+      : null;
 
   const handleGeneratePostMortem = async () => {
     if (trades.length === 0) {
@@ -576,6 +581,18 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
                   {currentParameters.rsiFilterActive ? 'SÌ' : 'NO'}
                 </span>
               </div>
+              {lastHistory ? (
+                <div className="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/80 col-span-full">
+                  <span className="text-[10px] text-slate-500 block">
+                    Ultima calibrazione accettata (V{lastHistory.version}) — storico recuperabile
+                  </span>
+                  <span className="text-white text-[11px] font-mono break-words">
+                    {lastHistory.changes
+                      .map((c) => `${String(c.parameterKey)}: ${String(c.from)} → ${String(c.to)}`)
+                      .join(' · ')}
+                  </span>
+                </div>
+              ) : null}
             </div>
           </div>
 
