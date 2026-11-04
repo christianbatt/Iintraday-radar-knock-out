@@ -253,6 +253,10 @@ export function calculateOrbFromIntradayBars(
       ? TRADING_PARAMS.US_OPEN_HOUR * 60 + TRADING_PARAMS.US_OPEN_MINUTE
       : TRADING_PARAMS.EU_OPEN_HOUR * 60 + TRADING_PARAMS.EU_OPEN_MINUTE;
   const orbEndM = openM + TRADING_PARAMS.ORB_MINUTES;
+  const closeM =
+    market === 'US'
+      ? TRADING_PARAMS.US_CLOSE_HOUR * 60 + TRADING_PARAMS.US_CLOSE_MINUTE
+      : TRADING_PARAMS.EU_CLOSE_HOUR * 60 + TRADING_PARAMS.EU_CLOSE_MINUTE;
 
   // I tre slot attesi di 5 minuti: [openM, openM + 5, openM + 10]
   // EU: 09:00 (540), 09:05 (545), 09:10 (550)
@@ -329,6 +333,14 @@ export function calculateOrbFromIntradayBars(
 
       slotMap.set(startMin, { high: b.high, low: b.low, close: b.close, dateObj: d });
     } else if (startMin >= orbEndM) {
+      // AUDIT P1-5: breakout validi solo dentro la sessione regolare (fine esclusa) e solo su
+      // barre gia' chiuse rispetto ad asOf: nessun breakout after-hours o futuro.
+      if (startMin + 5 > closeM) continue;
+      if (asOfTime) {
+        const asOfMt = getMarketTime(market, asOfTime);
+        if (asOfMt.dateFormatted !== sessionDateStr) continue;
+        if (asOfMt.totalMinutes < startMin + 5) continue;
+      }
       postOrbCandles.push({ high: b.high, low: b.low, close: b.close, dateObj: d });
     }
   }
