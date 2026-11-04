@@ -536,6 +536,8 @@ export interface RawQuoteData {
   vwapCumulativeWithPre?: number | null;
   vwapCoverage?: number | null;
   vwapState?: VwapSignalState | null;
+  lastBarVolume?: number | null; // volume della barra 5m piu' recente della sessione (da getIntraday5mMetrics)
+  lastBarTime?: number | null; // timestamp unix (secondi) della stessa barra
   gapPercent: number | null;
   rvol: number | null;
   impliedVolatility?: number | null;
@@ -635,6 +637,8 @@ async function getIntraday5mMetrics(
   vwapCumulativeWithPre?: number | null;
   vwapCoverage?: number | null;
   vwapState?: VwapSignalState | null;
+  lastBarVolume?: number | null;
+  lastBarTime?: number | null;
 }> {
   const cacheKey = `metrics5m:${ticker}:${market}`;
   const cached = cache.get<{
@@ -647,6 +651,9 @@ async function getIntraday5mMetrics(
     orbBreakoutTime: string | null;
     orbBreakoutTimeLong: string | null;
     orbBreakoutTimeShort: string | null;
+    vwapState?: VwapSignalState | null;
+    lastBarVolume?: number | null;
+    lastBarTime?: number | null;
   }>(cacheKey);
   if (cached) return cached.data;
 
@@ -657,7 +664,7 @@ async function getIntraday5mMetrics(
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
       signal: AbortSignal.timeout(6000),
     });
-    if (!resp.ok) return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null, orbBreakoutTimeLong: null, orbBreakoutTimeShort: null, vwapCumulative: null, vwapCumulativeWithPre: null, vwapCoverage: null, vwapState: null };
+    if (!resp.ok) return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null, orbBreakoutTimeLong: null, orbBreakoutTimeShort: null, vwapCumulative: null, vwapCumulativeWithPre: null, vwapCoverage: null, vwapState: null, lastBarVolume: null, lastBarTime: null };
     const json = await resp.json();
     const rawQuotes = json?.chart?.result?.[0]?.indicators?.quote?.[0];
     const closes: number[] = rawQuotes?.close?.filter(
@@ -912,6 +919,8 @@ async function getIntraday5mMetrics(
     let vwapCumulativeWithPre: number | null = null;
     let vwapCoverage: number | null = null;
     let vwapState: VwapSignalState | null = null;
+    let lastBarVolume: number | null = null;
+    let lastBarTime: number | null = null;
     try {
       const ts: number[] = json?.chart?.result?.[0]?.timestamp || [];
       if (ts.length > 0) {
@@ -925,6 +934,14 @@ async function getIntraday5mMetrics(
         // Data di sessione = OGGI nel fuso del mercato (non l'ultima barra disponibile)
         const sessionDate = getExchangeDateStr(market, new Date());
         const nowMinutes = getMarketTime(market, new Date()).totalMinutes;
+
+        // Barra 5m piu' recente della sessione corrente: volume e timestamp servono al VWAP state
+        // e vengono passati al call site di calculateCandidateScore.
+        const lastSessionBar = [...bars]
+          .reverse()
+          .find((b) => getExchangeDateStr(market, new Date(b.timestamp * 1000)) === sessionDate);
+        lastBarVolume = lastSessionBar?.volume ?? null;
+        lastBarTime = lastSessionBar?.timestamp ?? null;
         const reg = computeSessionVwap(bars, market, sessionDate, { nowMinutes });
         vwapCumulative = reg.vwap != null ? +reg.vwap.toFixed(2) : null;
         vwapCoverage = reg.coverage != null ? +reg.coverage.toFixed(2) : null;
@@ -964,6 +981,8 @@ async function getIntraday5mMetrics(
       vwapCumulativeWithPre,
       vwapCoverage,
       vwapState,
+      lastBarVolume,
+      lastBarTime,
     };
     cache.set(cacheKey, result, 25);
     return result;
@@ -982,6 +1001,8 @@ async function getIntraday5mMetrics(
       vwapCumulativeWithPre: null,
       vwapCoverage: null,
       vwapState: null,
+      lastBarVolume: null,
+      lastBarTime: null,
     };
   }
 }
@@ -1350,6 +1371,8 @@ async function fetchQuoteForTicker(
     vwapCumulativeWithPre: (await intraday5mPromise).vwapCumulativeWithPre ?? null,
     vwapCoverage: (await intraday5mPromise).vwapCoverage ?? null,
     vwapState: (await intraday5mPromise).vwapState ?? null,
+    lastBarVolume: (await intraday5mPromise).lastBarVolume ?? null,
+    lastBarTime: (await intraday5mPromise).lastBarTime ?? null,
     gapPercent,
     rvol: quoteData.rvol ?? (await intraday5mPromise).rvol ?? null,
     rvol20m: quoteData.rvol20m ?? (await intraday5mPromise).rvol20m,
