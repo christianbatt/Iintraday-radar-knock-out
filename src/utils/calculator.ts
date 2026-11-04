@@ -253,6 +253,10 @@ export function calculateOrbFromIntradayBars(
       ? TRADING_PARAMS.US_OPEN_HOUR * 60 + TRADING_PARAMS.US_OPEN_MINUTE
       : TRADING_PARAMS.EU_OPEN_HOUR * 60 + TRADING_PARAMS.EU_OPEN_MINUTE;
   const orbEndM = openM + TRADING_PARAMS.ORB_MINUTES;
+  const closeM =
+    market === 'US'
+      ? TRADING_PARAMS.US_CLOSE_HOUR * 60 + TRADING_PARAMS.US_CLOSE_MINUTE
+      : TRADING_PARAMS.EU_CLOSE_HOUR * 60 + TRADING_PARAMS.EU_CLOSE_MINUTE;
 
   // I tre slot attesi di 5 minuti: [openM, openM + 5, openM + 10]
   // EU: 09:00 (540), 09:05 (545), 09:10 (550)
@@ -329,6 +333,14 @@ export function calculateOrbFromIntradayBars(
 
       slotMap.set(startMin, { high: b.high, low: b.low, close: b.close, dateObj: d });
     } else if (startMin >= orbEndM) {
+      // AUDIT P1-5: breakout validi solo dentro la sessione regolare (fine esclusa) e solo su
+      // barre gia' chiuse rispetto ad asOf: nessun breakout after-hours o futuro.
+      if (startMin + 5 > closeM) continue;
+      if (asOfTime) {
+        const asOfMt = getMarketTime(market, asOfTime);
+        if (asOfMt.dateFormatted !== sessionDateStr) continue;
+        if (asOfMt.totalMinutes < startMin + 5) continue;
+      }
       postOrbCandles.push({ high: b.high, low: b.low, close: b.close, dateObj: d });
     }
   }
@@ -1152,6 +1164,8 @@ export function calculateRsiFromPrices(closes: number[], period: number = 14): n
     avgLoss = (avgLoss * (p - 1) + loss) / p;
   }
 
+  // IPOTESI (AUDIT P1-9): serie piatta (nessun guadagno e nessuna perdita) -> RSI neutro 50.
+  if (avgGain === 0 && avgLoss === 0) return 50;
   if (avgLoss === 0) return 100;
   const rs = avgGain / avgLoss;
   return +(100 - 100 / (1 + rs)).toFixed(1);
@@ -1183,9 +1197,12 @@ export function isCandidateCompliantWithParameters(
   if (score + TRADING_PARAMS.EPSILON < minScore) {
     reasons.push(`Score ${score}/100 < ${minScore}/100 (${isEU ? 'EU' : 'US'})`);
   }
-  const rvol = quote.rvol != null ? quote.rvol : 1.0;
-  if (rvol < minRvol) {
-    reasons.push(`RVOL ${rvol.toFixed(2)}x < ${minRvol}x (${isEU ? 'EU' : 'US'})`);
+  // AUDIT P1-11: RVOL assente = volume NON confermato (prima valeva 1.0x e superava il filtro).
+  // Regola volume: barra >= 1.5x media 5m; senza dato la condizione non e' verificabile.
+  if (quote.rvol == null) {
+    reasons.push(`RVOL non confermato (dato assente): filtro volume >= ${minRvol}x non verificabile`);
+  } else if (quote.rvol < minRvol) {
+    reasons.push(`RVOL ${quote.rvol.toFixed(2)}x < ${minRvol}x (${isEU ? 'EU' : 'US'})`);
   }
   const absGap = Math.abs(quote.gapPercent ?? 0);
   if (absGap < minGap) {
@@ -1273,6 +1290,19 @@ export function calculateKnockOutBarrierGuard(
   };
 }
 
+/**
+ * AUDIT P1-10: la direzione operativa deve essere la stessa usata da score e veto.
+ * Il catalyst esplicito (LONG/SHORT) prevale sul segno del gap; senza catalyst decide il gap.
+ */
+function candidateOperationalDirection(
+  quote: RawQuoteData,
+  catalyst?: GeminiCatalystAnalysis | null
+): 'LONG' | 'SHORT' {
+  if (catalyst?.direzione === 'LONG') return 'LONG';
+  if (catalyst?.direzione === 'SHORT') return 'SHORT';
+  return (quote.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT';
+}
+
 export function rankMarketCandidates(
   quotes: RawQuoteData[],
   market: 'EU' | 'US',
@@ -1289,7 +1319,10 @@ export function rankMarketCandidates(
 
   if (TRADING_PARAMS.VWAP_HARD_GATE) {
     marketQuotes = marketQuotes.filter((q) =>
-      passesVwapHardGate(q.vwapState ?? null, (q.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT')
+      passesVwapHardGate(
+        q.vwapState ?? null,
+        candidateOperationalDirection(q, options?.catalystCache?.[q.ticker])
+      )
     );
   }
 
@@ -1302,7 +1335,8 @@ export function rankMarketCandidates(
 
   const scored = marketQuotes.map((quote) => {
     const catalystOrNews = options?.catalystCache?.[quote.ticker] || options?.newsCache?.[quote.ticker];
-    const dir: 'LONG' | 'SHORT' = (quote.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT';
+    // AUDIT P1-10: direzione allineata a quella del catalyst (score e veto).
+    const dir = candidateOperationalDirection(quote, options?.catalystCache?.[quote.ticker]);
     const knockOutGuard = calculateKnockOutBarrierGuard(quote, dir);
     return {
       quote,
@@ -2448,7 +2482,10 @@ export function calculateKnockOutSafety(
   setup: ExecutionSetup,
   input: KnockOutCalculatorInput
 ): KnockOutSafetyCheck {
-  const entryPrice = setup.triggerLevel ?? setup.candidate.preMarketPrice ?? setup.candidate.currentPrice ?? 0;
+  // AUDIT P1-3: la safety KO si calcola sul prezzo di entry operativo (E), non sul trigger (T).
+  // E = entryLevel dello setup; se assente si usa il prezzo di mercato corrente, mai T.
+  const entryPrice =
+    setup.entryLevel ?? setup.candidate.currentPrice ?? setup.candidate.preMarketPrice ?? 0;
   const stopLoss = setup.stopLossLevel ?? 0;
   const barrierStrike = input.barrierStrike;
   const isLong = setup.direction === 'LONG';
@@ -3674,8 +3711,9 @@ export function generateFilteringAuditReport(
     if (candidate.score.total < minScore) return false;
 
     // 2. RVOL Gate
-    const rvol = q.rvol != null ? q.rvol : (isEU ? 1.0 : 1.0);
-    if (rvol < minRvol) return false;
+    // AUDIT P1-11: RVOL assente non e' 1.0x: volume non confermato -> non qualificato.
+    if (q.rvol == null) return false;
+    if (q.rvol < minRvol) return false;
 
     // 3. Gap Gate
     const absGap = Math.abs(q.gapPercent ?? 0);
@@ -4539,6 +4577,16 @@ export interface PositionEvaluationOptions {
  * - Chiusura di fine sessione (EOD) con motivo esplicito (EOD_CUTOFF)
  * - Tracciamento cronistoria transizioni di stato (stateHistory)
  */
+/**
+ * AUDIT P1-8: un R negativo e' sempre una perdita: mai BREAKEVEN (pareggio) ne' EXPIRED (scadenza).
+ * R < 0 -> LOSS; R >= 0.2 -> WIN; 0 <= R < 0.2 -> BREAKEVEN (pareggio tecnico).
+ */
+function classifyCutoffOutcome(r: number): 'WIN' | 'LOSS' | 'BREAKEVEN' {
+  if (r < 0) return 'LOSS';
+  if (r >= 0.2) return 'WIN';
+  return 'BREAKEVEN';
+}
+
 export function evaluateOpenPositionLifecycle(
   trade: TradeJournalEntry,
   quote: RawQuoteData | undefined,
@@ -4549,11 +4597,14 @@ export function evaluateOpenPositionLifecycle(
     return { updatedTrade: trade, wasClosed: false };
   }
 
-  const livePrice =
-    quote?.currentPrice ??
-    quote?.preMarketPrice ??
-    quote?.prevClose ??
-    (trade.exitPrice > 0 ? trade.exitPrice : null);
+  // AUDIT P0-1: solo prezzi operativi (ultimo / pre-market). prevClose non e' un prezzo corrente:
+  // usarlo farebbe scattare target o stop su un livello statico di ieri.
+  // Senza prezzo operativo l'esito e' "non valutabile": nessuna chiusura, nessun PnL, nessun win rate.
+  const livePrice = quote?.currentPrice ?? quote?.preMarketPrice ?? null;
+
+  if (livePrice == null || !(livePrice > 0)) {
+    return { updatedTrade: trade, wasClosed: false };
+  }
 
   const isLong = trade.direction === 'LONG';
   const entry = trade.entryPrice;
@@ -4561,8 +4612,13 @@ export function evaluateOpenPositionLifecycle(
   const target1 = trade.target1;
   const market = trade.market || (trade.session === 'US' ? 'US' : 'EU');
 
-  const riskDist = Math.abs(entry - stop) > 0 ? Math.abs(entry - stop) : entry > 0 ? entry * 0.005 : 1;
-  const targetDist = Math.abs(target1 - entry) > 0 ? Math.abs(target1 - entry) : riskDist * TRADING_PARAMS.T1_R;
+  // AUDIT P0-2: nessun fallback sintetico (0.5% di entry / 1.6R). Un setup con entry == stop
+  // o T1 == entry e' invalido: non si valuta (nessun esito, nessun PnL), non si inventa un rischio.
+  const riskDist = Math.abs(entry - stop);
+  const targetDist = Math.abs(target1 - entry);
+  if (!(entry > 0) || !(riskDist > 0) || !(targetDist > 0)) {
+    return { updatedTrade: trade, wasClosed: false };
+  }
 
   // Fallback capital and risk amount: non bloccare mai il monitoraggio se riskAmountEur manca
   const fallbackCap = options?.accountCapital && options.accountCapital > 0 ? options.accountCapital : 10000;
@@ -4587,13 +4643,9 @@ export function evaluateOpenPositionLifecycle(
     newMfe = Math.max(newMfe, tickR);
     newMae = Math.min(newMae, tickR);
 
-    // Also consider quote high/low if present
-    if (typeof quote?.todayHigh === 'number' && typeof quote?.todayLow === 'number') {
-      const highR = isLong ? (quote.todayHigh - entry) / riskDist : (entry - quote.todayHigh) / riskDist;
-      const lowR = isLong ? (quote.todayLow - entry) / riskDist : (entry - quote.todayLow) / riskDist;
-      newMfe = Math.max(newMfe, highR, lowR);
-      newMae = Math.min(newMae, highR, lowR);
-    }
+    // AUDIT P2-13: MFE/MAE solo nella finestra del trade (entry -> exit). todayHigh/todayLow
+    // sono estremi dell'intera sessione e includono l'escursione avvenuta PRIMA dell'ingresso:
+    // usarli gonfierebbe MFE/MAE con prezzi mai sperimentati dalla posizione.
   }
 
   newMfe = +newMfe.toFixed(2);
@@ -4768,7 +4820,8 @@ export function evaluateOpenPositionLifecycle(
   const isUsEod = market === 'US' && (currentMinutes >= usEodCET || options?.sessionInfo?.cet?.marketStatusUS === 'CLOSED');
 
   if (options?.forceEod || isPastDay || isEuEod || isUsEod) {
-    const outcome = currentR >= 0.2 ? 'WIN' : currentR <= -0.2 ? 'LOSS' : 'EXPIRED';
+    // AUDIT P1-8: R negativo e' LOSS anche in chiusura EOD.
+    const outcome = currentR < 0 ? 'LOSS' : currentR >= 0.2 ? 'WIN' : 'EXPIRED';
     const notif = `🏁 Chiusura EOD: ${trade.ticker} chiuso al termine della sessione a ${effectiveLivePrice.toFixed(2)} (${currentR > 0 ? '+' : ''}${currentR}R).`;
     return closePosition(
       effectiveLivePrice,
@@ -4830,7 +4883,7 @@ export function evaluateOpenPositionLifecycle(
     // Condition 2: Hard Exit Ceiling reached
     if ((market === 'EU' && isEuHardCeiling) || (market === 'US' && isUsHardCeiling)) {
       const ceilingTimeStr = market === 'EU' ? '14:15' : '21:30';
-      const outcome = currentR >= 0.2 ? 'WIN' : 'BREAKEVEN';
+      const outcome = classifyCutoffOutcome(currentR);
       // US con momentum non negativo: scadenza temporale (CUTOFF_EXPIRED). EU invariato.
       const hardCeilingReason = market === 'US' && momentum >= 0 ? 'CUTOFF_EXPIRED' : 'SOFT_CUTOFF_HARD_EXIT';
       const notif = `⏰ Hard Ceiling Cutoff: ${trade.ticker} chiuso alle ${ceilingTimeStr} CET prima dei macro (+${currentR}R).`;
@@ -4875,7 +4928,7 @@ export function evaluateOpenPositionLifecycle(
         notification: `🛡️ Soft Cutoff Attivato: ${trade.ticker} è a +${currentR}R! Stop protetto a Pareggio (${entry.toFixed(2)}).`,
       };
     } else {
-      const outcome = Math.abs(currentR) < 0.2 ? 'BREAKEVEN' : currentR > 0 ? 'WIN' : 'EXPIRED';
+      const outcome = classifyCutoffOutcome(currentR);
       const notif = `⏰ Risoluzione Autonoma: ${trade.ticker} cutoff orario superato (+${currentR}R < +${softCutoffRThreshold}R). Chiusura disciplinata (${outcome}).`;
       return closePosition(
         effectiveLivePrice,
@@ -4890,7 +4943,7 @@ export function evaluateOpenPositionLifecycle(
     // Regole 2 & 3: US decisione dinamica al soft cutoff
     // Regola 3.1: R < softCutoffRThreshold (0.35) -> chiudi a mercato, motivo CUTOFF_EXPIRED
     if (currentR < softCutoffRThreshold) {
-      const outcome = Math.abs(currentR) < 0.2 ? 'BREAKEVEN' : currentR > 0 ? 'WIN' : 'EXPIRED';
+      const outcome = classifyCutoffOutcome(currentR);
       const notif = `⏰ Risoluzione Autonoma US: ${trade.ticker} cutoff superato (+${currentR}R < +${softCutoffRThreshold}R). Chiusura disciplinata (${outcome}).`;
       return closePosition(
         effectiveLivePrice,
@@ -4936,7 +4989,7 @@ export function evaluateOpenPositionLifecycle(
     // Regola 3.3: R >= softCutoffRThreshold e momentum >= 0 ma hard ceiling US raggiunto (21:30 CET)
     // -> chiusura per scadenza oraria, MAI come perdita di momentum
     if (momentum >= 0) {
-      const outcome = currentR >= 0.2 ? 'WIN' : 'BREAKEVEN';
+      const outcome = classifyCutoffOutcome(currentR);
       const notif = `⏰ Hard Ceiling Cutoff: ${trade.ticker} chiuso alle 21:30 CET per scadenza temporale (+${currentR}R).`;
       return closePosition(
         effectiveLivePrice,
@@ -4949,7 +5002,7 @@ export function evaluateOpenPositionLifecycle(
     }
 
     // Regola 3.4: R >= softCutoffRThreshold e momentum < 0 -> chiudi a mercato, motivo CUTOFF_MOMENTUM_LOSS
-    const outcome = currentR >= 0.2 ? 'WIN' : 'BREAKEVEN';
+    const outcome = classifyCutoffOutcome(currentR);
     const notif = `📉 Risoluzione Cutoff Momentum Loss: ${trade.ticker} a +${currentR}R ma con perdita di momentum (${momentum} < 0). Chiusura protettiva anticipata.`;
     return closePosition(
       effectiveLivePrice,
@@ -5036,12 +5089,16 @@ export function computeSessionVwap(
   let vol = 0;
   let barsUsed = 0;
   let barsWithVolume = 0;
+  // AUDIT P1-6: limite temporale della valutazione (una barra entra solo se chiusa entro nowMinutes).
+  const upTo = Math.min(options.nowMinutes ?? endM, endM);
 
   for (const b of bars) {
     if (b.high == null || b.low == null || b.close == null) continue;
     const mt = getMarketTime(market, new Date(b.timestamp * 1000));
     if (mt.dateFormatted !== sessionDate) continue;
     if (mt.totalMinutes < startM || mt.totalMinutes >= endM) continue;
+    // AUDIT P1-6: barra in formazione o futura esclusa dalla VWAP (chiusura = apertura + 5m > now).
+    if (mt.totalMinutes + 5 > upTo) continue;
     barsUsed++;
     const v = b.volume != null && b.volume > 0 ? b.volume : 0;
     if (v === 0) continue;
@@ -5050,7 +5107,6 @@ export function computeSessionVwap(
     vol += v;
   }
 
-  const upTo = Math.min(options.nowMinutes ?? endM, endM);
   const expected = Math.max(0, Math.floor((upTo - startM) / 5));
 
   return {
@@ -5339,6 +5395,8 @@ export function computeVwapState(
     const mt = getMarketTime(options.market, new Date(b.timestamp * 1000));
     if (mt.dateFormatted !== options.sessionDate) continue;
     if (mt.totalMinutes < startM || mt.totalMinutes >= endM) continue;
+    // AUDIT P1-6: la VWAP di stato ignora la barra in formazione (chiusura > nowMinutes).
+    if (mt.totalMinutes + 5 > nowM) continue;
     const v = b.volume != null && b.volume > 0 ? b.volume : 0;
     const typical = (b.high + b.low + b.close) / 3;
     if (v > 0) {
@@ -5632,7 +5690,9 @@ export function calculateVwapScoreContribution(
   const volumeRatio = vwapState.volumeRatio;
   const volTxt = volumeRatio != null ? `${volumeRatio.toFixed(2)}x` : 'nd';
   const distTxt = dist.toFixed(2);
-  const neutralPoints = weight <= 0 ? 0 : Math.round(weight / 2);
+  // IPOTESI (AUDIT P1-7): NEUTRAL non e' una conferma direzionale: vale 0 punti su 10
+  // (prima valeva weight/2 = 5/10, un bonus regalato a un segnale assente).
+  const neutralPoints = weight <= 0 ? 0 : 0;
 
   const neutral = (): VwapContribution => ({
     score: neutralPoints,
