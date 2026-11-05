@@ -8,6 +8,7 @@ import {
   calculateKnockOutSafety,
   evaluateOpenPositionLifecycle,
 } from '../calculator';
+import { mergeTradesWithTombstones } from '../tradeMerge';
 import type { ExecutionSetup, TradeJournalEntry, RawQuoteData } from '../../types/radar';
 
 const setupForKo = (over: Record<string, unknown> = {}): ExecutionSetup =>
@@ -110,4 +111,22 @@ const quoteAt = (price: number): RawQuoteData =>
   console.log('[V3_perdita_ko_senza_clamp] PASS');
 }
 
-console.log('audit_round2: 1 gruppo OK');
+// ---------------------------------------------------------------- VOCE 4
+// Tombstone: un trade eliminato non deve risorgere dallo snapshot cloud.
+{
+  const mk = (id: string, ts: string): TradeJournalEntry => ({ ...tradeForKo(), id, timestamp: ts });
+  const local = [mk('A', '2026-11-04T09:00:00.000Z'), mk('LOCAL', '2026-11-04T09:10:00.000Z')];
+  const cloud = [mk('A', '2026-11-04T09:00:00.000Z'), mk('B', '2026-11-04T09:20:00.000Z')];
+
+  const merged = mergeTradesWithTombstones(local, cloud, ['A']);
+  assert.equal(merged.some((t) => t.id === 'A'), false, 'V4: trade cancellato non risorge');
+  assert.equal(merged.some((t) => t.id === 'B'), true, 'V4: trade nuovo nel cloud aggiunto');
+  assert.equal(merged.some((t) => t.id === 'LOCAL'), true, 'V4: trade solo locale conservato');
+  assert.equal(merged[0].id, 'B', 'V4: merge ordinato per timestamp decrescente');
+
+  const noTombs = mergeTradesWithTombstones(local, cloud, []);
+  assert.equal(noTombs.length, 3, 'V4: senza tombstone il merge resta quello di prima');
+  console.log('[V4_tombstone_merge] PASS');
+}
+
+console.log('audit_round2: 2 gruppi OK');

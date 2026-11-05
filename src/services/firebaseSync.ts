@@ -166,6 +166,8 @@ export interface CloudSystemSettings {
   accountCapital: number;
   isPaperMode: boolean;
   underlyings?: UnderlyingItem[];
+  /** Tombstone dei trade eliminati (retention illimitata). */
+  deletedTradeIds?: string[];
   updatedAt: string;
 }
 
@@ -239,6 +241,7 @@ export async function syncSystemSettingsToCloud(
     accountCapital: number;
     isPaperMode: boolean;
     underlyings?: UnderlyingItem[];
+    deletedTradeIds?: string[];
   }
 ): Promise<void> {
   if (!db) return;
@@ -251,6 +254,7 @@ export async function syncSystemSettingsToCloud(
       parameters: settings.parameters,
       pendingProposal: settings.pendingProposal,
       underlyings: settings.underlyings || null,
+      deletedTradeIds: settings.deletedTradeIds ?? null,
       updatedAt: new Date().toISOString(),
     };
     await setDoc(ref, stripUndefined(rawPayload), { merge: true });
@@ -373,6 +377,7 @@ export function subscribeToUserCloudData(
           accountCapital: d.accountCapital ?? 10000,
           isPaperMode: d.isPaperMode ?? true,
           underlyings: d.underlyings || undefined,
+          deletedTradeIds: Array.isArray(d.deletedTradeIds) ? d.deletedTradeIds : undefined,
           updatedAt: d.updatedAt || new Date().toISOString(),
         });
       } else if (onEmpty && !snap.metadata.fromCache) {
