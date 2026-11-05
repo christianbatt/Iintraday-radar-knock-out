@@ -1322,7 +1322,8 @@ export function applyOptimizationProposal(
         else if (market === 'US') writeNumber('minRvolUSA', val);
         else {
           writeNumber('minRvolEurope', val);
-          writeNumber('minRvolUSA', +(val * 1.35).toFixed(2)); // rapporto US/EU gia' usato dall'UI
+          // IPOTESI: il rapporto US/EU arriva da TRADING_PARAMS.RVOL_USA_MULTIPLIER
+          writeNumber('minRvolUSA', +(val * TRADING_PARAMS.RVOL_USA_MULTIPLIER).toFixed(2));
         }
         break;
       }
