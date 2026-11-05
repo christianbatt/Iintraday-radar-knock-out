@@ -1469,14 +1469,16 @@ async function fetchQuoteForTicker(
           }
         }
 
-        // Real Today Open, Day High, Day Low, and Intraday VWAP estimate from official feed
+        // Real Today Open, Day High, Day Low from official feed
         const tOpen: number | null = meta.regularMarketOpen ?? (lastBar ? lastBar.close : null);
         const tHigh: number | null = meta.regularMarketDayHigh ?? (lastBar ? lastBar.high : null);
         const tLow: number | null = meta.regularMarketDayLow ?? (lastBar ? lastBar.low : null);
-        let calcVwap: number | null = null;
-        if (tHigh && tLow && currentP) {
-          calcVwap = +((tHigh + tLow + currentP) / 3).toFixed(2);
-        }
+        // PUNTO 1 (VWAP di sessione, IPOTESI): quote.vwap e' la VWAP reale prodotta da
+        // computeSessionVwap sulle stesse barre 5m chiuse che alimentano vwapCumulative
+        // (stessa serie, stesso arrotondamento a 2 decimali: i due campi non possono divergere).
+        // Senza barre con volume > 0 il valore e' null: la vecchia stima
+        // (dayHigh + dayLow + currentPrice) / 3 non era una VWAP ed e' stata rimossa.
+        const sessionVwap: number | null = (await intraday5mPromise).vwapCumulative ?? null;
 
         quoteData = {
           currentPrice: currentP ? +currentP.toFixed(2) : quoteData.currentPrice ?? null,
@@ -1489,7 +1491,7 @@ async function fetchQuoteForTicker(
           todayOpen: tOpen ? +tOpen.toFixed(2) : null,
           todayHigh: tHigh ? +tHigh.toFixed(2) : null,
           todayLow: tLow ? +tLow.toFixed(2) : null,
-          vwap: calcVwap,
+          vwap: sessionVwap,
           ema20Daily: calcEma20,
           avgVolume20d: avgVol,
           preMarketVolume: pmVol ?? regVol ?? null,

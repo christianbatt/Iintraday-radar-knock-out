@@ -5253,8 +5253,9 @@ export interface SessionVwapResult {
  *   - EU 540-1050 (09:00-17:30 Roma).
  *   Il post-market (dalle 16:00 ET in poi) e' sempre escluso; per i segnali (computeVwapState) una barra
  *   piu' recente fuori sessione regolare, o troppo illiquida, produce state = UNKNOWN con flag AFTER_HOURS.
- * Attenzione: il campo numerico `quote.vwap` NON usa questa formula. E' il prezzo tipico
- *   (todayHigh + todayLow + currentPrice) / 3, senza volumi e senza cumulazione (vedi server.ts).
+ * Il campo numerico `quote.vwap` usa questa stessa formula sulle stesse barre 5m: il server
+ *   riporta come `quote.vwap` il risultato di computeSessionVwap, quindi coincide con
+ *   `quote.vwapCumulative` (unica serie per entrambi i campi).
  */
 export function computeSessionVwap(
   bars: VwapBar[],
