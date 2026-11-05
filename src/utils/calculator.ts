@@ -37,7 +37,7 @@ import {
   SetupIndicators,
   SetupVetoReason,
 } from '../types/radar';
-import { TRADING_PARAMS, adxThresholds } from '../config/tradingParams';
+import { TRADING_PARAMS, adxThresholds, vwapMaxStaleMin, vwapMaxZeroVolumeBars } from '../config/tradingParams';
 
 export { adxThresholds };
 import { getMarketTime, getExchangeDateStr } from './timezone';
@@ -5410,22 +5410,24 @@ export function computeVwapDataQuality(
     if (regular[i].minutes - regular[i - 1].minutes > 5) return fail('GAP');
   }
 
-  // f. ZERO_VOLUME: barre di sessione a volume 0 oltre la soglia tollerata (IPOTESI: 0)
+  // f. ZERO_VOLUME: barre di sessione a volume 0 oltre la soglia tollerata per mercato
   const zeroVolumeBars = regular.filter((r) => r.volume === 0).length;
-  if (zeroVolumeBars > TRADING_PARAMS.VWAP_MAX_ZERO_VOLUME_BARS) return fail('ZERO_VOLUME');
+  const maxZeroVolumeBars = vwapMaxZeroVolumeBars(market);
+  if (zeroVolumeBars > maxZeroVolumeBars) return fail('ZERO_VOLUME');
 
   // g. LOW_COVERAGE: barre presenti / barre attese dall'apertura alla valutazione
   const expected = Math.max(0, Math.floor((upTo - openMinutes) / 5));
   const coverage = expected > 0 ? Math.min(1, regular.length / expected) : 0;
   if (coverage < TRADING_PARAMS.VWAP_MIN_COVERAGE) return fail('LOW_COVERAGE', coverage);
 
-  // h. STALE: ultima barra piu' vecchia di VWAP_MAX_STALE_MIN mentre la sessione e' aperta
+  // h. STALE: ultima barra piu' vecchia della soglia di freschezza per mercato
   const lastRegular = regular.length > 0 ? regular[regular.length - 1] : null;
+  const maxStaleMin = vwapMaxStaleMin(market);
   if (
     nowMinutes >= openMinutes &&
     nowMinutes < closeMinutes &&
     lastRegular != null &&
-    nowMinutes - lastRegular.minutes > TRADING_PARAMS.VWAP_MAX_STALE_MIN
+    nowMinutes - lastRegular.minutes > maxStaleMin
   ) {
     return fail('STALE', coverage);
   }

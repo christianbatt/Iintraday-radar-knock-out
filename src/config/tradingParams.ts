@@ -131,7 +131,11 @@ export interface TradingParamsConfig {
   VWAP_SOURCE: 'session' | 'withPre';
   VWAP_MIN_COVERAGE: number;
   VWAP_MAX_ZERO_VOLUME_BARS: number;
+  VWAP_MAX_ZERO_VOLUME_BARS_EU: number;
+  VWAP_MAX_ZERO_VOLUME_BARS_US: number;
   VWAP_MAX_STALE_MIN: number;
+  VWAP_MAX_STALE_MIN_EU: number;
+  VWAP_MAX_STALE_MIN_US: number;
   VWAP_MAX_QUOTE_DRIFT_PCT: number;
   VWAP_NEAR_ATR: number;
   VWAP_REJECT_VOL_MULT: number;
@@ -163,7 +167,9 @@ export interface TradingParamsConfig {
   PSAR_MAX: number;
   IND_BAR_MS: number; // IPOTESI: durata della barra 5m in millisecondi (chiusura della barra = apertura + IND_BAR_MS)
   IND_MIN_BARS: number; // barre 5m complete richieste (sessione precedente inclusa)
-  IND_MAX_STALE_MIN: number; // ultima barra piu' vecchia di N minuti = serie STALE
+  IND_MAX_STALE_MIN: number; // ultima barra piu' vecchia di N minuti = serie STALE (default / US: 15 min)
+  IND_MAX_STALE_MIN_EU: number; // tolleranza Europa per feed a ritardo standard 15 min (25 min)
+  IND_MAX_STALE_MIN_US: number; // tolleranza USA per feed real-time BATS (15 min)
   WARMUP_RANGE_5M: string; // IPOTESI: range Yahoo della serie 5m usata dagli indicatori
   WARMUP_RANGE_FALLBACK_5M: string; // IPOTESI: fallback se con WARMUP_RANGE_5M le barre complete sono < IND_MIN_BARS
   WARMUP_MAX_PRIOR_SESSIONS: number; // IPOTESI: massimo sessioni regolari precedenti usate nel warm-up
@@ -329,6 +335,8 @@ export const TRADING_PARAMS: TradingParamsConfig = {
   IND_BAR_MS: 5 * 60_000, // IPOTESI: durata della barra 5m (300s); chiusura = apertura + IND_BAR_MS
   IND_MIN_BARS: 60,
   IND_MAX_STALE_MIN: 15,
+  IND_MAX_STALE_MIN_EU: 25, // Tolleranza 25 min per il feed europeo con ritardo contrattuale di 15 min
+  IND_MAX_STALE_MIN_US: 15, // Tolleranza 15 min per il feed USA in tempo reale BATS
   WARMUP_RANGE_5M: '5d', // IPOTESI: ~5 sessioni regolari di barre 5m
   WARMUP_RANGE_FALLBACK_5M: '1mo', // IPOTESI: fallback se le barre complete sono < IND_MIN_BARS
   WARMUP_MAX_PRIOR_SESSIONS: 5, // IPOTESI
@@ -360,8 +368,12 @@ export const TRADING_PARAMS: TradingParamsConfig = {
   VWAP_AFTER_HOURS_VOL_RATIO: 0.1, // IPOTESI: volume barra < 10% della media di sessione = barra illiquida (after-market) -> stato UNKNOWN
   VWAP_SOURCE: 'session', // IPOTESI: 'session' (US 09:30-16:00 / EU 09:00-17:30) oppure 'withPre' (solo US, dalle 04:00 NY)
   VWAP_MIN_COVERAGE: 0.8, // IPOTESI: sotto questa quota di barre presenti/attese lo stato VWAP e' UNKNOWN
-  VWAP_MAX_ZERO_VOLUME_BARS: 0, // IPOTESI: barre a volume 0 tollerate in sessione (0 = una sola barra a volume 0 invalida la serie)
-  VWAP_MAX_STALE_MIN: 10, // IPOTESI: ultima barra piu' vecchia di 10 minuti in sessione = serie STALE
+  VWAP_MAX_ZERO_VOLUME_BARS: 0, // Fallback base per test generici
+  VWAP_MAX_ZERO_VOLUME_BARS_EU: 2, // Tolleranza 2 barre con volume 0 in sessione europea
+  VWAP_MAX_ZERO_VOLUME_BARS_US: 0, // In USA zero volume = anomalia di feed
+  VWAP_MAX_STALE_MIN: 10, // Fallback base per test generici
+  VWAP_MAX_STALE_MIN_EU: 25, // Tolleranza 25 min in Europa per feed ritardato 15 min
+  VWAP_MAX_STALE_MIN_US: 10, // Tolleranza 10 min in USA
   VWAP_MAX_QUOTE_DRIFT_PCT: 0.005, // IPOTESI: scostamento massimo ammesso tra ultima chiusura 5m e prezzo quote (0.5%)
   VWAP_NEAR_ATR: 0.1, // IPOTESI: prossimita' alla VWAP per riconoscere un PULLBACK (in ATR 5m)
   VWAP_REJECT_VOL_MULT: 1.5, // IPOTESI: volume della barra >= 1.5x media 5m per validare RECLAIM/REJECT
@@ -369,7 +381,7 @@ export const TRADING_PARAMS: TradingParamsConfig = {
   VWAP_OPEN_WINDOW_MIN: 30, // IPOTESI: primi minuti di sessione in cui il contributo e' ridotto
   VWAP_OPEN_WEIGHT_FACTOR: 0.5, // IPOTESI: moltiplicatore del contributo nella finestra di apertura
   VWAP_HARD_GATE: false, // IPOTESI: true = scarta i candidati con stato VWAP contrario alla direzione (non validato: resta false)
-}
+};
 export const IND_BAR_MS = TRADING_PARAMS.IND_BAR_MS;
 
 export type TradingParams = typeof TRADING_PARAMS;
@@ -382,4 +394,28 @@ export function adxThresholds(market: 'EU' | 'US'): { min: number; strong: numbe
   return market === 'EU'
     ? { min: TRADING_PARAMS.ADX_MIN_TREND_EU, strong: TRADING_PARAMS.ADX_STRONG_EU }
     : { min: TRADING_PARAMS.ADX_MIN_TREND_US, strong: TRADING_PARAMS.ADX_STRONG_US };
+}
+
+/**
+ * Soglia di freschezza per gli indicatori 5m (Supertrend, ADX, StochRSI, PSAR, ATR).
+ * In Europa il feed gratuito Yahoo Finance ha un ritardo contrattuale ufficiale di 15 minuti,
+ * per cui la tolleranza e' 25 minuti (15 min ritardo + 10 min finestra barra chiusa).
+ * In USA il feed e' in tempo reale BATS, per cui la tolleranza e' 15 minuti.
+ */
+export function indMaxStaleMin(market: 'EU' | 'US'): number {
+  return market === 'EU' ? TRADING_PARAMS.IND_MAX_STALE_MIN_EU : TRADING_PARAMS.IND_MAX_STALE_MIN_US;
+}
+
+/**
+ * Soglia di freschezza per la VWAP di sessione per mercato.
+ */
+export function vwapMaxStaleMin(market: 'EU' | 'US'): number {
+  return market === 'EU' ? TRADING_PARAMS.VWAP_MAX_STALE_MIN_EU : TRADING_PARAMS.VWAP_MAX_STALE_MIN_US;
+}
+
+/**
+ * Soglia di barre a volume zero tollerate nella sessione per il VWAP Quality Gate.
+ */
+export function vwapMaxZeroVolumeBars(market: 'EU' | 'US'): number {
+  return market === 'EU' ? TRADING_PARAMS.VWAP_MAX_ZERO_VOLUME_BARS_EU : TRADING_PARAMS.VWAP_MAX_ZERO_VOLUME_BARS_US;
 }

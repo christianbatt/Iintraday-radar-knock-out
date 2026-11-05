@@ -30,7 +30,7 @@ import type {
   StochRsiSnapshot,
   SupertrendSnapshot,
 } from '../types/radar';
-import { adxThresholds, IND_BAR_MS, TRADING_PARAMS } from '../config/tradingParams';
+import { adxThresholds, indMaxStaleMin, IND_BAR_MS, TRADING_PARAMS } from '../config/tradingParams';
 
 const MINUTE_MS = 60_000;
 
@@ -662,7 +662,7 @@ export function computeSetupIndicators(
 ): SetupIndicators {
   const now = options.now ?? new Date();
   const minBars = options.minBars ?? TRADING_PARAMS.IND_MIN_BARS;
-  const maxStaleMin = options.maxStaleMin ?? TRADING_PARAMS.IND_MAX_STALE_MIN;
+  const maxStaleMin = options.maxStaleMin ?? indMaxStaleMin(options.market);
   const selection = selectWarmupBars(bars, options.market, {
     maxPriorSessions: options.maxPriorSessions,
     now,
