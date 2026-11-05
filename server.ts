@@ -635,6 +635,11 @@ function calculateWilderRsi(closes: number[], period: number = 14): number | nul
  */
 const EXTERNAL_FETCH_TIMEOUT_MS = 10000;
 
+// PUNTO 3 (config): modelli OpenRouter leggibili da ambiente.
+// Default = valori storici hardcoded: senza variabili il comportamento non cambia.
+const OPENROUTER_PRIMARY_MODEL = (process.env.OPENROUTER_PRIMARY_MODEL || '').trim() || 'nvidia/nemotron-3-ultra-550b-a55b:free';
+const OPENROUTER_FALLBACK_MODEL = (process.env.OPENROUTER_FALLBACK_MODEL || '').trim() || 'openrouter/free';
+
 async function fetchWithTimeout(
   url: string,
   init: RequestInit = {},
@@ -2379,7 +2384,7 @@ Restituisci eventuali proposte non persistenti nel campo "newDirectives". Non di
     let generated: any = null;
     if (openRouterKey) {
       const openRouterRes = await callOpenRouterModel(
-        ['nvidia/nemotron-3-ultra-550b-a55b:free', 'openrouter/free'],
+        [OPENROUTER_PRIMARY_MODEL, OPENROUTER_FALLBACK_MODEL],
         systemInstruction,
         promptText,
         openRouterKey,
@@ -2484,7 +2489,7 @@ Restituisci un JSON rigoroso con questi campi:
     let generated: any = null;
     if (openRouterKey) {
       const openRouterRes = await callOpenRouterModel(
-        ['nvidia/nemotron-3-ultra-550b-a55b:free', 'openrouter/free'],
+        [OPENROUTER_PRIMARY_MODEL, OPENROUTER_FALLBACK_MODEL],
         systemInstruction,
         promptText,
         openRouterKey,
@@ -2712,10 +2717,7 @@ app.post('/api/test-openrouter', requireServerApiKey, async (req: Request, res: 
       : '***';
 
     const testPrompt = 'Rispondi solo con questo JSON: {"status": "ok", "message": "connessione riuscita"}';
-    const modelsToTest = [
-      'nvidia/nemotron-3-ultra-550b-a55b:free',
-      'openrouter/free',
-    ];
+    const modelsToTest = [OPENROUTER_PRIMARY_MODEL, OPENROUTER_FALLBACK_MODEL];
 
     const modelResults: any[] = [];
     for (const model of modelsToTest) {
@@ -2899,10 +2901,7 @@ newsBonusScore: numero intero da 0 a 15 (punti bonus aggiuntivi per forza del ca
     // 1. TIER 1 & 2: OpenRouter (Primario: NVIDIA Nemotron 3 Ultra Free, Fallback: OpenRouter Free router)
     if (openRouterKey) {
       const openRouterRes = await callOpenRouterModel(
-        [
-          'nvidia/nemotron-3-ultra-550b-a55b:free',
-          'openrouter/free',
-        ],
+        [OPENROUTER_PRIMARY_MODEL, OPENROUTER_FALLBACK_MODEL],
         systemInstruction,
         userPrompt,
         openRouterKey,
