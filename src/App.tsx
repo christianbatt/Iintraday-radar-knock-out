@@ -629,6 +629,19 @@ export default function App() {
     }
   }, [currentUser, parameters, pendingProposal, accountCapital, isPaperMode]);
 
+  // AUDIT ROUND2 V5: lo stato letto dalla scansione passa da ref aggiornati in un effect dedicato,
+  // cosi' le dipendenze della scansione non cambiano e l'effetto non si rilancia da solo.
+  const macroCalendarRef = React.useRef<MacroCalendarState | null>(macroCalendar);
+  const sessionInfoRef = React.useRef<SessionInfo | null>(sessionInfo);
+  const catalystCacheRef = React.useRef<Record<string, GeminiCatalystAnalysis>>(catalystCache);
+  const newsCacheRef = React.useRef<Record<string, NewsItem[]>>(newsCache);
+  useEffect(() => {
+    sessionInfoRef.current = sessionInfo;
+    macroCalendarRef.current = macroCalendar;
+    catalystCacheRef.current = catalystCache;
+    newsCacheRef.current = newsCache;
+  }, [sessionInfo, macroCalendar, catalystCache, newsCache]);
+
   // Compute Daily Risk Tracker & Circuit Breaker
   const todayStr = new Date().toLocaleDateString('it-IT');
   const todayTrades = journalEntries.filter((e) => e.date === todayStr);
@@ -680,10 +693,10 @@ export default function App() {
     const ticker = candidate.quote.ticker;
 
     // Check memory cache first
-    if (catalystCache[ticker]) return catalystCache[ticker];
+    if (catalystCacheRef.current[ticker]) return catalystCacheRef.current[ticker];
 
     try {
-      let newsItems = newsCache[ticker];
+      let newsItems = newsCacheRef.current[ticker];
       if (!newsItems) {
         newsItems = await fetchTickerNews(ticker, candidate.quote.name);
         setNewsCache((prev) => ({ ...prev, [ticker]: newsItems }));
@@ -881,11 +894,11 @@ export default function App() {
 
       setTopCandidateEU(finalTopEU);
       setTopCandidateUS(finalTopUS);
-      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU, macroEvents: macroCalendar?.events }));
-      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters, { entryMode: entryModeUS, macroEvents: macroCalendar?.events }));
+      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU, macroEvents: macroCalendarRef.current?.events }));
+      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters, { entryMode: entryModeUS, macroEvents: macroCalendarRef.current?.events }));
 
       // 4.5. Visual Filtering Audit Generation (triggers 3-5s notification banner)
-      const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCache };
+      const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCacheRef.current };
       if (finalTopEU && finalCatEU) currentCache[finalTopEU.quote.ticker] = finalCatEU;
       if (finalTopUS && finalCatUS) currentCache[finalTopUS.quote.ticker] = finalCatUS;
 
@@ -896,7 +909,7 @@ export default function App() {
         parameters,
         currentCache,
         rsiFilterActive,
-        sessionInfo?.cet?.currentMinutes
+        sessionInfoRef.current?.cet?.currentMinutes
       );
       setAuditReport(audit);
       setShowAuditBanner(true);
