@@ -907,11 +907,11 @@ export function calculateCandidateScore(
     'direzione' in newsOrCatalyst
   ) {
     const catDir = (newsOrCatalyst as GeminiCatalystAnalysis).direzione;
-    // IPOTESI: il riferimento di prezzo del filtro contrarian e' la VWAP cumulativa di sessione
-    // (quote.vwapCumulative), la stessa serie usata da vwapState.vwapLevel. Fallback documentato su
-    // quote.vwap quando la cumulativa manca: quote.vwap e' la stima (High+Low+Close)/3 del server,
-    // non una media ponderata per i volumi.
-    const contrarianVwap = quote.vwapCumulative ?? quote.vwap ?? null;
+    // IPOTESI: il riferimento di prezzo del filtro contrarian e' SOLO la VWAP cumulativa di sessione
+    // (quote.vwapCumulative), ponderata per volume da computeSessionVwap sulle barre 5m chiuse.
+    // Nessun fallback: se la VWAP manca (feed assente, volumi a zero, sessione non iniziata) il
+    // catalizzatore non viene ridotto, invece di usare un prezzo che non e' una VWAP.
+    const contrarianVwap = quote.vwapCumulative ?? null;
     const isContrarian =
       (catDir === 'LONG' &&
         ((quote.gapPercent ?? 0) < -0.3 || (contrarianVwap != null && price != null && price < contrarianVwap * (1 - proxFactor)))) ||

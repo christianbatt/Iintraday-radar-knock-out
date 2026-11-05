@@ -80,7 +80,7 @@ const CASES: Case[] = [
     c: catalyst('SHORT'),
   },
   {
-    // Nessuna VWAP cumulativa: il filtro deve usare il fallback su quote.vwap.
+    // Nessuna VWAP cumulativa: senza VWAP il filtro contrarian non riduce il bonus.
     name: 'E_SENZA_CUMULATIVA_FALLBACK',
     q: baseQuote({ ticker: 'E', gapPercent: 0.2, currentPrice: 100, vwap: 101, vwapCumulative: null }),
     c: catalyst('LONG'),
@@ -113,7 +113,7 @@ function snapshot(c: Case): Snapshot {
 
 // Valori fissati sul codice PRIMA della modifica del filtro (commit di caratterizzazione).
 const BASELINE: Record<string, Snapshot> = {
-  // A/E invariati: il gap negativo (A) e il fallback su quote.vwap (E) restano contrarian.
+  // A invariato: il gap negativo resta contrarian anche senza VWAP usata dal filtro.
   A_LONG_GAP_NEGATIVO: { total: 34, newsScore: 2, contrarianReduced: true, reducedTo: 3 },
   // Delta accettato (vwapCumulative): sopra la VWAP di sessione -> catalizzatore LONG non piu' contrarian.
   B_LONG_VWAP_CLASSICA_CONTRARIA: { total: 38, newsScore: 8, contrarianReduced: false, reducedTo: null },
@@ -121,7 +121,8 @@ const BASELINE: Record<string, Snapshot> = {
   C_LONG_VWAP_CUMULATIVA_CONTRARIA: { total: 32, newsScore: 2, contrarianReduced: true, reducedTo: 3 },
   // Delta accettato (vwapCumulative): sopra la VWAP di sessione -> catalizzatore SHORT ora contrarian.
   D_SHORT_VWAP_CUMULATIVA_CONTRARIA: { total: 19, newsScore: 2, contrarianReduced: true, reducedTo: 3 },
-  E_SENZA_CUMULATIVA_FALLBACK: { total: 32, newsScore: 2, contrarianReduced: true, reducedTo: 3 },
+  // Delta accettato (nessun fallback su quote.vwap): senza VWAP il bonus resta pieno.
+  E_SENZA_CUMULATIVA_FALLBACK: { total: 38, newsScore: 8, contrarianReduced: false, reducedTo: null },
   // Delta accettato (vwapCumulative): sotto la VWAP di sessione -> catalizzatore SHORT non piu' contrarian.
   F_SHORT_VWAP_CLASSICA_CONTRARIA: { total: 25, newsScore: 8, contrarianReduced: false, reducedTo: null },
 };
