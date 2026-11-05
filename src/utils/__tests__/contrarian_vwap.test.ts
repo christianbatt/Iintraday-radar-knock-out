@@ -113,12 +113,17 @@ function snapshot(c: Case): Snapshot {
 
 // Valori fissati sul codice PRIMA della modifica del filtro (commit di caratterizzazione).
 const BASELINE: Record<string, Snapshot> = {
+  // A/E invariati: il gap negativo (A) e il fallback su quote.vwap (E) restano contrarian.
   A_LONG_GAP_NEGATIVO: { total: 34, newsScore: 2, contrarianReduced: true, reducedTo: 3 },
-  B_LONG_VWAP_CLASSICA_CONTRARIA: { total: 32, newsScore: 2, contrarianReduced: true, reducedTo: 3 },
-  C_LONG_VWAP_CUMULATIVA_CONTRARIA: { total: 38, newsScore: 8, contrarianReduced: false, reducedTo: null },
-  D_SHORT_VWAP_CUMULATIVA_CONTRARIA: { total: 25, newsScore: 8, contrarianReduced: false, reducedTo: null },
+  // Delta accettato (vwapCumulative): sopra la VWAP di sessione -> catalizzatore LONG non piu' contrarian.
+  B_LONG_VWAP_CLASSICA_CONTRARIA: { total: 38, newsScore: 8, contrarianReduced: false, reducedTo: null },
+  // Delta accettato (vwapCumulative): sotto la VWAP di sessione -> catalizzatore LONG ora contrarian.
+  C_LONG_VWAP_CUMULATIVA_CONTRARIA: { total: 32, newsScore: 2, contrarianReduced: true, reducedTo: 3 },
+  // Delta accettato (vwapCumulative): sopra la VWAP di sessione -> catalizzatore SHORT ora contrarian.
+  D_SHORT_VWAP_CUMULATIVA_CONTRARIA: { total: 19, newsScore: 2, contrarianReduced: true, reducedTo: 3 },
   E_SENZA_CUMULATIVA_FALLBACK: { total: 32, newsScore: 2, contrarianReduced: true, reducedTo: 3 },
-  F_SHORT_VWAP_CLASSICA_CONTRARIA: { total: 19, newsScore: 2, contrarianReduced: true, reducedTo: 3 },
+  // Delta accettato (vwapCumulative): sotto la VWAP di sessione -> catalizzatore SHORT non piu' contrarian.
+  F_SHORT_VWAP_CLASSICA_CONTRARIA: { total: 25, newsScore: 8, contrarianReduced: false, reducedTo: null },
 };
 
 describe('Filtro contrarian - caratterizzazione', () => {

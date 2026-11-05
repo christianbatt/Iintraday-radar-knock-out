@@ -907,11 +907,16 @@ export function calculateCandidateScore(
     'direzione' in newsOrCatalyst
   ) {
     const catDir = (newsOrCatalyst as GeminiCatalystAnalysis).direzione;
+    // IPOTESI: il riferimento di prezzo del filtro contrarian e' la VWAP cumulativa di sessione
+    // (quote.vwapCumulative), la stessa serie usata da vwapState.vwapLevel. Fallback documentato su
+    // quote.vwap quando la cumulativa manca: quote.vwap e' la stima (High+Low+Close)/3 del server,
+    // non una media ponderata per i volumi.
+    const contrarianVwap = quote.vwapCumulative ?? quote.vwap ?? null;
     const isContrarian =
       (catDir === 'LONG' &&
-        ((quote.gapPercent ?? 0) < -0.3 || (quote.vwap != null && price != null && price < quote.vwap * (1 - proxFactor)))) ||
+        ((quote.gapPercent ?? 0) < -0.3 || (contrarianVwap != null && price != null && price < contrarianVwap * (1 - proxFactor)))) ||
       (catDir === 'SHORT' &&
-        ((quote.gapPercent ?? 0) > 0.3 || (quote.vwap != null && price != null && price > quote.vwap * (1 + proxFactor))));
+        ((quote.gapPercent ?? 0) > 0.3 || (contrarianVwap != null && price != null && price > contrarianVwap * (1 + proxFactor))));
     if (isContrarian) {
       const reducedBonus = Math.min(3, Math.floor(newsLegacy * 0.25));
       details.push(`⚠️ Notizia ${catDir} in contrasto con azione di prezzo: bonus ridotto a ${reducedBonus}pt legacy`);
