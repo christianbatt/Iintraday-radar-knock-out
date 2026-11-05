@@ -711,7 +711,15 @@ export default function App() {
   };
 
   // Run Screening Function (Dual-Market Europe & USA)
+  // AUDIT ROUND2 V6: una nuova scansione annulla la precedente.
+  const scanAbortRef = React.useRef<AbortController | null>(null);
+
   const handleRunScreening = useCallback(async () => {
+    scanAbortRef.current?.abort();
+    const controller = new AbortController();
+    scanAbortRef.current = controller;
+    const isAlive = () => !controller.signal.aborted;
+
     if (underlyings.length === 0) {
       setScanError('Nessun sottostante caricato nel paniere. Aggiungine nel gestore CSV.');
       return;
@@ -742,6 +750,7 @@ export default function App() {
         fetchBenchmarkFutures(true).catch(() => futures),
         fetchMarketData(scanBasket, true),
       ]);
+      if (!isAlive()) return;
 
       if (freshFutures) {
         setFutures(freshFutures);
@@ -892,6 +901,7 @@ export default function App() {
         ? 'MANUAL_FREEZE'
         : 'UNFROZEN_LATE';
 
+      if (!isAlive()) return;
       setTopCandidateEU(finalTopEU);
       setTopCandidateUS(finalTopUS);
       setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU, macroEvents: macroCalendarRef.current?.events }));
@@ -940,9 +950,10 @@ export default function App() {
         });
       }
     } catch (err: any) {
+      if (!isAlive()) return;
       setScanError(`Errore durante il recupero dei dati di mercato: ${err.message || 'Controlla la connessione'}`);
     } finally {
-      setIsScanning(false);
+      if (scanAbortRef.current === controller) setIsScanning(false);
     }
   }, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries]);
 
@@ -1064,17 +1075,21 @@ export default function App() {
     handleRunScreeningRef.current = handleRunScreening;
   });
 
+  const autoRefreshCountdownRef = React.useRef(20);
+  useEffect(() => {
+    autoRefreshCountdownRef.current = autoRefreshCountdown;
+  }, [autoRefreshCountdown]);
+
   useEffect(() => {
     if (!isAutoRefresh) return;
 
     const timer = setInterval(() => {
-      setAutoRefreshCountdown((prev) => {
-        if (prev <= 1) {
-          handleRunScreeningRef.current();
-          return 20;
-        }
-        return prev - 1;
-      });
+      // AUDIT ROUND2 V6: il tick e il side effect stanno fuori dall'updater di stato.
+      const base = autoRefreshCountdownRef.current;
+      const next = base <= 1 ? 20 : base - 1;
+      autoRefreshCountdownRef.current = next;
+      setAutoRefreshCountdown(next);
+      if (next === 20) handleRunScreeningRef.current();
     }, 1000);
 
     return () => clearInterval(timer);
@@ -1240,9 +1255,11 @@ export default function App() {
   useEffect(() => {
     if (quotes.length === 0) return;
 
-    setJournalEntries((prevEntries) => {
+    // AUDIT ROUND2 V6: nessun side effect dentro l'updater di stato.
+    const prevEntries = journalEntriesRef.current;
+    {
       const openTrades = prevEntries.filter((t) => t.status === 'OPEN');
-      if (openTrades.length === 0) return prevEntries;
+      if (openTrades.length === 0) return;
 
       let hasAnyChange = false;
       let notificationToDisplay = '';
@@ -1267,7 +1284,9 @@ export default function App() {
         return trade;
       });
 
-      if (!hasAnyChange) return prevEntries;
+      if (!hasAnyChange) return;
+
+      setJournalEntries(updatedList);
 
       if (notificationToDisplay) {
         setOptimizationNotification(notificationToDisplay);
@@ -1282,9 +1301,7 @@ export default function App() {
           }
         });
       }
-
-      return updatedList;
-    });
+    }
   }, [quotes, sessionInfo, accountCapital, currentUser]);
 
   // 6d. Autonomous Excluded Setups Live Monitor (Counterfactual Tick-by-Tick Evaluation)

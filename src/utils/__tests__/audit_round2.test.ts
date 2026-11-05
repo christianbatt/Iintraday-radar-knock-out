@@ -129,4 +129,32 @@ const quoteAt = (price: number): RawQuoteData =>
   console.log('[V4_tombstone_merge] PASS');
 }
 
-console.log('audit_round2: 2 gruppi OK');
+// ---------------------------------------------------------------- VOCE 5
+// La scansione legge lo stato variabile da ref: dipendenze invariate, nessun loop.
+{
+  const src = fs.readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8');
+  assert.ok(src.includes('macroCalendarRef.current?.events'), 'V5: macro calendario letto da ref');
+  assert.ok(src.includes('catalystCacheRef.current'), 'V5: cache catalyst letta da ref');
+  assert.ok(src.includes('newsCacheRef.current'), 'V5: cache news letta da ref');
+  assert.ok(src.includes('sessionInfoRef.current?.cet?.currentMinutes'), 'V5: sessione letta da ref');
+  assert.ok(
+    src.includes('}, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries]);'),
+    'V5: dipendenze della scansione invariate (nessun rilancio automatico)',
+  );
+  console.log('[V5_scan_refs] PASS');
+}
+
+// ---------------------------------------------------------------- VOCE 6
+// Nessun side effect negli updater; abort della scansione precedente.
+{
+  const src = fs.readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8');
+  assert.ok(src.includes('new AbortController()'), 'V6: AbortController presente');
+  assert.ok(src.includes('scanAbortRef.current?.abort()'), 'V6: nuova scansione annulla la precedente');
+  assert.ok(src.includes('if (!isAlive()) return;'), 'V6: guardia signal.aborted prima dei setState');
+  assert.equal(src.includes('setAutoRefreshCountdown((prev) => {'), false, 'V6: nessun side effect nel countdown');
+  assert.equal(src.includes('setJournalEntries((prevEntries) => {'), false, 'V6: nessun side effect nel monitor');
+  assert.equal(src.includes('return updatedList;'), false, 'V6: il monitor non ritorna da un updater');
+  console.log('[V6_no_side_effect_in_updater] PASS');
+}
+
+console.log('audit_round2: 4 gruppi OK');
