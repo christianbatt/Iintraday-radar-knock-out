@@ -449,6 +449,8 @@ export interface KnockOutSafetyCheck {
   suggestedCertificates: number;
   totalInvestedEur: number;
   potentialLossEur: number;
+  /** Perdita reale superiore al rischio pianificato (nessuna esclusione del candidato). */
+  riskBreached: boolean;
   potentialGainT1Eur: number;
   potentialGainT2Eur: number;
   breakeven: DynamicBreakevenInfo;

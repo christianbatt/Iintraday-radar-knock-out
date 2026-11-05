@@ -2682,6 +2682,7 @@ export function calculateKnockOutSafety(
       suggestedCertificates: 0,
       totalInvestedEur: 0,
       potentialLossEur: 0,
+      riskBreached: false,
       potentialGainT1Eur: 0,
       potentialGainT2Eur: 0,
       breakeven: emptyBreakeven,
@@ -2721,7 +2722,11 @@ export function calculateKnockOutSafety(
 
   const suggestedCertificates = Math.max(1, Math.floor(maxRiskEur / validLossPerCert));
   const totalInvestedEur = +(suggestedCertificates * certPrice).toFixed(2);
-  const potentialLossEur = Math.min(+(suggestedCertificates * validLossPerCert).toFixed(2), maxRiskEur);
+  // IPOTESI: R = PnL reale / rischio pianificato.
+  // La perdita KO riportata e' quella reale della posizione minima (1 certificato):
+  // quantita' x (prezzo di entrata - prezzo di uscita), senza clamp a maxRiskEur.
+  const potentialLossEur = +(suggestedCertificates * validLossPerCert).toFixed(2);
+  const riskBreached = potentialLossEur > maxRiskEur;
 
   const rewardRatioT1 = setup.riskRewardRatio || TRADING_PARAMS.T1_R;
   const potentialGainT1Eur = +(potentialLossEur * rewardRatioT1).toFixed(2);
@@ -2793,6 +2798,7 @@ export function calculateKnockOutSafety(
     suggestedCertificates,
     totalInvestedEur,
     potentialLossEur,
+    riskBreached,
     potentialGainT1Eur,
     potentialGainT2Eur,
     breakeven,
@@ -2820,6 +2826,7 @@ export function createDefaultSafetyCheck(
     suggestedCertificates: 0,
     totalInvestedEur: 0,
     potentialLossEur: 0,
+    riskBreached: false,
     potentialGainT1Eur: 0,
     potentialGainT2Eur: 0,
     breakeven: {
@@ -4775,12 +4782,21 @@ export function evaluateOpenPositionLifecycle(
 
   // Fallback capital and risk amount: non bloccare mai il monitoraggio se riskAmountEur manca
   const fallbackCap = options?.accountCapital && options.accountCapital > 0 ? options.accountCapital : 10000;
-  const riskAmountEur =
+  // IPOTESI: R = PnL reale / rischio pianificato.
+  // potentialLossEur ora e' la perdita reale e puo' superare maxRiskEur: il denominatore di R
+  // resta il rischio pianificato (maxRiskEur), non la perdita effettiva.
+  const plannedRiskEur =
+    typeof trade.maxRiskEur === 'number' && Number.isFinite(trade.maxRiskEur) && trade.maxRiskEur > 0
+      ? trade.maxRiskEur
+      : typeof trade.potentialLossEur === 'number' && Number.isFinite(trade.potentialLossEur) && trade.potentialLossEur > 0
+      ? trade.potentialLossEur
+      : +(fallbackCap * 0.01).toFixed(2);
+  // La perdita effettiva della posizione alimenta il PnL; R usa il rischio pianificato.
+  const realRiskEur =
     typeof trade.potentialLossEur === 'number' && Number.isFinite(trade.potentialLossEur) && trade.potentialLossEur > 0
       ? trade.potentialLossEur
-      : typeof trade.maxRiskEur === 'number' && Number.isFinite(trade.maxRiskEur) && trade.maxRiskEur > 0
-      ? trade.maxRiskEur
-      : +(fallbackCap * 0.01).toFixed(2);
+      : plannedRiskEur;
+  const riskAmountEur = realRiskEur;
   const frictionEur = Math.max(0, trade.frictionEur ?? 0);
 
   // Time metrics
@@ -4835,7 +4851,13 @@ export function evaluateOpenPositionLifecycle(
       outcome,
       exitPrice: +exitP.toFixed(4),
       pnlEur: finalPnlEur,
-      rMultiple: +rMult.toFixed(2),
+      // IPOTESI: R = PnL reale / rischio pianificato quando il rischio pianificato viene
+      // superato; entro il piano R resta quello geometrico (comportamento invariato).
+      rMultiple: +(
+        plannedRiskEur > 0 && Math.abs(finalPnlEur) + frictionEur > plannedRiskEur + 1e-9
+          ? (finalPnlEur + frictionEur) / plannedRiskEur
+          : rMult
+      ).toFixed(2),
       closedAt: timestampIso,
       closeReason: reason,
       mfe: newMfe,
