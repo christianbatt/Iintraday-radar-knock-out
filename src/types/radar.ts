@@ -21,6 +21,7 @@ export interface RawQuoteData {
   todayHigh?: number | null;
   todayLow?: number | null;
   vwap?: number | null;
+  vwapCumulative?: number | null; // VWAP cumulativa di sessione calcolata dalle barre 5m (server -> scoring)
   vwapState?: VwapSignalState | null;
   lastBarVolume?: number | null; // volume della barra 5m piu' recente della sessione (getIntraday5mMetrics)
   lastBarTime?: number | null; // timestamp unix (secondi) della stessa barra

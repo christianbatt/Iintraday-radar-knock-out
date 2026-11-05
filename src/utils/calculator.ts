@@ -907,11 +907,16 @@ export function calculateCandidateScore(
     'direzione' in newsOrCatalyst
   ) {
     const catDir = (newsOrCatalyst as GeminiCatalystAnalysis).direzione;
+    // IPOTESI: il riferimento di prezzo del filtro contrarian e' SOLO la VWAP cumulativa di sessione
+    // (quote.vwapCumulative), ponderata per volume da computeSessionVwap sulle barre 5m chiuse.
+    // Nessun fallback: se la VWAP manca (feed assente, volumi a zero, sessione non iniziata) il
+    // catalizzatore non viene ridotto, invece di usare un prezzo che non e' una VWAP.
+    const contrarianVwap = quote.vwapCumulative ?? null;
     const isContrarian =
       (catDir === 'LONG' &&
-        ((quote.gapPercent ?? 0) < -0.3 || (quote.vwap != null && price != null && price < quote.vwap * (1 - proxFactor)))) ||
+        ((quote.gapPercent ?? 0) < -0.3 || (contrarianVwap != null && price != null && price < contrarianVwap * (1 - proxFactor)))) ||
       (catDir === 'SHORT' &&
-        ((quote.gapPercent ?? 0) > 0.3 || (quote.vwap != null && price != null && price > quote.vwap * (1 + proxFactor))));
+        ((quote.gapPercent ?? 0) > 0.3 || (contrarianVwap != null && price != null && price > contrarianVwap * (1 + proxFactor))));
     if (isContrarian) {
       const reducedBonus = Math.min(3, Math.floor(newsLegacy * 0.25));
       details.push(`⚠️ Notizia ${catDir} in contrasto con azione di prezzo: bonus ridotto a ${reducedBonus}pt legacy`);
@@ -1317,7 +1322,8 @@ export function applyOptimizationProposal(
         else if (market === 'US') writeNumber('minRvolUSA', val);
         else {
           writeNumber('minRvolEurope', val);
-          writeNumber('minRvolUSA', +(val * 1.35).toFixed(2)); // rapporto US/EU gia' usato dall'UI
+          // IPOTESI: il rapporto US/EU arriva da TRADING_PARAMS.RVOL_USA_MULTIPLIER
+          writeNumber('minRvolUSA', +(val * TRADING_PARAMS.RVOL_USA_MULTIPLIER).toFixed(2));
         }
         break;
       }
@@ -5247,8 +5253,9 @@ export interface SessionVwapResult {
  *   - EU 540-1050 (09:00-17:30 Roma).
  *   Il post-market (dalle 16:00 ET in poi) e' sempre escluso; per i segnali (computeVwapState) una barra
  *   piu' recente fuori sessione regolare, o troppo illiquida, produce state = UNKNOWN con flag AFTER_HOURS.
- * Attenzione: il campo numerico `quote.vwap` NON usa questa formula. E' il prezzo tipico
- *   (todayHigh + todayLow + currentPrice) / 3, senza volumi e senza cumulazione (vedi server.ts).
+ * Il campo numerico `quote.vwap` usa questa stessa formula sulle stesse barre 5m: il server
+ *   riporta come `quote.vwap` il risultato di computeSessionVwap, quindi coincide con
+ *   `quote.vwapCumulative` (unica serie per entrambi i campi).
  */
 export function computeSessionVwap(
   bars: VwapBar[],

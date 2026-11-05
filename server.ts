@@ -633,7 +633,32 @@ function calculateWilderRsi(closes: number[], period: number = 14): number | nul
  * esplicito (DOMException/AbortError), mai una risposta vuota trattata come dato valido.
  * Un init.signal gia' presente (timeout dedicato del chiamante) ha la precedenza.
  */
-const EXTERNAL_FETCH_TIMEOUT_MS = 10000;
+const DEFAULT_EXTERNAL_FETCH_TIMEOUT_MS = 10000;
+
+/**
+ * PUNTO 5: legge un intero positivo da ambiente.
+ * Variabile assente, vuota, non numerica o <= 0 -> fallback (default storico).
+ */
+function positiveIntFromEnv(name: string, fallback: number): number {
+  const raw = (process.env[name] || '').trim();
+  if (!raw) return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+const EXTERNAL_FETCH_TIMEOUT_MS = positiveIntFromEnv(
+  'EXTERNAL_FETCH_TIMEOUT_MS',
+  DEFAULT_EXTERNAL_FETCH_TIMEOUT_MS
+);
+
+// PUNTO 5: TTL della cache Yahoo delle metriche intraday 5m (in millisecondi).
+// Default 25000 ms = 25 secondi, il valore storico usato da cache.set(..., 25).
+const YAHOO_CACHE_TTL_MS = positiveIntFromEnv('YAHOO_CACHE_TTL_MS', 25000);
+
+// PUNTO 3 (config): modelli OpenRouter leggibili da ambiente.
+// Default = valori storici hardcoded: senza variabili il comportamento non cambia.
+const OPENROUTER_PRIMARY_MODEL = (process.env.OPENROUTER_PRIMARY_MODEL || '').trim() || 'nvidia/nemotron-3-ultra-550b-a55b:free';
+const OPENROUTER_FALLBACK_MODEL = (process.env.OPENROUTER_FALLBACK_MODEL || '').trim() || 'openrouter/free';
 
 async function fetchWithTimeout(
   url: string,
@@ -1143,7 +1168,7 @@ async function getIntraday5mMetrics(
       vwapDataQuality,
       setupIndicators,
     };
-    cache.set(cacheKey, result, 25);
+    cache.set(cacheKey, result, YAHOO_CACHE_TTL_MS / 1000);
     return result;
   } catch {
     return {
@@ -1444,14 +1469,16 @@ async function fetchQuoteForTicker(
           }
         }
 
-        // Real Today Open, Day High, Day Low, and Intraday VWAP estimate from official feed
+        // Real Today Open, Day High, Day Low from official feed
         const tOpen: number | null = meta.regularMarketOpen ?? (lastBar ? lastBar.close : null);
         const tHigh: number | null = meta.regularMarketDayHigh ?? (lastBar ? lastBar.high : null);
         const tLow: number | null = meta.regularMarketDayLow ?? (lastBar ? lastBar.low : null);
-        let calcVwap: number | null = null;
-        if (tHigh && tLow && currentP) {
-          calcVwap = +((tHigh + tLow + currentP) / 3).toFixed(2);
-        }
+        // PUNTO 1 (VWAP di sessione, IPOTESI): quote.vwap e' la VWAP reale prodotta da
+        // computeSessionVwap sulle stesse barre 5m chiuse che alimentano vwapCumulative
+        // (stessa serie, stesso arrotondamento a 2 decimali: i due campi non possono divergere).
+        // Senza barre con volume > 0 il valore e' null: la vecchia stima
+        // (dayHigh + dayLow + currentPrice) / 3 non era una VWAP ed e' stata rimossa.
+        const sessionVwap: number | null = (await intraday5mPromise).vwapCumulative ?? null;
 
         quoteData = {
           currentPrice: currentP ? +currentP.toFixed(2) : quoteData.currentPrice ?? null,
@@ -1464,7 +1491,7 @@ async function fetchQuoteForTicker(
           todayOpen: tOpen ? +tOpen.toFixed(2) : null,
           todayHigh: tHigh ? +tHigh.toFixed(2) : null,
           todayLow: tLow ? +tLow.toFixed(2) : null,
-          vwap: calcVwap,
+          vwap: sessionVwap,
           ema20Daily: calcEma20,
           avgVolume20d: avgVol,
           preMarketVolume: pmVol ?? regVol ?? null,
@@ -2379,7 +2406,7 @@ Restituisci eventuali proposte non persistenti nel campo "newDirectives". Non di
     let generated: any = null;
     if (openRouterKey) {
       const openRouterRes = await callOpenRouterModel(
-        ['nvidia/nemotron-3-ultra-550b-a55b:free', 'openrouter/free'],
+        [OPENROUTER_PRIMARY_MODEL, OPENROUTER_FALLBACK_MODEL],
         systemInstruction,
         promptText,
         openRouterKey,
@@ -2484,7 +2511,7 @@ Restituisci un JSON rigoroso con questi campi:
     let generated: any = null;
     if (openRouterKey) {
       const openRouterRes = await callOpenRouterModel(
-        ['nvidia/nemotron-3-ultra-550b-a55b:free', 'openrouter/free'],
+        [OPENROUTER_PRIMARY_MODEL, OPENROUTER_FALLBACK_MODEL],
         systemInstruction,
         promptText,
         openRouterKey,
@@ -2712,10 +2739,7 @@ app.post('/api/test-openrouter', requireServerApiKey, async (req: Request, res: 
       : '***';
 
     const testPrompt = 'Rispondi solo con questo JSON: {"status": "ok", "message": "connessione riuscita"}';
-    const modelsToTest = [
-      'nvidia/nemotron-3-ultra-550b-a55b:free',
-      'openrouter/free',
-    ];
+    const modelsToTest = [OPENROUTER_PRIMARY_MODEL, OPENROUTER_FALLBACK_MODEL];
 
     const modelResults: any[] = [];
     for (const model of modelsToTest) {
@@ -2899,10 +2923,7 @@ newsBonusScore: numero intero da 0 a 15 (punti bonus aggiuntivi per forza del ca
     // 1. TIER 1 & 2: OpenRouter (Primario: NVIDIA Nemotron 3 Ultra Free, Fallback: OpenRouter Free router)
     if (openRouterKey) {
       const openRouterRes = await callOpenRouterModel(
-        [
-          'nvidia/nemotron-3-ultra-550b-a55b:free',
-          'openrouter/free',
-        ],
+        [OPENROUTER_PRIMARY_MODEL, OPENROUTER_FALLBACK_MODEL],
         systemInstruction,
         userPrompt,
         openRouterKey,

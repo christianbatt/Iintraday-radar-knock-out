@@ -58,6 +58,7 @@ export interface TradingParamsConfig {
   // Soglie Minime di RVOL per Mercato
   MIN_RVOL_EU: number;
   MIN_RVOL_US: number;
+  RVOL_USA_MULTIPLIER: number; // rapporto minRvolUSA / minRvolEurope
 
   // Soglie Minime di Punteggio per Mercato (Unica Fonte di Verità)
   MIN_SCORE_EU: number;
@@ -231,6 +232,8 @@ export const TRADING_PARAMS: TradingParamsConfig = {
   // Soglie Minime di RVOL per Mercato
   MIN_RVOL_EU: 0.85, // Soglia minima RVOL per Europa (0.85x)
   MIN_RVOL_US: 1.15, // Soglia minima RVOL per USA (1.15x)
+  // IPOTESI: rapporto minRvolUSA / minRvolEurope (calculator e UI). Valore storico 1.35, non validato empiricamente.
+  RVOL_USA_MULTIPLIER: 1.35,
 
   // Soglie Minime di Punteggio per Mercato (Unica Fonte di Verità)
   MIN_SCORE_EU: 48, // Punteggio minimo qualificazione Top Pick Europa (senza punti liquidità)

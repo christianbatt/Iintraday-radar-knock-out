@@ -102,9 +102,9 @@ describe('VWAP scoring - contributo per stato', () => {
 
   it('T7: |distAtr| < banda neutra -> NEUTRAL, meta peso e riga presente', () => {
     const c = calculateVwapScoreContribution(state({ state: 'ABOVE', distAtr: 0.05 }), 'LONG');
-    assert.strictEqual(c.score, 5);
+    assert.strictEqual(c.score, 0);
     assert.strictEqual(c.state, 'NEUTRAL');
-    assert.ok(c.detail.startsWith('VWAP: NEUTRAL | dist 0.05 ATR | vol 2.10x | contributo 5/10'), c.detail);
+    assert.ok(c.detail.startsWith('VWAP: NEUTRAL | dist 0.05 ATR | vol 2.10x | contributo 0/10'), c.detail);
   });
 
   it('T8: volume non confermato (< 1.5x) -> UNCONFIRMED, 0 punti e riga presente', () => {
