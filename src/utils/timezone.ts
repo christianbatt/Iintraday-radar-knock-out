@@ -22,33 +22,58 @@ export interface MarketTimeDetails {
   orbCloseFormatted: string;
 }
 
+const exchangeDateFmtUS = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+const exchangeDateFmtEU = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Europe/Rome',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+const marketTimeFmtUS = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'America/New_York',
+  hour12: false,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
+
+const marketTimeFmtEU = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Europe/Rome',
+  hour12: false,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
+
+const romeTimeFmt = new Intl.DateTimeFormat('it-IT', {
+  timeZone: 'Europe/Rome',
+  hour12: false,
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
+
 export function getExchangeDateStr(market: 'EU' | 'US', date: Date = new Date()): string {
-  const timeZone = market === 'US' ? 'America/New_York' : 'Europe/Rome';
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-  const map: Record<string, string> = {};
-  for (const p of parts) map[p.type] = p.value;
-  return `${map.year}-${map.month}-${map.day}`;
+  const formatter = market === 'US' ? exchangeDateFmtUS : exchangeDateFmtEU;
+  return formatter.format(date);
 }
 
 export function getMarketTime(market: 'EU' | 'US', date: Date = new Date()): MarketTimeDetails {
   const timeZone = market === 'US' ? 'America/New_York' : 'Europe/Rome';
-
-  const formatter = new Intl.DateTimeFormat('en-GB', {
-    timeZone,
-    hour12: false,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-
+  const formatter = market === 'US' ? marketTimeFmtUS : marketTimeFmtEU;
   const parts = formatter.formatToParts(date);
   const partMap: Record<string, string> = {};
   for (const p of parts) {
@@ -179,11 +204,5 @@ export function getUsOrbCloseTimeInfo(sessionDateStr: string): {
  * Converte l'orario di un timestamp o Date nel fuso di Roma
  */
 export function formatInRomeTime(date: Date = new Date()): string {
-  return new Intl.DateTimeFormat('it-IT', {
-    timeZone: 'Europe/Rome',
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).format(date);
+  return romeTimeFmt.format(date);
 }

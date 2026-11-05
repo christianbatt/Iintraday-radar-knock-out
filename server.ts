@@ -670,6 +670,26 @@ async function fetchWithTimeout(
   return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
 
+/**
+ * Esegue mapping asincrono con limite di concorrenza per evitare rate limit e timeout su API esterne.
+ */
+async function mapConcurrent<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let currentIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (currentIndex < items.length) {
+      const idx = currentIndex++;
+      results[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 // Fetch real live EUR/USD exchange rate from Yahoo Finance feed (no hardcoded fallback)
 async function getLiveEurUsdRate(): Promise<number> {
   const cacheKey = 'fx:EURUSD';
@@ -701,8 +721,11 @@ async function fetchWarmup5mBars(ticker: string, range: string): Promise<Indicat
   const ySymbol = ticker.includes('.') ? ticker : `${ticker}`;
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}?interval=5m&range=${encodeURIComponent(range)}&includePrePost=true&_=${Date.now()}`;
   const resp = await fetchWithTimeout(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-    signal: AbortSignal.timeout(6000),
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      Accept: 'application/json',
+    },
+    signal: AbortSignal.timeout(12000),
   });
   if (!resp.ok) throw new Error(`FEED_ERROR:HTTP ${resp.status}`);
   const json = await resp.json();
@@ -763,8 +786,11 @@ async function getIntraday5mMetrics(
     const ySymbol = ticker.includes('.') ? ticker : `${ticker}`;
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}?interval=5m&range=60d&includePrePost=true&_=${Date.now()}`;
     const resp = await fetchWithTimeout(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-      signal: AbortSignal.timeout(6000),
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(12000),
     });
     if (!resp.ok) return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null, orbBreakoutTimeLong: null, orbBreakoutTimeShort: null, vwapCumulative: null, vwapCumulativeWithPre: null, vwapCoverage: null, vwapState: null, lastBarVolume: null, lastBarTime: null, vwapDataQuality: { ok: false, reason: `FEED_ERROR:HTTP ${resp.status}`, coverage: 0 }, setupIndicators: null };
     const json = await resp.json();
@@ -1121,13 +1147,26 @@ async function getIntraday5mMetrics(
       })) as IndicatorBarInput[];
 
       let warmup: WarmupSeriesResult | null = null;
-      try {
-        warmup = await loadWarmupBars((range) => fetchWarmup5mBars(ticker, range), { market, now: new Date() });
-      } catch {
-        warmup = null;
+      const recentInMemoryBars = inMemoryBars.length > 600 ? inMemoryBars.slice(-600) : inMemoryBars;
+      if (recentInMemoryBars.length >= TRADING_PARAMS.IND_MIN_BARS) {
+        const selection = selectWarmupBars(recentInMemoryBars, market, { now: new Date() });
+        warmup = {
+          bars: selection.bars,
+          rangeUsed: '60d (serie gia in memoria)',
+          fallbackUsed: false,
+          priorSessionsUsed: selection.priorSessionsUsed,
+          completeBars: selection.bars.length,
+          droppedFutureBars: selection.droppedFutureBars,
+        };
+      } else {
+        try {
+          warmup = await loadWarmupBars((range) => fetchWarmup5mBars(ticker, range), { market, now: new Date() });
+        } catch {
+          warmup = null;
+        }
       }
       if (!warmup) {
-        const selection = selectWarmupBars(inMemoryBars, market);
+        const selection = selectWarmupBars(recentInMemoryBars, market, { now: new Date() });
         warmup = {
           bars: selection.bars,
           rangeUsed: '60d (serie gia in memoria)',
@@ -1170,7 +1209,8 @@ async function getIntraday5mMetrics(
     };
     cache.set(cacheKey, result, YAHOO_CACHE_TTL_MS / 1000);
     return result;
-  } catch {
+  } catch (err: any) {
+    console.warn(`[getIntraday5mMetrics] ${ticker} (${market}) fallito:`, err?.message || err);
     return {
       rsi5m: null,
       rvol: null,
@@ -1527,6 +1567,13 @@ async function fetchQuoteForTicker(
     gapPercent = +(((activePrice - quoteData.prevClose) / quoteData.prevClose) * 100).toFixed(2);
   }
 
+  let intraday5m: any = {};
+  try {
+    intraday5m = await intraday5mPromise;
+  } catch (err: any) {
+    intraday5m = {};
+  }
+
   const result: RawQuoteData = {
     ticker,
     name: name || ticker,
@@ -1542,7 +1589,7 @@ async function fetchQuoteForTicker(
     todayOpen: quoteData.todayOpen ?? null,
     todayHigh: quoteData.todayHigh ?? null,
     todayLow: quoteData.todayLow ?? null,
-    vwap: quoteData.vwap ?? null,
+    vwap: intraday5m.vwapCumulative ?? quoteData.vwap ?? null,
     ema20Daily: quoteData.ema20Daily ?? null,
     avgVolume20d: quoteData.avgVolume20d ?? null,
     preMarketVolume: quoteData.preMarketVolume ?? null,
@@ -1550,28 +1597,28 @@ async function fetchQuoteForTicker(
     adr14: quoteData.adr14 ?? null,
     liqEur20d: quoteData.liqEur20d ?? null,
     completedBarsCount: quoteData.completedBarsCount ?? null,
-    orbHigh: (await intraday5mPromise).orbHigh ?? null,
-    orbLow: (await intraday5mPromise).orbLow ?? null,
-    orbBreakoutTime: (await intraday5mPromise).orbBreakoutTime ?? null,
-    orbBreakoutTimeLong: (await intraday5mPromise).orbBreakoutTimeLong ?? null,
-    orbBreakoutTimeShort: (await intraday5mPromise).orbBreakoutTimeShort ?? null,
-    vwapCumulative: (await intraday5mPromise).vwapCumulative ?? null,
-    vwapCumulativeWithPre: (await intraday5mPromise).vwapCumulativeWithPre ?? null,
-    vwapCoverage: (await intraday5mPromise).vwapCoverage ?? null,
-    vwapState: (await intraday5mPromise).vwapState ?? null,
-    lastBarVolume: (await intraday5mPromise).lastBarVolume ?? null,
-    lastBarTime: (await intraday5mPromise).lastBarTime ?? null,
-    vwapDataQuality: (await intraday5mPromise).vwapDataQuality ?? null,
-    setupIndicators: (await intraday5mPromise).setupIndicators ?? null,
+    orbHigh: intraday5m.orbHigh ?? null,
+    orbLow: intraday5m.orbLow ?? null,
+    orbBreakoutTime: intraday5m.orbBreakoutTime ?? null,
+    orbBreakoutTimeLong: intraday5m.orbBreakoutTimeLong ?? null,
+    orbBreakoutTimeShort: intraday5m.orbBreakoutTimeShort ?? null,
+    vwapCumulative: intraday5m.vwapCumulative ?? null,
+    vwapCumulativeWithPre: intraday5m.vwapCumulativeWithPre ?? null,
+    vwapCoverage: intraday5m.vwapCoverage ?? null,
+    vwapState: intraday5m.vwapState ?? null,
+    lastBarVolume: intraday5m.lastBarVolume ?? null,
+    lastBarTime: intraday5m.lastBarTime ?? null,
+    vwapDataQuality: intraday5m.vwapDataQuality ?? null,
+    setupIndicators: intraday5m.setupIndicators ?? null,
     gapPercent,
-    rvol: quoteData.rvol ?? (await intraday5mPromise).rvol ?? null,
-    rvol20m: quoteData.rvol20m ?? (await intraday5mPromise).rvol20m,
+    rvol: quoteData.rvol ?? intraday5m.rvol ?? null,
+    rvol20m: quoteData.rvol20m ?? intraday5m.rvol20m,
     impliedVolatility: quoteData.impliedVolatility ?? null,
     historicalVolatility30d: quoteData.historicalVolatility30d ?? null,
     ivRank: quoteData.ivRank ?? null,
     rsi14: quoteData.rsi14 ?? null,
-    rsi5m: quoteData.rsi5m ?? (await intraday5mPromise).rsi5m,
-    orderFlow: quoteData.orderFlow ?? (await intraday5mPromise).orderFlow ?? null,
+    rsi5m: quoteData.rsi5m ?? intraday5m.rsi5m,
+    orderFlow: quoteData.orderFlow ?? intraday5m.orderFlow ?? null,
     timestamp: new Date().toISOString(),
     source: quoteData.currentPrice ? source : 'Dati di mercato non disponibili',
   };
@@ -2067,8 +2114,11 @@ app.post('/api/market-data', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Array "underlyings" richiesto' });
     }
 
-    const results = await Promise.all(
-      underlyings.map((item) =>
+    // Esecuzione concorrente a lotti controllati (concurrency = 6) per evitare saturazione e timeout da Yahoo Finance
+    const results = await mapConcurrent(
+      underlyings,
+      6,
+      (item) =>
         fetchQuoteForTicker(
           item.ticker,
           item.nome || item.name,
@@ -2076,7 +2126,6 @@ app.post('/api/market-data', async (req: Request, res: Response) => {
           item.valuta || item.currency || 'EUR',
           bypass
         )
-      )
     );
 
     // Qualita' dati VWAP per scansione: solo log/report, nessun impatto su UI o punteggi.
