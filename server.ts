@@ -33,6 +33,7 @@ import { VWAP_PROMPT_BLOCK } from './src/config/vwapPrompt';
 import { SETUP_PROMPT_BLOCK } from './src/config/setupPrompt';
 import { AILearnedInsight, VwapSignalState, VwapDataQuality, SetupIndicators, IndicatorBarInput } from './src/types/radar';
 import { runNightlyLearning } from './scripts/nightly_learning';
+import { authStartupWarning } from './src/utils/authStartupWarning';
 
 dotenv.config();
 
@@ -162,6 +163,13 @@ app.use(express.json({ limit: '10mb' }));
 app.set('trust proxy', 1);
 
 const validApiKeys = (process.env.VALID_API_KEYS || '').split(',').map((key) => key.trim()).filter(Boolean);
+
+/**
+ * AUDIT D2: interruttore esplicito per il vecchio comportamento "legacy" (nessuna credenziale
+ * -> sessione condivisa). Default OFF: le API protette sono fail-closed.
+ * IPOTESI: nome della variabile e default OFF (prima il fail-open era sempre attivo).
+ */
+const ALLOW_LEGACY_API_AUTH = process.env.ALLOW_LEGACY_API_AUTH === 'true';
 const firebaseLocalConfigPath = path.join(__dirname, 'firebase-applet-config.json');
 let firebaseProjectId =
   process.env.FIREBASE_PROJECT_ID ||
@@ -201,8 +209,12 @@ if (firebaseProjectId) {
   }
 }
 
-if (validApiKeys.length === 0 && !firebaseAdminAuth) {
-  console.warn('[Auth] Nessun autenticatore configurato: route sensibili restano chiuse (401/503).');
+const startupAuthWarning = authStartupWarning(
+  ALLOW_LEGACY_API_AUTH,
+  validApiKeys.length > 0 || Boolean(firebaseAdminAuth),
+);
+if (startupAuthWarning) {
+  console.warn(startupAuthWarning);
 }
 
 async function loadPersistentAIMemory(): Promise<AILearnedInsight[]> {
@@ -279,12 +291,6 @@ function isValidApiKey(req: Request): boolean {
   });
 }
 
-/**
- * AUDIT D2: interruttore esplicito per il vecchio comportamento "legacy" (nessuna credenziale
- * -> sessione condivisa). Default OFF: le API protette sono fail-closed.
- * IPOTESI: nome della variabile e default OFF (prima il fail-open era sempre attivo).
- */
-const ALLOW_LEGACY_API_AUTH = process.env.ALLOW_LEGACY_API_AUTH === 'true';
 
 async function requireApiAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (isValidApiKey(req)) {
