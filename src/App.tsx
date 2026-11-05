@@ -60,6 +60,7 @@ import {
   batchUploadTradesToCloud,
   subscribeToUserCloudData,
 } from './services/firebaseSync';
+import { mergeTradesWithTombstones } from './utils/tradeMerge';
 import { User, onAuthStateChanged } from 'firebase/auth';
 
 import { RiskBanner } from './components/RiskBanner';
@@ -439,15 +440,13 @@ export default function App() {
 
         // 3. Diario di trading
         if (Array.isArray(s.journalEntries) && s.journalEntries.length > 0) {
-          setJournalEntries((prevLocal) => {
-            const map = new Map<string, TradeJournalEntry>();
-            prevLocal.forEach((t) => map.set(t.id, t));
-            s.journalEntries.forEach((t: TradeJournalEntry) => map.set(t.id, t));
-            const merged = Array.from(map.values());
-            merged.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-            localStorage.setItem('intraday_radar_journal_trades', JSON.stringify(merged));
-            return merged;
-          });
+          const merged = mergeTradesWithTombstones(
+            journalEntriesRef.current,
+            s.journalEntries,
+            deletedTradeIdsRef.current
+          );
+          setJournalEntries(merged);
+          localStorage.setItem('intraday_radar_journal_trades', JSON.stringify(merged));
         }
 
         // 4. Setup esclusi (Autoanalisi scartati)
@@ -554,26 +553,25 @@ export default function App() {
             if (cloudSettings.underlyings && cloudSettings.underlyings.length > 0) {
               setUnderlyings(migrateUnderlyings(cloudSettings.underlyings));
             }
+            if (Array.isArray(cloudSettings.deletedTradeIds) && cloudSettings.deletedTradeIds.length > 0) {
+              const mergedIds = Array.from(new Set([...deletedTradeIdsRef.current, ...cloudSettings.deletedTradeIds]));
+              deletedTradeIdsRef.current = mergedIds;
+              setDeletedTradeIds(mergedIds);
+            }
             setCloudSyncStatus('SYNCED');
           },
           (cloudTrades) => {
-            setJournalEntries((prevLocal) => {
-              // Bidirectional merge: combine local and cloud trades by id
-              const tradeMap = new Map<string, TradeJournalEntry>();
-              prevLocal.forEach((t) => tradeMap.set(t.id, t));
-              cloudTrades.forEach((t) => tradeMap.set(t.id, t));
-              const merged = Array.from(tradeMap.values());
-              merged.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-              // Upload any local-only trades that aren't yet in Firestore
-              const cloudIds = new Set(cloudTrades.map((t) => t.id));
-              const missingInCloud = prevLocal.filter((t) => !cloudIds.has(t.id));
-              if (missingInCloud.length > 0) {
-                batchUploadTradesToCloud(user.uid, missingInCloud);
-              }
-
-              return merged;
-            });
+            // AUDIT ROUND2 V4: il merge rispetta i tombstone (un trade eliminato non risorge).
+            const tombstones = deletedTradeIdsRef.current;
+            const blocked = new Set(tombstones);
+            const cloudIds = new Set(cloudTrades.map((t) => t.id));
+            const missingInCloud = journalEntriesRef.current.filter(
+              (t) => !cloudIds.has(t.id) && !blocked.has(t.id)
+            );
+            setJournalEntries(mergeTradesWithTombstones(journalEntriesRef.current, cloudTrades, tombstones));
+            if (missingInCloud.length > 0) {
+              batchUploadTradesToCloud(user.uid, missingInCloud);
+            }
             setCloudSyncStatus('SYNCED');
           },
           () => {
@@ -590,6 +588,59 @@ export default function App() {
       unsubAuth();
     };
   }, []);
+
+  // AUDIT ROUND2 V4: tombstone dei trade eliminati.
+  // IPOTESI: i tombstone sono mantenuti tutti (nessun limite di retention).
+  const [deletedTradeIds, setDeletedTradeIds] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('intraday_radar_deleted_trade_ids');
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
+  const deletedTradeIdsRef = React.useRef<string[]>(deletedTradeIds);
+  const journalEntriesRef = React.useRef<TradeJournalEntry[]>(journalEntries);
+  useEffect(() => {
+    journalEntriesRef.current = journalEntries;
+  }, [journalEntries]);
+  useEffect(() => {
+    deletedTradeIdsRef.current = deletedTradeIds;
+    try {
+      localStorage.setItem('intraday_radar_deleted_trade_ids', JSON.stringify(deletedTradeIds));
+    } catch {
+      /* storage non disponibile: i tombstone restano in memoria */
+    }
+  }, [deletedTradeIds]);
+  const rememberDeletedTrades = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    const next = Array.from(new Set([...deletedTradeIdsRef.current, ...ids]));
+    deletedTradeIdsRef.current = next;
+    setDeletedTradeIds(next);
+    if (currentUser) {
+      syncSystemSettingsToCloud(currentUser.uid, {
+        parameters,
+        pendingProposal,
+        accountCapital,
+        isPaperMode,
+        deletedTradeIds: next,
+      });
+    }
+  }, [currentUser, parameters, pendingProposal, accountCapital, isPaperMode]);
+
+  // AUDIT ROUND2 V5: lo stato letto dalla scansione passa da ref aggiornati in un effect dedicato,
+  // cosi' le dipendenze della scansione non cambiano e l'effetto non si rilancia da solo.
+  const macroCalendarRef = React.useRef<MacroCalendarState | null>(macroCalendar);
+  const sessionInfoRef = React.useRef<SessionInfo | null>(sessionInfo);
+  const catalystCacheRef = React.useRef<Record<string, GeminiCatalystAnalysis>>(catalystCache);
+  const newsCacheRef = React.useRef<Record<string, NewsItem[]>>(newsCache);
+  useEffect(() => {
+    sessionInfoRef.current = sessionInfo;
+    macroCalendarRef.current = macroCalendar;
+    catalystCacheRef.current = catalystCache;
+    newsCacheRef.current = newsCache;
+  }, [sessionInfo, macroCalendar, catalystCache, newsCache]);
 
   // Compute Daily Risk Tracker & Circuit Breaker
   const todayStr = new Date().toLocaleDateString('it-IT');
@@ -642,10 +693,10 @@ export default function App() {
     const ticker = candidate.quote.ticker;
 
     // Check memory cache first
-    if (catalystCache[ticker]) return catalystCache[ticker];
+    if (catalystCacheRef.current[ticker]) return catalystCacheRef.current[ticker];
 
     try {
-      let newsItems = newsCache[ticker];
+      let newsItems = newsCacheRef.current[ticker];
       if (!newsItems) {
         newsItems = await fetchTickerNews(ticker, candidate.quote.name);
         setNewsCache((prev) => ({ ...prev, [ticker]: newsItems }));
@@ -660,7 +711,15 @@ export default function App() {
   };
 
   // Run Screening Function (Dual-Market Europe & USA)
+  // AUDIT ROUND2 V6: una nuova scansione annulla la precedente.
+  const scanAbortRef = React.useRef<AbortController | null>(null);
+
   const handleRunScreening = useCallback(async () => {
+    scanAbortRef.current?.abort();
+    const controller = new AbortController();
+    scanAbortRef.current = controller;
+    const isAlive = () => !controller.signal.aborted;
+
     if (underlyings.length === 0) {
       setScanError('Nessun sottostante caricato nel paniere. Aggiungine nel gestore CSV.');
       return;
@@ -691,6 +750,7 @@ export default function App() {
         fetchBenchmarkFutures(true).catch(() => futures),
         fetchMarketData(scanBasket, true),
       ]);
+      if (!isAlive()) return;
 
       if (freshFutures) {
         setFutures(freshFutures);
@@ -841,13 +901,14 @@ export default function App() {
         ? 'MANUAL_FREEZE'
         : 'UNFROZEN_LATE';
 
+      if (!isAlive()) return;
       setTopCandidateEU(finalTopEU);
       setTopCandidateUS(finalTopUS);
-      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU, macroEvents: macroCalendar?.events }));
-      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters, { entryMode: entryModeUS, macroEvents: macroCalendar?.events }));
+      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU, macroEvents: macroCalendarRef.current?.events }));
+      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters, { entryMode: entryModeUS, macroEvents: macroCalendarRef.current?.events }));
 
       // 4.5. Visual Filtering Audit Generation (triggers 3-5s notification banner)
-      const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCache };
+      const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCacheRef.current };
       if (finalTopEU && finalCatEU) currentCache[finalTopEU.quote.ticker] = finalCatEU;
       if (finalTopUS && finalCatUS) currentCache[finalTopUS.quote.ticker] = finalCatUS;
 
@@ -858,7 +919,7 @@ export default function App() {
         parameters,
         currentCache,
         rsiFilterActive,
-        sessionInfo?.cet?.currentMinutes
+        sessionInfoRef.current?.cet?.currentMinutes
       );
       setAuditReport(audit);
       setShowAuditBanner(true);
@@ -889,9 +950,10 @@ export default function App() {
         });
       }
     } catch (err: any) {
+      if (!isAlive()) return;
       setScanError(`Errore durante il recupero dei dati di mercato: ${err.message || 'Controlla la connessione'}`);
     } finally {
-      setIsScanning(false);
+      if (scanAbortRef.current === controller) setIsScanning(false);
     }
   }, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries]);
 
@@ -1013,17 +1075,21 @@ export default function App() {
     handleRunScreeningRef.current = handleRunScreening;
   });
 
+  const autoRefreshCountdownRef = React.useRef(20);
+  useEffect(() => {
+    autoRefreshCountdownRef.current = autoRefreshCountdown;
+  }, [autoRefreshCountdown]);
+
   useEffect(() => {
     if (!isAutoRefresh) return;
 
     const timer = setInterval(() => {
-      setAutoRefreshCountdown((prev) => {
-        if (prev <= 1) {
-          handleRunScreeningRef.current();
-          return 20;
-        }
-        return prev - 1;
-      });
+      // AUDIT ROUND2 V6: il tick e il side effect stanno fuori dall'updater di stato.
+      const base = autoRefreshCountdownRef.current;
+      const next = base <= 1 ? 20 : base - 1;
+      autoRefreshCountdownRef.current = next;
+      setAutoRefreshCountdown(next);
+      if (next === 20) handleRunScreeningRef.current();
     }, 1000);
 
     return () => clearInterval(timer);
@@ -1189,9 +1255,11 @@ export default function App() {
   useEffect(() => {
     if (quotes.length === 0) return;
 
-    setJournalEntries((prevEntries) => {
+    // AUDIT ROUND2 V6: nessun side effect dentro l'updater di stato.
+    const prevEntries = journalEntriesRef.current;
+    {
       const openTrades = prevEntries.filter((t) => t.status === 'OPEN');
-      if (openTrades.length === 0) return prevEntries;
+      if (openTrades.length === 0) return;
 
       let hasAnyChange = false;
       let notificationToDisplay = '';
@@ -1216,7 +1284,9 @@ export default function App() {
         return trade;
       });
 
-      if (!hasAnyChange) return prevEntries;
+      if (!hasAnyChange) return;
+
+      setJournalEntries(updatedList);
 
       if (notificationToDisplay) {
         setOptimizationNotification(notificationToDisplay);
@@ -1231,9 +1301,7 @@ export default function App() {
           }
         });
       }
-
-      return updatedList;
-    });
+    }
   }, [quotes, sessionInfo, accountCapital, currentUser]);
 
   // 6d. Autonomous Excluded Setups Live Monitor (Counterfactual Tick-by-Tick Evaluation)
@@ -1322,6 +1390,8 @@ export default function App() {
   };
 
   const handleDeleteJournalTrade = (id: string) => {
+    // AUDIT ROUND2 V4: tombstone prima della rimozione, cosi' lo snapshot cloud non lo riaggiunge.
+    rememberDeletedTrades([id]);
     setJournalEntries((prev) => prev.filter((item) => item.id !== id));
     if (currentUser) {
       deleteTradeFromCloud(currentUser.uid, id);
@@ -1329,6 +1399,7 @@ export default function App() {
   };
 
   const handleClearJournal = () => {
+    rememberDeletedTrades(journalEntries.map((trade) => trade.id));
     setJournalEntries([]);
     setPendingProposal(null);
     if (currentUser) {
