@@ -100,7 +100,7 @@ describe('VWAP scoring - contributo per stato', () => {
     assert.strictEqual(calculateVwapScoreContribution(reject, 'SHORT').score, +W);
   });
 
-  it('T7: |distAtr| < banda neutra -> NEUTRAL, meta peso e riga presente', () => {
+  it('T7: |distAtr| < banda neutra -> NEUTRAL, 0 punti e riga presente', () => {
     const c = calculateVwapScoreContribution(state({ state: 'ABOVE', distAtr: 0.05 }), 'LONG');
     assert.strictEqual(c.score, 0);
     assert.strictEqual(c.state, 'NEUTRAL');

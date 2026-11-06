@@ -30,19 +30,41 @@ import type {
   StochRsiSnapshot,
   SupertrendSnapshot,
 } from '../types/radar';
-import { adxThresholds, IND_BAR_MS, TRADING_PARAMS } from '../config/tradingParams';
+import { adxThresholds, indMaxStaleMin, IND_BAR_MS, TRADING_PARAMS } from '../config/tradingParams';
 
 const MINUTE_MS = 60_000;
 
-/** Minuti dalla mezzanotte nel fuso del mercato, con ora legale gestita da Intl. */
-export function exchangeMinutes(tsMs: number, market: 'EU' | 'US'): number {
-  const timeZone = market === 'EU' ? 'Europe/Rome' : 'America/New_York';
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone,
+const formatterCache = {
+  minutesEU: new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Rome',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
-  }).formatToParts(new Date(tsMs));
+  }),
+  minutesUS: new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'America/New_York',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }),
+  dateEU: new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Rome',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }),
+  dateUS: new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }),
+};
+
+/** Minuti dalla mezzanotte nel fuso del mercato, con ora legale gestita da Intl. */
+export function exchangeMinutes(tsMs: number, market: 'EU' | 'US'): number {
+  const fmt = market === 'EU' ? formatterCache.minutesEU : formatterCache.minutesUS;
+  const parts = fmt.formatToParts(new Date(tsMs));
   const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
   const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
   return hour * 60 + minute;
@@ -82,13 +104,8 @@ export function filterRegularSessionBars(
 
 /** Data locale di scambio (YYYY-MM-DD) nel fuso del mercato. */
 export function exchangeDate(tsMs: number, market: 'EU' | 'US'): string {
-  const timeZone = market === 'EU' ? 'Europe/Rome' : 'America/New_York';
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(tsMs));
+  const fmt = market === 'EU' ? formatterCache.dateEU : formatterCache.dateUS;
+  return fmt.format(new Date(tsMs));
 }
 
 /**
@@ -645,7 +662,7 @@ export function computeSetupIndicators(
 ): SetupIndicators {
   const now = options.now ?? new Date();
   const minBars = options.minBars ?? TRADING_PARAMS.IND_MIN_BARS;
-  const maxStaleMin = options.maxStaleMin ?? TRADING_PARAMS.IND_MAX_STALE_MIN;
+  const maxStaleMin = options.maxStaleMin ?? indMaxStaleMin(options.market);
   const selection = selectWarmupBars(bars, options.market, {
     maxPriorSessions: options.maxPriorSessions,
     now,

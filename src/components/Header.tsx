@@ -95,6 +95,12 @@ export const Header: React.FC<HeaderProps> = ({
                   <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
                     Trade Republic KO
                   </span>
+                  <span
+                    className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-950/70 text-sky-300 border border-sky-800/60 hidden sm:inline-block"
+                    title="Feed dati di borsa 100% reali. Borse UE con latenza contrattuale ufficiale di 15 min; Borse USA real-time BATS."
+                  >
+                    Dati 100% Reali (EU 15m • US Live)
+                  </span>
                 </h1>
               </div>
               <p className="text-xs text-slate-400">
