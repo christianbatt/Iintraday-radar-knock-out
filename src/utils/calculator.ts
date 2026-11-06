@@ -5272,7 +5272,22 @@ export function computeSessionVwap(
   let barsUsed = 0;
   let barsWithVolume = 0;
   // AUDIT P1-6: limite temporale della valutazione (una barra entra solo se chiusa entro nowMinutes).
-  const upTo = Math.min(options.nowMinutes ?? endM, endM);
+  // BUGFIX (coverage): senza nowMinutes l'orizzonte era endM, quindi `expected` contava tutte
+  // le barre della giornata (78) e un cutoff anticipato usciva con coverage 3/78 = 0.038
+  // anche con la serie completa e pulita. Orizzonte di fallback = chiusura dell'ultima
+  // barra di sessione presente nel feed (lettura dei dati, non formula VWAP).
+  const lastClosedMinutes = (() => {
+    let maxEnd = -1;
+    for (const b of bars) {
+      const mt = getMarketTime(market, new Date(b.timestamp * 1000));
+      if (mt.dateFormatted !== sessionDate) continue;
+      if (mt.totalMinutes < startM || mt.totalMinutes >= endM) continue;
+      const endBar = mt.totalMinutes + 5;
+      if (endBar > maxEnd) maxEnd = endBar;
+    }
+    return maxEnd > 0 ? maxEnd : endM;
+  })();
+  const upTo = Math.min(options.nowMinutes ?? lastClosedMinutes, endM);
 
   for (const b of bars) {
     if (b.high == null || b.low == null || b.close == null) continue;
@@ -5326,7 +5341,12 @@ export function computeVwapDataQuality(
   now: Date,
   options: VwapQualityOptions = {}
 ): VwapDataQuality {
-  const fail = (reason: string, coverage = 0): VwapDataQuality => ({ ok: false, reason, coverage: +coverage.toFixed(3) });
+  const fail = (reason: string, coverage = 0, nulls = 0): VwapDataQuality => ({
+    ok: false,
+    reason,
+    coverage: +coverage.toFixed(3),
+    nullFields: nulls,
+  });
 
   // a. FEED_ERROR: richiesta fallita (es. 429) o nessuna barra restituita
   if (options.feedError) return fail('FEED_ERROR');
@@ -5364,17 +5384,27 @@ export function computeVwapDataQuality(
     });
   }
 
-  // b. NON_FINITE: high/low/close/volume null o NaN, prezzi <= 0
-  for (const r of sessionBars) {
-    for (const n of [r.high, r.low, r.close, r.volume]) {
-      if (n == null || !isFinite(n) || isNaN(n)) return fail('NON_FINITE');
-    }
-    if ((r.high as number) <= 0 || (r.low as number) <= 0 || (r.close as number) <= 0) return fail('NON_FINITE');
-    if (r.open != null && (!isFinite(r.open) || isNaN(r.open) || r.open <= 0)) return fail('NON_FINITE');
+  // b. Barre incomplete (BUGFIX): high/low/close/volume null o NaN, prezzi <= 0.
+  // Le barre incomplete del feed Yahoo (placeholder con campi null, tipiche sulle sessioni
+  // estese) non invalidano piu' l'intera serie: vengono escluse dal calcolo e conteggiate in
+  // nullFields. NON_FINITE resta solo se nella finestra valutata non resta nessuna barra utile.
+  // griglia temporale della sessione (tutte le barre presenti, anche incomplete)
+  const grid = sessionBars.filter((r) => r.minutes < upTo);
+  let nullFields = 0;
+  const completeBars: RawBar[] = [];
+  for (const r of grid) {
+    const finite = [r.high, r.low, r.close, r.volume].every(
+      (n) => n != null && isFinite(n as number) && !isNaN(n as number)
+    );
+    const positive = (r.high as number) > 0 && (r.low as number) > 0 && (r.close as number) > 0;
+    const openOk = r.open == null || (isFinite(r.open) && !isNaN(r.open) && r.open > 0);
+    if (finite && positive && openOk) completeBars.push(r);
+    else nullFields++;
   }
+  if (grid.length > 0 && completeBars.length === 0) return fail('NON_FINITE', 0, nullFields);
 
   // c. OHLC_INCONSISTENT: high < low, oppure open/close fuori da [low, high]
-  for (const r of sessionBars) {
+  for (const r of completeBars) {
     const hi = r.high as number;
     const lo = r.low as number;
     const cl = r.close as number;
@@ -5388,37 +5418,37 @@ export function computeVwapDataQuality(
     if (bars[i].timestamp <= bars[i - 1].timestamp) return fail('DUPLICATE_OR_UNSORTED');
   }
 
-  const regular = sessionBars
-    .filter((r) => r.minutes < upTo)
-    .map((r) => {
-      const hi = r.high as number;
-      const lo = r.low as number;
-      const cl = r.close as number;
-      return {
-        timestamp: r.timestamp,
-        minutes: r.minutes,
-        high: hi,
-        low: lo,
-        close: cl,
-        volume: r.volume as number,
-        typical: (hi + lo + cl) / 3,
-      };
-    });
+  const regular = completeBars.map((r) => {
+    const hi = r.high as number;
+    const lo = r.low as number;
+    const cl = r.close as number;
+    return {
+      timestamp: r.timestamp,
+      minutes: r.minutes,
+      high: hi,
+      low: lo,
+      close: cl,
+      volume: r.volume as number,
+      typical: (hi + lo + cl) / 3,
+    };
+  });
 
-  // e. GAP: buco interno nella griglia 5m della sessione prima della valutazione
-  for (let i = 1; i < regular.length; i++) {
-    if (regular[i].minutes - regular[i - 1].minutes > 5) return fail('GAP');
+  // e. GAP: buco interno nella griglia 5m della sessione prima della valutazione.
+  // La continuita' si verifica sulla griglia completa: una barra con campi null e' una barra
+  // incompleta del feed, non un buco di mercato.
+  for (let i = 1; i < grid.length; i++) {
+    if (grid[i].minutes - grid[i - 1].minutes > 5) return fail('GAP', 0, nullFields);
   }
 
   // f. ZERO_VOLUME: barre di sessione a volume 0 oltre la soglia tollerata per mercato
   const zeroVolumeBars = regular.filter((r) => r.volume === 0).length;
   const maxZeroVolumeBars = vwapMaxZeroVolumeBars(market);
-  if (zeroVolumeBars > maxZeroVolumeBars) return fail('ZERO_VOLUME');
+  if (zeroVolumeBars > maxZeroVolumeBars) return fail('ZERO_VOLUME', 0, nullFields);
 
   // g. LOW_COVERAGE: barre presenti / barre attese dall'apertura alla valutazione
   const expected = Math.max(0, Math.floor((upTo - openMinutes) / 5));
   const coverage = expected > 0 ? Math.min(1, regular.length / expected) : 0;
-  if (coverage < TRADING_PARAMS.VWAP_MIN_COVERAGE) return fail('LOW_COVERAGE', coverage);
+  if (coverage < TRADING_PARAMS.VWAP_MIN_COVERAGE) return fail('LOW_COVERAGE', coverage, nullFields);
 
   // h. STALE: ultima barra piu' vecchia della soglia di freschezza per mercato
   const lastRegular = regular.length > 0 ? regular[regular.length - 1] : null;
@@ -5429,7 +5459,7 @@ export function computeVwapDataQuality(
     lastRegular != null &&
     nowMinutes - lastRegular.minutes > maxStaleMin
   ) {
-    return fail('STALE', coverage);
+    return fail('STALE', coverage, nullFields);
   }
 
   // i. OUT_OF_RANGE: il livello VWAP usato deve stare dentro [minimo, massimo] di sessione
@@ -5454,17 +5484,17 @@ export function computeVwapDataQuality(
     sessionLow !== Infinity &&
     (vwapLevel < sessionLow - TRADING_PARAMS.EPSILON || vwapLevel > sessionHigh + TRADING_PARAMS.EPSILON)
   ) {
-    return fail('OUT_OF_RANGE', coverage);
+    return fail('OUT_OF_RANGE', coverage, nullFields);
   }
 
   // j. QUOTE_MISMATCH: ultima chiusura 5m troppo distante dal prezzo corrente della quote
   const price = quote?.currentPrice;
-  if (price == null || !isFinite(price) || price <= 0) return fail('QUOTE_MISMATCH', coverage);
+  if (price == null || !isFinite(price) || price <= 0) return fail('QUOTE_MISMATCH', coverage, nullFields);
   if (lastRegular != null && Math.abs(lastRegular.close - price) / price > TRADING_PARAMS.VWAP_MAX_QUOTE_DRIFT_PCT) {
-    return fail('QUOTE_MISMATCH', coverage);
+    return fail('QUOTE_MISMATCH', coverage, nullFields);
   }
 
-  return { ok: true, reason: null, coverage: +coverage.toFixed(3) };
+  return { ok: true, reason: null, coverage: +coverage.toFixed(3), nullFields };
 }
 
 /** Conteggio dei candidati per esito del quality gate (log di scansione). */

@@ -121,6 +121,8 @@ export interface VwapDataQuality {
   ok: boolean;
   reason: VwapDataQualityReason | string | null;
   coverage: number;
+  /** Barre incomplete (campi null/NaN) escluse dal calcolo: non invalidano piu' il feed. */
+  nullFields?: number;
 }
 
 export interface ScoreBreakdown {

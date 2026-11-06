@@ -266,7 +266,9 @@ dupBars[2] = { ...dupBars[2], timestamp: dupBars[1].timestamp };
 
 const FIXTURES: QualityFixture[] = [
   { reason: 'FEED_ERROR', bars: [], quote: CLEAN_QUOTE, now: NOW_1000_ET },
-  { reason: 'NON_FINITE', bars: series(6, (i) => (i === 2 ? { volume: null } : {})), quote: CLEAN_QUOTE, now: NOW_1000_ET },
+  // Fix bug 2: una singola barra con campi null non invalida piu' il feed, quindi NON_FINITE
+  // scatta solo quando nessuna barra della finestra e' utilizzabile.
+  { reason: 'NON_FINITE', bars: series(6, () => ({ volume: null })), quote: CLEAN_QUOTE, now: NOW_1000_ET },
   { reason: 'OHLC_INCONSISTENT', bars: series(6, (i) => (i === 1 ? { high: 98, low: 99 } : {})), quote: CLEAN_QUOTE, now: NOW_1000_ET },
   { reason: 'DUPLICATE_OR_UNSORTED', bars: dupBars, quote: CLEAN_QUOTE, now: NOW_1000_ET },
   { reason: 'GAP', bars: series(6).filter((_, i) => i !== 2), quote: CLEAN_QUOTE, now: NOW_1000_ET },
@@ -280,7 +282,8 @@ const FIXTURES: QualityFixture[] = [
 describe('VWAP quality gate - 10 motivi (IPOTESI)', () => {
   it('T17: serie pulita -> ok=true, coverage 1, stato normale preservato', () => {
     const q = computeVwapDataQuality(series(6), CLEAN_QUOTE, 'US', NOW_1000_ET);
-    assert.deepStrictEqual(q, { ok: true, reason: null, coverage: 1 });
+    // `nullFields` e' il conteggio delle barre incomplete escluse (fix bug 2).
+    assert.deepStrictEqual(q, { ok: true, reason: null, coverage: 1, nullFields: 0 });
     const resolved = resolveVwapStateForScoring(state({ state: 'ABOVE', distAtr: 0.5 }), null, 'US', q);
     assert.strictEqual(resolved?.state, 'ABOVE');
   });
