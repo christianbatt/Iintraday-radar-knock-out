@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { SessionInfo } from '../types/radar';
+import { usSessionLabel } from '../utils/sessionBadge';
 
 interface HeaderProps {
   sessionInfo: SessionInfo | null;
@@ -119,7 +120,8 @@ export const Header: React.FC<HeaderProps> = ({
             ) : currentSession === 'GLOBAL' ? (
               <span className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-indigo-950/70 border border-indigo-600/70 text-indigo-300 font-medium">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                Live Globale (EU: {sessionInfo?.cet?.isEuropeLive ? 'Aperto' : 'Pre/Post'} • US: {sessionInfo?.cet?.isUSALive ? 'Aperto' : 'Pre-Mkt'})
+                Live Globale (EU: {sessionInfo?.cet?.isEuropeLive ? 'Aperto' : 'Pre/Post'} • US:{' '}
+                {usSessionLabel(sessionInfo?.cet?.marketStatusUS, sessionInfo?.cet?.usMinutes)})
               </span>
             ) : currentSession === 'EU' ? (
               sessionInfo?.cet?.isEuropeLive ? (
