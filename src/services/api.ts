@@ -58,11 +58,24 @@ export async function fetchMacroCalendar(): Promise<MacroCalendarState> {
   try {
     const res = await fetch('/api/macro-calendar', withTimeout({}, timeoutForUrl('/api/macro-calendar')));
     if (!res.ok) {
-      return { events: [], activeBlackoutEvent: null, isBlackoutActive: false, spreadWarningTradeRepublic: null };
+      return {
+        events: [],
+        activeBlackoutEvent: null,
+        isBlackoutActive: false,
+        spreadWarningTradeRepublic: null,
+        status: 'unavailable',
+      };
     }
-    return res.json();
+    const data = await res.json();
+    return { ...data, status: 'ok' };
   } catch {
-    return { events: [], activeBlackoutEvent: null, isBlackoutActive: false, spreadWarningTradeRepublic: null };
+    return {
+      events: [],
+      activeBlackoutEvent: null,
+      isBlackoutActive: false,
+      spreadWarningTradeRepublic: null,
+      status: 'unavailable',
+    };
   }
 }
 

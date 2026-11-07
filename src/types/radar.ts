@@ -248,6 +248,7 @@ export interface MacroCalendarState {
   events: MacroEvent[];
   activeBlackoutEvent: MacroEvent | null;
   isBlackoutActive: boolean;
+  status: 'ok' | 'unavailable';
   spreadWarningTradeRepublic: string | null;
   isWeekend?: boolean;
   marketClosed?: boolean;
