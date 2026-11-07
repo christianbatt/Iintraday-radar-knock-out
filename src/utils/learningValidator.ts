@@ -1,6 +1,22 @@
 import { ExcludedSetupRecord, TradeJournalEntry } from '../types/radar';
+import type { DeflatedSharpeResult, ExpectancyBootstrapResult } from '../knowledge/shadowAlgorithms';
+import { deflatedSharpeRatio, expectancyBootstrap } from '../knowledge/shadowAlgorithms';
 
 export const MIN_REAL_TRADE_SAMPLE = 30;
+
+/**
+ * IPOTESI: opzioni informative della validazione. Non cambiano i gate esistenti
+ * (MIN_REAL_TRADE_SAMPLE, q-value FDR, avgR, profit factor): aggiungono solo campi al risultato.
+ */
+export interface LearningValidationOptions {
+  /** IPOTESI: numero di prove indipendenti dichiarato dal chiamante per il DSR (T < 2 ⇒ null). */
+  dsrTrials?: number;
+  /**
+   * IPOTESI: true quando i controfattuali arrivano dal raggruppamento per mercato, direzione e
+   * finestra oraria (stesso insieme condiviso fra più topic della stessa chiave di contesto).
+   */
+  counterfactualShared?: boolean;
+}
 
 export interface LearningResult {
   topic: string;
@@ -8,6 +24,12 @@ export interface LearningResult {
   directive: string;
   confidence: number;
   evidence: string[];
+  /** IPOTESI: test di expectancy sugli R-multipli; informativo, non è un gate. */
+  expectancy: ExpectancyBootstrapResult | null;
+  /** IPOTESI: Deflated Sharpe Ratio; informativo, non è un gate. */
+  deflatedSharpe: DeflatedSharpeResult;
+  /** IPOTESI: i controfattuali sono condivisi per chiave mercato+direzione+finestra. */
+  counterfactualShared: boolean;
   stats: {
     n: number;
     wins: number;
@@ -31,7 +53,8 @@ export function validateLearningPattern(
   trades: TradeJournalEntry[],
   excluded: ExcludedSetupRecord[],
   topic: string,
-  market: 'EU' | 'US' | 'GLOBAL'
+  market: 'EU' | 'US' | 'GLOBAL',
+  options: LearningValidationOptions = {}
 ): LearningResult | null {
   const actualTrades = trades.filter((trade) =>
     trade.status !== 'OPEN' &&
@@ -78,12 +101,19 @@ export function validateLearningPattern(
     `avg R ${avgR.toFixed(2)} su ${actualTrades.length} trade chiusi. ` +
     'Non modificare automaticamente soglie o regole operative; rivalutare con nuovi trade reali.';
 
+  const rMultiples = actualTrades.map((trade) => trade.rMultiple);
+  const expectancy = expectancyBootstrap(rMultiples);
+  const deflatedSharpe = deflatedSharpeRatio(rMultiples, options.dsrTrials ?? 1);
+
   return {
     topic,
     market,
     directive,
     confidence: 1 - pValue,
     evidence: actualTrades.map((trade) => trade.id),
+    expectancy,
+    deflatedSharpe,
+    counterfactualShared: options.counterfactualShared === true,
     stats: {
       n: actualTrades.length,
       wins: wins.length,

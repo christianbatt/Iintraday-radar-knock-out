@@ -214,8 +214,15 @@ export async function runNightlyLearning(dryRun = false): Promise<LearningResult
   );
 
   const candidates: LearningResult[] = [];
-  for (const group of groupByTopic(completedTrades, resolvedExcluded).values()) {
-    const result = validateLearningPattern(group.trades, group.excluded, group.topic, group.market);
+  const groups = Array.from(groupByTopic(completedTrades, resolvedExcluded).values());
+  for (const group of groups) {
+    // IPOTESI: i controfattuali arrivano dal raggruppamento per mercato+direzione+finestra
+    // (condivisi fra i topic della stessa chiave) e T = numero di ipotesi testate stanotte.
+    // Entrambi sono campi informativi: non entrano nei filtri né nelle scritture di memoria.
+    const result = validateLearningPattern(group.trades, group.excluded, group.topic, group.market, {
+      counterfactualShared: true,
+      dsrTrials: groups.length,
+    });
     if (result) candidates.push(result);
   }
 
