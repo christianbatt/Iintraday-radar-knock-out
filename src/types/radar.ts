@@ -33,6 +33,7 @@ export interface RawQuoteData {
   avgVolume20d: number | null;
   preMarketVolume: number | null;
   atr14: number | null;
+  assetClass?: string;
   adr14?: number | null;
   liqEur20d?: number | null;
   fxRate?: number | null;
@@ -148,6 +149,7 @@ export interface ScoreBreakdown {
   rawTotal?: number; // Somma grezza pre-cap a 100 per tie-breaking quantitativo
   total: number;
   details: string[];
+  directVetoes?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +256,7 @@ export interface MacroCalendarState {
   message?: string;
   lastCheckedAt?: string;
   attribution?: string;
+  status?: 'ok' | 'unavailable';
 }
 
 export interface ScoredCandidate {
