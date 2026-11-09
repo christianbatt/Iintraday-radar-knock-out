@@ -1945,6 +1945,12 @@ export function buildExecutionSetup(
     currentTime?: Date;
     customLeve?: readonly number[];
     macroEvents?: MacroEvent[];
+    macroCalendar?: {
+      status: 'ok' | 'unavailable';
+      events: MacroEvent[];
+      isBlackoutActive: boolean;
+      minutesToEvent?: number;
+    };
   }
 ): ExecutionSetup {
   const currentTime = options?.currentTime || new Date();
