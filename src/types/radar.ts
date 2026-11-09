@@ -386,6 +386,7 @@ export interface ExecutionSetup {
     label: string;
   };
   orderFlow?: OrderFlowMetrics | null;
+  calendarStatus?: 'ok' | 'unavailable' | 'absent';
 }
 
 export interface PnLScenario {

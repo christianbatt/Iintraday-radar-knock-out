@@ -90,6 +90,15 @@ function extractCallArguments(source: string, callee: string): { line: number; a
   return calls;
 }
 
+/**
+ * Valore testuale di un campo dentro gli argomenti di una chiamata.
+ * Si ferma alla virgola: nessun valore osservato contiene virgole.
+ */
+function fieldValue(args: string, field: string): string | null {
+  const match = new RegExp(`\\b${field}\\s*:\\s*([^,}\\n]+)`).exec(args);
+  return match ? match[1].trim() : null;
+}
+
 describe('wiring statico buildExecutionSetup', () => {
   it('src/App.tsx esiste e viene letto come testo', () => {
     const source = readSource(APP_URL, 'src/App.tsx');
@@ -123,6 +132,51 @@ describe('wiring statico buildExecutionSetup', () => {
       calls.length,
       `contate ${withField} chiamate con macroCalendar su ${calls.length} totali`,
     );
+  });
+
+  it(`macroCalendar deriva dalla stessa sorgente di macroEvents (minimo ${MIN_EXPECTED_INVOCATIONS} invocazioni)`, () => {
+    const source = readSource(APP_URL, 'src/App.tsx');
+    const calls = extractCallArguments(source, CALLEE);
+
+    // Guardia anti-vacuita: la coppia si verifica solo su un campione reale.
+    assert.ok(
+      calls.length >= MIN_EXPECTED_INVOCATIONS,
+      `trovate ${calls.length} invocazioni di ${CALLEE}, attese almeno ${MIN_EXPECTED_INVOCATIONS}`,
+    );
+
+    const mismatches: string[] = [];
+    const unparsed: number[] = [];
+
+    for (const call of calls) {
+      const events = fieldValue(call.args, 'macroEvents');
+      const calendar = fieldValue(call.args, 'macroCalendar');
+
+      if (events === null || calendar === null) {
+        unparsed.push(call.line);
+        continue;
+      }
+
+      // `macroCalendarRef` inizia per `macroCalendar`: il ref va riconosciuto per primo.
+      const expected = events.startsWith('macroCalendarRef.current')
+        ? 'macroCalendarRef.current'
+        : events.startsWith('macroCalendar')
+        ? 'macroCalendar'
+        : null;
+
+      if (expected === null) {
+        unparsed.push(call.line);
+        continue;
+      }
+
+      if (!calendar.startsWith(expected)) {
+        mismatches.push(
+          `riga ${call.line}: macroEvents=${events} ma macroCalendar=${calendar}`,
+        );
+      }
+    }
+
+    assert.deepEqual(unparsed, [], `campi non riconosciuti alle righe: ${unparsed.join(', ')}`);
+    assert.deepEqual(mismatches, [], `coppie incoerenti:\n${mismatches.join('\n')}`);
   });
 
   it("SETUP_SELECTOR_LIVE e ancora 'off'", () => {

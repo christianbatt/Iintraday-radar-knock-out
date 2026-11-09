@@ -42,6 +42,8 @@ import { TRADING_PARAMS, adxThresholds, vwapMaxStaleMin, vwapMaxZeroVolumeBars }
 
 export { adxThresholds };
 import { getMarketTime, getExchangeDateStr } from './timezone';
+import { SETUP_SELECTOR_LIVE } from '../config/liveSelector';
+import { applyCalendarSelector } from './setupSelector';
 
 export interface DailyBarInput {
   date?: string;
@@ -2319,7 +2321,7 @@ export function buildExecutionSetup(
     ...(catalyst?.condizioni_invalidazione || []),
   ];
 
-  return {
+  return applyCalendarSelector<ExecutionSetup & { reasonCodes?: string[] }>({
     candidate: quote,
     decision,
     reasonNoTrade,
@@ -2378,7 +2380,7 @@ export function buildExecutionSetup(
     macroBlackout,
     overnightWarning,
     orderFlow: quote.orderFlow ?? null,
-  };
+  }, options?.macroCalendar, SETUP_SELECTOR_LIVE === 'on');
 }
 
 export function calculateDynamicBreakeven(
