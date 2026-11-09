@@ -32,6 +32,7 @@ import {
   ExcludedSetupsAutoAnalysis,
   ExcludedOutcomeStatus,
   EntryMode,
+  MacroCalendarState,
   MacroEvent,
   SessionInfo,
   SetupIndicators,
@@ -1945,12 +1946,7 @@ export function buildExecutionSetup(
     currentTime?: Date;
     customLeve?: readonly number[];
     macroEvents?: MacroEvent[];
-    macroCalendar?: {
-      status: 'ok' | 'unavailable';
-      events: MacroEvent[];
-      isBlackoutActive: boolean;
-      minutesToEvent?: number;
-    };
+    macroCalendar?: MacroCalendarState;
   }
 ): ExecutionSetup {
   const currentTime = options?.currentTime || new Date();
