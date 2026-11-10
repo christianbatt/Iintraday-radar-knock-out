@@ -919,7 +919,6 @@ export default function App() {
         parameters,
         currentCache,
         rsiFilterActive,
-        sessionInfoRef.current?.cet?.currentMinutes
       );
       setAuditReport(audit);
       setShowAuditBanner(true);
@@ -1064,7 +1063,6 @@ export default function App() {
         parameters,
         currentCache,
         rsiFilterActive,
-        sessionInfoRef.current?.cet?.currentMinutes
       );
       setAuditReport(audit);
     });
@@ -1525,7 +1523,6 @@ export default function App() {
         newParams,
         catalystCache,
         rsiFilterActive,
-        sessionInfo?.cet?.currentMinutes
       );
       setAuditReport(audit);
     } else {
@@ -1670,7 +1667,6 @@ export default function App() {
         updated,
         catalystCache,
         newRsiActive,
-        sessionInfo?.cet?.currentMinutes
       );
       setAuditReport(audit);
     }
@@ -1760,7 +1756,6 @@ export default function App() {
         updated,
         catalystCache,
         newRsiActive,
-        sessionInfo?.cet?.currentMinutes
       );
       setAuditReport(audit);
     }

@@ -9,6 +9,7 @@ import {
   evaluateOpenPositionLifecycle,
 } from '../calculator';
 import { mergeTradesWithTombstones } from '../tradeMerge';
+import { auditRegionRefs } from './sourceAudit';
 import type { ExecutionSetup, TradeJournalEntry, RawQuoteData } from '../../types/radar';
 
 const setupForKo = (over: Record<string, unknown> = {}): ExecutionSetup =>
@@ -133,10 +134,21 @@ const quoteAt = (price: number): RawQuoteData =>
 // La scansione legge lo stato variabile da ref: dipendenze invariate, nessun loop.
 {
   const src = fs.readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8');
-  assert.ok(src.includes('macroCalendarRef.current?.events'), 'V5: macro calendario letto da ref');
-  assert.ok(src.includes('catalystCacheRef.current'), 'V5: cache catalyst letta da ref');
-  assert.ok(src.includes('newsCacheRef.current'), 'V5: cache news letta da ref');
-  assert.ok(src.includes('sessionInfoRef.current?.cet?.currentMinutes'), 'V5: sessione letta da ref');
+  // Invariante di REGIONE, non di file: i quattro `src.includes` di prima
+  // passavano anche con la regione rotta, perche' bastava che i nomi
+  // comparissero altrove in App.tsx.
+  const scan = auditRegionRefs(src, {
+    anchor: 'const handleRunScreening = useCallback(async () => {',
+    end: '}, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries]);',
+  });
+  assert.equal(scan.anchorCount, 1, `V5: ancora di handleRunScreening trovata ${scan.anchorCount} volte`);
+  assert.ok(scan.regionFound, 'V5: regione di handleRunScreening non delimitata');
+  assert.equal(scan.allowedHits, 0, 'V5: la scansione non ha letture ammesse');
+  assert.deepEqual(
+    scan.offending.map((o) => `riga ${o.line}: ${o.token} -> ${o.snippet}`),
+    [],
+    'V5: letture dirette dello state dentro handleRunScreening',
+  );
   assert.ok(
     src.includes('}, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries]);'),
     'V5: dipendenze della scansione invariate (nessun rilancio automatico)',
