@@ -1,223 +1,58 @@
 /**
  * Wiring statico: ogni chiamata a buildExecutionSetup in src/App.tsx deve
- * passare `macroCalendar`. Legge i file come TESTO: non importa App.tsx,
- * quindi niente React/DOM in questo test.
+ * passare `macroCalendar`, e le due regioni con stato "ref-backed"
+ * (effetto re-rank e handleRunScreening) non devono leggere dallo state i
+ * valori che hanno un ref allineato. Legge i file come TESTO: non importa
+ * App.tsx, quindi niente React/DOM in questo test.
  *
  * Runner: npx tsx src/utils/__tests__/app_wiring.test.ts
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
+import {
+  auditCalendarPairing,
+  auditRegionRefs,
+  countTopLevelArgs,
+  extractCallArguments,
+  readSource,
+  type RegionAllowRule,
+} from './sourceAudit';
 
 const APP_URL = new URL('../../App.tsx', import.meta.url);
+const CALC_URL = new URL('../calculator.ts', import.meta.url);
 const SELECTOR_URL = new URL('../../config/liveSelector.ts', import.meta.url);
 const MIN_EXPECTED_INVOCATIONS = 15;
 const CALLEE = 'buildExecutionSetup';
+const AUDIT_CALLEE = 'generateFilteringAuditReport';
 
-function readSource(url: URL, label: string): string {
-  if (!fs.existsSync(url)) {
-    assert.fail(`${label} non trovato: ${url.pathname}`);
-  }
-  return fs.readFileSync(url, 'utf8');
-}
-
-/**
- * Scansione a parentesi bilanciate: gestisce stringhe, template literal e
- * commenti, cosi' le chiamate multi-riga vengono lette per intero.
- * Ritorna il testo degli argomenti di ogni invocazione del callee.
- */
-function extractCallArguments(source: string, callee: string): { line: number; args: string }[] {
-  const calls: { line: number; args: string }[] = [];
-  const pattern = new RegExp(`\\b${callee}\\s*\\(`, 'g');
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(source)) !== null) {
-    let i = source.indexOf('(', match.index);
-    const openParen = i;
-    let depth = 0;
-    let quote: string | null = null;
-
-    while (i < source.length) {
-      const ch = source[i];
-
-      if (quote) {
-        if (ch === '\\') {
-          i += 2;
-          continue;
-        }
-        if (ch === quote) quote = null;
-        i += 1;
-        continue;
-      }
-
-      if (ch === "'" || ch === '"' || ch === '`') {
-        quote = ch;
-        i += 1;
-        continue;
-      }
-
-      if (ch === '/' && source[i + 1] === '/') {
-        const nl = source.indexOf('\n', i);
-        i = nl < 0 ? source.length : nl;
-        continue;
-      }
-
-      if (ch === '/' && source[i + 1] === '*') {
-        const end = source.indexOf('*/', i + 2);
-        i = end < 0 ? source.length : end + 2;
-        continue;
-      }
-
-      if (ch === '(') {
-        depth += 1;
-      } else if (ch === ')') {
-        depth -= 1;
-        if (depth === 0) {
-          const line = source.slice(0, match.index).split('\n').length;
-          calls.push({ line, args: source.slice(openParen + 1, i) });
-          pattern.lastIndex = i + 1;
-          break;
-        }
-      }
-      i += 1;
-    }
-
-    if (depth !== 0) {
-      assert.fail(`parentesi non bilanciate nella chiamata a riga ${match.index}`);
-    }
-  }
-
-  return calls;
-}
-
-/**
- * Valore testuale di un campo dentro gli argomenti di una chiamata.
- * Si ferma alla virgola: nessun valore osservato contiene virgole.
- */
-function fieldValue(args: string, field: string): string | null {
-  const match = new RegExp(`\\b${field}\\s*:\\s*([^,}\\n]+)`).exec(args);
-  return match ? match[1].trim() : null;
-}
-
+// --- Regione 1: effetto re-rank ------------------------------------------
 const RERANK_ANCHOR = '// Re-rank instantly when RSI Filter or parameters are changed';
 const RERANK_END = '\n  }, [rsiFilterActive, parameters]);';
-// Marcatore sulla riga precedente: dichiara che la lettura dallo state e' voluta.
-const RERANK_CACHE_ALLOW_MARK = 'PASSO E:';
 
-type RerankRefAudit = {
-  anchorCount: number;
-  regionFound: boolean;
-  regionStartLine: number;
-  offending: { line: number; token: string; snippet: string }[];
-};
+// --- Regione 2: handleRunScreening ---------------------------------------
+// `const handleRunScreening` da solo comparirebbe DUE volte (c'e' anche
+// `const handleRunScreeningRef = React.useRef(...)`): l'ancora deve essere
+// unica, altrimenti l'invariante non sa quale regione sta guardando.
+const SCAN_ANCHOR = 'const handleRunScreening = useCallback(async () => {';
+const SCAN_END = '}, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries]);';
 
 /**
- * Invariante statica sull'effetto re-rank: dentro la regione (ancora -> deps array)
- * `sessionInfo` deve comparire SOLO come `sessionInfoRef.current`, e `catalystCache`
- * solo come ref oppure nella sola snapshot documentata `{ ...catalystCache }`
- * (preceduta dal marcatore: li' la lettura dallo state e' voluta, read-after-write).
- *
- * L'ancora deve esistere esattamente una volta: se il codice cambia forma, il test
- * fallisce invece di passare in silenzio.
+ * Unica lettura dallo state ammessa, con motivazione dichiarata:
+ * `catalystCache` e' lo snapshot PRE-RUN. In questo run `setCatalystCache` e'
+ * gia' stato chiamato (resolveCandidateCatalyst), quindi il ref potrebbe gia'
+ * contenere i catalyst risolti e `currentCache` non sarebbe piu' lo snapshot
+ * pre-run: cambierebbe la lista degli esclusi nel Catalyst Gate del report.
+ * La regola e' pinnata sul testo esatto: nessun `includes`, nessun marcatore
+ * "qualsiasi".
  */
-export function auditRerankRefs(source: string): RerankRefAudit {
-  const anchorCount = source.split(RERANK_ANCHOR).length - 1;
-  if (anchorCount !== 1) {
-    return { anchorCount, regionFound: false, regionStartLine: 0, offending: [] };
-  }
-
-  const startIdx = source.indexOf(RERANK_ANCHOR);
-  const endIdx = source.indexOf(RERANK_END, startIdx);
-  if (endIdx < 0) {
-    return {
-      anchorCount,
-      regionFound: false,
-      regionStartLine: source.slice(0, startIdx).split('\n').length,
-      offending: [],
-    };
-  }
-
-  const region = source.slice(startIdx, endIdx + RERANK_END.length);
-  const regionStartLine = source.slice(0, startIdx).split('\n').length;
-  const lines = region.split('\n');
-  const offending: RerankRefAudit['offending'] = [];
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const lineText = lines[i];
-    // Le righe di solo commento sono prosa (spiegano le scelte): non sono letture.
-    if (lineText.trim().startsWith('//')) continue;
-    const tokens = lineText.match(/\b(catalystCache|sessionInfo)\b/g) ?? [];
-    for (const token of tokens) {
-      // `catalystCacheRef`/`sessionInfoRef` e i setter non matchano \b...\b: qui
-      // arrivano solo le letture dirette dello state.
-      const isDocumentedCacheSnapshot =
-        token === 'catalystCache' &&
-        lineText.includes('{ ...catalystCache }') &&
-        i > 0 &&
-        lines[i - 1].includes(RERANK_CACHE_ALLOW_MARK);
-
-      if (!isDocumentedCacheSnapshot) {
-        offending.push({ line: regionStartLine - 1 + i + 1, token, snippet: lineText.trim().slice(0, 120) });
-      }
-    }
-  }
-
-  return { anchorCount, regionFound: true, regionStartLine, offending };
-}
-
-type CalendarPairAudit = {
-  calls: number;
-  unparsed: number[];
-  mismatches: { line: number; events: string; calendar: string }[];
-};
-
-/**
- * Confronto esatto fra `macroEvents` e `macroCalendar`.
- *
- * Il confronto NON puo' essere un semplice `startsWith`: `'macroCalendarRef.current'`
- * inizia per `'macroCalendar'`, quindi un calendar preso dal ref supererebbe il
- * controllo del prefisso e la coppia incoerente (eventi dalla variabile, calendario
- * dal ref) passerebbe in silenzio. Il ref e' quindi ammesso solo quando gli eventi
- * arrivano dal ref, ed escluso ESPLICITAMENTE quando arrivano dalla variabile.
- */
-export function auditCalendarPairing(source: string): CalendarPairAudit {
-  const calls = extractCallArguments(source, CALLEE);
-  const unparsed: number[] = [];
-  const mismatches: CalendarPairAudit['mismatches'] = [];
-
-  for (const call of calls) {
-    const events = fieldValue(call.args, 'macroEvents');
-    const calendar = fieldValue(call.args, 'macroCalendar');
-
-    if (events === null || calendar === null) {
-      unparsed.push(call.line);
-      continue;
-    }
-
-    // Il ref va riconosciuto per primo: il suo nome contiene il prefisso della variabile.
-    const expected = events.startsWith('macroCalendarRef.current')
-      ? 'macroCalendarRef.current'
-      : events.startsWith('macroCalendar')
-      ? 'macroCalendar'
-      : null;
-
-    if (expected === null) {
-      unparsed.push(call.line);
-      continue;
-    }
-
-    const consistent =
-      expected === 'macroCalendarRef.current'
-        ? calendar.startsWith('macroCalendarRef.current')
-        : calendar.startsWith('macroCalendar') && !calendar.startsWith('macroCalendarRef');
-
-    if (!consistent) {
-      mismatches.push({ line: call.line, events, calendar });
-    }
-  }
-
-  return { calls: calls.length, unparsed, mismatches };
-}
+const RERANK_ALLOWED: RegionAllowRule[] = [
+  {
+    token: 'catalystCache',
+    line: 'const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCache };',
+    prevLine:
+      "// PASSO E: catalystCache resta dallo state di proposito (snapshot pre-run: in questo run setCatalystCache e' gia' stato chiamato).",
+  },
+];
 
 describe('wiring statico buildExecutionSetup', () => {
   it('src/App.tsx esiste e viene letto come testo', () => {
@@ -256,7 +91,7 @@ describe('wiring statico buildExecutionSetup', () => {
 
   it(`macroCalendar deriva dalla stessa sorgente di macroEvents (minimo ${MIN_EXPECTED_INVOCATIONS} invocazioni)`, () => {
     const source = readSource(APP_URL, 'src/App.tsx');
-    const audit = auditCalendarPairing(source);
+    const audit = auditCalendarPairing(source, CALLEE);
 
     // Guardia anti-vacuita: la coppia si verifica solo su un campione reale.
     assert.ok(
@@ -290,7 +125,7 @@ describe('wiring statico buildExecutionSetup', () => {
       '});',
     ].join('\n');
 
-    const audit = auditCalendarPairing(synthetic);
+    const audit = auditCalendarPairing(synthetic, CALLEE);
 
     assert.equal(audit.calls, 1, 'la sorgente sintetica deve avere una sola invocazione');
     assert.deepEqual(audit.unparsed, [], 'la coppia sintetica deve essere leggibile');
@@ -306,9 +141,14 @@ describe('wiring statico buildExecutionSetup', () => {
     assert.ok(declaration, 'dichiarazione SETUP_SELECTOR_LIVE non trovata');
     assert.equal(declaration[2], 'off', 'SETUP_SELECTOR_LIVE non e "off"');
   });
-  it("l'effetto re-rank legge catalystCache e sessionInfo dai ref", () => {
+
+  it("l'effetto re-rank non legge dallo state i valori che hanno un ref allineato", () => {
     const source = readSource(APP_URL, 'src/App.tsx');
-    const audit = auditRerankRefs(source);
+    const audit = auditRegionRefs(source, {
+      anchor: RERANK_ANCHOR,
+      end: RERANK_END,
+      allowed: RERANK_ALLOWED,
+    });
 
     assert.equal(
       audit.anchorCount,
@@ -319,10 +159,116 @@ describe('wiring statico buildExecutionSetup', () => {
       audit.regionFound,
       `regione dell'effetto re-rank non delimitata (deps array non trovato dopo la riga ${audit.regionStartLine})`,
     );
+    // Guardia anti-vacuita: l'unica eccezione ammessa deve essere stata consumata,
+    // altrimenti la regola e' scritta su un testo che non esiste piu'.
+    assert.equal(
+      audit.allowedHits,
+      RERANK_ALLOWED.length,
+      `regole ammesse soddisfatte: ${audit.allowedHits} su ${RERANK_ALLOWED.length}`,
+    );
     assert.deepEqual(
       audit.offending.map((o) => `riga ${o.line}: ${o.token} -> ${o.snippet}`),
       [],
-      'letture dirette dello state dentro l\'effetto re-rank',
+      "letture dirette dello state dentro l'effetto re-rank",
+    );
+  });
+
+  it('la regione della scansione non legge dallo state i valori che hanno un ref allineato', () => {
+    const source = readSource(APP_URL, 'src/App.tsx');
+    const audit = auditRegionRefs(source, { anchor: SCAN_ANCHOR, end: SCAN_END });
+
+    assert.equal(
+      audit.anchorCount,
+      1,
+      `ancora di handleRunScreening trovata ${audit.anchorCount} volte (attesa: 1)`,
+    );
+    assert.ok(
+      audit.regionFound,
+      `regione di handleRunScreening non delimitata (deps array non trovato dopo la riga ${audit.regionStartLine})`,
+    );
+    // Nessuna eccezione: nella scansione ogni valore con ref deve venire dal ref.
+    assert.equal(audit.allowedHits, 0, 'la scansione non ha letture ammesse');
+    assert.deepEqual(
+      audit.offending.map((o) => `riga ${o.line}: ${o.token} -> ${o.snippet}`),
+      [],
+      'letture dirette dello state dentro handleRunScreening',
+    );
+  });
+
+  // --- Anti-vacuita: l'helper deve fallire quando deve -------------------
+  it('l\'audit di regione segnala una lettura nuda di sessionInfo', () => {
+    const synthetic = [
+      'const regione = () => {',
+      '  const x = sessionInfo?.cet?.currentMinutes;',
+      '\n};',
+    ].join('\n');
+
+    const audit = auditRegionRefs(synthetic, { anchor: 'const regione = () => {', end: '\n};' });
+
+    assert.equal(audit.anchorCount, 1);
+    assert.ok(audit.regionFound, 'la regione sintetica deve essere delimitata');
+    assert.deepEqual(
+      audit.offending.map((o) => `riga ${o.line}: ${o.token}`),
+      ['riga 2: sessionInfo'],
+      'la lettura nuda non e stata segnalata alla riga attesa',
+    );
+  });
+
+  it('la seconda snapshot marcata e un offending: ogni regola ammette una sola occorrenza', () => {
+    const mark = '// PASSO E: snapshot documentata';
+    const snapshot = 'const currentCache = { ...catalystCache };';
+    const synthetic = [
+      'const regione = () => {',
+      `  ${mark}`,
+      `  ${snapshot}`,
+      `  ${mark}`,
+      `  ${snapshot}`,
+      '\n};',
+    ].join('\n');
+
+    const audit = auditRegionRefs(synthetic, {
+      anchor: 'const regione = () => {',
+      end: '\n};',
+      allowed: [{ token: 'catalystCache', line: snapshot, prevLine: mark }],
+    });
+
+    assert.equal(audit.allowedHits, 1, 'la regola deve ammettere esattamente una occorrenza');
+    assert.deepEqual(
+      audit.offending.map((o) => `riga ${o.line}: ${o.token}`),
+      ['riga 5: catalystCache'],
+      'la seconda snapshot non e stata segnalata alla riga attesa',
+    );
+  });
+
+  // --- Firma del report di audit: nessun parametro morto ------------------
+  it('generateFilteringAuditReport non chiede un CET che nessuno usa', () => {
+    const calc = readSource(CALC_URL, 'src/utils/calculator.ts');
+    const app = readSource(APP_URL, 'src/App.tsx');
+
+    const declarations = extractCallArguments(calc, AUDIT_CALLEE);
+    assert.ok(declarations.length >= 1, `dichiarazione di ${AUDIT_CALLEE} non trovata`);
+    const signature = declarations[0];
+    const declaredParams = countTopLevelArgs(signature.args);
+
+    assert.equal(
+      declaredParams,
+      6,
+      `firma a riga ${signature.line}: ${declaredParams} parametri (attesi 6: il CET non e' letto nel corpo)`,
+    );
+    assert.equal(
+      /\bcurrentCetMinutes\b/.test(signature.args),
+      false,
+      `firma a riga ${signature.line}: chiede ancora currentCetMinutes`,
+    );
+
+    const calls = extractCallArguments(app, AUDIT_CALLEE);
+    // Guardia anti-vacuita: i call site devono essere stati letti davvero.
+    assert.ok(calls.length > 0, `nessun call site di ${AUDIT_CALLEE} in src/App.tsx`);
+    const wrong = calls.filter((c) => countTopLevelArgs(c.args) !== declaredParams);
+    assert.deepEqual(
+      wrong.map((c) => `riga ${c.line}: ${countTopLevelArgs(c.args)} argomenti`),
+      [],
+      `call site con arita' diversa da ${declaredParams}`,
     );
   });
 });

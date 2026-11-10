@@ -3848,8 +3848,7 @@ export function generateFilteringAuditReport(
   futuresChange: number | { EU: number; US: number },
   parameters: SystemParameters,
   catalystCache: Record<string, GeminiCatalystAnalysis>,
-  isRsiFilterActive: boolean,
-  currentCetMinutes?: number
+  isRsiFilterActive: boolean
 ): FilteringAuditReport {
   const totalScanned = quotes.length;
   const qualifiedTickers = new Set<string>();
