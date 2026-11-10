@@ -551,3 +551,75 @@ export function findUnreadParams(source: string, callee: string): UnreadParamsAu
 
   return { line: found.line, params, unread, bodyLength: found.body.length };
 }
+
+/**
+ * Ancoraggi delle due regioni "ref-backed" di `src/App.tsx`.
+ *
+ * Vivono qui, e non nei test, perche' erano duplicati alla lettera fra
+ * `app_wiring.test.ts` e `audit_round2.test.ts`: la costante condivisa toglie
+ * la copia, e una futura modifica al codice ha un solo posto da aggiornare.
+ * `allowed` e' la sola lettura dallo state ammessa, con la sua motivazione.
+ */
+export const APP_REGIONS = {
+  rerank: {
+    anchor: '// Re-rank instantly when RSI Filter or parameters are changed',
+    end: '\n  }, [rsiFilterActive, parameters]);',
+    allowed: [
+      {
+        token: 'catalystCache',
+        line: 'const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCache };',
+        prevLine:
+          "// PASSO E: catalystCache resta dallo state di proposito (snapshot pre-run: in questo run setCatalystCache e' gia' stato chiamato).",
+      },
+    ] as RegionAllowRule[],
+  },
+  scan: {
+    // `const handleRunScreening` da solo comparirebbe DUE volte (c'e' anche
+    // `const handleRunScreeningRef = React.useRef(...)`): l'ancora deve essere
+    // unica, altrimenti l'invariante non sa quale regione sta guardando.
+    anchor: 'const handleRunScreening = useCallback(async () => {',
+    end: '}, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries]);',
+    allowed: [] as RegionAllowRule[],
+  },
+} as const;
+
+export type AppRegion = { anchor: string; end: string; allowed?: RegionAllowRule[] };
+
+/**
+ * Invariante di regione, in un posto solo: i test invocano questa funzione
+ * invece di ripetere le quattro asserzioni, cosi' la REGOLA (ancora unica,
+ * regione delimitata, eccezioni consumate, nessun offending) non puo' divergere
+ * fra i due file. Duplicare l'invocazione e' accettabile, duplicare la regola no.
+ */
+export function assertRegionHasNoStateReads(
+  source: string,
+  region: AppRegion,
+  label: string,
+): RegionRefAudit {
+  const audit = auditRegionRefs(source, region);
+  const allowedCount = region.allowed?.length ?? 0;
+  const problems: string[] = [];
+
+  if (audit.anchorCount !== 1) {
+    problems.push(`${label}: ancora trovata ${audit.anchorCount} volte (attesa 1)`);
+  }
+  if (!audit.regionFound) {
+    problems.push(`${label}: regione non delimitata dopo la riga ${audit.regionStartLine}`);
+  }
+  if (audit.allowedHits !== allowedCount) {
+    problems.push(`${label}: eccezioni ammesse soddisfatte ${audit.allowedHits} su ${allowedCount}`);
+  }
+  if (audit.offending.length > 0) {
+    problems.push(
+      `${label}: letture dirette dello state -> ${audit.offending
+        .map((o) => `riga ${o.line}: ${o.token} (${o.snippet})`)
+        .join(', ')}`,
+    );
+  }
+
+  if (problems.length > 0) {
+    assert.fail(problems.join(' | '));
+  }
+
+  return audit;
+}

@@ -10,12 +10,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  APP_REGIONS,
+  assertRegionHasNoStateReads,
   auditCalendarPairing,
   auditRegionRefs,
   extractCallArguments,
   findUnreadParams,
   readSource,
-  type RegionAllowRule,
 } from './sourceAudit';
 
 const APP_URL = new URL('../../App.tsx', import.meta.url);
@@ -25,35 +26,6 @@ const SELECTOR_CALL_URL = new URL('../setupSelector.ts', import.meta.url);
 const MIN_EXPECTED_INVOCATIONS = 15;
 const CALLEE = 'buildExecutionSetup';
 const AUDIT_CALLEE = 'generateFilteringAuditReport';
-
-// --- Regione 1: effetto re-rank ------------------------------------------
-const RERANK_ANCHOR = '// Re-rank instantly when RSI Filter or parameters are changed';
-const RERANK_END = '\n  }, [rsiFilterActive, parameters]);';
-
-// --- Regione 2: handleRunScreening ---------------------------------------
-// `const handleRunScreening` da solo comparirebbe DUE volte (c'e' anche
-// `const handleRunScreeningRef = React.useRef(...)`): l'ancora deve essere
-// unica, altrimenti l'invariante non sa quale regione sta guardando.
-const SCAN_ANCHOR = 'const handleRunScreening = useCallback(async () => {';
-const SCAN_END = '}, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries]);';
-
-/**
- * Unica lettura dallo state ammessa, con motivazione dichiarata:
- * `catalystCache` e' lo snapshot PRE-RUN. In questo run `setCatalystCache` e'
- * gia' stato chiamato (resolveCandidateCatalyst), quindi il ref potrebbe gia'
- * contenere i catalyst risolti e `currentCache` non sarebbe piu' lo snapshot
- * pre-run: cambierebbe la lista degli esclusi nel Catalyst Gate del report.
- * La regola e' pinnata sul testo esatto: nessun `includes`, nessun marcatore
- * "qualsiasi".
- */
-const RERANK_ALLOWED: RegionAllowRule[] = [
-  {
-    token: 'catalystCache',
-    line: 'const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCache };',
-    prevLine:
-      "// PASSO E: catalystCache resta dallo state di proposito (snapshot pre-run: in questo run setCatalystCache e' gia' stato chiamato).",
-  },
-];
 
 describe('wiring statico buildExecutionSetup', () => {
   it('src/App.tsx esiste e viene letto come testo', () => {
@@ -145,55 +117,14 @@ describe('wiring statico buildExecutionSetup', () => {
 
   it("l'effetto re-rank non legge dallo state i valori che hanno un ref allineato", () => {
     const source = readSource(APP_URL, 'src/App.tsx');
-    const audit = auditRegionRefs(source, {
-      anchor: RERANK_ANCHOR,
-      end: RERANK_END,
-      allowed: RERANK_ALLOWED,
-    });
-
-    assert.equal(
-      audit.anchorCount,
-      1,
-      `ancora dell'effetto re-rank trovata ${audit.anchorCount} volte (attesa: 1)`,
-    );
-    assert.ok(
-      audit.regionFound,
-      `regione dell'effetto re-rank non delimitata (deps array non trovato dopo la riga ${audit.regionStartLine})`,
-    );
-    // Guardia anti-vacuita: l'unica eccezione ammessa deve essere stata consumata,
-    // altrimenti la regola e' scritta su un testo che non esiste piu'.
-    assert.equal(
-      audit.allowedHits,
-      RERANK_ALLOWED.length,
-      `regole ammesse soddisfatte: ${audit.allowedHits} su ${RERANK_ALLOWED.length}`,
-    );
-    assert.deepEqual(
-      audit.offending.map((o) => `riga ${o.line}: ${o.token} -> ${o.snippet}`),
-      [],
-      "letture dirette dello state dentro l'effetto re-rank",
-    );
+    // Ancoraggio, eccezione ammessa e regola vivono in APP_REGIONS /
+    // assertRegionHasNoStateReads: qui si invoca, non si riscrive.
+    assertRegionHasNoStateReads(source, APP_REGIONS.rerank, "effetto re-rank");
   });
 
   it('la regione della scansione non legge dallo state i valori che hanno un ref allineato', () => {
     const source = readSource(APP_URL, 'src/App.tsx');
-    const audit = auditRegionRefs(source, { anchor: SCAN_ANCHOR, end: SCAN_END });
-
-    assert.equal(
-      audit.anchorCount,
-      1,
-      `ancora di handleRunScreening trovata ${audit.anchorCount} volte (attesa: 1)`,
-    );
-    assert.ok(
-      audit.regionFound,
-      `regione di handleRunScreening non delimitata (deps array non trovato dopo la riga ${audit.regionStartLine})`,
-    );
-    // Nessuna eccezione: nella scansione ogni valore con ref deve venire dal ref.
-    assert.equal(audit.allowedHits, 0, 'la scansione non ha letture ammesse');
-    assert.deepEqual(
-      audit.offending.map((o) => `riga ${o.line}: ${o.token} -> ${o.snippet}`),
-      [],
-      'letture dirette dello state dentro handleRunScreening',
-    );
+    assertRegionHasNoStateReads(source, APP_REGIONS.scan, 'handleRunScreening');
   });
 
   // --- Anti-vacuita: l'helper deve fallire quando deve -------------------
@@ -238,6 +169,26 @@ describe('wiring statico buildExecutionSetup', () => {
       audit.offending.map((o) => `riga ${o.line}: ${o.token}`),
       ['riga 5: catalystCache'],
       'la seconda snapshot non e stata segnalata alla riga attesa',
+    );
+  });
+
+  it("assertRegionHasNoStateReads fallisce con l'etichetta della regione", () => {
+    // Sorgente sintetica: una lettura nuda dentro la regione deve far fallire
+    // l'helper condiviso, altrimenti la regola sarebbe solo decorativa.
+    const synthetic = [
+      'const regione = () => {',
+      '  const x = catalystCache[ticker];',
+      '\n};',
+    ].join('\n');
+
+    assert.throws(
+      () =>
+        assertRegionHasNoStateReads(
+          synthetic,
+          { anchor: 'const regione = () => {', end: '\n};' },
+          'regione sintetica',
+        ),
+      /regione sintetica: letture dirette dello state/,
     );
   });
 
