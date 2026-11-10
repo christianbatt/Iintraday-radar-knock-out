@@ -12,8 +12,8 @@ import assert from 'node:assert/strict';
 import {
   auditCalendarPairing,
   auditRegionRefs,
-  countTopLevelArgs,
   extractCallArguments,
+  findUnreadParams,
   readSource,
   type RegionAllowRule,
 } from './sourceAudit';
@@ -21,6 +21,7 @@ import {
 const APP_URL = new URL('../../App.tsx', import.meta.url);
 const CALC_URL = new URL('../calculator.ts', import.meta.url);
 const SELECTOR_URL = new URL('../../config/liveSelector.ts', import.meta.url);
+const SELECTOR_CALL_URL = new URL('../setupSelector.ts', import.meta.url);
 const MIN_EXPECTED_INVOCATIONS = 15;
 const CALLEE = 'buildExecutionSetup';
 const AUDIT_CALLEE = 'generateFilteringAuditReport';
@@ -241,34 +242,71 @@ describe('wiring statico buildExecutionSetup', () => {
   });
 
   // --- Firma del report di audit: nessun parametro morto ------------------
-  it('generateFilteringAuditReport non chiede un CET che nessuno usa', () => {
+  it('generateFilteringAuditReport non dichiara parametri che nessuno legge', () => {
     const calc = readSource(CALC_URL, 'src/utils/calculator.ts');
-    const app = readSource(APP_URL, 'src/App.tsx');
+    const audit = findUnreadParams(calc, AUDIT_CALLEE);
 
-    const declarations = extractCallArguments(calc, AUDIT_CALLEE);
-    assert.ok(declarations.length >= 1, `dichiarazione di ${AUDIT_CALLEE} non trovata`);
-    const signature = declarations[0];
-    const declaredParams = countTopLevelArgs(signature.args);
-
-    assert.equal(
-      declaredParams,
-      6,
-      `firma a riga ${signature.line}: ${declaredParams} parametri (attesi 6: il CET non e' letto nel corpo)`,
+    assert.ok(audit, `dichiarazione di ${AUDIT_CALLEE} non trovata`);
+    // Guardie anti-vacuita': senza corpo non c'e' niente da verificare, e una
+    // firma letta male darebbe zero parametri (cioe' zero controlli).
+    assert.ok(audit.bodyLength > 0, `corpo vuoto per ${AUDIT_CALLEE}`);
+    assert.ok(
+      audit.params.length > 0,
+      `nessun parametro estratto dalla firma a riga ${audit.line}`,
     );
-    assert.equal(
-      /\bcurrentCetMinutes\b/.test(signature.args),
-      false,
-      `firma a riga ${signature.line}: chiede ancora currentCetMinutes`,
-    );
-
-    const calls = extractCallArguments(app, AUDIT_CALLEE);
-    // Guardia anti-vacuita: i call site devono essere stati letti davvero.
-    assert.ok(calls.length > 0, `nessun call site di ${AUDIT_CALLEE} in src/App.tsx`);
-    const wrong = calls.filter((c) => countTopLevelArgs(c.args) !== declaredParams);
     assert.deepEqual(
-      wrong.map((c) => `riga ${c.line}: ${countTopLevelArgs(c.args)} argomenti`),
+      audit.unread,
       [],
-      `call site con arita' diversa da ${declaredParams}`,
+      `riga ${audit.line}: parametri dichiarati e mai letti nel corpo: ${audit.unread.join(', ')}`,
     );
+  });
+
+  it('nessun parametro morto nelle funzioni chiuse da Passo G1', () => {
+    const calc = readSource(CALC_URL, 'src/utils/calculator.ts');
+    const closed = [
+      'calculateDynamicBreakeven',
+      'calculateDerivativeStressReport',
+      'runExcludedSetupsAutoAnalysis',
+    ];
+
+    for (const callee of closed) {
+      const audit = findUnreadParams(calc, callee);
+      assert.ok(audit, `${callee}: dichiarazione non trovata`);
+      assert.ok(audit.params.length > 0, `${callee}: nessun parametro estratto`);
+      assert.deepEqual(
+        audit.unread,
+        [],
+        `${callee} (riga ${audit.line}): parametri mai letti: ${audit.unread.join(', ')}`,
+      );
+    }
+    assert.equal(closed.length, 3, 'la lista delle funzioni chiuse non e stata svuotata');
+  });
+
+  it('applyCalendarSelector non dichiara parametri che nessuno legge', () => {
+    const source = readSource(SELECTOR_CALL_URL, 'src/utils/setupSelector.ts');
+    const audit = findUnreadParams(source, 'applyCalendarSelector');
+
+    assert.ok(audit, 'dichiarazione di applyCalendarSelector non trovata');
+    assert.ok(audit.params.length > 0, 'nessun parametro estratto dalla firma');
+    assert.deepEqual(
+      audit.unread,
+      [],
+      `riga ${audit.line}: parametri dichiarati e mai letti nel corpo: ${audit.unread.join(', ')}`,
+    );
+  });
+
+  it('il controllo dei parametri non letti segnala quelli realmente non letti', () => {
+    // Sorgente sintetica: `inerte` e' dichiarato nell'ordine e mai usato.
+    const synthetic = [
+      'export function finta(usato: number, inerte: string): number {',
+      '  return usato;',
+      '}',
+    ].join('\n');
+
+    const audit = findUnreadParams(synthetic, 'finta');
+
+    assert.ok(audit, 'dichiarazione sintetica non trovata');
+    assert.deepEqual(audit.params, ['usato', 'inerte'], 'parametri letti male dalla firma');
+    assert.deepEqual(audit.unread, ['inerte'], 'il parametro inerte non e stato segnalato');
   });
 });
