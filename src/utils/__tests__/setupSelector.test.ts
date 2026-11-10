@@ -5,6 +5,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { applyCalendarSelector } from '../setupSelector';
 import type { ExecutionSetup, MacroCalendarState } from '../../types/radar';
 
@@ -56,7 +57,15 @@ function makeSetup(): SetupShape {
   };
 }
 
-function numericSnapshot(setup: Record<string, unknown>): Record<string, number> {
+/**
+ * Il setup sintetico di questi test copre i campi osservati; il constraint del
+ * selettore e' `ExecutionSetup`, quindi il cast e' esplicito e localizzato qui.
+ */
+function asExecutionSetup(shape: SetupShape): SetupShape & ExecutionSetup {
+  return shape as unknown as SetupShape & ExecutionSetup;
+}
+
+function numericSnapshot(setup: object): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [k, v] of Object.entries(setup)) {
     if (typeof v === 'number') out[k] = v;
@@ -66,7 +75,7 @@ function numericSnapshot(setup: Record<string, unknown>): Record<string, number>
 
 describe('applyCalendarSelector - live=false', () => {
   it('ritorna lo STESSO riferimento e non aggiunge chiavi', () => {
-    const setup = makeSetup();
+    const setup = asExecutionSetup(makeSetup());
     const before = JSON.parse(JSON.stringify(setup));
 
     const result = applyCalendarSelector(setup, makeCalendar('unavailable'), false);
@@ -79,7 +88,7 @@ describe('applyCalendarSelector - live=false', () => {
   });
 
   it('ignora anche calendar undefined (nessuna marcatura)', () => {
-    const setup = makeSetup();
+    const setup = asExecutionSetup(makeSetup());
     const result = applyCalendarSelector(setup, undefined, false);
 
     assert.equal(result, setup);
@@ -90,13 +99,10 @@ describe('applyCalendarSelector - live=false', () => {
 
 describe('applyCalendarSelector - live=true', () => {
   it('calendar undefined -> calendarStatus absent + CALENDAR_ABSENT', () => {
-    const setup = makeSetup();
+    const setup = asExecutionSetup(makeSetup());
     const numericBefore = numericSnapshot(setup);
 
-    const result = applyCalendarSelector(setup, undefined, true) as typeof setup & {
-      calendarStatus?: string;
-      reasonCodes?: string[];
-    };
+    const result = applyCalendarSelector(setup, undefined, true);
 
     assert.equal(result.calendarStatus, 'absent');
     assert.deepEqual(result.reasonCodes, ['CALENDAR_ABSENT']);
@@ -106,13 +112,10 @@ describe('applyCalendarSelector - live=true', () => {
   });
 
   it('unavailable -> calendarStatus unavailable + CALENDAR_UNAVAILABLE, setup NON scartato', () => {
-    const setup = makeSetup();
+    const setup = asExecutionSetup(makeSetup());
     const numericBefore = numericSnapshot(setup);
 
-    const result = applyCalendarSelector(setup, makeCalendar('unavailable'), true) as typeof setup & {
-      calendarStatus?: string;
-      reasonCodes?: string[];
-    };
+    const result = applyCalendarSelector(setup, makeCalendar('unavailable'), true);
 
     assert.equal(result.calendarStatus, 'unavailable');
     assert.deepEqual(result.reasonCodes, ['CALENDAR_UNAVAILABLE']);
@@ -122,12 +125,10 @@ describe('applyCalendarSelector - live=true', () => {
   });
 
   it('ok -> calendarStatus ok e NESSUN reason code aggiunto', () => {
-    const setup = makeSetup();
+    const setup = asExecutionSetup(makeSetup());
     const numericBefore = numericSnapshot(setup);
 
-    const result = applyCalendarSelector(setup, makeCalendar('ok'), true) as typeof setup & {
-      calendarStatus?: string;
-    };
+    const result = applyCalendarSelector(setup, makeCalendar('ok'), true);
 
     assert.equal(result.calendarStatus, 'ok');
     assert.equal('reasonCodes' in result, false, 'reasonCodes aggiunto con status ok');
@@ -135,11 +136,9 @@ describe('applyCalendarSelector - live=true', () => {
   });
 
   it('reasonCodes preesistenti vengono accodati, non sostituiti', () => {
-    const setup = { ...makeSetup(), reasonCodes: ['PRE_EXISTING'] };
+    const setup = asExecutionSetup({ ...makeSetup(), reasonCodes: ['PRE_EXISTING'] });
 
-    const result = applyCalendarSelector(setup, makeCalendar('unavailable'), true) as typeof setup & {
-      reasonCodes?: string[];
-    };
+    const result = applyCalendarSelector(setup, makeCalendar('unavailable'), true);
 
     assert.deepEqual(result.reasonCodes, ['PRE_EXISTING', 'CALENDAR_UNAVAILABLE']);
   });
@@ -153,5 +152,33 @@ describe('ExecutionSetup dichiara reasonCodes', () => {
     const typed = makeSetup() as unknown as ExecutionSetup;
     const codes: string[] | undefined = typed.reasonCodes;
     assert.equal(codes, undefined);
+  });
+});
+
+const SELECTOR_SRC_URL = new URL('../setupSelector.ts', import.meta.url);
+const RADAR_SRC_URL = new URL('../../types/radar.ts', import.meta.url);
+
+describe('CalendarStatus ha una sola fonte di verita', () => {
+  it('il tipo vive in radar.ts e il selettore lo importa', () => {
+    const selector = fs.readFileSync(SELECTOR_SRC_URL, 'utf8');
+    const radar = fs.readFileSync(RADAR_SRC_URL, 'utf8');
+
+    assert.ok(
+      /export type CalendarStatus\s*=/.test(radar),
+      'radar.ts non esporta CalendarStatus',
+    );
+    assert.equal(
+      /export type CalendarStatus\s*=/.test(selector),
+      false,
+      'setupSelector ridichiara CalendarStatus (due fonti di verita per lo stesso dominio)',
+    );
+    assert.ok(
+      /import type \{[^}]*CalendarStatus[^}]*\} from '\.\.\/types\/radar'/.test(selector),
+      'setupSelector non importa CalendarStatus da ../types/radar',
+    );
+    assert.ok(
+      /calendarStatus\?:\s*CalendarStatus/.test(radar),
+      'ExecutionSetup.calendarStatus non usa CalendarStatus',
+    );
   });
 });

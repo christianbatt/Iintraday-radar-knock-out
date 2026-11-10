@@ -2321,7 +2321,7 @@ export function buildExecutionSetup(
     ...(catalyst?.condizioni_invalidazione || []),
   ];
 
-  return applyCalendarSelector<ExecutionSetup>({
+  return applyCalendarSelector({
     candidate: quote,
     decision,
     reasonNoTrade,

@@ -6,15 +6,13 @@
  * Con `live === false` ritorna lo stesso riferimento, senza aggiungere proprieta':
  * e' questo che rende l'output bit-identico quando SETUP_SELECTOR_LIVE e' "off".
  */
-import type { MacroCalendarState } from '../types/radar';
+import type { CalendarStatus, ExecutionSetup, MacroCalendarState } from '../types/radar';
 
-export type CalendarStatus = 'ok' | 'unavailable' | 'absent';
-
-export function applyCalendarSelector<T extends { reasonCodes?: string[] }>(
+export function applyCalendarSelector<T extends ExecutionSetup>(
   setup: T,
   calendar: MacroCalendarState | undefined,
   live: boolean,
-): T {
+): T & { calendarStatus?: CalendarStatus } {
   // Nessuna proprieta' aggiunta, nessun array ricreato: stessa identita'.
   if (!live) {
     return setup;
@@ -25,7 +23,7 @@ export function applyCalendarSelector<T extends { reasonCodes?: string[] }>(
       ...setup,
       calendarStatus: 'absent',
       reasonCodes: [...(setup.reasonCodes ?? []), 'CALENDAR_ABSENT'],
-    } as T & { calendarStatus: CalendarStatus };
+    };
   }
 
   if (calendar.status === 'unavailable') {
@@ -34,8 +32,8 @@ export function applyCalendarSelector<T extends { reasonCodes?: string[] }>(
       ...setup,
       calendarStatus: 'unavailable',
       reasonCodes: [...(setup.reasonCodes ?? []), 'CALENDAR_UNAVAILABLE'],
-    } as T & { calendarStatus: CalendarStatus };
+    };
   }
 
-  return { ...setup, calendarStatus: 'ok' } as T & { calendarStatus: CalendarStatus };
+  return { ...setup, calendarStatus: 'ok' };
 }
