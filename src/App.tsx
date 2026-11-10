@@ -1049,8 +1049,8 @@ export default function App() {
 
       setTopCandidateEU(finalTopEU);
       setTopCandidateUS(finalTopUS);
-      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU, macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
-      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters, { entryMode: entryModeUS, macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
+      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU, macroEvents: macroCalendarRef.current?.events, macroCalendar: macroCalendarRef.current ?? undefined }));
+      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters, { entryMode: entryModeUS, macroEvents: macroCalendarRef.current?.events, macroCalendar: macroCalendarRef.current ?? undefined }));
 
       const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCache };
       if (finalTopEU && finalCatEU) currentCache[finalTopEU.quote.ticker] = finalCatEU;
