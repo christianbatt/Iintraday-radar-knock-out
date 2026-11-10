@@ -104,13 +104,21 @@ export function fieldValue(args: string, field: string): string | null {
  * `Record<string, X>` verrebbe contata come separatore di parametri.
  */
 function stripGenericArguments(args: string): string {
-  let previous: string;
   let current = args;
-  do {
-    previous = current;
-    current = current.replace(/\b\w+<[^<>]*>/g, (match) => match.slice(0, match.indexOf('<')));
-  } while (current !== previous);
-  return current;
+  for (;;) {
+    // La maschera si ricalcola a ogni giro: le sostituzioni accorciano il testo
+    // e gli indici precedenti non valgono piu'.
+    const mask = codeMask(current);
+    let changed = false;
+    current = current.replace(/\b\w+<[^<>]*>/g, (match, offset: number) => {
+      // Dentro stringa, template o commento il testo non e' un tipo: toccarlo
+      // muterebbe il contenuto del letterale (es. `'a<b>'` -> `'a'`).
+      if (!mask[offset]) return match;
+      changed = true;
+      return match.slice(0, match.indexOf('<'));
+    });
+    if (!changed) return current;
+  }
 }
 
 /**

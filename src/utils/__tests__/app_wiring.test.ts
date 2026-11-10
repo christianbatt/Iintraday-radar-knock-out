@@ -14,6 +14,7 @@ import {
   assertRegionHasNoStateReads,
   auditCalendarPairing,
   auditRegionRefs,
+  countTopLevelArgs,
   extractCallArguments,
   findUnreadParams,
   readSource,
@@ -190,6 +191,13 @@ describe('wiring statico buildExecutionSetup', () => {
         ),
       /regione sintetica: letture dirette dello state/,
     );
+  });
+
+  it('il conteggio degli argomenti ignora i generici e non tocca le stringhe', () => {
+    // `'a<b>'` e' un letterale, non un tipo: il suo contenuto non va mutato.
+    assert.equal(countTopLevelArgs("'a<b>', x"), 2, 'il letterale ha mangiato un argomento');
+    // `Record<string, number>` e' un tipo: la sua virgola non separa argomenti.
+    assert.equal(countTopLevelArgs('Record<string, number>, y'), 2, 'la virgola del generico contata');
   });
 
   // --- Firma del report di audit: nessun parametro morto ------------------
