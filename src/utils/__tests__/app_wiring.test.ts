@@ -99,6 +99,60 @@ function fieldValue(args: string, field: string): string | null {
   return match ? match[1].trim() : null;
 }
 
+type CalendarPairAudit = {
+  calls: number;
+  unparsed: number[];
+  mismatches: { line: number; events: string; calendar: string }[];
+};
+
+/**
+ * Confronto esatto fra `macroEvents` e `macroCalendar`.
+ *
+ * Il confronto NON puo' essere un semplice `startsWith`: `'macroCalendarRef.current'`
+ * inizia per `'macroCalendar'`, quindi un calendar preso dal ref supererebbe il
+ * controllo del prefisso e la coppia incoerente (eventi dalla variabile, calendario
+ * dal ref) passerebbe in silenzio. Il ref e' quindi ammesso solo quando gli eventi
+ * arrivano dal ref, ed escluso ESPLICITAMENTE quando arrivano dalla variabile.
+ */
+export function auditCalendarPairing(source: string): CalendarPairAudit {
+  const calls = extractCallArguments(source, CALLEE);
+  const unparsed: number[] = [];
+  const mismatches: CalendarPairAudit['mismatches'] = [];
+
+  for (const call of calls) {
+    const events = fieldValue(call.args, 'macroEvents');
+    const calendar = fieldValue(call.args, 'macroCalendar');
+
+    if (events === null || calendar === null) {
+      unparsed.push(call.line);
+      continue;
+    }
+
+    // Il ref va riconosciuto per primo: il suo nome contiene il prefisso della variabile.
+    const expected = events.startsWith('macroCalendarRef.current')
+      ? 'macroCalendarRef.current'
+      : events.startsWith('macroCalendar')
+      ? 'macroCalendar'
+      : null;
+
+    if (expected === null) {
+      unparsed.push(call.line);
+      continue;
+    }
+
+    const consistent =
+      expected === 'macroCalendarRef.current'
+        ? calendar.startsWith('macroCalendarRef.current')
+        : calendar.startsWith('macroCalendar') && !calendar.startsWith('macroCalendarRef');
+
+    if (!consistent) {
+      mismatches.push({ line: call.line, events, calendar });
+    }
+  }
+
+  return { calls: calls.length, unparsed, mismatches };
+}
+
 describe('wiring statico buildExecutionSetup', () => {
   it('src/App.tsx esiste e viene letto come testo', () => {
     const source = readSource(APP_URL, 'src/App.tsx');
@@ -136,47 +190,46 @@ describe('wiring statico buildExecutionSetup', () => {
 
   it(`macroCalendar deriva dalla stessa sorgente di macroEvents (minimo ${MIN_EXPECTED_INVOCATIONS} invocazioni)`, () => {
     const source = readSource(APP_URL, 'src/App.tsx');
-    const calls = extractCallArguments(source, CALLEE);
+    const audit = auditCalendarPairing(source);
 
     // Guardia anti-vacuita: la coppia si verifica solo su un campione reale.
     assert.ok(
-      calls.length >= MIN_EXPECTED_INVOCATIONS,
-      `trovate ${calls.length} invocazioni di ${CALLEE}, attese almeno ${MIN_EXPECTED_INVOCATIONS}`,
+      audit.calls >= MIN_EXPECTED_INVOCATIONS,
+      `trovate ${audit.calls} invocazioni di ${CALLEE}, attese almeno ${MIN_EXPECTED_INVOCATIONS}`,
     );
 
-    const mismatches: string[] = [];
-    const unparsed: number[] = [];
+    assert.deepEqual(
+      audit.unparsed,
+      [],
+      `campi non riconosciuti alle righe: ${audit.unparsed.join(', ')}`,
+    );
+    assert.deepEqual(
+      audit.mismatches.map(
+        (m) => `riga ${m.line}: macroEvents=${m.events} ma macroCalendar=${m.calendar}`,
+      ),
+      [],
+      'coppie incoerenti',
+    );
+  });
 
-    for (const call of calls) {
-      const events = fieldValue(call.args, 'macroEvents');
-      const calendar = fieldValue(call.args, 'macroCalendar');
+  it('il controllo di coppia segnala il ref come calendar quando events viene dalla variabile', () => {
+    // Sorgente sintetica: `macroCalendarRef.current` inizia per `macroCalendar`,
+    // quindi senza l'esclusione esplicita del prefisso questa coppia passerebbe.
+    const synthetic = [
+      'const macroCalendar = buildMacroCalendar(events);',
+      'const macroCalendarRef = useRef<MacroCalendarState | null>(null);',
+      'const setup = buildExecutionSetup(candidate, catalyst, "EU", params, {',
+      '  macroEvents: macroCalendar?.events,',
+      '  macroCalendar: macroCalendarRef.current,',
+      '});',
+    ].join('\n');
 
-      if (events === null || calendar === null) {
-        unparsed.push(call.line);
-        continue;
-      }
+    const audit = auditCalendarPairing(synthetic);
 
-      // `macroCalendarRef` inizia per `macroCalendar`: il ref va riconosciuto per primo.
-      const expected = events.startsWith('macroCalendarRef.current')
-        ? 'macroCalendarRef.current'
-        : events.startsWith('macroCalendar')
-        ? 'macroCalendar'
-        : null;
-
-      if (expected === null) {
-        unparsed.push(call.line);
-        continue;
-      }
-
-      if (!calendar.startsWith(expected)) {
-        mismatches.push(
-          `riga ${call.line}: macroEvents=${events} ma macroCalendar=${calendar}`,
-        );
-      }
-    }
-
-    assert.deepEqual(unparsed, [], `campi non riconosciuti alle righe: ${unparsed.join(', ')}`);
-    assert.deepEqual(mismatches, [], `coppie incoerenti:\n${mismatches.join('\n')}`);
+    assert.equal(audit.calls, 1, 'la sorgente sintetica deve avere una sola invocazione');
+    assert.deepEqual(audit.unparsed, [], 'la coppia sintetica deve essere leggibile');
+    assert.equal(audit.mismatches.length, 1, 'la coppia incoerente non e stata segnalata');
+    assert.equal(audit.mismatches[0].calendar, 'macroCalendarRef.current');
   });
 
   it("SETUP_SELECTOR_LIVE e ancora 'off'", () => {

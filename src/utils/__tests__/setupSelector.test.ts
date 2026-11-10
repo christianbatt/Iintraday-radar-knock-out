@@ -6,7 +6,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyCalendarSelector } from '../setupSelector';
-import type { MacroCalendarState } from '../../types/radar';
+import type { ExecutionSetup, MacroCalendarState } from '../../types/radar';
 
 type CalendarLike = Pick<MacroCalendarState, 'status'> & Partial<MacroCalendarState>;
 
@@ -142,5 +142,16 @@ describe('applyCalendarSelector - live=true', () => {
     };
 
     assert.deepEqual(result.reasonCodes, ['PRE_EXISTING', 'CALENDAR_UNAVAILABLE']);
+  });
+});
+
+describe('ExecutionSetup dichiara reasonCodes', () => {
+  it('il campo esiste sul tipo, non solo a runtime', () => {
+    // Il vero gate e' tsc: la riga `codes` non compila se `reasonCodes` manca dal
+    // tipo ExecutionSetup. L'assert runtime tiene usate entrambe le variabili,
+    // cosi' noUnusedLocals (TS6133) non fa fallire il gate.
+    const typed = makeSetup() as unknown as ExecutionSetup;
+    const codes: string[] | undefined = typed.reasonCodes;
+    assert.equal(codes, undefined);
   });
 });
