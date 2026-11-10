@@ -1052,6 +1052,7 @@ export default function App() {
       setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU, macroEvents: macroCalendarRef.current?.events, macroCalendar: macroCalendarRef.current ?? undefined }));
       setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters, { entryMode: entryModeUS, macroEvents: macroCalendarRef.current?.events, macroCalendar: macroCalendarRef.current ?? undefined }));
 
+      // PASSO E: catalystCache resta dallo state di proposito (snapshot pre-run: in questo run setCatalystCache e' gia' stato chiamato).
       const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCache };
       if (finalTopEU && finalCatEU) currentCache[finalTopEU.quote.ticker] = finalCatEU;
       if (finalTopUS && finalCatUS) currentCache[finalTopUS.quote.ticker] = finalCatUS;
@@ -1063,7 +1064,7 @@ export default function App() {
         parameters,
         currentCache,
         rsiFilterActive,
-        sessionInfo?.cet?.currentMinutes
+        sessionInfoRef.current?.cet?.currentMinutes
       );
       setAuditReport(audit);
     });

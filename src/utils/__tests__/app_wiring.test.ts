@@ -99,6 +99,72 @@ function fieldValue(args: string, field: string): string | null {
   return match ? match[1].trim() : null;
 }
 
+const RERANK_ANCHOR = '// Re-rank instantly when RSI Filter or parameters are changed';
+const RERANK_END = '\n  }, [rsiFilterActive, parameters]);';
+// Marcatore sulla riga precedente: dichiara che la lettura dallo state e' voluta.
+const RERANK_CACHE_ALLOW_MARK = 'PASSO E:';
+
+type RerankRefAudit = {
+  anchorCount: number;
+  regionFound: boolean;
+  regionStartLine: number;
+  offending: { line: number; token: string; snippet: string }[];
+};
+
+/**
+ * Invariante statica sull'effetto re-rank: dentro la regione (ancora -> deps array)
+ * `sessionInfo` deve comparire SOLO come `sessionInfoRef.current`, e `catalystCache`
+ * solo come ref oppure nella sola snapshot documentata `{ ...catalystCache }`
+ * (preceduta dal marcatore: li' la lettura dallo state e' voluta, read-after-write).
+ *
+ * L'ancora deve esistere esattamente una volta: se il codice cambia forma, il test
+ * fallisce invece di passare in silenzio.
+ */
+export function auditRerankRefs(source: string): RerankRefAudit {
+  const anchorCount = source.split(RERANK_ANCHOR).length - 1;
+  if (anchorCount !== 1) {
+    return { anchorCount, regionFound: false, regionStartLine: 0, offending: [] };
+  }
+
+  const startIdx = source.indexOf(RERANK_ANCHOR);
+  const endIdx = source.indexOf(RERANK_END, startIdx);
+  if (endIdx < 0) {
+    return {
+      anchorCount,
+      regionFound: false,
+      regionStartLine: source.slice(0, startIdx).split('\n').length,
+      offending: [],
+    };
+  }
+
+  const region = source.slice(startIdx, endIdx + RERANK_END.length);
+  const regionStartLine = source.slice(0, startIdx).split('\n').length;
+  const lines = region.split('\n');
+  const offending: RerankRefAudit['offending'] = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const lineText = lines[i];
+    // Le righe di solo commento sono prosa (spiegano le scelte): non sono letture.
+    if (lineText.trim().startsWith('//')) continue;
+    const tokens = lineText.match(/\b(catalystCache|sessionInfo)\b/g) ?? [];
+    for (const token of tokens) {
+      // `catalystCacheRef`/`sessionInfoRef` e i setter non matchano \b...\b: qui
+      // arrivano solo le letture dirette dello state.
+      const isDocumentedCacheSnapshot =
+        token === 'catalystCache' &&
+        lineText.includes('{ ...catalystCache }') &&
+        i > 0 &&
+        lines[i - 1].includes(RERANK_CACHE_ALLOW_MARK);
+
+      if (!isDocumentedCacheSnapshot) {
+        offending.push({ line: regionStartLine - 1 + i + 1, token, snippet: lineText.trim().slice(0, 120) });
+      }
+    }
+  }
+
+  return { anchorCount, regionFound: true, regionStartLine, offending };
+}
+
 type CalendarPairAudit = {
   calls: number;
   unparsed: number[];
@@ -239,5 +305,24 @@ describe('wiring statico buildExecutionSetup', () => {
     );
     assert.ok(declaration, 'dichiarazione SETUP_SELECTOR_LIVE non trovata');
     assert.equal(declaration[2], 'off', 'SETUP_SELECTOR_LIVE non e "off"');
+  });
+  it("l'effetto re-rank legge catalystCache e sessionInfo dai ref", () => {
+    const source = readSource(APP_URL, 'src/App.tsx');
+    const audit = auditRerankRefs(source);
+
+    assert.equal(
+      audit.anchorCount,
+      1,
+      `ancora dell'effetto re-rank trovata ${audit.anchorCount} volte (attesa: 1)`,
+    );
+    assert.ok(
+      audit.regionFound,
+      `regione dell'effetto re-rank non delimitata (deps array non trovato dopo la riga ${audit.regionStartLine})`,
+    );
+    assert.deepEqual(
+      audit.offending.map((o) => `riga ${o.line}: ${o.token} -> ${o.snippet}`),
+      [],
+      'letture dirette dello state dentro l\'effetto re-rank',
+    );
   });
 });
