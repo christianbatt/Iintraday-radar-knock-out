@@ -10,49 +10,23 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  APP_REGIONS,
+  assertRegionHasNoStateReads,
   auditCalendarPairing,
   auditRegionRefs,
   countTopLevelArgs,
   extractCallArguments,
+  findUnreadParams,
   readSource,
-  type RegionAllowRule,
 } from './sourceAudit';
 
 const APP_URL = new URL('../../App.tsx', import.meta.url);
 const CALC_URL = new URL('../calculator.ts', import.meta.url);
 const SELECTOR_URL = new URL('../../config/liveSelector.ts', import.meta.url);
+const SELECTOR_CALL_URL = new URL('../setupSelector.ts', import.meta.url);
 const MIN_EXPECTED_INVOCATIONS = 15;
 const CALLEE = 'buildExecutionSetup';
 const AUDIT_CALLEE = 'generateFilteringAuditReport';
-
-// --- Regione 1: effetto re-rank ------------------------------------------
-const RERANK_ANCHOR = '// Re-rank instantly when RSI Filter or parameters are changed';
-const RERANK_END = '\n  }, [rsiFilterActive, parameters]);';
-
-// --- Regione 2: handleRunScreening ---------------------------------------
-// `const handleRunScreening` da solo comparirebbe DUE volte (c'e' anche
-// `const handleRunScreeningRef = React.useRef(...)`): l'ancora deve essere
-// unica, altrimenti l'invariante non sa quale regione sta guardando.
-const SCAN_ANCHOR = 'const handleRunScreening = useCallback(async () => {';
-const SCAN_END = '}, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries]);';
-
-/**
- * Unica lettura dallo state ammessa, con motivazione dichiarata:
- * `catalystCache` e' lo snapshot PRE-RUN. In questo run `setCatalystCache` e'
- * gia' stato chiamato (resolveCandidateCatalyst), quindi il ref potrebbe gia'
- * contenere i catalyst risolti e `currentCache` non sarebbe piu' lo snapshot
- * pre-run: cambierebbe la lista degli esclusi nel Catalyst Gate del report.
- * La regola e' pinnata sul testo esatto: nessun `includes`, nessun marcatore
- * "qualsiasi".
- */
-const RERANK_ALLOWED: RegionAllowRule[] = [
-  {
-    token: 'catalystCache',
-    line: 'const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCache };',
-    prevLine:
-      "// PASSO E: catalystCache resta dallo state di proposito (snapshot pre-run: in questo run setCatalystCache e' gia' stato chiamato).",
-  },
-];
 
 describe('wiring statico buildExecutionSetup', () => {
   it('src/App.tsx esiste e viene letto come testo', () => {
@@ -144,55 +118,14 @@ describe('wiring statico buildExecutionSetup', () => {
 
   it("l'effetto re-rank non legge dallo state i valori che hanno un ref allineato", () => {
     const source = readSource(APP_URL, 'src/App.tsx');
-    const audit = auditRegionRefs(source, {
-      anchor: RERANK_ANCHOR,
-      end: RERANK_END,
-      allowed: RERANK_ALLOWED,
-    });
-
-    assert.equal(
-      audit.anchorCount,
-      1,
-      `ancora dell'effetto re-rank trovata ${audit.anchorCount} volte (attesa: 1)`,
-    );
-    assert.ok(
-      audit.regionFound,
-      `regione dell'effetto re-rank non delimitata (deps array non trovato dopo la riga ${audit.regionStartLine})`,
-    );
-    // Guardia anti-vacuita: l'unica eccezione ammessa deve essere stata consumata,
-    // altrimenti la regola e' scritta su un testo che non esiste piu'.
-    assert.equal(
-      audit.allowedHits,
-      RERANK_ALLOWED.length,
-      `regole ammesse soddisfatte: ${audit.allowedHits} su ${RERANK_ALLOWED.length}`,
-    );
-    assert.deepEqual(
-      audit.offending.map((o) => `riga ${o.line}: ${o.token} -> ${o.snippet}`),
-      [],
-      "letture dirette dello state dentro l'effetto re-rank",
-    );
+    // Ancoraggio, eccezione ammessa e regola vivono in APP_REGIONS /
+    // assertRegionHasNoStateReads: qui si invoca, non si riscrive.
+    assertRegionHasNoStateReads(source, APP_REGIONS.rerank, "effetto re-rank");
   });
 
   it('la regione della scansione non legge dallo state i valori che hanno un ref allineato', () => {
     const source = readSource(APP_URL, 'src/App.tsx');
-    const audit = auditRegionRefs(source, { anchor: SCAN_ANCHOR, end: SCAN_END });
-
-    assert.equal(
-      audit.anchorCount,
-      1,
-      `ancora di handleRunScreening trovata ${audit.anchorCount} volte (attesa: 1)`,
-    );
-    assert.ok(
-      audit.regionFound,
-      `regione di handleRunScreening non delimitata (deps array non trovato dopo la riga ${audit.regionStartLine})`,
-    );
-    // Nessuna eccezione: nella scansione ogni valore con ref deve venire dal ref.
-    assert.equal(audit.allowedHits, 0, 'la scansione non ha letture ammesse');
-    assert.deepEqual(
-      audit.offending.map((o) => `riga ${o.line}: ${o.token} -> ${o.snippet}`),
-      [],
-      'letture dirette dello state dentro handleRunScreening',
-    );
+    assertRegionHasNoStateReads(source, APP_REGIONS.scan, 'handleRunScreening');
   });
 
   // --- Anti-vacuita: l'helper deve fallire quando deve -------------------
@@ -240,35 +173,99 @@ describe('wiring statico buildExecutionSetup', () => {
     );
   });
 
+  it("assertRegionHasNoStateReads fallisce con l'etichetta della regione", () => {
+    // Sorgente sintetica: una lettura nuda dentro la regione deve far fallire
+    // l'helper condiviso, altrimenti la regola sarebbe solo decorativa.
+    const synthetic = [
+      'const regione = () => {',
+      '  const x = catalystCache[ticker];',
+      '\n};',
+    ].join('\n');
+
+    assert.throws(
+      () =>
+        assertRegionHasNoStateReads(
+          synthetic,
+          { anchor: 'const regione = () => {', end: '\n};' },
+          'regione sintetica',
+        ),
+      /regione sintetica: letture dirette dello state/,
+    );
+  });
+
+  it('il conteggio degli argomenti ignora i generici e non tocca le stringhe', () => {
+    // `'a<b>'` e' un letterale, non un tipo: il suo contenuto non va mutato.
+    assert.equal(countTopLevelArgs("'a<b>', x"), 2, 'il letterale ha mangiato un argomento');
+    // `Record<string, number>` e' un tipo: la sua virgola non separa argomenti.
+    assert.equal(countTopLevelArgs('Record<string, number>, y'), 2, 'la virgola del generico contata');
+  });
+
   // --- Firma del report di audit: nessun parametro morto ------------------
-  it('generateFilteringAuditReport non chiede un CET che nessuno usa', () => {
+  it('generateFilteringAuditReport non dichiara parametri che nessuno legge', () => {
     const calc = readSource(CALC_URL, 'src/utils/calculator.ts');
-    const app = readSource(APP_URL, 'src/App.tsx');
+    const audit = findUnreadParams(calc, AUDIT_CALLEE);
 
-    const declarations = extractCallArguments(calc, AUDIT_CALLEE);
-    assert.ok(declarations.length >= 1, `dichiarazione di ${AUDIT_CALLEE} non trovata`);
-    const signature = declarations[0];
-    const declaredParams = countTopLevelArgs(signature.args);
-
-    assert.equal(
-      declaredParams,
-      6,
-      `firma a riga ${signature.line}: ${declaredParams} parametri (attesi 6: il CET non e' letto nel corpo)`,
+    assert.ok(audit, `dichiarazione di ${AUDIT_CALLEE} non trovata`);
+    // Guardie anti-vacuita': senza corpo non c'e' niente da verificare, e una
+    // firma letta male darebbe zero parametri (cioe' zero controlli).
+    assert.ok(audit.bodyLength > 0, `corpo vuoto per ${AUDIT_CALLEE}`);
+    assert.ok(
+      audit.params.length > 0,
+      `nessun parametro estratto dalla firma a riga ${audit.line}`,
     );
-    assert.equal(
-      /\bcurrentCetMinutes\b/.test(signature.args),
-      false,
-      `firma a riga ${signature.line}: chiede ancora currentCetMinutes`,
-    );
-
-    const calls = extractCallArguments(app, AUDIT_CALLEE);
-    // Guardia anti-vacuita: i call site devono essere stati letti davvero.
-    assert.ok(calls.length > 0, `nessun call site di ${AUDIT_CALLEE} in src/App.tsx`);
-    const wrong = calls.filter((c) => countTopLevelArgs(c.args) !== declaredParams);
     assert.deepEqual(
-      wrong.map((c) => `riga ${c.line}: ${countTopLevelArgs(c.args)} argomenti`),
+      audit.unread,
       [],
-      `call site con arita' diversa da ${declaredParams}`,
+      `riga ${audit.line}: parametri dichiarati e mai letti nel corpo: ${audit.unread.join(', ')}`,
     );
+  });
+
+  it('nessun parametro morto nelle funzioni chiuse da Passo G1', () => {
+    const calc = readSource(CALC_URL, 'src/utils/calculator.ts');
+    const closed = [
+      'calculateDynamicBreakeven',
+      'calculateDerivativeStressReport',
+      'runExcludedSetupsAutoAnalysis',
+    ];
+
+    for (const callee of closed) {
+      const audit = findUnreadParams(calc, callee);
+      assert.ok(audit, `${callee}: dichiarazione non trovata`);
+      assert.ok(audit.params.length > 0, `${callee}: nessun parametro estratto`);
+      assert.deepEqual(
+        audit.unread,
+        [],
+        `${callee} (riga ${audit.line}): parametri mai letti: ${audit.unread.join(', ')}`,
+      );
+    }
+    assert.equal(closed.length, 3, 'la lista delle funzioni chiuse non e stata svuotata');
+  });
+
+  it('applyCalendarSelector non dichiara parametri che nessuno legge', () => {
+    const source = readSource(SELECTOR_CALL_URL, 'src/utils/setupSelector.ts');
+    const audit = findUnreadParams(source, 'applyCalendarSelector');
+
+    assert.ok(audit, 'dichiarazione di applyCalendarSelector non trovata');
+    assert.ok(audit.params.length > 0, 'nessun parametro estratto dalla firma');
+    assert.deepEqual(
+      audit.unread,
+      [],
+      `riga ${audit.line}: parametri dichiarati e mai letti nel corpo: ${audit.unread.join(', ')}`,
+    );
+  });
+
+  it('il controllo dei parametri non letti segnala quelli realmente non letti', () => {
+    // Sorgente sintetica: `inerte` e' dichiarato nell'ordine e mai usato.
+    const synthetic = [
+      'export function finta(usato: number, inerte: string): number {',
+      '  return usato;',
+      '}',
+    ].join('\n');
+
+    const audit = findUnreadParams(synthetic, 'finta');
+
+    assert.ok(audit, 'dichiarazione sintetica non trovata');
+    assert.deepEqual(audit.params, ['usato', 'inerte'], 'parametri letti male dalla firma');
+    assert.deepEqual(audit.unread, ['inerte'], 'il parametro inerte non e stato segnalato');
   });
 });

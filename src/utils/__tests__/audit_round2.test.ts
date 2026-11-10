@@ -9,7 +9,7 @@ import {
   evaluateOpenPositionLifecycle,
 } from '../calculator';
 import { mergeTradesWithTombstones } from '../tradeMerge';
-import { auditRegionRefs } from './sourceAudit';
+import { APP_REGIONS, assertRegionHasNoStateReads } from './sourceAudit';
 import type { ExecutionSetup, TradeJournalEntry, RawQuoteData } from '../../types/radar';
 
 const setupForKo = (over: Record<string, unknown> = {}): ExecutionSetup =>
@@ -137,18 +137,9 @@ const quoteAt = (price: number): RawQuoteData =>
   // Invariante di REGIONE, non di file: i quattro `src.includes` di prima
   // passavano anche con la regione rotta, perche' bastava che i nomi
   // comparissero altrove in App.tsx.
-  const scan = auditRegionRefs(src, {
-    anchor: 'const handleRunScreening = useCallback(async () => {',
-    end: '}, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries]);',
-  });
-  assert.equal(scan.anchorCount, 1, `V5: ancora di handleRunScreening trovata ${scan.anchorCount} volte`);
-  assert.ok(scan.regionFound, 'V5: regione di handleRunScreening non delimitata');
-  assert.equal(scan.allowedHits, 0, 'V5: la scansione non ha letture ammesse');
-  assert.deepEqual(
-    scan.offending.map((o) => `riga ${o.line}: ${o.token} -> ${o.snippet}`),
-    [],
-    'V5: letture dirette dello state dentro handleRunScreening',
-  );
+  // Ancoraggio e regola vivono in APP_REGIONS / assertRegionHasNoStateReads:
+  // questo file non riscrive piu' le stringhe della regione.
+  assertRegionHasNoStateReads(src, APP_REGIONS.scan, 'V5 scansione');
   assert.ok(
     src.includes('}, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries]);'),
     'V5: dipendenze della scansione invariate (nessun rilancio automatico)',

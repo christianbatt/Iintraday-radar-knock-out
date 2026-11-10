@@ -320,7 +320,7 @@ export default function App() {
 
   // 6a. Excluded Setups Auto-Analysis & Optimization Calculation
   const excludedAutoAnalysis = React.useMemo(() => {
-    return runExcludedSetupsAutoAnalysis(excludedRecords, parameters, accountCapital);
+    return runExcludedSetupsAutoAnalysis(excludedRecords, parameters);
   }, [excludedRecords, parameters, accountCapital]);
 
   const [pendingProposal, setPendingProposal] = useState<OptimizationProposal | null>(() => {

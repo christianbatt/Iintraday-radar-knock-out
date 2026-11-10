@@ -300,6 +300,14 @@ export interface AILearnedInsight {
   sampleEvidence: string;
 }
 
+/**
+ * Stato del calendario macro rispetto a un setup. `absent` descrive l'ASSENZA
+ * del calendario, `unavailable` un calendario che non ha risposto: sono lo
+ * stesso dominio (qui), e NON vanno confusi con `MacroCalendarState.status`,
+ * che vale solo 'ok' | 'unavailable' e non ha 'absent'.
+ */
+export type CalendarStatus = 'ok' | 'unavailable' | 'absent';
+
 export interface ExecutionSetup {
   candidate: RawQuoteData;
   decision: 'TRADE' | 'NESSUN_TRADE';
@@ -386,7 +394,7 @@ export interface ExecutionSetup {
     label: string;
   };
   orderFlow?: OrderFlowMetrics | null;
-  calendarStatus?: 'ok' | 'unavailable' | 'absent';
+  calendarStatus?: CalendarStatus;
   reasonCodes?: string[];
 }
 

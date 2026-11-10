@@ -2321,7 +2321,7 @@ export function buildExecutionSetup(
     ...(catalyst?.condizioni_invalidazione || []),
   ];
 
-  return applyCalendarSelector<ExecutionSetup>({
+  return applyCalendarSelector({
     candidate: quote,
     decision,
     reasonNoTrade,
@@ -2387,7 +2387,6 @@ export function calculateDynamicBreakeven(
   entryPrice: number,
   isLong: boolean,
   leverage: number,
-  certPrice: number,
   suggestedCertificates: number,
   totalInvestedEur: number,
   atr: number,
@@ -2535,10 +2534,8 @@ export function generatePnLScenarios(
 }
 
 export function calculateDerivativeStressReport(
-  entryPrice: number,
   stopLoss: number,
   barrierStrike: number,
-  stopDistance: number,
   barrierDistance: number,
   safetyRatio: number,
   isLong: boolean,
@@ -2750,7 +2747,6 @@ export function calculateKnockOutSafety(
     entryPrice,
     isLong,
     input.leverage,
-    certPrice,
     suggestedCertificates,
     totalInvestedEur,
     atr,
@@ -2760,10 +2756,8 @@ export function calculateKnockOutSafety(
 
   // Stress Report & Hybrid Filter
   const stressReport = calculateDerivativeStressReport(
-    entryPrice,
     stopLoss,
     barrierStrike,
-    stopDistance,
     barrierDistance,
     safetyRatio,
     isLong,
@@ -4326,8 +4320,7 @@ export function updateExcludedSetupsWithLiveQuotes(
  */
 export function runExcludedSetupsAutoAnalysis(
   records: ExcludedSetupRecord[],
-  currentParams: SystemParameters = DEFAULT_SYSTEM_PARAMETERS,
-  accountCapital = 10000
+  currentParams: SystemParameters = DEFAULT_SYSTEM_PARAMETERS
 ): ExcludedSetupsAutoAnalysis {
   const categoryOrder: ExclusionCategory[] = [
     'RSI_EXTREME',
