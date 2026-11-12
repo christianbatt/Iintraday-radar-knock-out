@@ -37,9 +37,33 @@ for (const a of process.argv.slice(2)) {
   const m = a.match(/^--([^=]+)(?:=(.*))?$/);
   if (m) ARGS.set(m[1], m[2] ?? 'true');
 }
-const PROBE      = ARGS.has('probe');
-const HORIZON    = Number(ARGS.get('horizon') ?? 3600);
-const BE_TRIGGER = ARGS.has('be-trigger') ? Number(ARGS.get('be-trigger')) : null;
+const PROBE          = ARGS.has('probe');
+const COUNTERFACTUAL = ARGS.has('counterfactual');
+const JACKKNIFE      = ARGS.has('jackknife');
+
+// Orizzonte della BARRIERA: numero di secondi oppure 'resolution'
+// (cammina le barre fino a stop/T1/fine serie, senza limite di tempo).
+const HORIZON_RAW  = ARGS.get('horizon') ?? '3600';
+const HORIZON_MODE: 'resolution' | 'fixed' =
+  HORIZON_RAW === 'resolution' ? 'resolution' : 'fixed';
+const HORIZON = HORIZON_MODE === 'resolution' ? Infinity : Number(HORIZON_RAW);
+if (HORIZON_MODE === 'fixed' && !Number.isFinite(HORIZON)) {
+  fail(7, `--horizon non valido: '${HORIZON_RAW}'. Usa un numero di secondi oppure 'resolution'.`);
+}
+// Il MARK resta definito a 3600s (delay_replay.ts:60, default di --horizon):
+// la modalita' resolution non deve cambiare la validazione della FASE 0.
+const MARK_HORIZON = 3600;
+
+// BE: assente o 'off' -> null; numero >= 0 -> quel valore; altro -> exit 7 (niente NaN).
+const BE_RAW = ARGS.has('be-trigger') ? (ARGS.get('be-trigger') ?? '') : null;
+let BE_TRIGGER: number | null = null;
+if (BE_RAW !== null && BE_RAW !== 'off') {
+  const v = Number(BE_RAW);
+  if (BE_RAW.trim() === '' || !Number.isFinite(v) || v < 0) {
+    fail(7, `--be-trigger non valido: '${BE_RAW}'. Usa 'off' oppure un numero >= 0.`);
+  }
+  BE_TRIGGER = v;
+}
 const BOOT       = Number(ARGS.get('boot') ?? 10000);
 const PAIR_KEY   = ARGS.get('pair-key') ?? 'ts-norm|dir';
 const SHIFTS     = [0, 15, 20];
@@ -154,6 +178,8 @@ interface Setup {
   entryTs: number; date: string; key: string;
   markR: number | null;
   barrierR: number | null; barrierExit: string; barrierBars: number;
+  barrierTs?: number | null; barrierSameBar?: boolean;
+  emitted?: boolean; gates?: string[]; blockedGate?: string | null;
 }
 
 type Variant = 'direct' | 'markRReplay' | 'lastBefore' | 'firstAfter' | 'nearest';
@@ -224,14 +250,42 @@ function loadBars(symbol: string): Bar[] | null {
   return result;
 }
 
+/**
+ * Tabella dei gate G1..G13, letta da src/utils/calculator.ts:2153-2316 (sola lettura).
+ * `gates` negli artefatti = gate PASSATI: bloccante = primo assente in quest'ordine.
+ */
+const GATES: Array<{ sigla: string; label: string; condizione: string; soglia: string; ref: string }> = [
+  { sigla: 'G1',  label: 'Liquidita',        condizione: 'liqEur20d >= soglia; se liqEur assente o barre complete < 20 PASSA (cade in G2)', soglia: 'LIQ_MIN_EUR 3.000.000 EUR; LIQ_BARS_REQUIRED 20', ref: 'calculator.ts:2153-2162' },
+  { sigla: 'G2',  label: 'Dati',             condizione: 'ORB high/low, prezzo>0, gap%, ATR14>0, ADR14>0, C_ieri>0, volume medio>0, liqEur>0, barre complete >= 20', soglia: 'nessuna soglia numerica', ref: 'calculator.ts:2164-2186' },
+  { sigla: 'G3',  label: 'Orario ORB',       condizione: 'non prima della chiusura dell ORB', soglia: 'marketTime.isBeforeOrb', ref: 'calculator.ts:2188-2192' },
+  { sigla: 'G4',  label: 'Estensione',       condizione: 'estensione oltre il trigger <= EST_MAX', soglia: 'EST_MAX 0.004 (0.40%)', ref: 'calculator.ts:2194-2200' },
+  { sigla: 'G5',  label: 'Freschezza',       condizione: 'minuti da Tb (prima rottura) <= FRESH_MIN', soglia: 'FRESH_MIN 60 min', ref: 'calculator.ts:2202-2214' },
+  { sigla: 'G6',  label: 'Target',           condizione: 'T1 non ancora raggiunto in sessione (H_sess < T1 long, L_sess > T1 short)', soglia: 'T1', ref: 'calculator.ts:2216-2225' },
+  { sigla: 'G7',  label: 'ADR',              condizione: 'consumo ADR14 <= ADR_MAX', soglia: 'ADR_MAX 0.60', ref: 'calculator.ts:2227-2234' },
+  { sigla: 'G8',  label: 'Stop distanza',    condizione: 'dS <= LMAX / min(LEVE)', soglia: 'LMAX 0.10 / 10 = 0.01 (1.0%)', ref: 'calculator.ts:2236-2243' },
+  { sigla: 'G9',  label: 'Leva e barriera',  condizione: 'esiste L in LEVE con dS*L <= LMAX e 1/L >= dS+BUF_BAR, e la barriera raccomandata dista >= BUF_BAR*E dallo stop', soglia: 'LEVE [10,15,20,25]; BUF_BAR 0.001 (0.1%)', ref: 'calculator.ts:2245-2268' },
+  { sigla: 'G10', label: 'Stop gia toccato', condizione: 'prezzo corrente non oltre lo stop', soglia: 'eps', ref: 'calculator.ts:2270-2278' },
+  { sigla: 'G11', label: 'Score',            condizione: 'score senza liquidita >= minScore', soglia: 'MIN_SCORE_EU 48 / MIN_SCORE_US 58', ref: 'calculator.ts:2280-2288' },
+  { sigla: 'G12', label: 'T1 vs ADR residuo', condizione: 'distanza T1 <= spazio ADR residuo', soglia: 'ADR_MAX + EPSILON', ref: 'calculator.ts:2290-2299' },
+  { sigla: 'G13', label: 'Freshness dati',   condizione: 'quote non stantia', soglia: 'soglia minuti di checkQuoteStaleness; flag STALENESS_USE_MARKET_TS', ref: 'calculator.ts:2301-2307' },
+];
+const GATE_ORDER = GATES.map(g => g.sigla);
+
+function firstMissingGate(passed: string[]): string | null {
+  const set = new Set(passed);
+  for (const g of GATE_ORDER) if (!set.has(g)) return g;
+  return null;
+}
+
 const EMITTED_COUNT: Record<number, number> = {};
 
-function buildSetups(raw: any[], shift: number): Setup[] {
+function buildSetups(raw: any[], shift: number, includeBlocked = false): Setup[] {
   const out: Setup[] = [];
   let skipped = 0;
   let notEmitted = 0;
   for (const r of raw) {
-    if (r?.emitted !== true) { notEmitted++; continue; }
+    const wasEmitted = r?.emitted === true;
+    if (!wasEmitted && !includeBlocked) { notEmitted++; continue; }
     const sym   = pick(r, ['symbol', 'ticker', 'sym', 'underlying']);
     const dirR  = pick(r, ['direction', 'side', 'dir', 'signal']);
     const entry = pick(r, ['entry', 'entryPrice', 'entry_price', 'entryPx']);
@@ -250,11 +304,16 @@ function buildSetups(raw: any[], shift: number): Setup[] {
       target: tgt ? Number(tgt.value) : NaN,
       entryTs, date: sessionDate(entryTs), key: '',
       markR: null, barrierR: null, barrierExit: '', barrierBars: 0,
+      emitted: wasEmitted,
+      gates: Array.isArray(r?.gates) ? (r.gates as string[]) : [],
+      blockedGate: wasEmitted ? null : firstMissingGate(Array.isArray(r?.gates) ? r.gates : []),
     });
   }
-  EMITTED_COUNT[shift] = raw.length - notEmitted;
-  log(`  (shift ${shift}: ${raw.length} righe, ${notEmitted} non emesse, ` +
-      `${skipped} scartate per campi mancanti, ${out.length} valide)`);
+  if (!includeBlocked) {
+    EMITTED_COUNT[shift] = raw.length - notEmitted;
+    log(`  (shift ${shift}: ${raw.length} righe, ${notEmitted} non emesse, ` +
+        `${skipped} scartate per campi mancanti, ${out.length} valide)`);
+  }
   return out;
 }
 
@@ -287,7 +346,7 @@ function markRAt(s: Setup, bars: Bar[], horizonSec: number,
 function markRReplay(s: Setup, bars: Bar[]): number | null {
   const risk = Math.abs(s.entry - s.stop);
   if (!(risk > 0)) return null;
-  const tgt = s.entryTs + HORIZON * 1000;
+  const tgt = s.entryTs + MARK_HORIZON * 1000;
   let exitPrice: number | null = null;
   for (const b of bars) {
     if (b.t <= tgt) exitPrice = b.c;
@@ -306,10 +365,16 @@ function directR(s: Setup): number | null {
 
 // ---------------------------------------------------------------- R a barriera
 
-function barrierR(s: Setup, bars: Bar[], horizonSec: number, beTrigger: number | null) {
+type BarrierResult = {
+  r: number | null; exit: string; nBars: number;
+  exitTs: number | null; sameBar: boolean;
+};
+
+function barrierR(s: Setup, bars: Bar[], horizonSec: number, beTrigger: number | null): BarrierResult {
   const risk = Math.abs(s.entry - s.stop);
-  if (!(risk > 0)) return { r: null as number | null, exit: 'unresolved', nBars: 0 };
-  const tEnd = s.entryTs + horizonSec * 1000;
+  if (!(risk > 0)) return { r: null, exit: 'unresolved', nBars: 0, exitTs: null, sameBar: false };
+  const bounded = Number.isFinite(horizonSec);
+  const tEnd = bounded ? s.entryTs + horizonSec * 1000 : Infinity;
   const target = Number.isFinite(s.target) && s.target > 0
     ? s.target
     : s.entry + s.dir * 1.6 * risk;
@@ -318,26 +383,28 @@ function barrierR(s: Setup, bars: Bar[], horizonSec: number, beTrigger: number |
   let beArmed = false;
   let nBars = 0;
   let lastClose: number | null = null;
+  let lastTs: number | null = null;
 
   for (const b of bars) {
     if (b.t <= s.entryTs) continue;
     if (b.t > tEnd) break;
     nBars++;
     lastClose = b.c;
+    lastTs = b.t;
 
     const stopHit = s.dir > 0 ? b.l <= stop : b.h >= stop;
     const t1Hit   = s.dir > 0 ? b.h >= target : b.l <= target;
 
     // Pessimistico: se stop e target cadono nella stessa barra, vince lo stop.
-    if (stopHit) {
-      return {
-        r: s.dir * (stop - s.entry) / risk,
-        exit: beArmed ? 'be' : 'stop',
-        nBars,
-      };
-    }
-    if (t1Hit) {
-      return { r: s.dir * (target - s.entry) / risk, exit: 't1', nBars };
+    if (stopHit || t1Hit) {
+      if (stopHit) {
+        return {
+          r: s.dir * (stop - s.entry) / risk,
+          exit: beArmed ? 'be' : 'stop',
+          nBars, exitTs: b.t, sameBar: stopHit && t1Hit,
+        };
+      }
+      return { r: s.dir * (target - s.entry) / risk, exit: 't1', nBars, exitTs: b.t, sameBar: false };
     }
 
     // BE armato a fine barra, valido dalle barre successive (lettura conservativa).
@@ -349,8 +416,14 @@ function barrierR(s: Setup, bars: Bar[], horizonSec: number, beTrigger: number |
     }
   }
 
-  if (lastClose === null) return { r: null as number | null, exit: 'unresolved', nBars };
-  return { r: s.dir * (lastClose - s.entry) / risk, exit: 'time', nBars };
+  if (lastClose === null) return { r: null, exit: 'unresolved', nBars, exitTs: null, sameBar: false };
+  // Orizzonte finito: 'time' e' un esito censurato dal tempo (contribuisce alla media).
+  // Orizzonte 'resolution': le barre finiscono senza stop ne T1 -> 'censored', fuori dalla media.
+  return {
+    r: s.dir * (lastClose - s.entry) / risk,
+    exit: bounded ? 'time' : 'censored',
+    nBars, exitTs: lastTs, sameBar: false,
+  };
 }
 
 // ---------------------------------------------------------------- bootstrap
@@ -451,14 +524,168 @@ function probe() {
   log('\n=== fine probe ===');
 }
 
+// ---------------------------------------------------------------- counterfactual
+
+function cfStats(rows: Array<{ bar: number | null; mark: number | null; censored: boolean }>) {
+  const bars = rows.map(r => r.bar).filter((x): x is number => x !== null);
+  const marks = rows.map(r => r.mark).filter((x): x is number => x !== null);
+  return {
+    n: rows.length,
+    nBar: bars.length,
+    meanRBarrier: mean(bars),
+    meanRMark: mean(marks),
+    hitBarrier: bars.length ? bars.filter(r => r > 0).length / bars.length : NaN,
+    pctCensored: rows.length ? rows.filter(r => r.censored).length / rows.length : NaN,
+    sumBarrier: bars.reduce((a, b) => a + b, 0),
+  };
+}
+
+function runCounterfactual() {
+  log(`i3_barrier — counterfactual ${new Date().toISOString()} (Europe/Rome: ${romeNow()})`);
+  log('=== COUNTERFACTUAL — R dei setup BLOCCATI ===');
+  log('  Popolazione: righe con direction/entry/stop valorizzati, emesse o no.');
+  log('  R a barriera fino a RISOLUZIONE, stop per primo, BE off (NON calculateDynamicBreakeven).');
+  log('  Le righe senza setup (gates vuoto) non hanno entry/stop: non entrano qui.');
+  log('');
+  const out: Record<number, any> = {};
+  for (const sh of SHIFTS) {
+    const raw = loadSetups(sh);
+    const cands = buildSetups(raw, sh, true);
+    const groups: Record<string, Array<{ bar: number | null; mark: number | null; censored: boolean }>> = {};
+    for (const g of GATE_ORDER) groups[g] = [];
+    groups['EMESSO'] = [];
+    for (const s of cands) {
+      const key = s.emitted ? 'EMESSO' : (s.blockedGate ?? 'IGNOTO');
+      if (!groups[key]) groups[key] = [];
+      const bars = loadBars(s.symbol);
+      const mark = bars ? markRReplay(s, bars) : null;
+      const b = bars ? barrierR(s, bars, Infinity, null) : { r: null as number | null, exit: 'unresolved' };
+      groups[key].push({ bar: b.r, mark, censored: b.exit === 'censored' });
+    }
+    const emitted = groups['EMESSO'] ?? [];
+    const blocked: Array<{ bar: number | null; mark: number | null; censored: boolean }> = [];
+    const all: Array<{ bar: number | null; mark: number | null; censored: boolean }> = [];
+    for (const [k, v] of Object.entries(groups)) {
+      for (const x of v) { all.push(x); if (k !== 'EMESSO') blocked.push(x); }
+    }
+    log(`  --- shift ${sh}: ${cands.length} setup con campi completi ` +
+        `(${emitted.length} emessi, ${blocked.length} bloccati) ---`);
+    log('  gate   n     meanR_barrier  meanR_mark  hit     %cens');
+    const perGate: Record<string, any> = {};
+    for (const g of GATE_ORDER) {
+      const rows = groups[g] ?? [];
+      if (!rows.length) continue;
+      const st = cfStats(rows);
+      perGate[g] = st;
+      log(`  ${pad(g, 6)} ${pad(st.n, 5)} ${pad(num(st.meanRBarrier), 14)} ${pad(num(st.meanRMark), 11)} ` +
+          `${pad(num(st.hitBarrier * 100, 1), 7)} ${num(st.pctCensored * 100, 1)}`);
+    }
+    const e = cfStats(emitted), bl = cfStats(blocked), al = cfStats(all);
+    out[sh] = { emitted: e, blocked: bl, all: al, byGate: perGate };
+
+    if (sh === 0) {
+      log('');
+      log('  | popolazione | n | meanR_barrier | hit |');
+      log(`  | emessi | ${e.n} | ${num(e.meanRBarrier)} | ${num(e.hitBarrier * 100, 1)}% |`);
+      log(`  | tutti i candidati | ${al.n} | ${num(al.meanRBarrier)} | ${num(al.hitBarrier * 100, 1)}% |`);
+      log(`  | bloccati | ${bl.n} | ${num(bl.meanRBarrier)} | ${num(bl.hitBarrier * 100, 1)}% |`);
+      for (const g of ['G8', 'G4', 'G11']) {
+        const st = perGate[g];
+        if (st) log(`  | bloccati da ${g} | ${st.n} | ${num(st.meanRBarrier)} | ${num(st.hitBarrier * 100, 1)}% |`);
+      }
+      log('');
+      log(`  (a) emessi ${num(e.meanRBarrier)} vs bloccati ${num(bl.meanRBarrier)} -> ` +
+          `${e.meanRBarrier > bl.meanRBarrier ? 'EMESSI MIGLIORI' : 'EMESSI PEGGIORI'}`);
+      log(`  (b) emessi ${num(e.meanRBarrier)} vs tutti i candidati ${num(al.meanRBarrier)} -> ` +
+          `${e.meanRBarrier > al.meanRBarrier ? 'EMESSI MIGLIORI' : 'EMESSI PEGGIORI'}`);
+      let bestGate = '', bestDelta = -Infinity;
+      for (const g of GATE_ORDER) {
+        const st = perGate[g];
+        if (!st || !st.nBar) continue;
+        const merged = (e.sumBarrier + st.sumBarrier) / (e.nBar + st.nBar);
+        const delta = merged - e.meanRBarrier;
+        if (delta > bestDelta) { bestDelta = delta; bestGate = g; }
+      }
+      log(`  (c) gate che, se rimosso, alza di piu' la media del pool: ${bestGate || 'n/a'} -> ` +
+          `meanR ${num(e.meanRBarrier + bestDelta)} (delta ${num(bestDelta, 4)})`);
+      const pos: string[] = [];
+      for (const g of GATE_ORDER) {
+        const st = perGate[g];
+        if (st && st.nBar && st.meanRBarrier > 0) pos.push(`${g} (n=${st.nBar}, meanR=${num(st.meanRBarrier)})`);
+      }
+      log(`  (d) gate che bloccano setup con meanR POSITIVO: ${pos.length ? pos.join(', ') : 'nessuno'}`);
+    }
+    log('');
+  }
+  if (!existsSync(ART)) mkdirSync(ART, { recursive: true });
+  writeFileSync(join(ART, 'i3_barrier_counterfactual.json'), JSON.stringify({ gates: GATES, shifts: out }, null, 2));
+  log(`report scritto in ${join(ART, 'i3_barrier_counterfactual.json')}`);
+}
+
+// ---------------------------------------------------------------- jackknife
+
+function runJackknife() {
+  log(`i3_barrier — jackknife ${new Date().toISOString()} (Europe/Rome: ${romeNow()})`);
+  log('=== JACKKNIFE — shift 0, R a barriera, un giorno fuori per volta ===');
+  log(`  orizzonte=${HORIZON_MODE === 'resolution' ? 'resolution' : HORIZON + 's'} ` +
+      `be-trigger=${BE_TRIGGER ?? 'off'}`);
+  log('');
+  const setups = buildSetups(loadSetups(0), 0);
+  const items: Array<{ date: string; v: number }> = [];
+  let censored = 0;
+  for (const s of setups) {
+    const bars = loadBars(s.symbol);
+    if (!bars) continue;
+    const b = barrierR(s, bars, HORIZON, BE_TRIGGER);
+    if (b.exit === 'censored') { censored++; continue; }
+    if (b.r !== null) items.push({ date: s.date, v: b.r });
+  }
+  const dates = [...new Set(items.map(i => i.date))].sort();
+  const perDay: Record<string, number> = {};
+  for (const i of items) perDay[i.date] = (perDay[i.date] ?? 0) + 1;
+  const counts = dates.map(d => perDay[d]).sort((a, b) => a - b);
+  log(`  cluster (giorni): ${dates.length}   setup/giorno min=${counts[0]} ` +
+      `med=${quantile(counts, 0.5)} max=${counts[counts.length - 1]}`);
+  if (dates.length < 20) {
+    log(`  ATTENZIONE: ${dates.length} cluster (<20). CI block-bootstrap con affidabilita' bassa:`);
+    log('  il jackknife e\' il controllo primario, non le CI.');
+  }
+  const full = mean(items.map(i => i.v));
+  log(`  meanR completo = ${num(full)}  n=${items.length}  censurati esclusi=${censored}`);
+  const means: Array<{ date: string; m: number; n: number }> = [];
+  for (const d of dates) {
+    const kept = items.filter(i => i.date !== d);
+    means.push({ date: d, m: mean(kept.map(i => i.v)), n: kept.length });
+  }
+  for (const x of means) log(`    senza ${x.date}: meanR=${num(x.m)} (n=${x.n})`);
+  const vals = means.map(x => x.m).sort((a, b) => a - b);
+  const neg = vals.filter(v => v < 0).length;
+  const flips = vals.length - neg;
+  log('');
+  log(`  jackknife: min=${num(vals[0])} max=${num(vals[vals.length - 1])} ` +
+      `mediana=${num(quantile(vals, 0.5))} negativi=${neg}/${vals.length} ribaltano=${flips}`);
+  if (flips > 0) log('  ATTENZIONE: almeno un giorno ribalta il segno.');
+  if (!existsSync(ART)) mkdirSync(ART, { recursive: true });
+  writeFileSync(join(ART, 'i3_barrier_jackknife.json'), JSON.stringify({
+    horizon: HORIZON_MODE === 'resolution' ? 'resolution' : HORIZON,
+    beTrigger: BE_TRIGGER, nDays: dates.length, meanFull: full, censored,
+    min: vals[0], max: vals[vals.length - 1], median: quantile(vals, 0.5),
+    signFlips: flips, leaveOneOut: means,
+  }, null, 2));
+  log(`report scritto in ${join(ART, 'i3_barrier_jackknife.json')}`);
+}
+
 // ---------------------------------------------------------------- main
 
 function main() {
   log(`i3_barrier — inizio ${new Date().toISOString()} (Europe/Rome: ${romeNow()})`);
-  log(`parametri: horizon=${HORIZON}s be-trigger=${BE_TRIGGER ?? 'off'} boot=${BOOT} pair-key=${PAIR_KEY}`);
+  log(`parametri: horizon=${HORIZON_MODE === 'resolution' ? 'resolution' : HORIZON + 's'} ` +
+      `(mark fisso ${MARK_HORIZON}s) be-trigger=${BE_TRIGGER ?? 'off'} boot=${BOOT} pair-key=${PAIR_KEY}`);
   log('');
 
   if (PROBE) { probe(); return; }
+  if (COUNTERFACTUAL) { runCounterfactual(); return; }
+  if (JACKKNIFE) { runJackknife(); return; }
 
   // ---- caricamento
   const data: Record<number, Setup[]> = {};
@@ -488,7 +715,7 @@ function main() {
           if (bars) r = markRReplay(s, bars);
         } else {
           const bars = loadBars(s.symbol);
-          if (bars) r = markRAt(s, bars, HORIZON, v);
+          if (bars) r = markRAt(s, bars, MARK_HORIZON, v);
         }
         if (r !== null && Number.isFinite(r)) { sum += r; n++; }
       }
@@ -556,52 +783,88 @@ function main() {
         s.markR = bars ? markRReplay(s, bars) : null;
       } else {
         const bars = loadBars(s.symbol);
-        s.markR = bars ? markRAt(s, bars, HORIZON, chosen) : null;
+        s.markR = bars ? markRAt(s, bars, MARK_HORIZON, chosen) : null;
       }
     }
   }
 
   // ---- FASE 1: I3-ter, R a barriera
-  log('=== FASE 1 (I3-ter) — R a barriera reale ===');
+  const horizonLabel = HORIZON_MODE === 'resolution' ? 'FINO A RISOLUZIONE' : `${HORIZON}s`;
+  log(`=== FASE 1 (I3-ter) — R a barriera, orizzonte ${horizonLabel} ===`);
+  log('  R a barriera, BE fisso, NON calculateDynamicBreakeven. Barre a 5 min: se stop e T1');
+  log('  cadono nella stessa barra vince lo stop (limite pessimistico).');
+  if (HORIZON_MODE === 'fixed') {
+    log(`  ATTENZIONE: a orizzonte fisso ${HORIZON}s le uscite "time" sono CENSURA, non esito.`);
+  }
+
+  // Fascia di sensibilita': BE off e BE 0.5 sempre; se ne e' chiesto un altro, si aggiunge.
+  const beVariants: Array<{ label: string; be: number | null }> = [
+    { label: 'BE off', be: null },
+    { label: 'BE 0.5', be: 0.5 },
+  ];
+  if (BE_TRIGGER !== null && !beVariants.some(v => v.be === BE_TRIGGER)) {
+    beVariants.push({ label: `BE ${BE_TRIGGER}`, be: BE_TRIGGER });
+  }
+
+  const ter: Record<string, any> = {};
   let unresolved = 0;
-  for (const sh of SHIFTS) {
-    for (const s of data[sh]) {
-      const bars = loadBars(s.symbol);
-      if (!bars) { unresolved++; continue; }
-      const b = barrierR(s, bars, HORIZON, BE_TRIGGER);
-      s.barrierR = b.r; s.barrierExit = b.exit; s.barrierBars = b.nBars;
-      if (b.r === null) unresolved++;
+  for (const v of beVariants) {
+    ter[v.label] = {};
+    for (const sh of SHIFTS) {
+      const rows: Array<{ s: Setup; r: number | null; exit: string; exitTs: number | null; sameBar: boolean }> = [];
+      for (const s of data[sh]) {
+        const bars = loadBars(s.symbol);
+        if (!bars) { unresolved++; continue; }
+        const b = barrierR(s, bars, HORIZON, v.be);
+        rows.push({ s, r: b.r, exit: b.exit, exitTs: b.exitTs, sameBar: b.sameBar });
+        if (v.be === BE_TRIGGER) {
+          s.barrierR = b.r; s.barrierExit = b.exit; s.barrierBars = b.nBars;
+          s.barrierTs = b.exitTs; s.barrierSameBar = b.sameBar;
+        }
+      }
+      const resolved = rows.filter(x => x.r !== null && x.exit !== 'censored');
+      const rs = resolved.map(x => x.r!);
+      const wins = rs.filter(r => r > 0), losses = rs.filter(r => r < 0);
+      const exits: Record<string, number> = {};
+      for (const x of rows) exits[x.exit] = (exits[x.exit] ?? 0) + 1;
+      const boot = blockBootstrap(resolved.map(x => ({ date: x.s.date, v: x.r! })), BOOT);
+      const holdMin = resolved
+        .map(x => ((x.exitTs ?? x.s.entryTs) - x.s.entryTs) / 60000)
+        .sort((a, b) => a - b);
+      const markRs = data[sh].map(s => s.markR).filter((r): r is number => r !== null && Number.isFinite(r));
+      const t: any = {
+        n: rows.length,
+        nResolved: resolved.length,
+        nCensored: rows.length - resolved.length,
+        pctCensored: rows.length ? (rows.length - resolved.length) / rows.length : NaN,
+        meanR: mean(rs), sdR: sd(rs),
+        hitRate: rs.length ? wins.length / rs.length : NaN,
+        meanWin: mean(wins), meanLoss: Math.abs(mean(losses)),
+        wlRatio: wins.length && losses.length ? mean(wins) / Math.abs(mean(losses)) : NaN,
+        wlRequired: wins.length ? (rs.length - wins.length) / wins.length : NaN,
+        ci95: [boot.lo, boot.hi], excludesZero: boot.excludesZero, nBlocks: boot.nBlocks,
+        exits,
+        holdingMedianMin: quantile(holdMin, 0.5),
+        holdingP75Min: quantile(holdMin, 0.75),
+        holdingP90Min: quantile(holdMin, 0.90),
+        sameBarAmbiguous: rows.filter(x => x.sameBar).length,
+        meanMarkR: mean(markRs),
+        deltaVsMark: mean(rs) - mean(markRs),
+      };
+      ter[v.label][sh] = t;
+      log(`  ${pad(v.label, 7)} shift ${pad(sh, 3)} n=${pad(t.n, 4)} risolti=${pad(t.nResolved, 4)} ` +
+          `censurati=${pad(t.nCensored, 4)} (${num(t.pctCensored * 100, 1)}%) ` +
+          `meanR=${pad(num(t.meanR), 8)} sd=${num(t.sdR)} CI95=[${num(boot.lo)}, ${num(boot.hi)}] ` +
+          `esclude0=${boot.excludesZero}`);
+      log(`           hit=${num(t.hitRate * 100, 1)}% meanWin=${num(t.meanWin)} meanLoss=${num(t.meanLoss)} ` +
+          `W/L=${num(t.wlRatio, 2)} richiesto=${num(t.wlRequired, 2)} ` +
+          `holding med/p75/p90=${num(t.holdingMedianMin, 0)}/${num(t.holdingP75Min, 0)}/` +
+          `${num(t.holdingP90Min, 0)}min sameBar=${t.sameBarAmbiguous}`);
+      log(`           uscite: ${Object.entries(exits).map(([k, v2]) => `${k}=${v2}`).join(' ')}  ` +
+          `mark=${num(t.meanMarkR)} delta=${num(t.deltaVsMark)}`);
     }
   }
   if (unresolved) log(`  ATTENZIONE: ${unresolved} setup senza R a barriera (barre mancanti o non risolvibili)`);
-
-  const ter: Record<number, any> = {};
-  for (const sh of SHIFTS) {
-    const valid = data[sh].filter(s => s.barrierR !== null);
-    const rs = valid.map(s => s.barrierR!);
-    const wins = rs.filter(r => r > 0), losses = rs.filter(r => r < 0);
-    const exits: Record<string, number> = {};
-    for (const s of valid) exits[s.barrierExit] = (exits[s.barrierExit] ?? 0) + 1;
-    const boot = blockBootstrap(valid.map(s => ({ date: s.date, v: s.barrierR! })), BOOT);
-    const markRs = data[sh].map(s => s.markR).filter((r): r is number => r !== null && Number.isFinite(r));
-    ter[sh] = {
-      n: valid.length,
-      meanR: mean(rs), sdR: sd(rs),
-      hitRate: rs.length ? wins.length / rs.length : NaN,
-      meanWin: mean(wins), meanLoss: Math.abs(mean(losses)),
-      wlRatio: wins.length && losses.length ? mean(wins) / Math.abs(mean(losses)) : NaN,
-      wlRequired: wins.length ? (rs.length - wins.length) / wins.length : NaN,
-      ci95: [boot.lo, boot.hi], excludesZero: boot.excludesZero, nBlocks: boot.nBlocks,
-      exits,
-      meanMarkR: mean(markRs),
-      deltaVsMark: mean(rs) - mean(markRs),
-    };
-    log(`  shift ${pad(sh, 3)} n=${pad(valid.length, 4)} meanR=${pad(num(ter[sh].meanR), 8)} ` +
-        `CI95=[${num(boot.lo)}, ${num(boot.hi)}] esclude0=${boot.excludesZero} ` +
-        `hit=${num(ter[sh].hitRate * 100, 1)}% ` +
-        `uscite: ${Object.entries(exits).map(([k, v]) => `${k}=${v}`).join(' ')}`);
-    log(`           mark=${num(ter[sh].meanMarkR)}  delta(barriera-mark)=${num(ter[sh].deltaVsMark)}`);
-  }
   log('');
 
   // ---- FASE 2: I3-quater, confronto appaiato
@@ -702,7 +965,7 @@ function main() {
     const move1h = ss.map(s => {
       const bars = loadBars(s.symbol);
       if (!bars) return NaN;
-      const r = markRAt(s, bars, HORIZON, 'lastBefore');
+      const r = markRAt(s, bars, MARK_HORIZON, 'lastBefore');
       return r === null ? NaN : Math.abs(r) * Math.abs(s.entry - s.stop) / s.entry * 100;
     }).filter(Number.isFinite);
     bySym[sym] = {
@@ -737,7 +1000,10 @@ function main() {
   // ---- output
   const report = {
     generatedAt: new Date().toISOString(),
-    params: { horizon: HORIZON, beTrigger: BE_TRIGGER, boot: BOOT, pairKey: keyName, validatedVariant: chosen },
+    params: { horizon: HORIZON_MODE === 'resolution' ? 'resolution' : HORIZON, horizonMode: HORIZON_MODE,
+              markHorizon: MARK_HORIZON, beTrigger: BE_TRIGGER, boot: BOOT, pairKey: keyName,
+              validatedVariant: chosen },
+    gates: GATES,
     validation: { expectedSumR: EXPECTED_SUMR, reproducedSumR: chosenSums, tolerance: SUMP_TOL },
     i3ter: ter,
     i3quater: quater,
