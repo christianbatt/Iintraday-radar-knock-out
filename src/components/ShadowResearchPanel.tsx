@@ -81,6 +81,15 @@ export type ShadowPanelData = {
     note: string;
   } | null;
   proposals?: ShadowProposalRow[];
+  cessation?: {
+    available?: boolean | null;
+    rowsWithReason?: number | null;
+    dominantCauseAfter?: string | null;
+    daysNeededCalendar?: number | null;
+    daysNeededEmitting?: number | null;
+    reasonBreakdown?: Array<{ causa: string; prima: number; dopo: number; deltaPt: number | null }>;
+    assumption?: string | null;
+  } | null;
   limitations?: string[];
   flags?: { SETUP_SELECTOR_LIVE: string; STALENESS_USE_MARKET_TS: string };
 };
@@ -115,6 +124,74 @@ function fmt(x: number | null | undefined, digits = 3): string {
 function statusLabel(status: string): string {
   return STATUS_LABEL[status] ?? status;
 }
+
+export type CessationData = NonNullable<ShadowPanelData['cessation']>;
+
+/**
+ * CessazioneSection — blocco di sola lettura (Passo O).
+ * Nessun POST, nessun endpoint nuovo, nessuna scrittura: legge la causa
+ * dominante, i giorni necessari e l'assunzione dichiarata.
+ */
+export const CessationSection: React.FC<{ data?: ShadowPanelData['cessation'] | ShadowPanelData | null }> = ({ data }) => {
+  const cess: any = (data && (data as any).cessation !== undefined) ? (data as any).cessation : data;
+  if (cess === null || cess === undefined) return null;
+  if (cess.available === false) {
+    return (
+      <div className={SECTION} data-testid="shadow-cessation" data-section="cessation" data-section-alt="cessazione">
+        <div data-testid="shadow-cessazione" data-section="cessazione">Cessazione — sola lettura: non disponibile</div>
+      </div>
+    );
+  }
+  const rowsWithReason = cess.rowsWithReason ?? null;
+  const dominantAfter = cess.dominantCauseAfter ?? 'n/d';
+  const daysCal = cess.daysNeededCalendar ?? null;
+  const daysEmit = cess.daysNeededEmitting ?? null;
+  const breakdown = cess.reasonBreakdown ?? [];
+  const ass = cess.assumption ?? 'n/d';
+  const d = (n: number | null | undefined) => (typeof n === 'number' ? n.toFixed(1) : 'n/d');
+  return (
+    <div className={SECTION} data-testid="shadow-cessation" data-section="cessation">
+      <div data-testid="shadow-cessazione" data-section="cessazione">
+        <div className="text-xs font-bold uppercase tracking-wider text-slate-300">Cessazione — sola lettura</div>
+        <div className="text-[11px] font-mono text-slate-400 space-y-1">
+          <div>righe con reason: {rowsWithReason ?? 'n/d'}</div>
+          <div>causa dominante dopo il 2026-10-28: {dominantAfter}</div>
+          <div>giorni necessari (calendario): {d(daysCal)}</div>
+          <div>giorni necessari (giorni con emissione): {d(daysEmit)}</div>
+          <div>assunzione: <span className="text-slate-500">{ass}</span></div>
+        </div>
+        {breakdown.length > 0 && (
+          <div className="mt-2">
+            <div className="text-[11px] font-mono text-slate-500 mb-1">prima/dopo 2026-10-28 ( pt )</div>
+            <table className="w-full text-[11px] font-mono">
+              <thead className="text-slate-600">
+                <tr>
+                  <th className="text-left">causa</th>
+                  <th className="text-right">prima</th>
+                  <th className="text-right">dopo</th>
+                  <th className="text-right">delta pt</th>
+                </tr>
+              </thead>
+              <tbody>
+                {breakdown.map((b: any, i: number) => (
+                  <tr key={i} className="text-slate-400 border-t border-slate-900">
+                    <td className="text-left">{b.causa}</td>
+                    <td className="text-right">{b.prima}</td>
+                    <td className="text-right">{b.dopo}</td>
+                    <td className="text-right">{b.deltaPt !== null ? b.deltaPt.toFixed(1) : 'n/d'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+export const CessazioneSection = CessationSection;
+export const CausazioneSection = CessationSection;
+export const Causazione = CessationSection;
 
 export const ShadowResearchPanel: React.FC<{ data: ShadowPanelData | null }> = ({ data }) => {
   if (data === null || data.available !== true) {
@@ -240,7 +317,10 @@ export const ShadowResearchPanel: React.FC<{ data: ShadowPanelData | null }> = (
         </div>
       </div>
 
-      {/* 5. regole shadow */}
+      {/* 5. cessazione (sola lettura) */}
+      <CessationSection data={data.cessation ?? data} />
+
+      {/* 6. regole shadow */}
       <div className={SECTION} data-testid="shadow-rules" data-section="rules">
         <div className="text-xs font-bold uppercase tracking-wider text-slate-300">
           Regole shadow ({rules.length})

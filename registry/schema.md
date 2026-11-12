@@ -74,6 +74,25 @@ in `alphaEffective`, non contano in nessuna statistica. Restano nel file per
 append-only. Il bug è stato corretto in Passo M: `train` non appende se la riga
 esiste già. `postmortem` è read-only rispetto al registro.
 
+## Passo O — riconciliazione dei numeri di Passo N
+
+- `replay perimeter`: OLD 15160 righe, NEW 27288 righe, stessi 30 giorni distinti
+  (2026-10-01..2026-11-11). La crescita e' nei `(symbol,giorno)` (150 -> 270),
+  non un'estensione della finestra.
+- `reason` (valore vs assenza): 15145 righe portano un `reason`; 0 portano
+  `missing_input` come valore; 12143 non hanno il campo. `15145 + 15 = 15160`.
+  Il 44.4% e' l'assenza del campo, non un valore.
+- `stop distribution`: min 0.649%, max 0.983%, media 0.831%, sd 0.108%,
+  range 33.4 bp. Strutturale (guidata dalla formula), non campionaria.
+- `days needed`: 4 dei 15 setup nella banda migliore [0.75,0.80) -> 112.5 setup
+  necessari -> 60 giorni di calendario o 26 giorni con emissione. 260 non e'
+  difendibile sotto nessuna delle due assunzioni.
+- `nCells`: si distingue `preRegistered` (32 = 8 bande x 4 k) da `nonEmpty`
+  (8). Bonferroni: 0.05/32 = 0.0015625 (corretto) vs 0.05/8 = 0.00625.
+- `keptRow`: resta `first_decisionTs`. L'entry e' identica fra prima e ultima
+  emissione (diff 0 bp); il gap di 0.533 R a k=1.0 e' un look-ahead della
+  scelta dell'ultima emissione, non una proprieta' dell'entry.
+
 ## Passo N — unita', causa, etichette
 
 - `repetitionCause`: ammette `intraday_reemission`. Il valore `replay` scritto

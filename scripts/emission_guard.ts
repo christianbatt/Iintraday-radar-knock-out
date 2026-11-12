@@ -36,17 +36,29 @@ export function dayOf(decisionTs: number): string {
   return new Date(decisionTs * 1000).toISOString().slice(0, 10);
 }
 
+/** Regola dichiarata di deduplica: si tiene la prima emissione (decisionTs minimo). */
+export const KEPT_ROW_RULE = 'first_decisionTs' as const;
+
 /**
  * Declassa le riemissioni intraday. Le righe restano, l'emissione no.
- * Regola: vince il decisionTs MINIMO del gruppo (symbol|entry|stop|giorno).
+ * Regola: vince il decisionTs MINIMO del gruppo (symbol|entry|stop|giorno),
+ * indipendentemente dall'ordine delle righe in input.
  */
 export function applyEmissionGuard<T extends Row>(rows: T[]): T[] {
-  const seen = new Set<string>();
+  // primo passo: decisionTs minimo per gruppo
+  const minTs = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.emitted) continue;
+    const key = `${setupKeyOf(r)}|${dayOf(r.decisionTs)}`;
+    const cur = minTs.get(key);
+    if (cur === undefined || r.decisionTs < cur) minTs.set(key, r.decisionTs);
+  }
+  const keptSeen = new Set<string>();
   return rows.map(r => {
     if (!r.emitted) return r;
     const key = `${setupKeyOf(r)}|${dayOf(r.decisionTs)}`;
-    if (!seen.has(key)) {
-      seen.add(key);
+    if (r.decisionTs === minTs.get(key) && !keptSeen.has(key)) {
+      keptSeen.add(key);
       return r;
     }
     return { ...r, emitted: false, reason: 'REEMISSIONE' };
