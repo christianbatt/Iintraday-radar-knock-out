@@ -93,6 +93,26 @@ esiste già. `postmortem` è read-only rispetto al registro.
   emissione (diff 0 bp); il gap di 0.533 R a k=1.0 e' un look-ahead della
   scelta dell'ultima emissione, non una proprieta' dell'entry.
 
+## Passo P — reason sull'universo nuovo
+
+- `reason` (perimetro): contato sull'universo nuovo (27288 righe, 9 simboli x
+  30 giorni). 15145 righe portano un `reason` (55.5%); 0 portano `missing_input`
+  come valore; 12143 non hanno il campo (44.5%). `15145 + 15 = 15160`.
+  Il 44.5% e' il delta di copertura (4 simboli x 30 giorni = 120 symbol-day),
+  non un valore del campo. La diagnosi della cessazione descrive 15 giorni su 27
+  solo se ristretta ai primi 15 giorni; sui 30 giorni il motivo dominante resta
+  `Nessun titolo presente o analizzato per la sessione` (9493, 34.8%).
+- `nCells`: si distingue `preRegistered` (32 = 8 bande x 4 k), `nonEmpty`
+  (8), e `structurallyUnreachable` (24): dato il range osservato (33.4 bp) e
+  la larghezza delle bande (25 bp), solo 2 bande su 8 possono contenere dati.
+  Bonferroni-32 penalizza test che nessun dato potra' mai produrre.
+- `days needed`: tre letture — aggregata 30 setup (60 gg calendario / 26 gg
+  emissione), banda 37.5 setup (75 / 32.5), decile 112.5 setup (225 / 97.5).
+  Il criterio scritto richiede il decile (la cella pre-registrata e' il decile).
+- `power`: a alpha Bonferroni-32 (0.0015625) servono 62 setup per l'80% di
+  potenza (vs 26 ad alpha 0.05). Fattore 2.07 vs la soglia 30: incoerenza
+  dichiarata, non risolta.
+
 ## Passo N — unita', causa, etichette
 
 - `repetitionCause`: ammette `intraday_reemission`. Il valore `replay` scritto

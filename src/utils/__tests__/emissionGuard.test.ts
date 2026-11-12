@@ -109,6 +109,38 @@ describe('O — keptRow: la regola dichiarata e first_decisionTs', () => {
   });
 });
 
+describe('P — keptRow strong: R della riga tenuta == R della prima riga del gruppo', () => {
+  it('per tutti i 15 gruppi, la riga tenuta ha lo stesso decisionTs della prima riga ordinata per decisionTs', () => {
+    const input = fixture();
+    const out = applyEmissionGuard(input);
+    const kept = out.filter(r => r.emitted);
+    assert.equal(kept.length, 15, '15 gruppi');
+    for (const r of kept) {
+      const key = setupKeyOf(r);
+      const group = input.filter(x => setupKeyOf(x) === key).sort((a, b) => a.decisionTs - b.decisionTs);
+      const first = group[0];
+      assert.equal(r.decisionTs, first.decisionTs, `decisionTs gruppo ${key}`);
+      assert.equal(r.symbol, first.symbol, `symbol gruppo ${key}`);
+      assert.equal(r.entry, first.entry, `entry gruppo ${key}`);
+      assert.equal(r.stop, first.stop, `stop gruppo ${key}`);
+      assert.equal(r.direction, first.direction, `direction gruppo ${key}`);
+      assert.equal(r.target, first.target, `target gruppo ${key}`);
+    }
+  });
+
+  it('per tutti i 15 gruppi, la riga tenuta è la prima riga del gruppo anche con input shuffled', () => {
+    const input = [...fixture()].sort(() => Math.random() - 0.5);
+    const out = applyEmissionGuard(input);
+    const kept = out.filter(r => r.emitted);
+    assert.equal(kept.length, 15);
+    for (const r of kept) {
+      const key = setupKeyOf(r);
+      const group = input.filter(x => setupKeyOf(x) === key).sort((a, b) => a.decisionTs - b.decisionTs);
+      assert.equal(r.decisionTs, group[0].decisionTs, `shuffled gruppo ${key}`);
+    }
+  });
+});
+
   it('la mappatura gate -> causa e’ quella dichiarata', () => {
     assert.equal(reasonFromGates({ G1: { passed: false } }), 'liquidita');
     assert.equal(reasonFromGates({ G4: { passed: false }, G1: { passed: true } }), 'leva');
