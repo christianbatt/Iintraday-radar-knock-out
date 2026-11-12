@@ -6,6 +6,33 @@
  * sha256 dell'output canonico dell'harness sullo snapshot versionato:
  * non e' confrontabile con 003c53e0 in nessun modo.
  *
+ * ---------------------------------------------------------------------------
+ * COSA BASELINE_OFF DIMOSTRA E COSA NON DIMOSTRA (Passo H-ter / I0-bis)
+ *
+ * BASELINE_OFF e' un'ancora di REGRESSIONE DELL'HARNESS in modalita' from-bars:
+ * fissa il comportamento della catena di scoring/gate ricostruita dalle barre
+ * versionate, cosi' che una modifica futura che cambia quei numeri faccia
+ * fallire questo test invece di passare inosservata.
+ *
+ * NON e' una prova di parita' con la pipeline LIVE. Le ragioni sono due,
+ * entrambe verificate e non dedotte:
+ *
+ *  1. La modalita' 'as-recorded', cioe' rialimentare le quote registrate, e'
+ *     DEGENERE: tutte le quote risultano warmupIncomplete, nessun Top Pick
+ *     viene prodotto e i gate non vengono mai eseguiti. Il baseline sarebbe
+ *     stato il vuoto. Per questo la modalita' di default e' 'from-bars'.
+ *  2. Il parity test qui sotto ("l harness coincide con la ricostruzione
+ *     diretta della catena di App.tsx") confronta l'harness con una
+ *     RICOSTRUZIONE della catena fatta con le stesse funzioni di src/, non con
+ *     l'output dell'app live. Un parity test LIVE non e' stato eseguito:
+ *     richiederebbe un'istanza del server che serva quote live nello stesso
+ *     istante del replay, e lato client non esiste alcun seam di barre in
+ *     memoria (l'unico inMemoryBars e' dentro server.ts).
+ *
+ * In sintesi: verde qui = la catena non e' regredita rispetto a se stessa.
+ * Verde qui != la catena live si comporta come l'harness.
+ * ---------------------------------------------------------------------------
+ *
  * Runner: npx tsx src/utils/__tests__/pipeline_baseline.test.ts
  */
 import { describe, it } from 'node:test';
