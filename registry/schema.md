@@ -73,3 +73,18 @@ Due righe `AI-0001 result` sono state prodotte dal bug di idempotenza di
 in `alphaEffective`, non contano in nessuna statistica. Restano nel file per
 append-only. Il bug è stato corretto in Passo M: `train` non appende se la riga
 esiste già. `postmortem` è read-only rispetto al registro.
+
+## Passo N — unita', causa, etichette
+
+- `repetitionCause`: ammette `intraday_reemission`. Il valore `replay` scritto
+  negli artefatti di Passo M era **errato** (forzato in un enum che non aveva il
+  valore giusto): i 15 gruppi hanno `giorni=1` e 13/15 hanno un `decisionTs`
+  distinto per riga. Non si corregge in place: si dichiara errato qui.
+- `alphaBonferroni`: con 0 celle ammissibili vale la stringa
+  `"undefined (0 celle ammissibili)"`, non `null`. `null` significa "non
+  calcolabile per input mancante"; `0.05/0` e' indefinito, non nullo.
+- `keptRow`: nella deduplica, `"first_decisionTs"` — si tiene la riga con
+  `decisionTs` minimo del gruppo `(symbol|entry|stop)`.
+- `reason` (replay): una delle 7 cause `liquidita, struttura, leva, rischio,
+  orario, barriera, vari`, dal primo gate fallito in ordine numerico, oppure
+  `REEMISSIONE` per le righe declassate dalla guardia.

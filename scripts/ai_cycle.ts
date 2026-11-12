@@ -1125,22 +1125,23 @@ function surface() {
     const per = Math.max(1, Math.ceil(sorted.length / 10));
     log('');
     log(`  --- ${label}: n=${rows.length} ---`);
-    log('  dec  stop%med  n     k=0.5            k=1.0            k=1.6            k=2.0');
+    log('  dec  stop%med  n  nSetup  k=0.5            k=1.0            k=1.6            k=2.0');
     const cells: Array<Record<string, unknown>> = [];
     for (let i = 0; i < 10; i++) {
       const chunk = sorted.slice(i * per, (i + 1) * per);
       if (!chunk.length) continue;
       const spm = quantile(chunk.map(x => stopPctOf(x.s)).sort((a, b) => a - b), 0.5);
-      let line = `  d${i + 1}  ${pad(num(spm, 2), 8)} ${pad(chunk.length, 5)} `;
+      const nSetup = new Set(chunk.map(x => setupKey(x.s))).size;
+      let line = `  d${i + 1}  ${pad(num(spm, 2), 8)} ${pad(chunk.length, 3)} ${pad(nSetup, 6)}  `;
       for (const k of SURFACE_KS) {
         if (chunk.length < 10) {
           line += pad('n<10', 17);
-          cells.push({ pop: label, dec: i + 1, stopPctMed: spm, k, n: chunk.length, meanRNet: null });
+          cells.push({ pop: label, dec: i + 1, stopPctMed: spm, k, n: chunk.length, nSetup, meanRNet: null });
           continue;
         }
         const st = netAt(chunk, k, fp);
         line += pad(`${num(st.meanRNet)} (${num(st.hit * 100, 0)}%)`, 17);
-        cells.push({ pop: label, dec: i + 1, stopPctMed: spm, k, n: chunk.length,
+        cells.push({ pop: label, dec: i + 1, stopPctMed: spm, k, n: chunk.length, nSetup,
                      meanRNet: st.meanRNet, hit: st.hit, fMed: st.fMed });
       }
       log(line);
@@ -1198,9 +1199,10 @@ function population() {
   const blocked = all.filter(s => !s.emitted && s.blocked !== null);
   log('  A = excludedRecords (scarti PRE-GATE): NON su disco — vivono in localStorage');
   log('      (src/App.tsx:248, chiave intraday_radar_excluded_setups_v1): non misurabili offline.');
-  log(`  B = candidati con direzione, bloccati da un gate: ${blocked.length}`);
-  log(`  C = emessi: ${emitted.length}`);
-  log(`  D = tutti i candidati (B+C): ${all.length}`);
+  const nSetup = (list: Setup[]) => new Set(list.map(s => setupKey(s))).size;
+  log(`  B = candidati con direzione, bloccati da un gate: ${blocked.length} righe · ${nSetup(blocked)} setup distinti`);
+  log(`  C = emessi: ${emitted.length} righe · ${nSetup(emitted)} setup distinti`);
+  log(`  D = tutti i candidati (B+C): ${all.length} righe · ${nSetup(all)} setup distinti`);
   log('');
   const netMean = (list: Setup[]) => {
     const rows = measure(list);
@@ -1480,6 +1482,115 @@ function fillaudit() {
   return payload;
 }
 
+// ---------------------------------------------------------------- reemissione (Passo N)
+
+function reemission() {
+  log('=== RIEMISSIONE INTRADAY — profilo dei gruppi ===');
+  const rows = measure(loadSetups(0, true));
+  const groups = new Map<string, Measured[]>();
+  for (const r of rows) {
+    const k = setupKey(r.s);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k)!.push(r);
+  }
+  const dayOf = (ts: number) => new Date(ts * 1000).toISOString().slice(0, 10);
+  const prof: Array<Record<string, unknown>> = [];
+  log('  (1.4) gruppo | n | minTs | maxTs | spreadMin | barre | giorno');
+  for (const [key, g] of groups) {
+    const ts = g.map(x => x.s.ts).sort((a, b) => a - b);
+    const spreadMin = (ts[ts.length - 1] - ts[0]) / 60;
+    prof.push({ key, n: g.length, minTs: ts[0], maxTs: ts[ts.length - 1], spreadMin,
+                bars: Math.round(spreadMin / 5) + 1, day: dayOf(ts[0]) });
+    log(`    ${pad(key, 34)} ${pad(g.length, 3)} ${pad(ts[0], 11)} ${pad(ts[ts.length - 1], 11)} ${pad(spreadMin, 9)} ${pad(Math.round(spreadMin / 5) + 1, 6)} ${dayOf(ts[0])}`);
+  }
+  const spuriousPerDay: Record<string, number> = {};
+  for (const d of prof) {
+    const day = String(d.day);
+    spuriousPerDay[day] = (spuriousPerDay[day] ?? 0) + ((d.n as number) - 1);
+  }
+  const spurious = rows.length - groups.size;
+  log(`  (1.5) emissioni spurie: ${rows.length} - ${groups.size} = ${spurious}`);
+  log(`        per giorno: ${Object.entries(spuriousPerDay).sort().map(([d, n]) => `${d}=${n}`).join(' ')}`);
+
+  // (6.2) dedup: prima (decisionTs min) vs ultima (max) vs righe
+  const firsts = new Map<string, Measured>();
+  const lasts = new Map<string, Measured>();
+  for (const r of rows) {
+    const k = setupKey(r.s);
+    const cur = firsts.get(k);
+    if (!cur || r.s.ts < cur.s.ts) firsts.set(k, r);
+    const curL = lasts.get(k);
+    if (!curL || r.s.ts > curL.s.ts) lasts.set(k, r);
+  }
+  const FRIC = 0.1;
+  log('  (6.3) meanR netto per k: righe | setup-M | setup-prima | setup-ultima');
+  const byK: Array<Record<string, unknown>> = [];
+  for (const k of [0.5, 1.0, 1.6, 2.0]) {
+    const v = (x: Measured) => (x.w.firstK[String(k)] !== undefined ? k : -1) - FRIC / stopPctOf(x.s);
+    const r = mean(rows.map(v));
+    const m = mean([...firsts.values()].map(v));
+    const f = mean([...firsts.values()].map(v));
+    const l = mean([...lasts.values()].map(v));
+    const delta = Math.abs(f - m);
+    byK.push({ k, rows: r, setupsFirst: f, setupsLast: l, deltaFirstVsLast: Math.abs(f - l) });
+    log(`    k=${k} righe=${num(r)} prima=${num(f)} ultima=${num(l)} |prima-ultima|=${num(Math.abs(f - l))}`);
+    void m; void delta;
+  }
+  writeFileSync(join(ART, 'ai_reemission.json'), JSON.stringify({ nRows: rows.length, nGroups: groups.size, spurious, spuriousPerDay, prof, byK }, null, 2));
+  log(`  scritto ${join(ART, 'ai_reemission.json')}`);
+}
+
+function reasons() {
+  const dir = join(ART, 'replay_i3_30d_reason', 'shift_0');
+  const p = join(dir, 'setups.json');
+  if (!existsSync(p)) { log(`  missing_input: ${p} non esiste (rigenerazione non completata)`); return; }
+  log('=== REASON — causa del blocco per giorno ===');
+  type Row = { symbol: string; decisionTs: number; emitted: boolean; reason?: string | null };
+  const rows = JSON.parse(readFileSync(p, 'utf8')) as Row[];
+  const dayOf = (ts: number) => new Date(ts * 1000).toISOString().slice(0, 10);
+  const causeOf = (r: Row) => {
+    if (r.emitted) return 'emesso';
+    const s = r.reason ?? 'missing_input';
+    return s.split(':')[0];
+  };
+  const byDay: Record<string, Record<string, number>> = {};
+  for (const r of rows) {
+    const d = dayOf(r.decisionTs);
+    if (!byDay[d]) byDay[d] = {};
+    const c = causeOf(r);
+    byDay[d][c] = (byDay[d][c] ?? 0) + 1;
+  }
+  const causesSet = new Set<string>();
+  for (const d of Object.keys(byDay)) for (const c of Object.keys(byDay[d])) causesSet.add(c);
+  const causes = [...causesSet].sort();
+  log(`  giorni=${Object.keys(byDay).length} righe=${rows.length} cause=${causes.join(',')}`);
+  log(`  giorno      totale  ${causes.map(c => pad(c, 10)).join(' ')}`);
+  for (const d of Object.keys(byDay).sort()) {
+    const tot = Object.values(byDay[d]).reduce((a, b) => a + b, 0);
+    log(`  ${d}  ${pad(tot, 7)} ${causes.map(c => pad(byDay[d][c] ?? 0, 10)).join(' ')}`);
+  }
+  const cut = '2026-10-28';
+  const agg = (before: boolean) => {
+    const out: Record<string, number> = {};
+    let tot = 0;
+    for (const d of Object.keys(byDay)) {
+      const isBefore = d < cut;
+      if (isBefore !== before) continue;
+      for (const [c, n] of Object.entries(byDay[d])) { out[c] = (out[c] ?? 0) + n; tot += n; }
+    }
+    return { out, tot };
+  };
+  const a = agg(true), b = agg(false);
+  log(`  (4.2) prima del ${cut}: n=${a.tot} · dopo: n=${b.tot}`);
+  for (const c of causes) {
+    const pa = a.tot ? ((a.out[c] ?? 0) / a.tot) * 100 : 0;
+    const pb = b.tot ? ((b.out[c] ?? 0) / b.tot) * 100 : 0;
+    log(`    ${pad(c, 10)} prima=${pad(a.out[c] ?? 0, 6)} (${num(pa, 1)}%) dopo=${pad(b.out[c] ?? 0, 6)} (${num(pb, 1)}%) delta=${num(pb - pa, 1)} pt`);
+  }
+  writeFileSync(join(ART, 'ai_reasons.json'), JSON.stringify({ nRows: rows.length, byDay, causes, before: a, after: b }, null, 2));
+  log(`  scritto ${join(ART, 'ai_reasons.json')}`);
+}
+
 function dedup() {
   log('=== DEDUP — unita di misura: setup distinto per (symbol|entry|stop) ===');
   const rows = measure(loadSetups(0, true));
@@ -1660,9 +1771,48 @@ function deathcheck() {
   }
 
   const admissible = cells.filter(c => c.n >= 30 && c.days >= 10);
+
+  // (5.2) Passo N: griglia a BANDE FISSE di stopPct, accanto ai decili.
+  const BANDS: Array<[number, number]> = [[0.5, 0.75], [0.75, 1.0], [1.0, 1.25], [1.25, 1.5],
+    [1.5, 1.75], [1.75, 2.0], [2.0, 2.5], [2.5, Infinity]];
+  const bandCells: Cell[] = [];
+  for (const [lo, hi] of BANDS) {
+    const rawChunk = sorted.filter(x => { const s = stopPctOf(x.s); return s >= lo && s < hi; });
+    if (!rawChunk.length) continue;
+    const chunk = distinctChunk(rawChunk);
+    for (const k of KS) {
+      const byDay = new Map<string, number[]>();
+      for (const x of chunk) {
+        const v = (x.w.firstK[String(k)] !== undefined ? k : -1) - 0.1 / stopPctOf(x.s);
+        if (!byDay.has(x.s.date)) byDay.set(x.s.date, []);
+        byDay.get(x.s.date)!.push(v);
+      }
+      const dayKeys = [...byDay.keys()].sort();
+      const rng2 = mulberry32(101);
+      const means: number[] = [];
+      for (let it = 0; it < 2000; it++) {
+        let sum = 0, cnt = 0;
+        for (let j = 0; j < dayKeys.length; j++) {
+          const pick = dayKeys[Math.floor(rng2() * dayKeys.length)];
+          for (const v of byDay.get(pick)!) { sum += v; cnt++; }
+        }
+        means.push(sum / Math.max(1, cnt));
+      }
+      const s2 = [...means].sort((a, b) => a - b);
+      const allV: number[] = [];
+      for (const v of byDay.values()) for (const x of v) allV.push(x);
+      const obs = mean(allV);
+      const lo2 = quantile(s2, 0.025), hi2 = quantile(s2, 0.975);
+      const p = means.filter(v => v <= 0).length / means.length;
+      bandCells.push({ dec: lo, k, n: chunk.length, days: dayKeys.length, meanRNet: obs,
+                       lo: lo2, hi: hi2, p, excludesZero: lo2 > 0 });
+    }
+  }
+  const admissibleBands = bandCells.filter(c => c.n >= 30 && c.days >= 10);
   const nHyp = nHypotheses();
   const alphaEffective = 0.05 / (1 + nHyp);
   const alphaBonferroni = admissible.length > 0 ? 0.05 / admissible.length : null;
+  const alphaBonferroniLabel = admissible.length > 0 ? num(0.05 / admissible.length, 4) : 'undefined (0 celle ammissibili)';
   // (2.5) giorni necessari perche' UNA cella abbia 30 setup distinti.
   // Assunzione dichiarata: distribuzione uniforme dei setup distinti sui 10 decili
   // e ritmo costante pari a haveSetups/haveDays.
@@ -1675,7 +1825,7 @@ function deathcheck() {
 
   log(`  trigger: setup ${haveSetups}/100 · giorni ${haveDays}/30 -> ${triggerMet ? 'soddisfatto' : 'NON soddisfatto'}`);
   log(`  celle: ${cells.length} totali · ${admissible.length} ammissibili (n>=30 e giorni>=10)`);
-  log(`  soglie: alphaEffective=${num(alphaEffective, 4)} · Bonferroni=${alphaBonferroni === null ? 'n/d' : num(alphaBonferroni, 4)}`);
+  log(`  soglie: alphaEffective=${num(alphaEffective, 4)} · Bonferroni=${alphaBonferroniLabel}`);
   log(`  giorni per 30 setup distinti in UNA cella: ${daysNeededUniform ?? 'n/d'} (assunzione: uniforme su 10 decili, ritmo ${num(haveSetups / Math.max(1, haveDays), 3)} setup/giorno)`);
   const g4 = (surfArt.EMESSI as { nCellsN10?: number; nPositiveN10?: number } | undefined);
   log(`  cross-check con ai_surface.json: celle n>=10=${g4?.nCellsN10 ?? 'n/d'} positive=${g4?.nPositiveN10 ?? 'n/d'} (qui la soglia e n>=30)`);
@@ -1684,6 +1834,13 @@ function deathcheck() {
   }
   const best = admissible.length ? admissible.reduce((a, b) => (a.meanRNet >= b.meanRNet ? a : b)) : null;
   if (best) log(`  migliore ammissibile: d${best.dec} k=${best.k} meanR_net=${num(best.meanRNet)}`);
+  // (5.3) blocco BANDE FISSE
+  log(`  --- BANDE FISSE: ${bandCells.length} celle · ${admissibleBands.length} ammissibili ---`);
+  const bestBand = admissibleBands.length ? admissibleBands.reduce((a, b) => (a.meanRNet >= b.meanRNet ? a : b)) : null;
+  if (bestBand) log(`  migliore ammissibile (bande): banda da stopPct=${bestBand.dec} k=${bestBand.k} n=${bestBand.n} giorni=${bestBand.days} meanR_net=${num(bestBand.meanRNet)} CI=[${num(bestBand.lo)}, ${num(bestBand.hi)}]`);
+  else log('  migliore ammissibile (bande): nessuna');
+  const maxBandN = bandCells.length ? Math.max(...bandCells.map(c => c.n)) : 0;
+  log(`  max setup distinti in una banda: ${maxBandN} (soglia 30)`);
   const reason = status === 'not_yet_evaluable'
     ? `trigger non soddisfatto (${haveSetups}/100 setup, ${haveDays}/30 giorni) e ${admissible.length} celle ammissibili su ${cells.length}`
     : status === 'survives'
@@ -1703,7 +1860,9 @@ function deathcheck() {
     status, fillIntegrity, trigger: { needSetups: 100, haveSetups, needDays: 30, haveDays },
     daysNeededUniform, perCellPerDay,
     nCells: cells.length, nAdmissibleCells: admissible.length,
-    alphaEffective, alphaBonferroni, bestAdmissibleCell: best, survivors: survivors.length,
+    bands: { nCells: bandCells.length, nAdmissible: admissibleBands.length, maxN: maxBandN,
+             best: bestBand, cells: bandCells },
+    alphaEffective, alphaBonferroni, alphaBonferroniLabel, bestAdmissibleCell: best, survivors: survivors.length,
     reason, frictionPct: 0.1, cells,
   }, null, 2));
   log(`  fillIntegrity: ${fillIntegrity}`);
@@ -1720,6 +1879,8 @@ switch (CMD) {
   case 'population': population(); break;
   case 'deathcheck': deathcheck(); break;
   case 'dedup':      dedup(); break;
+  case 'reemission': reemission(); break;
+  case 'reasons':    reasons(); break;
   case 'fillaudit': fillaudit(); break;
   case 'postmortem': postmortem(); break;
   case 'train':    train(); break;

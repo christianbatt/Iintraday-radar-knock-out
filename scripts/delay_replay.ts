@@ -25,6 +25,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
+import { applyEmissionGuard } from './emission_guard';
 
 type Bar = { t: number; o: number; h: number; l: number; c: number; v: number };
 
@@ -37,6 +38,7 @@ type SetupOut = {
   stop: number | null;
   target: number | null;
   gates: string[] | null;
+  reason: string | null;
 };
 
 function arg(name: string, fallback: string): string {
@@ -310,13 +312,16 @@ async function main(): Promise<void> {
             stop: null,
             target: null,
             gates: null,
+            reason: null,
           },
         );
       }
     }
-    results[key] = rows;
-    writeFileSync(join(dir, 'setups.json'), `${JSON.stringify(rows)}\n`);
-    console.log(`${key}: ${rows.filter((r) => r.emitted).length} setup su ${rows.length} valutazioni`);
+    // Passo N: una sola emissione per (symbol, setupKey) per giornata.
+    const guarded = applyEmissionGuard(rows);
+    results[key] = guarded;
+    writeFileSync(join(dir, 'setups.json'), `${JSON.stringify(guarded)}\n`);
+    console.log(`${key}: ${guarded.filter((r) => r.emitted).length} setup su ${guarded.length} valutazioni (riemissioni declassate: ${guarded.filter((r) => r.reason === 'REEMISSIONE').length})`);
   }
 
   if (MODE === 'runner') {
