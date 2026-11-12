@@ -1,0 +1,10 @@
+{
+  "configVersion": "sel-v1",
+  "live": false,
+  "maxParams": 4,
+  "features": [],
+  "params": {},
+  "trainedOn": null,
+  "holdoutMetrics": null,
+  "note": "Nessuna configurazione attiva. Il pulsante scrive verdetti, non accende: l'unico modo per portare live una config e' 'bun scripts/ai_cycle.ts promote --id=AI-XXXX' con result accepted, e SETUP_SELECTOR_LIVE resta 'off' in ogni caso."
+}
