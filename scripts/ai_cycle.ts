@@ -20,6 +20,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, appendFileSync, mkdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 
 const ARGS = new Map<string, string>();
@@ -1919,18 +1920,137 @@ function reason9() {
   log(`  setup bit-identici: ${em.length} (invariato)`);
 }
 
+
+function tests() {
+  log('=== TESTS — conteggio riconciliato (Passo R) ===');
+  const collected: string[] = [];
+  function walk(dir: string) {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.test.ts') || e.name.endsWith('.test.tsx')) collected.push(p);
+    }
+  }
+  walk('src');
+  collected.sort();
+  let total = 0;
+  for (const f of collected) {
+    let n = 0;
+    try {
+      const out = execFileSync('npx', ['tsx', f], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      const m = out.match(/ℹ tests (\d+)/);
+      n = m ? Number(m[1]) : 0;
+    } catch (e: any) {
+      const out = (e?.stdout ?? '') + (e?.stderr ?? '');
+      const m = out.match(/ℹ tests (\d+)/);
+      n = m ? Number(m[1]) : 0;
+    }
+    total += n;
+    log(`  ${String(n).padStart(3)}  ${f}`);
+  }
+  log(`  FILE=${collected.length} TEST=${total}`);
+}
+
+function logGamma(z: number): number {
+  const c = [76.18009172947146, -86.50532032941677, 24.01409824083091,
+    -1.231739572450155, 0.001208650973866179, -0.000005395239384953];
+  let x = z;
+  let y = z;
+  let tmp = x + 5.5;
+  tmp -= (x + 0.5) * Math.log(tmp);
+  let ser = 1.000000000190015;
+  for (let j = 0; j < 6; j++) { y += 1; ser += c[j] / y; }
+  return -tmp + Math.log(2.5066282746310005 * ser / x);
+}
+
+function chi2Survival(x: number, k: number): number {
+  const a = k / 2;
+  const xx = x / 2;
+  if (xx <= 0) return 1;
+  const gln = logGamma(a);
+  let gammp = 0;
+  if (xx < a + 1) {
+    let sum = 1 / a;
+    let del = sum;
+    for (let n = 1; n <= 200; n++) {
+      del *= xx / (a + n);
+      sum += del;
+      if (Math.abs(del) < Math.abs(sum) * 1e-12) break;
+    }
+    gammp = sum * Math.exp(-xx + a * Math.log(xx) - gln);
+  } else {
+    let b = xx + 1 - a;
+    let c = 1 / 1e-30;
+    let d = 1 / b;
+    let h = d;
+    for (let i = 1; i <= 200; i++) {
+      const an = -i * (i - a);
+      b += 2;
+      d = an * d + b;
+      if (Math.abs(d) < 1e-30) d = 1e-30;
+      c = b + an / c;
+      if (Math.abs(c) < 1e-30) c = 1e-30;
+      d = 1 / d;
+      const del = d * c;
+      h *= del;
+      if (Math.abs(del - 1) < 1e-12) break;
+    }
+    gammp = 1 - Math.exp(-xx + a * Math.log(xx) - gln) * h;
+  }
+  const surv = 1 - gammp;
+  return surv < 0 ? 0 : surv > 1 ? 1 : surv;
+}
+
+function persymbol() {
+  log('=== PERSYMBOL — eterogeneita per simbodo (Passo R) ===');
+  const rows = JSON.parse(readFileSync(join(ART, 'replay_i3_30d_reason', 'shift_0', 'setups.json'), 'utf8')) as any[];
+  const em = rows.filter((r: any) => r.emitted);
+  const totalSetups = em.length;
+  const totalRows = rows.length;
+  const syms = [...new Set(rows.map((r: any) => r.symbol))].sort();
+  const per: { sym: string; sd: number; setups: number }[] = [];
+  for (const s of syms) {
+    const r = rows.filter((x: any) => x.symbol === s);
+    const pairs = new Set(r.map((x: any) => new Date(x.decisionTs * 1000).toISOString().slice(0,10))).size;
+    const setups = em.filter((x: any) => x.symbol === s).length;
+    per.push({ sym: s, sd: pairs, setups });
+    log(`  ${s.padEnd(9)} symbol-day=${pairs} setup=${setups} tasso=${(setups/pairs).toFixed(4)}`);
+  }
+  log(`  TOTALE setup=${totalSetups} su ${totalRows} righe`);
+  let chi = 0;
+  const totalSd = per.reduce((a,b)=>a+b.sd,0);
+  for (const p of per) {
+    const expected = totalSetups * (p.sd / totalSd);
+    chi += (p.setups - expected) ** 2 / (expected > 0 ? expected : 1);
+  }
+  const df = per.length - 1;
+  const pval = chi2Survival(chi, df);
+  log(`  chi-quadro=${chi.toFixed(4)} gdl=${df} p=${pval.toExponential(3)}`);
+  const pZeroUniform = Math.exp(-12);
+  const pZeroMultinomial = Math.pow(5/9, 15);
+  const pZeroEmpirical = Math.pow(0.4, 4);
+  log(`  P(0) (i) Poisson uniforme: ${pZeroUniform.toExponential(3)}`);
+  log(`  P(0) (ii) multinomiale uniforme su 9: ${pZeroMultinomial.toExponential(3)}`);
+  log(`  P(0) (iii) eterogeneita empirica 0.4^4: ${pZeroEmpirical.toExponential(3)}`);
+  log(`  reductio ENI.MI/UCG.MI: attesi 6, osservati 0, P(0)=${Math.exp(-6).toExponential(3)}`);
+}
+
 function daysneeded() {
-  log('=== DAYSNEEDED — griglia e potenza (Passo Q) ===');
-  const expected = 0.7156753909982563;
-  const observed = 0.8;
-  const sdProp = Math.sqrt(expected * (1 - expected) / 15);
-  const z = (observed - expected) / sdProp;
-  log(`  frazione attesa in [0.75,1.00): ${expected.toFixed(4)} ; osservata: ${observed.toFixed(4)} ; sd: ${sdProp.toFixed(4)} ; z: ${z.toFixed(3)}`);
-  log(`  setup a frazione attesa: ${(30 / expected).toFixed(1)} (vs 37.5 a 0.800)`);
-  log(`  AI-0016 pre-registra 8 bande x 4 k = 32 celle (griglia: bande, non decili)`);
-  log(`  giorni a 41.9 setup: emitting ${(41.9/1.154).toFixed(1)} ; calendario ${(41.9/0.5).toFixed(1)}`);
-  log(`  giorni a 62 setup: emitting ${(62/1.154).toFixed(1)} ; calendario ${(62/0.5).toFixed(1)}`);
-  log(`  vincolo che morde: potenza (62 > 41.9) -> 124 giorni di calendario`);
+  log('=== DAYSNEEDED — griglia e potenza (Passo R) ===');
+  const frac = 0.7156753909982563;
+  const setups30 = 30 / frac;
+  const setups62 = 62 / frac;
+  const emit30 = setups30 / 1.154;
+  const emit62 = setups62 / 1.154;
+  const cal30 = setups30 / 0.5;
+  const cal62 = setups62 / 0.5;
+  log(`  definizione: setupTotali = setupPerCella / frazioneBanda (frazioneBanda=${frac.toFixed(4)})`);
+  log(`  setupTotali: 30 -> ${setups30.toFixed(1)} ; 62 -> ${setups62.toFixed(1)}`);
+  log(`  giorni emitting: 30 -> ${emit30.toFixed(1)} ; 62 -> ${emit62.toFixed(1)}`);
+  log(`  giorni calendario: 30 -> ${cal30.toFixed(1)} ; 62 -> ${cal62.toFixed(1)}`);
+  log(`  Q riportava: 41.9 -> 36.3/83.8 (corretto); 62 -> 53.7/124.0 (errato)`);
+  log(`  delta vs Q a 62: emitting +${(emit62-53.7).toFixed(1)} ; calendario +${(cal62-124.0).toFixed(1)} ; fattore ${(cal62/124.0).toFixed(2)}`);
+  log(`  leva: elasticita 0 -> ${cal62.toFixed(1)} gg ; elasticita 1 -> ${(setups62/2/0.5).toFixed(1)} gg ; differenza ${(cal62 - setups62/2/0.5).toFixed(1)} gg`);
 }
 
 switch (CMD) {
@@ -1943,6 +2063,8 @@ switch (CMD) {
   case 'dedup':      dedup(); break;
   case 'reemission': reemission(); break;
   case 'reasons':    reasons(); break;
+  case 'tests':      tests(); break;
+  case 'persymbol':  persymbol(); break;
   case 'perimeter':  perimeter(); break;
   case 'symbols':    symbols(); break;
   case 'reason9':    reason9(); break;
@@ -1952,5 +2074,5 @@ switch (CMD) {
   case 'train':    train(); break;
   case 'cycle':    cycle(); break;
   case 'promote':  promote(); break;
-  default: fail(2, `sottocomando sconosciuto: ${CMD}. Usa payoff|surface|population|deathcheck|g4fill|upstream|postmortem|train|cycle|promote|perimeter|symbols|reason9|daysneeded`);
+  default: fail(2, `sottocomando sconosciuto: ${CMD}. Usa payoff|surface|population|deathcheck|g4fill|upstream|postmortem|train|cycle|promote|perimeter|symbols|reason9|daysneeded|tests|persymbol`);
 }
