@@ -5,6 +5,7 @@ import {
   reasonFromGates,
   setupKeyOf,
   dayOf,
+  KEPT_ROW_RULE,
   type Row,
 } from '../../../scripts/emission_guard';
 
@@ -89,6 +90,24 @@ describe('N3 — i campi delle 15 righe sono identici alla prima riga del gruppo
       assert.equal(dayOf(r.decisionTs), dayOf(first.decisionTs));
     }
   });
+
+describe('O — keptRow: la regola dichiarata e first_decisionTs', () => {
+  it('la costante e first_decisionTs', () => {
+    assert.equal(KEPT_ROW_RULE, 'first_decisionTs');
+  });
+
+  it('anche con righe in ordine inverso vince il decisionTs minimo', () => {
+    const input = [...fixture()].reverse();
+    const out = applyEmissionGuard(input);
+    const kept = out.filter(r => r.emitted);
+    assert.equal(kept.length, 15);
+    for (const r of kept) {
+      const same = out.filter(x => setupKeyOf(x) === setupKeyOf(r));
+      const min = Math.min(...same.map(x => x.decisionTs));
+      assert.equal(r.decisionTs, min, `gruppo ${setupKeyOf(r)}`);
+    }
+  });
+});
 
   it('la mappatura gate -> causa e’ quella dichiarata', () => {
     assert.equal(reasonFromGates({ G1: { passed: false } }), 'liquidita');

@@ -98,6 +98,8 @@ I 3 giorni peggiori contengono 56 setup su 123 (45.5%) e -56.000 di -60.601 R to
 f_i a 0.10%: media 0.119 R, mediana 0.119 R, p90 0.133 R.
 corr(f_i, R realizzato) = 0.103.
 
+_nota: sezione netto ripresa dall'ultimo run con `--net` (non ricalcolata in questo run)._
+
 **Frizione dell'app implicita per trade: NON RICAVABILE.** `frictionEur` dipende da
 `suggestedCertificates` e `totalInvestedEur` (calculator.ts:2405), che non esistono negli
 artefatti del replay: vale la banda parametrica, non una misura di spread reale.
