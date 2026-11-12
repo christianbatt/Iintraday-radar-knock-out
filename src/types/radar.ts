@@ -55,6 +55,10 @@ export interface RawQuoteData {
   rvol20m?: number | null;
   orderFlow?: OrderFlowMetrics | null;
   timestamp: string;
+  // I2a: tempo di MERCATO della quota (unix secondi, da meta.regularMarketTime).
+  // Opzionale perche' i siti di costruzione di RawQuoteData nel repo sono >8.
+  // null = il feed non espone il campo. Inerte finche' STALENESS_USE_MARKET_TS e' 'off'.
+  marketTs?: number | null;
   source: string;
 }
 
