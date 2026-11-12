@@ -31,6 +31,10 @@
  *
  * In sintesi: verde qui = la catena non e' regredita rispetto a se stessa.
  * Verde qui != la catena live si comporta come l'harness.
+ *
+ * Il parity test LIVE non esiste in questo repo e il test di wiring qui sotto
+ * NON lo sostituisce: nessuna asserzione di questo file confronta l'output
+ * dell'harness con quello dell'app.
  * ---------------------------------------------------------------------------
  *
  * Runner: npx tsx src/utils/__tests__/pipeline_baseline.test.ts
@@ -93,7 +97,7 @@ describe('I0 — harinnes deterministico e baseline', () => {
     assert.ok(setup.ticker !== null, 'nessun Top Pick: la fixture non esercita la pipeline');
   });
 
-  it('parity: l harness coincide con la ricostruzione diretta della catena di App.tsx', () => {
+  it('wiring: l harness chiama le stesse funzioni della catena, nello stesso ordine', () => {
     const quotes = quotesAtRecordedInstant(SNAP);
     const dual = getDualTopCandidates(quotes, { EU: 0, US: 0 }, {
       parameters: DEFAULT_SYSTEM_PARAMETERS,
