@@ -1871,6 +1871,68 @@ function deathcheck() {
 
 // ---------------------------------------------------------------- dispatch
 
+
+// ---------------------------------------------------------------- Passo Q: comandi di analisi committati
+function perimeter() {
+  log('=== PERIMETER — simbodi, non giorni (Passo Q) ===');
+  for (const dir of ['replay_i3_30d', 'replay_i3_30d_reason']) {
+    const rows = JSON.parse(readFileSync(join(ART, dir, 'shift_0', 'setups.json'), 'utf8')) as any[];
+    const syms = [...new Set(rows.map((r: any) => r.symbol))].sort();
+    const dates = new Set(rows.map((r: any) => new Date(r.decisionTs * 1000).toISOString().slice(0,10)));
+    const pairs = new Set(rows.map((r: any) => r.symbol + '|' + new Date(r.decisionTs * 1000).toISOString().slice(0,10)));
+    log(`  ${dir}: righe=${rows.length} simbodi=${syms.length} giorni=${dates.size} symbol-day=${pairs.size} righe/symbol-day=${(rows.length/pairs.size).toFixed(2)}`);
+    log(`    simbodi: ${syms.join(', ')}`);
+  }
+  log('  OLD 15160 = 5 x 30 x 101.07 ; NEW 27288 = 9 x 30 x 101.07 ; delta 12128 = 4 x 30 x 101.07');
+  log('  crescita interamente attribuibile ai 4 simbodi aggiunti (BAYN.DE LDO.MI SIE.DE STLAM.MI)');
+}
+
+function symbols() {
+  log('=== SYMBOLS — esperimento naturale (Passo Q) ===');
+  const rows = JSON.parse(readFileSync(join(ART, 'replay_i3_30d_reason', 'shift_0', 'setups.json'), 'utf8')) as any[];
+  const em = rows.filter((r: any) => r.emitted);
+  const added = ['BAYN.DE','LDO.MI','SIE.DE','STLAM.MI'];
+  log(`  setup totali: ${em.length}`);
+  const counts: Record<string, number> = {};
+  for (const r of em) counts[r.symbol] = (counts[r.symbol] || 0) + 1;
+  for (const s of [...new Set(rows.map((r: any) => r.symbol))].sort()) {
+    const rs = rows.filter((r: any) => r.symbol === s);
+    const cand = rs.filter((r: any) => r.entry !== null).length;
+    const wr = rs.filter((r: any) => r.reason !== null).length;
+    log(`  ${s}: setup=${counts[s] || 0} righe=${rs.length} candidati=${cand} con_reason=${wr}`);
+  }
+  const inAdded = added.reduce((a, s) => a + (counts[s] || 0), 0);
+  log(`  setup nei 4 simbodi aggiunti: ${inAdded} (attesi a 0.100/symbol-day: 12)`);
+  log(`  Poisson P(0) con lambda=12: ${Math.exp(-12).toExponential(3)}`);
+  log(`  i 4 simbodi sono non misurati: 0 candidati, 0 reason, snapshot con 5 simbodi`);
+}
+
+function reason9() {
+  log('=== REASON9 — reason sui 9 simbodi (Passo Q) ===');
+  const rows = JSON.parse(readFileSync(join(ART, 'replay_i3_30d_reason', 'shift_0', 'setups.json'), 'utf8')) as any[];
+  const wr = rows.filter((r: any) => r.reason !== null).length;
+  const mi = rows.filter((r: any) => r.reason === 'missing_input').length;
+  const nr = rows.filter((r: any) => r.reason === null).length;
+  log(`  righe totali: ${rows.length} ; con reason: ${wr} ; missing_input: ${mi} ; senza reason: ${nr}`);
+  log('  estensione a 9 simbodi NON eseguita: snapshot ha 5 simbodi, 4 aggiunti non misurati');
+  const em = rows.filter((r: any) => r.emitted);
+  log(`  setup bit-identici: ${em.length} (invariato)`);
+}
+
+function daysneeded() {
+  log('=== DAYSNEEDED — griglia e potenza (Passo Q) ===');
+  const expected = 0.7156753909982563;
+  const observed = 0.8;
+  const sdProp = Math.sqrt(expected * (1 - expected) / 15);
+  const z = (observed - expected) / sdProp;
+  log(`  frazione attesa in [0.75,1.00): ${expected.toFixed(4)} ; osservata: ${observed.toFixed(4)} ; sd: ${sdProp.toFixed(4)} ; z: ${z.toFixed(3)}`);
+  log(`  setup a frazione attesa: ${(30 / expected).toFixed(1)} (vs 37.5 a 0.800)`);
+  log(`  AI-0016 pre-registra 8 bande x 4 k = 32 celle (griglia: bande, non decili)`);
+  log(`  giorni a 41.9 setup: emitting ${(41.9/1.154).toFixed(1)} ; calendario ${(41.9/0.5).toFixed(1)}`);
+  log(`  giorni a 62 setup: emitting ${(62/1.154).toFixed(1)} ; calendario ${(62/0.5).toFixed(1)}`);
+  log(`  vincolo che morde: potenza (62 > 41.9) -> 124 giorni di calendario`);
+}
+
 switch (CMD) {
   case 'payoff':   payoff(); break;
   case 'g4fill':   g4fill(); break;
@@ -1881,10 +1943,14 @@ switch (CMD) {
   case 'dedup':      dedup(); break;
   case 'reemission': reemission(); break;
   case 'reasons':    reasons(); break;
+  case 'perimeter':  perimeter(); break;
+  case 'symbols':    symbols(); break;
+  case 'reason9':    reason9(); break;
+  case 'daysneeded': daysneeded(); break;
   case 'fillaudit': fillaudit(); break;
   case 'postmortem': postmortem(); break;
   case 'train':    train(); break;
   case 'cycle':    cycle(); break;
   case 'promote':  promote(); break;
-  default: fail(2, `sottocomando sconosciuto: ${CMD}. Usa payoff|surface|population|deathcheck|g4fill|upstream|postmortem|train|cycle|promote`);
+  default: fail(2, `sottocomando sconosciuto: ${CMD}. Usa payoff|surface|population|deathcheck|g4fill|upstream|postmortem|train|cycle|promote|perimeter|symbols|reason9|daysneeded`);
 }
