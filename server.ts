@@ -1,4 +1,5 @@
 import express, { NextFunction, Request, Response } from 'express';
+import { registerShadowRoutesFromDisk } from './src/server/shadowRoute';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -3185,6 +3186,9 @@ if (process.env.K_SERVICE) {
 }
 
 // Serve public static assets (manifest, icons, favicon)
+// Passo L: pannello shadow research, sola lettura (artefatti offline).
+registerShadowRoutesFromDisk(app);
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Set up Vite or Static Serving

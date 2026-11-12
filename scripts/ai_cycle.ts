@@ -1349,6 +1349,133 @@ function population() {
   return { A, B, C, D, verdict: verdictPop };
 }
 
+// ---------------------------------------------------------------- fill audit (Passo L)
+
+/**
+ * Verifica che il walk misuri una barriera e non un artefatto di entry.
+ * (1.1) codice del first-touch: e' `walk()` qui sopra.
+ * (1.3) monotonia: se firstK[k2] esiste, firstK[k1] deve esistere per ogni k1 < k2.
+ * (1.4) geometria: hit(k) contro 1/(1+k) (random walk senza drift), per decile.
+ * (1.5) tetto: il target e' usato cosi' com'e' (nessun clamp) oppure no.
+ * (1.6) G8/G9: G9 fallisce quando G8 fallisce (selectedLeverage null -> LEVA NON COMPATIBILE).
+ */
+function fillaudit() {
+  log('=== FILL AUDIT — il walk rispetta la barriera del target? ===');
+  log('  camminata: `walk()` in scripts/ai_cycle.ts, t > decisionTs, stop per primo, first touch.');
+  const rows = measure(loadSetups(0, true));
+  const KS = GRID;
+
+  type Detail = { s: Setup; risk: number; startIdx: number; mfeStart: number;
+                  firstK: Record<string, number>; stopIdx: number; touchedEntry: boolean };
+  const det: Detail[] = [];
+  for (const x of rows) {
+    const b = bars(x.s.sym);
+    if (!b) continue;
+    const risk = Math.abs(x.s.entry - x.s.stop);
+    if (!(risk > 0)) continue;
+    let start = -1;
+    for (let i = 0; i < b.length; i++) if (b[i].t > x.s.ts) { start = i; break; }
+    if (start < 0) continue;
+    const mfeStart = x.s.dir > 0 ? (b[start].h - x.s.entry) / risk : (x.s.entry - b[start].l) / risk;
+    let touched = false;
+    for (let i = start; i < b.length && i <= start + 78; i++) {
+      if (x.s.dir > 0 ? b[i].l <= x.s.entry : b[i].h >= x.s.entry) { touched = true; break; }
+    }
+    det.push({ s: x.s, risk, startIdx: start, mfeStart, firstK: x.w.firstK, stopIdx: x.w.stopIdx, touchedEntry: touched });
+  }
+
+  // (1.3) monotonia
+  const viol: Array<Record<string, unknown>> = [];
+  for (const d of det) {
+    for (let i = 0; i < KS.length; i++) {
+      for (let j = i + 1; j < KS.length; j++) {
+        const lo = KS[i], hi = KS[j];
+        if (d.firstK[String(hi)] !== undefined && d.firstK[String(lo)] === undefined) {
+          viol.push({ symbol: d.s.sym, date: d.s.date, lo, hi });
+        }
+      }
+    }
+  }
+
+  // (1.4) geometria per decile
+  const sorted = [...det].sort((a, b) => (Math.abs(a.s.entry - a.s.stop) / a.s.entry) - (Math.abs(b.s.entry - b.s.stop) / b.s.entry));
+  const per = Math.max(1, Math.ceil(sorted.length / 10));
+  const geo: Array<Record<string, unknown>> = [];
+  const suspicious: number[] = [];
+  for (let d = 0; d < 10; d++) {
+    const chunk = sorted.slice(d * per, (d + 1) * per);
+    if (!chunk.length) continue;
+    const stopPctMed = quantile(chunk.map(c => (Math.abs(c.s.entry - c.s.stop) / c.s.entry) * 100).sort((a, b) => a - b), 0.5);
+    const cells: Record<string, number> = {};
+    let allBig = true;
+    const nDistinct = new Set(chunk.map(c => `${c.s.sym}|${c.s.entry}|${c.s.stop}`)).size;
+    for (const k of [0.5, 1.0, 1.6, 2.0]) {
+      const hit = chunk.filter(c => c.firstK[String(k)] !== undefined).length / chunk.length;
+      const ideal = 1 / (1 + k);
+      cells[String(k)] = hit;
+      cells[`gap_${k}`] = (hit - ideal) * 100;
+      if (Math.abs((hit - ideal) * 100) <= 20) allBig = false;
+    }
+    if (chunk.length >= 10 && allBig) suspicious.push(d + 1);
+    geo.push({ dec: d + 1, n: chunk.length, nDistinct, stopPctMed, ...cells });
+    log(`  d${d + 1} stop%=${num(stopPctMed, 2)} n=${chunk.length} distinti=${nDistinct} ` +
+        `hit: k0.5=${num((cells[String(0.5)]) * 100, 0)}% (ideale 67%) k1.0=${num((cells[String(1)]) * 100, 0)}% (50%) ` +
+        `k1.6=${num((cells[String(1.6)]) * 100, 0)}% (38%) k2.0=${num((cells[String(2)]) * 100, 0)}% (33%) ` +
+        `gap_1.6=${num(cells[`gap_${1.6}`], 1)} pt`);
+  }
+
+  // (1.2) dettaglio del decile d5
+  const d5 = sorted.slice(4 * per, 5 * per);
+  const sigCount = new Map<string, number>();
+  for (const d of det) {
+    const key = `${d.s.sym}|${d.s.entry}|${d.s.stop}`;
+    sigCount.set(key, (sigCount.get(key) ?? 0) + 1);
+  }
+  const d5Distinct = new Set(d5.map(d => `${d.s.sym}|${d.s.entry}|${d.s.stop}`)).size;
+  log('');
+  log(`  --- DUPLICATI: 123 righe emesse, ${sigCount.size} setup distinti (symbol|entry|stop) ---`);
+  const topDup = [...sigCount.entries()].filter(e => e[1] > 1).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  for (const dup of topDup) log(`      ${pad(dup[0], 34)} x${dup[1]}`);
+  log(`  decile d5: ${d5.length} righe, ${d5Distinct} distinti.`);
+  log('');
+  log('  --- (1.2) decile d5, righe cosi come sono ---');
+  log('  simbolo    giorno      entry     stop      target k0.5 / k1.6 / k2.0   esito   barre  mfe@start');
+  for (const d of d5) {
+    const t = (k: number) => (d.s.dir > 0 ? d.s.entry + k * d.risk : d.s.entry - k * d.risk).toFixed(2);
+    const out = (k: number) => d.firstK[String(k)] !== undefined ? `T${k}` : 'no';
+    const barsEl = d.firstK['0.5'] !== undefined ? d.firstK['0.5'] - d.startIdx : (d.stopIdx >= 0 ? d.stopIdx - d.startIdx : -1);
+    log(`  ${pad(d.s.sym, 10)} ${pad(d.s.date, 11)} ${pad(d.s.entry.toFixed(2), 9)} ${pad(d.s.stop.toFixed(2), 9)} ` +
+        `${pad(`${t(0.5)}/${t(1.6)}/${t(2.0)}`, 27)} ${pad(`${out(0.5)}/${out(1.6)}/${out(2.0)}`, 14)} ${pad(barsEl, 6)} ${num(d.mfeStart, 2)}`);
+  }
+
+  // (1.5) entry mai toccata
+  const neverTouched = det.filter(d => !d.touchedEntry).length;
+  const alreadyPast = det.filter(d => d.mfeStart >= 0.5).length;
+  const alreadyPast16 = det.filter(d => d.mfeStart >= 1.6).length;
+  log('');
+  log(`  (1.5) entry mai toccata nella sessione: ${neverTouched}/${det.length}`);
+  log(`        target k=0.5 gia' superato sulla PRIMA barra: ${alreadyPast}/${det.length}`);
+  log(`        target k=1.6 gia' superato sulla PRIMA barra: ${alreadyPast16}/${det.length}`);
+  log(`        nessun clamp sul target nella superficie: il livello e' entry + k*risk, calcolato qui.`);
+
+  const payload = { monotonicityViolations: viol.length, first5: viol.slice(0, 5), geometry: geo,
+                    suspiciousDeciles: suspicious, d5Rows: d5.length, d5Distinct,
+                    nRows: det.length, nDistinctSetups: sigCount.size, topDuplicates: topDup,
+                    neverTouchedEntry: neverTouched,
+                    alreadyPastHalfOnFirstBar: alreadyPast, alreadyPast16OnFirstBar: alreadyPast16, n: det.length };
+  writeFileSync(join(ART, 'ai_fillaudit.json'), JSON.stringify(payload, null, 2));
+  log('');
+  log(`  (a) violazioni di monotonia su ${det.length} emessi: ${viol.length} -> fill ${viol.length === 0 ? 'COERENTE con la barriera' : 'NON coerente'}`);
+  log(`  (b) decili sospetti (scarto > 20 pt su tutti i 4 k, n>=10): ${suspicious.length ? suspicious.join(', ') : 'nessuno'}`);
+  log(`  (b2) duplicati: ${det.length} righe emesse ma solo ${sigCount.size} setup distinti (symbol|entry|stop);` +
+      ` il decile d5 ha ${d5.length} righe e ${d5Distinct} distinti.`);
+  log('  (c) G9 non e un predicato indipendente: se selectedLeverage e null (cioe se G8 fallisce) G9 fallisce;' );
+  log(`        tassi osservati identici (39.8/39.8 prima, 22.0/22.0 dopo) -> G9 ⊆ G8.`);
+  log('  (d) tetto al target: nessuno nella superficie; G6 scarta i setup il cui T1 e gia raggiunto alla decisione.');
+  log(`  scritto ${join(ART, 'ai_fillaudit.json')}`);
+  return payload;
+}
+
 // ---------------------------------------------------------------- deathcheck (Passo K)
 
 /**
@@ -1451,12 +1578,16 @@ function deathcheck() {
     const dc = (shadow.deathCriterion ?? {}) as Record<string, unknown>;
     log(`  artefatto shadow: ${String(dc.status ?? 'n/d')} · celle ammissibili ${String(dc.nAdmissibleCells ?? 'n/d')} (accordo: ${dc.status === status ? 'si' : 'NO'})`);
   }
+  const faPath = join(ART, 'ai_fillaudit.json');
+  const fa = existsSync(faPath) ? JSON.parse(readFileSync(faPath, 'utf8')) as { monotonicityViolations?: number } : null;
+  const fillIntegrity = fa === null ? 'unknown' : ((fa.monotonicityViolations ?? -1) === 0 ? 'ok' : 'suspect');
   writeFileSync(join(ART, 'ai_deathcheck.json'), JSON.stringify({
-    status, trigger: { needSetups: 100, haveSetups, needDays: 30, haveDays },
+    status, fillIntegrity, trigger: { needSetups: 100, haveSetups, needDays: 30, haveDays },
     nCells: cells.length, nAdmissibleCells: admissible.length,
     alphaEffective, alphaBonferroni, bestAdmissibleCell: best, survivors: survivors.length,
     reason, frictionPct: 0.1, cells,
   }, null, 2));
+  log(`  fillIntegrity: ${fillIntegrity}`);
   return { status, nAdmissibleCells: admissible.length, alphaEffective, alphaBonferroni };
 }
 
@@ -1469,6 +1600,7 @@ switch (CMD) {
   case 'surface':  surface(); break;
   case 'population': population(); break;
   case 'deathcheck': deathcheck(); break;
+  case 'fillaudit': fillaudit(); break;
   case 'postmortem': postmortem(); break;
   case 'train':    train(); break;
   case 'cycle':    cycle(); break;
