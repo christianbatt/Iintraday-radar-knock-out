@@ -288,10 +288,117 @@ function readRegistry(): Array<Record<string, unknown>> {
   return out;
 }
 function nHypotheses() { return readRegistry().filter(r => r.kind === 'hypothesis').length; }
+function alphaEff() { return 0.05 / (1 + nHypotheses()); }
+function hasRow(id: string, kind: string): boolean {
+  return readRegistry().some(r => r.id === id && r.kind === kind);
+}
+function ensureHypothesis(id: string, assumption: string, touches: string[],
+                          prediction: Record<string, unknown>, split: Record<string, string>,
+                          evidence: Record<string, unknown>) {
+  if (hasRow(id, 'hypothesis')) return;
+  const nPrior = nHypotheses();
+  appendRow({
+    id, ts: new Date().toISOString(), kind: 'hypothesis', author: 'agent', assumption, touches, evidence,
+    prediction: { ...prediction, nullModel: 'random_same_K', alpha: 0.05, nTestsPrior: nPrior,
+                  alphaEffective: 0.05 / (1 + nPrior) },
+    split, status: 'pre_registered',
+  });
+}
+function writeResult(id: string, status: string, measured: Record<string, unknown>, reason: string) {
+  if (hasRow(id, 'result')) return;
+  const nPrior = nHypotheses();
+  appendRow({ id, ts: new Date().toISOString(), kind: 'result', status, measured, reason,
+              alphaEffective: 0.05 / (1 + nPrior) });
+}
+
+// ---------------------------------------------------------------- netto (Passo J)
+
+type NetStat = {
+  n: number; k: number; frictionPct: number; hit: number; hitStar: number; gap: number;
+  meanRGross: number; meanRNet: number; fbar: number; fMed: number;
+  ci: { lo: number; hi: number; excludesZero: boolean | null };
+  boot: { lo: number; hi: number; excludesZero: boolean | null };
+  identity: boolean;
+};
+type Measured = { s: Setup; w: Walk };
+
+function stopPctOf(s: Setup): number {
+  return (Math.abs(s.entry - s.stop) / s.entry) * 100;
+}
+
+function netAt(rows: Measured[], k: number, frictionPct: number): NetStat {
+  const n = rows.length;
+  const f = rows.map(x => frictionPct / stopPctOf(x.s));
+  const hits = rows.map(x => x.w.firstK[String(k)] !== undefined);
+  const hit = hits.filter(Boolean).length / Math.max(1, n);
+  const meanRGross = hit * k - (1 - hit);
+  const rNet = hits.map((h, i) => (h ? k - f[i] : -(1 + f[i])));
+  const fbar = mean(f);
+  const ci = analyticCI(rNet);
+  const boot = blockBootstrap(rows.map((x, i) => ({ date: x.s.date, v: rNet[i] })));
+  const sortedF = [...f].sort((a, b) => a - b);
+  return {
+    n, k, frictionPct, hit, hitStar: (1 + fbar) / (1 + k), gap: (1 + fbar) / (1 + k) - hit,
+    meanRGross, meanRNet: mean(rNet), fbar, fMed: quantile(sortedF, 0.5), ci, boot,
+    identity: Math.abs(mean(rNet) - (meanRGross - fbar)) < 1e-12,
+  };
+}
+
+function netPctsArg(): number[] {
+  const raw = ARGS.get('net');
+  if (raw === undefined || raw === '' || raw === 'true') return [];
+  const parts = raw.split(',').map(x => x.trim()).filter(x => x.length > 0);
+  if (!parts.length) fail(7, '--net senza valori: usa --net=0.05,0.10,0.15');
+  const out: number[] = [];
+  for (const p of parts) {
+    if (!/^\d+(\.\d+)?$/.test(p)) fail(7, `--net malformato: "${p}" (attesa lista di percentuali, es. 0.05,0.10,0.15)`);
+    const v = Number(p);
+    if (!Number.isFinite(v) || v <= 0 || v >= 5) fail(7, `--net fuori banda: ${p} (percentuale dello stop, 0 < x < 5)`);
+    out.push(v);
+  }
+  return out;
+}
+
+function frictionPctArg(name: string): number {
+  const raw = ARGS.get(name);
+  if (raw === undefined || raw === 'true') return 0.1;
+  if (!/^\d+(\.\d+)?$/.test(raw)) fail(7, `--${name} malformato: "${raw}"`);
+  const v = Number(raw);
+  if (!Number.isFinite(v) || v <= 0 || v >= 5) fail(7, `--${name} fuori banda: ${raw}`);
+  return v;
+}
+
+function pearson(p: Array<{ x: number; y: number }>): number {
+  if (p.length < 3) return NaN;
+  const mx = mean(p.map(q => q.x)), my = mean(p.map(q => q.y));
+  let cov = 0, vx = 0, vy = 0;
+  for (const q of p) { cov += (q.x - mx) * (q.y - my); vx += (q.x - mx) ** 2; vy += (q.y - my) ** 2; }
+  return vx > 0 && vy > 0 ? cov / Math.sqrt(vx * vy) : NaN;
+}
+
+function readPrevNet(): Record<string, unknown> | null {
+  const p = join(ART, 'ai_payoff.json');
+  if (!existsSync(p)) return null;
+  try {
+    const raw = JSON.parse(readFileSync(p, 'utf8')) as { net?: Record<string, unknown> | null };
+    return raw.net ?? null;
+  } catch { return null; }
+}
+
+function measure(list: Setup[]): Measured[] {
+  const out: Measured[] = [];
+  for (const s of list) {
+    const b = bars(s.sym);
+    if (!b) continue;
+    out.push({ s, w: walk(s, b, 'resolution') });
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------- payoff
 
 function payoff() {
+  const netPcts = netPctsArg();
   log('=== PAYOFF — esiste un edge? (shift 0, camminata per trade) ===');
   log('  R a barriera fino a risoluzione, stop per primo, BE off (non calculateDynamicBreakeven).');
   for (const sh of SHIFTS) log(`  campione shift ${sh}: ${loadSetups(sh, true).length} setup emessi`);
@@ -306,6 +413,9 @@ function payoff() {
     rows.push({ s, w: walk(s, b, 'resolution') });
   }
   const n = rows.length;
+  let netPayload: Record<string, unknown> | null = null;
+  const prevNet = readPrevNet();
+  if (!netPcts.length && prevNet) log('  nota: sezione netto ripresa dall\'ultimo run con --net (non ricalcolata qui).');
 
   const grid: Array<Record<string, number | boolean | null>> = [];
   let anyPositiveK = false;
@@ -332,6 +442,77 @@ function payoff() {
   log(`  (a) esiste un k con meanR > 0 e CI che esclude lo zero? ${anyPositiveK ? 'SI' : 'NO'} ` +
       `(migliore: k=${bestK} meanR=${num(bestMean)})`);
   log(`  (b) a k=1.0 hit = ${num(hitK1 * 100, 1)}% -> ${hitK1 > 0.5 ? 'SOPRA' : 'SOTTO'} il 50%`);
+
+  // ---- NETTO DEI COSTI (Passo J): f_i = frictionPct / stopPct_i ----------------
+  if (netPcts.length) {
+    const spArr = rows.map(x => stopPctOf(x.s));
+    ensureHypothesis('AI-0002',
+      'Il costo di transazione sposta il break-even hit di almeno 4 punti percentuali sulla griglia, rendendo la scelta del payoff una decisione di costo e non di segnale.',
+      ['payoff.net', 'exit.rule', 'cost.friction'],
+      { metric: 'gap_hitStar_minus_hit_at_k1.6', direction: 'increase', minDelta: 4 },
+      { train: 'intero campione (13 giorni): misura descrittiva, nessun holdout',
+        holdout: 'non applicabile (misura analitica sul campione, non selezione)' },
+      { dataset: 'artifacts/replay_i3_30d/shift_0', n, period: '13 giorni con setup' });
+
+    log('');
+    log("  === NETTO DEI COSTI: f_i = frictionPct / stopPct_i (unita' di R per trade) ===");
+    log('  f%     k     hit      hit*_net  gap pt   meanR_g  meanR_net  CI95 netto          esclude0 identita');
+    const table: NetStat[] = [];
+    for (const fp of netPcts) {
+      for (const k of GRID) {
+        const st = netAt(rows, k, fp);
+        table.push(st);
+        log(`  ${pad(fp, 6)} ${pad(k, 5)} ${pad(num(st.hit * 100, 1) + '%', 8)} ${pad(num(st.hitStar * 100, 1) + '%', 8)} ` +
+            `${pad(num(st.gap * 100, 2), 8)} ${pad(num(st.meanRGross), 8)} ${pad(num(st.meanRNet), 8)} ` +
+            `[${pad(num(st.ci.lo), 7)}, ${pad(num(st.ci.hi), 7)}] ${pad(String(st.ci.excludesZero), 8)} ${st.identity ? 'ok' : 'NO'}`);
+      }
+      log('');
+    }
+    const pick = (fp: number, k: number) => table.find(z => z.frictionPct === fp && z.k === k)!;
+    const anyPos = (fp: number) => table.some(z => z.frictionPct === fp && z.meanRNet > 0);
+    log(`  (a) meanR_net > 0 · a 0.05: ${anyPos(0.05) ? 'SI' : 'NO'} · a 0.10: ${anyPos(0.10) ? 'SI' : 'NO'} · a 0.20: ${anyPos(0.20) ? 'SI' : 'NO'}`);
+    const g05 = pick(0.05, 1.6).gap * 100, g10 = pick(0.1, 1.6).gap * 100, g20 = pick(0.2, 1.6).gap * 100;
+    log(`  (b) gap hit*_net - hit a k=1.6: 0.05 -> ${num(g05, 2)} pt · 0.10 -> ${num(g10, 2)} pt · 0.20 -> ${num(g20, 2)} pt ` +
+        `(allargamento 0.05->0.10 = ${num(g10 - g05, 2)} pt)`);
+    const orderOf = (fp: number | null) => [...GRID].sort((a, b) => {
+      const va = fp === null ? pick(netPcts[0], a).meanRGross : pick(fp, a).meanRNet;
+      const vb = fp === null ? pick(netPcts[0], b).meanRGross : pick(fp, b).meanRNet;
+      return vb - va;
+    });
+    const ordG = orderOf(null), ordN = orderOf(0.1);
+    log(`  (c) ranking per meanR lordo      : ${ordG.join(' > ')}`);
+    log(`      ranking per meanR netto 0.10 : ${ordN.join(' > ')} -> ${ordG.join('') === ordN.join('') ? 'INVARIATO' : 'CAMBIA'}`);
+    const f10 = spArr.map(v => 0.1 / v);
+    const sortedF10 = [...f10].sort((a, b) => a - b);
+    const pairs = rows.map((x, i) => ({ x: f10[i], y: x.w.exitR }))
+      .filter(q => q.y !== null && Number.isFinite(q.y as number)) as Array<{ x: number; y: number }>;
+    const cf = pearson(pairs);
+    log(`  (d) f_i a 0.10: media ${num(mean(f10))} mediana ${num(quantile(sortedF10, 0.5), 3)} p90 ${num(quantile(sortedF10, 0.9), 3)} R`);
+    log(`      decili f: ${deciles(f10).map(v => num(v, 3)).join(' ')}`);
+    log(`      corr(f_i, R realizzato) = ${num(cf, 3)} · corr(f_i, stopPct_i) = -1 per costruzione (f = c / stopPct)`);
+    const st16 = pick(0.1, 1.6);
+    const gapPt = st16.gap * 100;
+    log(`  (C) frizione dell'app implicita: NON RICAVABILE per trade — frictionEur dipende da`);
+    log(`      suggestedCertificates e totalInvestedEur (calculator.ts:2405), assenti negli artefatti.`);
+    log(`      Vale la banda parametrica ${netPcts.join('/')}% dello stop.`);
+
+    writeResult('AI-0002', gapPt >= 4 ? 'accepted' : 'rejected',
+      { gapAtK16: gapPt, hit: st16.hit, hitStarNet: st16.hitStar, meanRGross: st16.meanRGross,
+        meanRNet: st16.meanRNet, fMedian: st16.fMed, anyPositiveAt005: anyPos(0.05),
+        anyPositiveAt010: anyPos(0.1), anyPositiveAt020: anyPos(0.2),
+        corrFvsRealisedR: cf, rankingInvariant: ordG.join('') === ordN.join('') },
+      gapPt >= 4
+        ? 'Il costo sposta il break-even hit di almeno 4 punti percentuali a k=1.6: il lordo non e una base di decisione.'
+        : `Il costo sposta il break-even hit di ${num(gapPt, 2)} punti percentuali a k=1.6, sotto i 4 dichiarati: ipotesi respinta nella forma quantitativa.`);
+
+    netPayload = {
+      frictionPcts: netPcts, table,
+      fAt010: { mean: mean(f10), median: quantile(sortedF10, 0.5), p90: quantile(sortedF10, 0.9), deciles: deciles(f10) },
+      corrFvsRealisedR: cf, rankingGross: ordG, rankingNet010: ordN,
+      appFrictionPctImplicit: null,
+      appFrictionReason: 'frictionEur dipende da suggestedCertificates e totalInvestedEur (calculateDynamicBreakeven, calculator.ts:2405), assenti negli artefatti del replay: la frizione in % del prezzo non e ricavabile per trade.',
+    };
+  }
 
   // Output B — MFE / MAE
   const stopped = rows.filter(x => x.w.stopIdx >= 0).map(x => x.w);
@@ -414,6 +595,8 @@ function payoff() {
     sessionClose: { n: sc.length, meanR: mean(sc), sd: sd(sc), hit: scHit,
                     ci95: [scCI.lo, scCI.hi], exits: scExits, resolutionMeanR: mean(resR) },
     stopPctVsR: { emitted: em, g8Blocked: g8 },
+    net: netPayload ?? prevNet,
+    netFromPreviousRun: netPayload === null && prevNet !== null,
   };
   writeFileSync(join(ART, 'ai_payoff.json'), JSON.stringify(payload, null, 2));
   log(`\n  scritto ${join(ART, 'ai_payoff.json')}`);
@@ -565,6 +748,10 @@ function postmortem() {
     ? JSON.parse(readFileSync(join(ART, 'ai_payoff.json'), 'utf8')) : null;
   const g4Raw: unknown = existsSync(join(ART, 'ai_g4fill.json'))
     ? JSON.parse(readFileSync(join(ART, 'ai_g4fill.json'), 'utf8')) : null;
+  const surfaceRaw: unknown = existsSync(join(ART, 'ai_surface.json'))
+    ? JSON.parse(readFileSync(join(ART, 'ai_surface.json'), 'utf8')) : null;
+  const popRaw: unknown = existsSync(join(ART, 'ai_population.json'))
+    ? JSON.parse(readFileSync(join(ART, 'ai_population.json'), 'utf8')) : null;
 
   const hit = rs.filter(v => v > 0).length / rs.length;
   const win = mean(rs.filter(v => v > 0)), loss = Math.abs(mean(rs.filter(v => v < 0)));
@@ -646,26 +833,134 @@ function postmortem() {
     }
   } else L.push('_non disponibile: eseguire `payoff`_');
   L.push('');
-  L.push('## 8. Cosa i dati NON dicono');
+  // ---- 8. payoff al netto
+  type NetTab = {
+    table: Array<{ frictionPct: number; k: number; hit: number; hitStar: number; gap: number;
+                   meanRGross: number; meanRNet: number; ci: { lo: number; hi: number } }>;
+    fAt010?: { mean: number; median: number; p90: number };
+    corrFvsRealisedR?: number;
+  };
+  const netTab = (payoffRaw as { net?: NetTab | null } | null)?.net ?? null;
+  L.push('## 8. Payoff al NETTO dei costi');
   L.push('');
-  L.push('1. **Il campione è di 13 giorni su 5 simboli.** Le barre in cache coprono 30 giorni');
-  L.push('   di calendario ma solo 13 contengono setup emessi: nessuna conclusione su regimi');
-  L.push('   diversi, e 13 cluster sono pochi per una CI.');
-  L.push('2. **L\'R è misurato su barre a 5 minuti.** Con stop mediano ~0.85% la distanza di');
-  L.push('   stop è dello stesso ordine del rumore intra-barra: dentro la barra l\'ordine');
-  L.push('   stop/target non è risolvibile e vale l\'ipotesi pessimistica (stop per primo).');
-  L.push('3. **Il conterfactual su G4 non è un giudizio su G4.** Il fill assunto non era');
-  L.push('   disponibile per costruzione: serve la variante con fill reale (vedi sezione 5).');
-  L.push('4. **Le 9493 righe senza setup non sono attribuibili.** Gli artefatti non hanno un');
-  L.push('   campo `reason`: manca ORB, prezzo, ATR, ADR, volume e conteggio barre.');
-  L.push('5. **Il BE è un trigger fisso**, non `calculateDynamicBreakeven`: non è l\'expectancy');
+  L.push('`bun scripts/ai_cycle.ts payoff --net=0.05,0.10,0.15,0.20`. `f_i = frictionPct / stopPct_i`, `netWin = k - f_i`,');
+  L.push('`netLoss = -(1 + f_i)`, `hit*_net = (1 + mean f) / (1 + k)`.');
+  L.push('');
+  if (netTab && netTab.table.length) {
+    L.push('| f% | k | hit | hit*_net | gap pt | meanR lordo | meanR netto | CI95 netto |');
+    L.push('|---|---|---|---|---|---|---|---|');
+    for (const r of netTab.table.filter(z => z.frictionPct === 0.1)) {
+      L.push(`| ${r.frictionPct} | ${r.k} | ${num(r.hit * 100, 1)}% | ${num(r.hitStar * 100, 1)}% | ` +
+        `${num(r.gap * 100, 2)} | ${num(r.meanRGross)} | ${num(r.meanRNet)} | [${num(r.ci.lo)}, ${num(r.ci.hi)}] |`);
+    }
+    L.push('');
+    if (netTab.fAt010) {
+      L.push(`f_i a 0.10%: media ${num(netTab.fAt010.mean)} R, mediana ${num(netTab.fAt010.median)} R, p90 ${num(netTab.fAt010.p90)} R.`);
+    }
+    L.push(`corr(f_i, R realizzato) = ${num(netTab.corrFvsRealisedR ?? NaN, 3)}.`);
+    L.push('');
+    if ((payoffRaw as { netFromPreviousRun?: boolean }).netFromPreviousRun) {
+      L.push('_nota: sezione netto ripresa dall\'ultimo run con `--net` (non ricalcolata in questo run)._');
+      L.push('');
+    }
+    L.push('**Frizione dell\'app implicita per trade: NON RICAVABILE.** `frictionEur` dipende da');
+    L.push('`suggestedCertificates` e `totalInvestedEur` (calculator.ts:2405), che non esistono negli');
+    L.push('artefatti del replay: vale la banda parametrica, non una misura di spread reale.');
+  } else L.push('_non disponibile: eseguire `payoff --net=...`_');
+  L.push('');
+
+  // ---- 9. superficie
+  const surf = surfaceRaw as Record<string, any> | null;
+  L.push('## 9. Superficie stopPct × k (al netto)');
+  L.push('');
+  L.push('`bun scripts/ai_cycle.ts surface`. Decili di stopPct, k in {0.5, 1.0, 1.6, 2.0}, celle con n<10 ignorate.');
+  L.push('');
+  if (surf) {
+    L.push('| popolazione | n | celle n>=10 | celle con meanR_net>0 | massimo |');
+    L.push('|---|---|---|---|---|');
+    for (const k2 of ['EMESSI', 'BLOCCATI_G8']) {
+      const pop2 = surf[k2] as { cells: Array<Record<string, number>>; nCellsN10: number; nPositiveN10: number; bestCell: Record<string, number> | null } | undefined;
+      if (!pop2) continue;
+      const bc = pop2.bestCell;
+      L.push(`| ${k2} | ${(surf.emitted && k2 === 'EMESSI') ? surf.emitted.n : (surf.blockedG8 ? surf.blockedG8.n : '')} | ` +
+        `${pop2.nCellsN10} | ${pop2.nPositiveN10} | ${bc ? `k=${bc.k} d${bc.dec} meanR_net=${num(bc.meanRNet)}` : '—'} |`);
+    }
+    L.push('');
+    L.push(`bloccati G8: netto ${num(surf.blockedG8?.meanRNet ?? NaN)} (lordo ${num(surf.blockedG8?.meanRGross ?? NaN)}) · ` +
+      `emessi: netto ${num(surf.emitted?.meanRNet ?? NaN)} (lordo ${num(surf.emitted?.meanRGross ?? NaN)}) · ` +
+      `delta netto ${num(surf.deltaNet ?? NaN)}, delta lordo ${num(surf.deltaGross ?? NaN)}.`);
+    L.push('');
+    L.push('Le celle positive sono selezionate **ex post** su 36-40 celle e non hanno holdout:');
+    L.push('con 4-5 celle su 40 e nessuna correzione per test multipli, il rumore basta a spiegarle.');
+    L.push('Nessun selettore è addestrato su queste celle (vincolo del passo).');
+  } else L.push('_non disponibile: eseguire `surface`_');
+  L.push('');
+
+  // ---- 10. popolazioni
+  const pop = popRaw as Record<string, any> | null;
+  L.push('## 10. Popolazioni del ciclo');
+  L.push('');
+  L.push('`bun scripts/ai_cycle.ts population`.');
+  L.push('');
+  if (pop) {
+    L.push('| pop | n | meanR lordo | meanR netto | hit | f mediano | giorni |');
+    L.push('|---|---|---|---|---|---|---|');
+    for (const k2 of ['A', 'B', 'C', 'D']) {
+      const p2 = pop[k2] as Record<string, number> | undefined;
+      if (!p2) continue;
+      L.push(`| ${k2} | ${p2.n} | ${num(p2.meanRGross)} | ${num(p2.meanRNet)} | ${num(p2.hit * 100, 1)}% | ${num(p2.fMed, 3)} | ${p2.days} |`);
+    }
+    L.push('');
+    L.push('A = `excludedRecords` (scarti pre-gate): vivono in `localStorage` (`src/App.tsx:248`),');
+    L.push('non su disco — **non misurabili offline**, ed è questa l\'unica popolazione che il');
+    L.push('ciclo esistente analizza. B = 5544 setup bloccati da G1-G13, C = emessi, D = candidati.');
+    L.push('');
+    const h = pop.holdout as Record<string, any> | undefined;
+    const bg = pop.bestGate as Record<string, any> | null | undefined;
+    L.push(`split temporale: ${pop.split?.cut}/${pop.split?.dates} giorni di formazione, holdout dal ${pop.split?.holdoutFirst}.`);
+    L.push(`proposta formata sul train: rimozione di ${bg ? bg.gate : 'nessun gate'} (delta netto train ${num(bg?.deltaTrain ?? NaN)}).`);
+    if (h) {
+      L.push(`holdout: pool netto ${num(h.meanRNet)} vs emessi ${num(h.baseline)} → ${h.held ? 'regge' : 'NON regge'}; ` +
+        `nullo p95 ${num(h.nullP95)}, p=${num(h.pValue, 4)} → ${h.beatsNull ? 'batte il nullo' : 'non batte il nullo'}.`);
+      if (typeof h.baselineN === 'number' && h.baselineN < 30) {
+        L.push('');
+        L.push(`**Il verdetto è formale, non empirico:** l\'holdout contiene ${h.baselineN} soli trade emessi` +
+          ` (train ${h.trainN}). Contro una baseline di ${h.baselineN} trade nessun confronto regge, in nessuna direzione.`);
+        L.push('Questo è il fatto più importante della sezione: **le emissioni si fermano dopo il 2026-10-28**');
+        L.push('(121 dei 123 setup emessi sono prima della cesura), mentre i candidati bloccati continuano.');
+      }
+    }
+    L.push(`verdetto popolazione: **${String(pop.verdict)}**. Nessuna attivazione, nessuna scrittura di parametri.`);
+  } else L.push('_non disponibile: eseguire `population`_');
+  L.push('');
+
+  // ---- 11. limiti
+  L.push('## 11. Cosa i dati NON dicono');
+  L.push('');
+  L.push('1. **La frizione è un\'assunzione parametrica, non una misura di spread.** `SPREAD_EUR` 0.02 €');
+  L.push('   e `BROKER_FEE_PER_SIDE_EUR` 1.00 € (tradingParams.ts:235-236) sono costanti, e la');
+  L.push('   conversione in R dipende dal numero di certificati, che il replay non ha.');
+  L.push('2. **13 giorni, 13 cluster.** Le barre coprono 30 giorni di calendario ma solo 13');
+  L.push('   contengono setup emessi: nessuna conclusione su regimi diversi.');
+  L.push('3. **Solo simboli europei.** La sessione USA non è misurata: nessun numero di questo');
+  L.push('   file si trasferisce al mercato americano.');
+  L.push('4. **L\'R è misurato su barre a 5 minuti.** Con stop mediano ~0.85% la distanza di stop è');
+  L.push('   dello stesso ordine del rumore intra-barra: vale l\'ipotesi pessimistica (stop per primo).');
+  L.push('5. **G4 non è giudicato.** Con fill onesto blocca trade a −0.129 R e 400 su 1837 sono');
+  L.push('   irraggiungibili per costruzione: non seleziona, ma non è nemmeno dimostrato colpevole.');
+  L.push('6. **Le 9493 righe senza setup restano non attribuibili.** Il campo `reason` non è stato');
+  L.push('   introdotto in questo passo: gli artefatti non hanno ORB, prezzo, ATR, ADR, volume, barre.');
+  L.push('7. **Il BE è un trigger fisso**, non `calculateDynamicBreakeven`: non è l\'expectancy');
   L.push('   della strategia.');
+  L.push('8. **La popolazione A non è misurata.** È quella su cui il ciclo esistente propone');
+  L.push('   modifiche: senza di essa, il confronto con il percorso vecchio non è possibile.');
   L.push('');
   const path = join(REGDIR, `postmortem_${new Date().toISOString().slice(0, 10)}.md`);
   if (!existsSync(REGDIR)) mkdirSync(REGDIR, { recursive: true });
   writeFileSync(path, `${L.join('\n')}\n`);
-  log(`  scritto ${path} (${L.length} righe, 8 sezioni)`);
-  return { path, sections: 8 };
+  const nSec = L.filter(l => l.startsWith('## ')).length;
+  log(`  scritto ${path} (${L.length} righe, ${nSec} sezioni)`);
+  return { path, sections: nSec };
 }
 
 // ---------------------------------------------------------------- train
@@ -802,15 +1097,264 @@ function cycle() {
   log(`  SETUP_SELECTOR_LIVE resta 'off'.`);
 }
 
+// ---------------------------------------------------------------- superficie (Passo J)
+
+const SURFACE_KS = [0.5, 1.0, 1.6, 2.0];
+
+function surface() {
+  const fp = frictionPctArg('fnet');
+  log(`=== SUPERFICIE stopPct x k — al NETTO (frictionPct=${fp}%), shift 0, BE off ===`);
+  log("  f = frictionPct / stopPct: gli stop larghi pagano MENO frizione in unita' di R.");
+  log('  Regola: una cella con n < 10 si stampa come n<10 e non si commenta.');
+  const emitted = loadSetups(0, true);
+  const g8 = loadSetups(0, false).filter(s => s.blocked === 'G8');
+  const out: Record<string, unknown> = {};
+  for (const pair of [['EMESSI', emitted], ['BLOCCATI_G8', g8]] as Array<[string, Setup[]]>) {
+    const label = pair[0], list = pair[1];
+    const rows = measure(list);
+    const sorted = [...rows].sort((a, b) => stopPctOf(a.s) - stopPctOf(b.s));
+    const per = Math.max(1, Math.ceil(sorted.length / 10));
+    log('');
+    log(`  --- ${label}: n=${rows.length} ---`);
+    log('  dec  stop%med  n     k=0.5            k=1.0            k=1.6            k=2.0');
+    const cells: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < 10; i++) {
+      const chunk = sorted.slice(i * per, (i + 1) * per);
+      if (!chunk.length) continue;
+      const spm = quantile(chunk.map(x => stopPctOf(x.s)).sort((a, b) => a - b), 0.5);
+      let line = `  d${i + 1}  ${pad(num(spm, 2), 8)} ${pad(chunk.length, 5)} `;
+      for (const k of SURFACE_KS) {
+        if (chunk.length < 10) {
+          line += pad('n<10', 17);
+          cells.push({ pop: label, dec: i + 1, stopPctMed: spm, k, n: chunk.length, meanRNet: null });
+          continue;
+        }
+        const st = netAt(chunk, k, fp);
+        line += pad(`${num(st.meanRNet)} (${num(st.hit * 100, 0)}%)`, 17);
+        cells.push({ pop: label, dec: i + 1, stopPctMed: spm, k, n: chunk.length,
+                     meanRNet: st.meanRNet, hit: st.hit, fMed: st.fMed });
+      }
+      log(line);
+    }
+    const valid = cells.filter(c => (c.n as number) >= 10 && c.meanRNet !== null);
+    const pos = valid.filter(c => (c.meanRNet as number) > 0);
+    let best: Record<string, unknown> | null = null;
+    for (const c of valid) if (!best || (c.meanRNet as number) > (best.meanRNet as number)) best = c;
+    log(`      celle con n>=10: ${valid.length} · con meanR_net > 0: ${pos.length}` +
+        (best ? ` · massimo: k=${best.k} d${best.dec} stop%=${num(best.stopPctMed as number, 2)} meanR_net=${num(best.meanRNet as number)}` : ''));
+    out[label] = { cells, nCellsN10: valid.length, nPositiveN10: pos.length, bestCell: best };
+  }
+  const emNet = (() => {
+    const rows = measure(emitted);
+    const v: number[] = [];
+    for (const x of rows) if (x.w.exitR !== null && Number.isFinite(x.w.exitR)) v.push(x.w.exitR - fp / stopPctOf(x.s));
+    const g: number[] = [];
+    for (const x of rows) if (x.w.exitR !== null && Number.isFinite(x.w.exitR)) g.push(x.w.exitR);
+    return { n: v.length, meanRNet: mean(v), meanRGross: mean(g) };
+  })();
+  const g8Net = (() => {
+    const rows = measure(g8);
+    const v: number[] = [];
+    for (const x of rows) if (x.w.exitR !== null && Number.isFinite(x.w.exitR)) v.push(x.w.exitR - fp / stopPctOf(x.s));
+    const g: number[] = [];
+    for (const x of rows) if (x.w.exitR !== null && Number.isFinite(x.w.exitR)) g.push(x.w.exitR);
+    return { n: v.length, meanRNet: mean(v), meanRGross: mean(g) };
+  })();
+  const posCells = Number((out.EMESSI as { nPositiveN10: number }).nPositiveN10) +
+    Number((out.BLOCCATI_G8 as { nPositiveN10: number }).nPositiveN10);
+  log('');
+  log(`  (a) esiste una cella con n>=10 e meanR_net > 0? ${posCells === 0 ? 'NO su entrambe le popolazioni' : 'SI'}`);
+  log(`  (b) se no, il massimo della superficie sta dove: vedi "massimo" per popolazione sopra`);
+  log(`  (c) bloccati G8 n=${g8Net.n} netto=${num(g8Net.meanRNet)} lordo=${num(g8Net.meanRGross)} · ` +
+      `emessi n=${emNet.n} netto=${num(emNet.meanRNet)} lordo=${num(emNet.meanRGross)} -> ` +
+      `delta netto ${num(g8Net.meanRNet - emNet.meanRNet)} · delta lordo ${num(g8Net.meanRGross - emNet.meanRGross)}`);
+  if (posCells === 0) log('  -> nessuna combinazione stop/payoff e profittevole al netto dei costi.');
+  writeFileSync(join(ART, 'ai_surface.json'), JSON.stringify({
+    frictionPct: fp, ...out,
+    emitted: emNet, blockedG8: g8Net,
+    deltaNet: g8Net.meanRNet - emNet.meanRNet, deltaGross: g8Net.meanRGross - emNet.meanRGross,
+  }, null, 2));
+  log(`\n  scritto ${join(ART, 'ai_surface.json')}`);
+  return { frictionPct: fp, ...out, emitted: emNet, blockedG8: g8Net };
+}
+
+// ---------------------------------------------------------------- popolazione (Passo J)
+
+function population() {
+  const fp = frictionPctArg('fnet');
+  log('=== POPOLAZIONE — chi entra davvero nel ciclo di auto-miglioramento ===');
+  log(`  costi: f_i = ${fp} / stopPct_i`);
+  const all = loadSetups(0, false);
+  const emitted = all.filter(s => s.emitted);
+  const blocked = all.filter(s => !s.emitted && s.blocked !== null);
+  log('  A = excludedRecords (scarti PRE-GATE): NON su disco — vivono in localStorage');
+  log('      (src/App.tsx:248, chiave intraday_radar_excluded_setups_v1): non misurabili offline.');
+  log(`  B = candidati con direzione, bloccati da un gate: ${blocked.length}`);
+  log(`  C = emessi: ${emitted.length}`);
+  log(`  D = tutti i candidati (B+C): ${all.length}`);
+  log('');
+  const netMean = (list: Setup[]) => {
+    const rows = measure(list);
+    const g: number[] = [], v: number[] = [], fs: number[] = [];
+    for (const x of rows) {
+      if (x.w.exitR === null || !Number.isFinite(x.w.exitR)) continue;
+      const f = fp / stopPctOf(x.s);
+      g.push(x.w.exitR); v.push(x.w.exitR - f); fs.push(f);
+    }
+    const sortedF = [...fs].sort((a, b) => a - b);
+    return { n: v.length, meanRGross: mean(g), meanRNet: mean(v),
+             hit: g.filter(z => z > 0).length / Math.max(1, g.length),
+             fMed: sortedF.length ? quantile(sortedF, 0.5) : NaN,
+             days: new Set(rows.map(x => x.s.date)).size };
+  };
+  log('  pop  n     lordo     netto     hit      f_med  giorni');
+  const A = { label: 'A', n: 0, meanRGross: NaN, meanRNet: NaN, hit: NaN, fMed: NaN, days: 0 };
+  const B = netMean(blocked), C = netMean(emitted), D = netMean(all);
+  for (const st of [A, { ...B, label: 'B' }, { ...C, label: 'C' }, { ...D, label: 'D' }]) {
+    log(`  ${pad(st.label, 4)} ${pad(st.n, 5)} ${pad(num(st.meanRGross), 9)} ${pad(num(st.meanRNet), 9)} ` +
+        `${pad(num(st.hit * 100, 1) + '%', 8)} ${pad(num(st.fMed, 3), 6)} ${st.days}`);
+  }
+
+  const dates = [...new Set(all.map(s => s.date))].sort();
+  const cut = Math.max(1, Math.floor((dates.length * 2) / 3));
+  const trainD = new Set(dates.slice(0, cut));
+  const holdD = new Set(dates.slice(cut));
+  log('');
+  log(`  split TEMPORALE: train ${cut}/${dates.length} giorni (${dates[0]}..${dates[cut - 1]}) · ` +
+      `holdout ${dates.length - cut} (${dates[cut] ?? 'n/d'}..${dates[dates.length - 1]})`);
+
+  ensureHypothesis('AI-0003',
+    'La popolazione bloccata da G1-G13, misurata al netto dei costi, ha meanR migliore della popolazione emessa: il gate che la blocca sta rimuovendo segnale, non rumore.',
+    ['population.B', 'gate.removal', 'cost.friction'],
+    { metric: 'delta_meanR_net_B_minus_C', direction: 'increase', minDelta: 0 },
+    { train: `primi ${cut}/${dates.length} giorni`, holdout: `ultimi ${dates.length - cut} giorni` },
+    { dataset: 'artifacts/replay_i3_30d/shift_0', n: all.length, period: '13 giorni con setup' });
+
+  const byGate = GATE_ORDER.map(g => {
+    const nb = blocked.filter(s => s.blocked === g);
+    return { g, nAll: nb.length, nb };
+  }).filter(x => x.nAll >= 30);
+  const emTrain = emitted.filter(s => trainD.has(s.date));
+  const emHold = emitted.filter(s => holdD.has(s.date));
+  const baseTrain = netMean(emTrain), baseHold = netMean(emHold);
+  log(`  emessi: train n=${baseTrain.n} (netto ${num(baseTrain.meanRNet)}) · holdout n=${baseHold.n} (netto ${num(baseHold.meanRNet)})`);
+  if (baseHold.n < 30) {
+    log(`  ATTENZIONE: la baseline di holdout poggia su ${baseHold.n} trade. Il confronto di (c) e`);
+    log(`  la baseline di (d) NON sono informativi: il verdetto e formale, non empirico.`);
+  }
+  log('');
+  log('  --- counterfactual "se il gate G non ci fosse" (pool = emessi ∪ bloccati da G) ---');
+  log('  gate  n_train  delta_net_train  delta_gross_train  n_hold  delta_net_hold');
+  const gateRows: Array<Record<string, unknown>> = [];
+  let bestGate: { g: string; delta: number; pool: Setup[] } | null = null;
+  for (const x of byGate) {
+    const bTrain = x.nb.filter(s => trainD.has(s.date));
+    const bHold = x.nb.filter(s => holdD.has(s.date));
+    const poolTrain = [...emTrain, ...bTrain];
+    const poolHold = [...emHold, ...bHold];
+    const stT = netMean(poolTrain), stH = netMean(poolHold);
+    const dNetT = stT.meanRNet - baseTrain.meanRNet;
+    const dGrossT = stT.meanRGross - baseTrain.meanRGross;
+    const dNetH = stH.meanRNet - baseHold.meanRNet;
+    gateRows.push({ gate: x.g, nTrain: bTrain.length, deltaNetTrain: dNetT, deltaGrossTrain: dGrossT,
+                    nHold: bHold.length, deltaNetHold: dNetH, poolHoldId: null });
+    log(`  ${pad(x.g, 5)} ${pad(bTrain.length, 8)} ${pad(num(dNetT), 16)} ${pad(num(dGrossT), 18)} ${pad(bHold.length, 7)} ${num(dNetH)}`);
+    if (bTrain.length >= 30 && (!bestGate || dNetT > bestGate.delta)) bestGate = { g: x.g, delta: dNetT, pool: poolHold };
+  }
+  log('');
+  log(`  (b) gate con n_train>=30: ${gateRows.filter(r => (r.nTrain as number) >= 30).length} · ` +
+      `qualcuno alza il pool netto di > 0.10 R? ${gateRows.some(r => (r.nTrain as number) >= 30 && (r.deltaNetTrain as number) > 0.1) ? 'SI' : 'NO'}`);
+
+  if (bestGate) {
+    ensureHypothesis('AI-0004',
+      `Rimuovere ${bestGate.g} — la cui popolazione bloccata ha n_train>=30 — alza il meanR netto del pool sui giorni di formazione e l'aumento regge sull'ultimo terzo dei giorni, battendo il nullo.`,
+      [`gate.removal.${bestGate.g}`, 'population.B'],
+      { metric: 'delta_meanR_net_holdout', direction: 'increase', minDelta: 0.1 },
+      { train: `primi ${cut}/${dates.length} giorni`, holdout: `ultimi ${dates.length - cut} giorni` },
+      { dataset: 'artifacts/replay_i3_30d/shift_0', n: all.length, period: '13 giorni con setup' });
+  }
+
+  let holdoutHeld = false, beatsNull = false, pValue = NaN, nullP95 = NaN, nullMean = NaN;
+  let obs = NaN, obsN = 0;
+  if (bestGate) {
+    const gBest = bestGate.g, poolHold = bestGate.pool;
+    obs = netMean(poolHold).meanRNet; obsN = netMean(poolHold).n;
+    holdoutHeld = obs > baseHold.meanRNet;
+    const holdAll: number[] = [];
+    for (const x of measure(all.filter(s => holdD.has(s.date)))) {
+      if (x.w.exitR === null || !Number.isFinite(x.w.exitR)) continue;
+      holdAll.push(x.w.exitR - fp / stopPctOf(x.s));
+    }
+    const rng = mulberry32(7);
+    const nulls: number[] = [];
+    for (let i = 0; i < 1000; i++) {
+      let s = 0;
+      for (let j = 0; j < obsN; j++) s += holdAll[Math.floor(rng() * holdAll.length)];
+      nulls.push(s / Math.max(1, obsN));
+    }
+    const sorted = [...nulls].sort((a, b) => a - b);
+    nullMean = mean(nulls); nullP95 = quantile(sorted, 0.95);
+    pValue = (1 + nulls.filter(v => v >= obs).length) / (1 + nulls.length);
+    beatsNull = obs > nullP95;
+    log(`  (a) B vs C al netto: n_B=${B.n} netto ${num(B.meanRNet)} · n_C=${C.n} netto ${num(C.meanRNet)} -> ` +
+        `${B.meanRNet > C.meanRNet ? 'B MIGLIORE' : 'B NON migliore'} (delta ${num(B.meanRNet - C.meanRNet)})`);
+    log(`  (c) proposta formata sui primi ${cut}/${dates.length} giorni: rimuovere ${gBest}; ` +
+        `holdout: pool n=${obsN} netto ${num(obs)} vs emessi-holdout ${num(baseHold.meanRNet)} -> ${holdoutHeld ? 'REGGE' : 'NON regge'}`);
+    log(`  (d) nullo (1000 estrazioni di ${obsN} dall'holdout): media ${num(nullMean)} p95 ${num(nullP95)} · osservato ${num(obs)} · ` +
+        `p=${num(pValue, 4)} · alphaEffective=${num(alphaEff(), 4)} -> ${beatsNull ? 'batte il nullo' : 'NON batte il nullo'}`);
+  } else {
+    log('  (c)/(d) nessun gate con n_train>=30: nessuna proposta formulabile.');
+  }
+
+  const verdictPop = bestGate && holdoutHeld && beatsNull && pValue < alphaEff() ? 'accepted' : 'rejected';
+  writeResult('AI-0003', verdictPop, {
+    meanR_train: null, meanR_holdout: obs, delta: bestGate ? obs - baseHold.meanRNet : null,
+    ci95: [null, null], sumR_holdout: null, kSelected: 0,
+    nullMean, nullP95, pValue,
+    nA: 0, nB: B.n, nC: C.n, nD: D.n,
+    meanRNetB: B.meanRNet, meanRNetC: C.meanRNet, meanRNetD: D.meanRNet,
+    meanRGrossB: B.meanRGross, meanRGrossC: C.meanRGross,
+    bestGateRemoval: bestGate ? bestGate.g : null,
+  }, verdictPop === 'accepted'
+    ? 'Proposta validata out-of-sample e contro il nullo.'
+    : `Popolazione A non disponibile su disco; B vs C al netto: ${num(B.meanRNet)} vs ${num(C.meanRNet)}. ${bestGate ? `Rimozione di ${bestGate.g} ${holdoutHeld ? 'regge' : 'non regge'} sull'holdout e ${beatsNull ? 'batte' : 'non batte'} il nullo (p=${num(pValue, 4)}).` : 'Nessun gate con n_train>=30.'} Nessuna attivazione.`);
+
+  if (bestGate) {
+    writeResult('AI-0004', holdoutHeld && beatsNull ? 'accepted' : 'rejected',
+      { meanR_train: bestGate.delta, meanR_holdout: obs, delta: obs - baseHold.meanRNet,
+        ci95: [null, null], sumR_holdout: null, kSelected: 0,
+        nullMean, nullP95, pValue, gate: bestGate.g, nHoldout: obsN,
+        baselineHoldout: baseHold.meanRNet, gateRemoved: bestGate.g, alphaEffective: alphaEff() },
+      holdoutHeld && beatsNull
+        ? `Rimuovere ${bestGate.g} alza il netto del pool anche sull'holdout (${num(obs)} vs ${num(baseHold.meanRNet)}).`
+        : `Sui giorni di formazione ${bestGate.g} alzava il pool di ${num(bestGate.delta)} R, ma sull'holdout il pool (${num(obs)}) resta sotto gli emessi (${num(baseHold.meanRNet)}) e il delta e ${num(obs - baseHold.meanRNet)}: la proposta non regge. Nessuna attivazione.`);
+  }
+
+  log('');
+  log('  (d) nessuna proposta viene applicata: applyOptimizationProposal non e raggiungibile da qui.');
+  writeFileSync(join(ART, 'ai_population.json'), JSON.stringify({
+    frictionPct: fp, A, B, C, D, gates: gateRows,
+    split: { cut, dates: dates.length, holdoutFirst: dates[cut] ?? null },
+    bestGate: bestGate ? { gate: bestGate.g, deltaTrain: bestGate.delta } : null,
+    holdout: { meanRNet: obs, baseline: baseHold.meanRNet, baselineN: baseHold.n, trainN: baseTrain.n,
+               held: holdoutHeld, nullP95, nullMean, pValue, beatsNull },
+    verdict: verdictPop,
+  }, null, 2));
+  log(`  scritto ${join(ART, 'ai_population.json')}`);
+  return { A, B, C, D, verdict: verdictPop };
+}
+
 // ---------------------------------------------------------------- dispatch
 
 switch (CMD) {
   case 'payoff':   payoff(); break;
   case 'g4fill':   g4fill(); break;
   case 'upstream': upstream(); break;
+  case 'surface':  surface(); break;
+  case 'population': population(); break;
   case 'postmortem': postmortem(); break;
   case 'train':    train(); break;
   case 'cycle':    cycle(); break;
   case 'promote':  promote(); break;
-  default: fail(2, `sottocomando sconosciuto: ${CMD}. Usa payoff|g4fill|upstream|postmortem|train|cycle|promote`);
+  default: fail(2, `sottocomando sconosciuto: ${CMD}. Usa payoff|surface|population|g4fill|upstream|postmortem|train|cycle|promote`);
 }
