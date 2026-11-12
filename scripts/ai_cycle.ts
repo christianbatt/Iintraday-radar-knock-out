@@ -385,6 +385,10 @@ function readPrevNet(): Record<string, unknown> | null {
   } catch { return null; }
 }
 
+function setupKey(s: Setup): string {
+  return `${s.sym}|${s.entry}|${s.stop}`;
+}
+
 function measure(list: Setup[]): Measured[] {
   const out: Measured[] = [];
   for (const s of list) {
@@ -980,7 +984,7 @@ function train() {
     log(`  STEP 3(a) = NO: nessun k con meanR > 0 e CI che esclude lo zero.`);
     log(`  Il target non esiste: addestrare un selettore su un target irraggiungibile`);
     log(`  significherebbe insegnargli a filtrare rumore. NON addestro.`);
-    appendRow({
+    if (!hasRow('AI-0001', 'result')) appendRow({
       id: 'AI-0001', ts: new Date().toISOString(), kind: 'result', status: 'inconclusive',
       measured: { meanR_train: null, meanR_holdout: null, delta: null, ci95: [null, null],
                   sumR_holdout: null, kSelected: 0, nullMean: null, nullP95: null, pValue: null,
@@ -1046,7 +1050,7 @@ function train() {
   log(`  holdout: k=${k} meanR=${num(meanRho)} sumR=${num(sumRho)} (tutti: sumR=${num(sumAll)})`);
   log(`  nullo: p95 meanR=${num(nullP95)} p-value=${num(pValue, 4)} alphaEff=${num(alphaEffective, 4)}`);
   log(`  verdetto: ${verdict}`);
-  appendRow({
+  if (!hasRow('AI-0001', 'result')) appendRow({
     id: 'AI-0001', ts: new Date().toISOString(), kind: 'result', status: verdict,
     measured: { meanR_train: best.meanR, meanR_holdout: meanRho, delta: meanRho - mean(hoAll.map(r => r.w.exitR!)),
                 ci95: [boot.lo, boot.hi], sumR_holdout: sumRho, kSelected: k,
@@ -1476,6 +1480,108 @@ function fillaudit() {
   return payload;
 }
 
+function dedup() {
+  log('=== DEDUP — unita di misura: setup distinto per (symbol|entry|stop) ===');
+  const rows = measure(loadSetups(0, true));
+  const groups = new Map<string, Measured[]>();
+  for (const r of rows) {
+    const k = setupKey(r.s);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k)!.push(r);
+  }
+  log(`  (1.1) unita primaria: setup distinto per (symbol, entry, stop). ${groups.size} gruppi su ${rows.length} righe.`);
+  log('  (1.2) diagnosi della ripetizione:');
+  const diag: Array<Record<string, unknown>> = [];
+  for (const [key, g] of groups) {
+    const ts = g.map(x => x.s.ts).sort((a, b) => a - b);
+    const days = new Set(g.map(x => x.s.date)).size;
+    const tss = new Set(g.map(x => x.s.ts)).size;
+    diag.push({ key, n: g.length, minTs: ts[0], maxTs: ts[ts.length - 1], days, tss });
+    log(`    ${pad(key, 34)} n=${pad(g.length, 3)} giorni=${days} tsDistinti=${tss}`);
+  }
+  const replayGroups = diag.filter(d => (d.tss as number) === 1).length;
+  const persistGroups = diag.filter(d => (d.days as number) > 1).length;
+  const cause = replayGroups === diag.length ? 'replay' : (persistGroups === diag.length ? 'level_persistence' : 'mixed');
+  log(`  replay (1 ts): ${replayGroups}/${diag.length} · persistenza (>1 giorno): ${persistGroups}/${diag.length} -> ${cause}`);
+
+  const counts = [...groups.values()].map(g => g.length).sort((a, b) => b - a);
+  const top3 = counts.slice(0, 3).reduce((a, b) => a + b, 0);
+  const top3Share = top3 / rows.length;
+  let hhi = 0; for (const c of counts) { const q = c / rows.length; hhi += q * q; }
+  let cum = 0, nHalf = 0; for (const c of counts) { cum += c; nHalf++; if (cum >= rows.length / 2) break; }
+  log(`  (1.5) concentrazione: top3 righe=${top3}/${rows.length} (${(top3Share * 100).toFixed(1)}%) · setup per 50% righe=${nHalf} · HHI=${hhi.toFixed(4)}`);
+
+  function distinctSetups(list: Measured[]): Measured[] {
+    const seen = new Set<string>(); const out: Measured[] = [];
+    for (const r of list) { const k = setupKey(r.s); if (seen.has(k)) continue; seen.add(k); out.push(r); }
+    return out;
+  }
+  const setups = distinctSetups(rows);
+  const KS = [0.5, 1.0, 1.6, 2.0];
+  const FRIC = 0.1;
+  log('  (1.3) ricalcolo affiancato (righe | setup), frictionPct=0.10:');
+  const rng = mulberry32(7);
+  const byK: Array<Record<string, unknown>> = [];
+  for (const k of KS) {
+    const grossRows = rows.map(r => (r.w.firstK[String(k)] !== undefined ? k : -1));
+    const grossSetups = setups.map(r => (r.w.firstK[String(k)] !== undefined ? k : -1));
+    const vRows = rows.map((r, i) => grossRows[i] - FRIC / stopPctOf(r.s));
+    const vSetups = setups.map((r, i) => grossSetups[i] - FRIC / stopPctOf(r.s));
+    const hitRows = rows.filter(r => r.w.firstK[String(k)] !== undefined).length / rows.length;
+    const hitSetups = setups.filter(r => r.w.firstK[String(k)] !== undefined).length / setups.length;
+    function bootCI(vals: number[]): [number, number] {
+      const reps: number[] = [];
+      for (let it = 0; it < 2000; it++) {
+        let s = 0;
+        for (let j = 0; j < vals.length; j++) s += vals[Math.floor(Math.random() * vals.length)];
+        reps.push(s / vals.length);
+      }
+      reps.sort((a, b) => a - b);
+      return [quantile(reps, 0.025), quantile(reps, 0.975)];
+    }
+    const ciRows = bootCI(vRows);
+    const ciSetups = bootCI(vSetups);
+    byK.push({ k, nRows: rows.length, nSetups: setups.length,
+      meanRGrossRows: mean(grossRows), meanRNetRows: mean(vRows),
+      meanRGrossSetups: mean(grossSetups), meanRNetSetups: mean(vSetups),
+      hitRows, hitSetups, ciRows, ciSetups });
+    log(`    k=${k} n_righe=${rows.length} n_setup=${setups.length} hit_righe=${(hitRows * 100).toFixed(1)}% hit_setup=${(hitSetups * 100).toFixed(1)}% meanNet_righe=${mean(vRows).toFixed(3)} meanNet_setup=${mean(vSetups).toFixed(3)}`);
+  }
+
+  // surface distinct
+  const sorted = [...rows].sort((a, b) => stopPctOf(a.s) - stopPctOf(b.s));
+  const per = Math.max(1, Math.ceil(sorted.length / 10));
+  let maxDistinct = 0; let cellsUnder10 = 0; let cells30rowsUnder10 = 0;
+  for (let d = 0; d < 10; d++) {
+    const chunk = sorted.slice(d * per, (d + 1) * per);
+    const nd = distinctSetups(chunk).length;
+    if (nd > maxDistinct) maxDistinct = nd;
+    if (nd < 10) cellsUnder10++;
+    if (chunk.length >= 30 && nd < 10) cells30rowsUnder10++;
+  }
+  log(`  (1.4) superficie: max setup distinti per cella=${maxDistinct} · celle con <10 setup=${cellsUnder10}/10 · celle con >=30 righe ma <10 setup=${cells30rowsUnder10}`);
+
+  // population B
+  const all = loadSetups(0, false);
+  const blocked = all.filter(s => !s.emitted);
+  const bKeys = new Set(blocked.map(s => setupKey(s)));
+  const dedupable = blocked.every(s => Number.isFinite(s.entry) && Number.isFinite(s.stop));
+  log(`  (1.6) popolazione B: righe=${blocked.length} setup_distinti=${bKeys.size} deduplicabile=${dedupable}`);
+  log(`         C: righe=${rows.length} setup_distinti=${setups.length}`);
+
+  writeFileSync(join(ART, 'ai_dedup.json'), JSON.stringify({
+    nRows: rows.length, nDistinctSetups: setups.length, diag, cause, top3, top3Share, hhi, nHalf,
+    byK, maxDistinctSetupsPerCell: maxDistinct, cellsUnder10Setups: cellsUnder10,
+    cells30RowsUnder10Setups: cells30rowsUnder10, B: { nRows: blocked.length, nDistinctSetups: bKeys.size, dedupable },
+    C: { nRows: rows.length, nDistinctSetups: setups.length },
+  }, null, 2));
+  log(`  scritto ${join(ART, 'ai_dedup.json')}`);
+  log(`  (a) ripetizione: ${cause}`);
+  log(`  (b) setup distinti nel decile piu' popolato: ${maxDistinct}`);
+  log(`  (c) celle con >=10 setup distinti: ${10 - cellsUnder10}/10`);
+  log(`  (d) confronto B vs C cambia segno sulle unita' distinte: solo conteggi (B non ha edge misurabile)`);
+}
+
 // ---------------------------------------------------------------- deathcheck (Passo K)
 
 /**
@@ -1505,18 +1611,24 @@ function deathcheck() {
   log('  popolazione primaria C (emessi) · frictionPct = 0.10 · BE off · shift 0');
   const rows = measure(loadSetups(0, true));
   const days = [...new Set(rows.map(r => r.s.date))].sort();
-  const haveSetups = rows.length;
+  const haveSetups = new Set(rows.map(r => setupKey(r.s))).size;
   const haveDays = days.length;
 
   const KS = [0.5, 1.0, 1.6, 2.0];
   const sorted = [...rows].sort((a, b) => stopPctOf(a.s) - stopPctOf(b.s));
   const per = Math.max(1, Math.ceil(sorted.length / 10));
 
+  // unita' corretta (Passo M): una cella conta setup DISTINTI, non righe.
+  function distinctChunk(list: Measured[]): Measured[] {
+    const seen = new Set<string>();
+    return list.filter(x => { const k = setupKey(x.s); if (seen.has(k)) return false; seen.add(k); return true; });
+  }
+
   type Cell = { dec: number; k: number; n: number; days: number; meanRNet: number;
                 lo: number; hi: number; p: number; excludesZero: boolean };
   const cells: Cell[] = [];
   for (let d = 0; d < 10; d++) {
-    const chunk = sorted.slice(d * per, (d + 1) * per);
+    const chunk = distinctChunk(sorted.slice(d * per, (d + 1) * per));
     if (!chunk.length) continue;
     for (const k of KS) {
       const byDay = new Map<string, number[]>();
@@ -1551,6 +1663,11 @@ function deathcheck() {
   const nHyp = nHypotheses();
   const alphaEffective = 0.05 / (1 + nHyp);
   const alphaBonferroni = admissible.length > 0 ? 0.05 / admissible.length : null;
+  // (2.5) giorni necessari perche' UNA cella abbia 30 setup distinti.
+  // Assunzione dichiarata: distribuzione uniforme dei setup distinti sui 10 decili
+  // e ritmo costante pari a haveSetups/haveDays.
+  const perCellPerDay = haveSetups / Math.max(1, haveDays) / 10;
+  const daysNeededUniform = perCellPerDay > 0 ? Math.ceil(30 / perCellPerDay) : null;
   const triggerMet = haveSetups >= 100 && haveDays >= 30;
   const survivors = admissible.filter(c => c.meanRNet > 0 && c.excludesZero &&
     c.p < alphaEffective && (alphaBonferroni === null || c.p < alphaBonferroni));
@@ -1559,6 +1676,7 @@ function deathcheck() {
   log(`  trigger: setup ${haveSetups}/100 · giorni ${haveDays}/30 -> ${triggerMet ? 'soddisfatto' : 'NON soddisfatto'}`);
   log(`  celle: ${cells.length} totali · ${admissible.length} ammissibili (n>=30 e giorni>=10)`);
   log(`  soglie: alphaEffective=${num(alphaEffective, 4)} · Bonferroni=${alphaBonferroni === null ? 'n/d' : num(alphaBonferroni, 4)}`);
+  log(`  giorni per 30 setup distinti in UNA cella: ${daysNeededUniform ?? 'n/d'} (assunzione: uniforme su 10 decili, ritmo ${num(haveSetups / Math.max(1, haveDays), 3)} setup/giorno)`);
   const g4 = (surfArt.EMESSI as { nCellsN10?: number; nPositiveN10?: number } | undefined);
   log(`  cross-check con ai_surface.json: celle n>=10=${g4?.nCellsN10 ?? 'n/d'} positive=${g4?.nPositiveN10 ?? 'n/d'} (qui la soglia e n>=30)`);
   for (const c of admissible) {
@@ -1583,6 +1701,7 @@ function deathcheck() {
   const fillIntegrity = fa === null ? 'unknown' : ((fa.monotonicityViolations ?? -1) === 0 ? 'ok' : 'suspect');
   writeFileSync(join(ART, 'ai_deathcheck.json'), JSON.stringify({
     status, fillIntegrity, trigger: { needSetups: 100, haveSetups, needDays: 30, haveDays },
+    daysNeededUniform, perCellPerDay,
     nCells: cells.length, nAdmissibleCells: admissible.length,
     alphaEffective, alphaBonferroni, bestAdmissibleCell: best, survivors: survivors.length,
     reason, frictionPct: 0.1, cells,
@@ -1600,6 +1719,7 @@ switch (CMD) {
   case 'surface':  surface(); break;
   case 'population': population(); break;
   case 'deathcheck': deathcheck(); break;
+  case 'dedup':      dedup(); break;
   case 'fillaudit': fillaudit(); break;
   case 'postmortem': postmortem(); break;
   case 'train':    train(); break;
