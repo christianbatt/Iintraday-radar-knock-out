@@ -8,7 +8,7 @@ Nessuna riga passata viene modificata o cancellata: ogni correzione è una nuova
 | kind | quando |
 |---|---|
 | `hypothesis` | **prima** di vedere l'holdout. Pre-registrazione. |
-| `result` | dopo la misura, con l'esito `accepted` / `rejected` / `inconclusive`. |
+| `result` | dopo la misura, con l'esito `accepted` / `rejected` / `inconclusive` / `insufficient_holdout` / `not_yet_evaluable`. |
 | `activation` | solo via `ai_cycle.ts promote --id=AI-XXXX`, mai dal pulsante. |
 | `rejection_note` | nota su un'ipotesi scartata, senza riaprirla. |
 
@@ -28,7 +28,24 @@ Nessuna riga passata viene modificata o cancellata: ogni correzione è una nuova
 | `status` | `pre_registered` |
 
 ### result
-`status`, `measured` (`meanR_train`, `meanR_holdout`, `delta`, `ci95`, `sumR_holdout`, `kSelected`, `nullMean`, `nullP95`, `pValue`), `reason`.
+`status`, `measured` (`meanR_train`, `meanR_holdout`, `delta`, `ci95`, `sumR_holdout`, `kSelected`, `nullMean`, `nullP95`, `pValue`), `reason`, `supersedes` (opzionale).
+
+### status `insufficient_holdout`
+Un rifiuto **formale** e un rifiuto **empirico** non sono la stessa informazione.
+`insufficient_holdout` si usa quando l'holdout esiste ma è troppo piccolo perché il
+confronto significhi qualcosa (soglia: meno di 30 campioni). In quel caso
+`measured.beatsNull` vale **`null`**, mai `true` o `false`, e `measured.nullReason`
+dice perché il confronto non è interpretabile.
+
+### status `not_yet_evaluable`
+Usato dal criterio di morte (AI-0005): il trigger non è soddisfatto, quindi non
+esiste né un'accettazione né un rifiuto. Non è un fallimento: è l'assenza di giudizio.
+
+### campo `supersedes`
+Una `result` può sostituire **lo stato** di una precedente senza toccarla:
+`supersedes: "AI-0003"` significa «questa riga corregge lo stato di AI-0003».
+La riga originale resta nel file: il registro è append-only, la catena si legge
+seguendo gli `supersedes`.
 
 ### activation
 `configVersion`, `live`, `approvedBy`.

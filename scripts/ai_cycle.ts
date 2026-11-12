@@ -470,27 +470,32 @@ function payoff() {
     }
     const pick = (fp: number, k: number) => table.find(z => z.frictionPct === fp && z.k === k)!;
     const anyPos = (fp: number) => table.some(z => z.frictionPct === fp && z.meanRNet > 0);
-    log(`  (a) meanR_net > 0 · a 0.05: ${anyPos(0.05) ? 'SI' : 'NO'} · a 0.10: ${anyPos(0.10) ? 'SI' : 'NO'} · a 0.20: ${anyPos(0.20) ? 'SI' : 'NO'}`);
-    const g05 = pick(0.05, 1.6).gap * 100, g10 = pick(0.1, 1.6).gap * 100, g20 = pick(0.2, 1.6).gap * 100;
-    log(`  (b) gap hit*_net - hit a k=1.6: 0.05 -> ${num(g05, 2)} pt · 0.10 -> ${num(g10, 2)} pt · 0.20 -> ${num(g20, 2)} pt ` +
-        `(allargamento 0.05->0.10 = ${num(g10 - g05, 2)} pt)`);
+    const anyPosLine = () => netPcts.map(fp => `${fp}: ${anyPos(fp) ? 'SI' : 'NO'}`).join(' · ');
+    log(`  (a) meanR_net > 0 · ${anyPosLine()}`);
+    const gapAt = (fp: number) => { const z = table.find(t => t.frictionPct === fp && t.k === 1.6); return z ? z.gap * 100 : null; };
+    const partsG = netPcts.map(fp => `${fp} -> ${gapAt(fp) === null ? 'n/d' : num(gapAt(fp)!, 2)} pt`);
+    const g05 = gapAt(0.05), g10 = gapAt(0.1);
+    const wide = g05 !== null && g10 !== null ? `allargamento 0.05->0.10 = ${num(g10 - g05, 2)} pt`
+      : 'allargamento non calcolabile in questo run (serve --net con 0.05 e 0.10)';
+    log(`  (b) gap hit*_net - hit a k=1.6: ${partsG.join(' · ')} (${wide})`);
+    const fpMain = netPcts.includes(0.1) ? 0.1 : netPcts[0];
     const orderOf = (fp: number | null) => [...GRID].sort((a, b) => {
       const va = fp === null ? pick(netPcts[0], a).meanRGross : pick(fp, a).meanRNet;
       const vb = fp === null ? pick(netPcts[0], b).meanRGross : pick(fp, b).meanRNet;
       return vb - va;
     });
-    const ordG = orderOf(null), ordN = orderOf(0.1);
+    const ordG = orderOf(null), ordN = orderOf(fpMain);
     log(`  (c) ranking per meanR lordo      : ${ordG.join(' > ')}`);
-    log(`      ranking per meanR netto 0.10 : ${ordN.join(' > ')} -> ${ordG.join('') === ordN.join('') ? 'INVARIATO' : 'CAMBIA'}`);
-    const f10 = spArr.map(v => 0.1 / v);
+    log(`      ranking per meanR netto ${fpMain} : ${ordN.join(' > ')} -> ${ordG.join('') === ordN.join('') ? 'INVARIATO' : 'CAMBIA'}`);
+    const f10 = spArr.map(v => fpMain / v);
     const sortedF10 = [...f10].sort((a, b) => a - b);
     const pairs = rows.map((x, i) => ({ x: f10[i], y: x.w.exitR }))
       .filter(q => q.y !== null && Number.isFinite(q.y as number)) as Array<{ x: number; y: number }>;
     const cf = pearson(pairs);
-    log(`  (d) f_i a 0.10: media ${num(mean(f10))} mediana ${num(quantile(sortedF10, 0.5), 3)} p90 ${num(quantile(sortedF10, 0.9), 3)} R`);
+    log(`  (d) f_i a ${fpMain}: media ${num(mean(f10))} mediana ${num(quantile(sortedF10, 0.5), 3)} p90 ${num(quantile(sortedF10, 0.9), 3)} R`);
     log(`      decili f: ${deciles(f10).map(v => num(v, 3)).join(' ')}`);
     log(`      corr(f_i, R realizzato) = ${num(cf, 3)} · corr(f_i, stopPct_i) = -1 per costruzione (f = c / stopPct)`);
-    const st16 = pick(0.1, 1.6);
+    const st16 = pick(fpMain, 1.6);
     const gapPt = st16.gap * 100;
     log(`  (C) frizione dell'app implicita: NON RICAVABILE per trade — frictionEur dipende da`);
     log(`      suggestedCertificates e totalInvestedEur (calculator.ts:2405), assenti negli artefatti.`);
@@ -1344,6 +1349,117 @@ function population() {
   return { A, B, C, D, verdict: verdictPop };
 }
 
+// ---------------------------------------------------------------- deathcheck (Passo K)
+
+/**
+ * Criterio di morte, pre-registrato. Meccanico: nessun giudizio a mano.
+ * Popolazione primaria C (emessi). Cella ammissibile = n>=30 e giorni distinti>=10.
+ * Test: meanR_net > 0 con CI95 bootstrap a cluster sui GIORNI (2000 repliche).
+ * Soglie: alphaEffective = 0.05/(1+nHypotheses) E Bonferroni 0.05/nCelleAmmissibili.
+ * Trigger: C con >=100 setup e >=30 giorni distinti.
+ */
+function deathcheck() {
+  const surfPath = ARGS.get('surface') ?? join(ART, 'ai_surface.json');
+  if (!existsSync(surfPath)) fail(7, `manca l'artefatto della superficie: ${surfPath}`);
+  let shadow: Record<string, unknown> | null = null;
+  const shArg = ARGS.get('shadow');
+  if (shArg !== undefined) {
+    if (!existsSync(shArg)) fail(7, `manca l'artefatto shadow: ${shArg}`);
+    shadow = JSON.parse(readFileSync(shArg, 'utf8')) as Record<string, unknown>;
+  } else {
+    const dir = join(ART, 'shadow');
+    const files = existsSync(dir)
+      ? readdirSync(dir).filter(f => f.startsWith('shadow_') && f.endsWith('.json')).sort() : [];
+    if (files.length) shadow = JSON.parse(readFileSync(join(dir, files[files.length - 1]), 'utf8')) as Record<string, unknown>;
+  }
+  const surfArt = JSON.parse(readFileSync(surfPath, 'utf8')) as Record<string, unknown>;
+
+  log('=== DEATHCHECK — criterio di morte pre-registrato (AI-0005) ===');
+  log('  popolazione primaria C (emessi) · frictionPct = 0.10 · BE off · shift 0');
+  const rows = measure(loadSetups(0, true));
+  const days = [...new Set(rows.map(r => r.s.date))].sort();
+  const haveSetups = rows.length;
+  const haveDays = days.length;
+
+  const KS = [0.5, 1.0, 1.6, 2.0];
+  const sorted = [...rows].sort((a, b) => stopPctOf(a.s) - stopPctOf(b.s));
+  const per = Math.max(1, Math.ceil(sorted.length / 10));
+
+  type Cell = { dec: number; k: number; n: number; days: number; meanRNet: number;
+                lo: number; hi: number; p: number; excludesZero: boolean };
+  const cells: Cell[] = [];
+  for (let d = 0; d < 10; d++) {
+    const chunk = sorted.slice(d * per, (d + 1) * per);
+    if (!chunk.length) continue;
+    for (const k of KS) {
+      const byDay = new Map<string, number[]>();
+      for (const x of chunk) {
+        const v = (x.w.firstK[String(k)] !== undefined ? k : -1) - 0.1 / stopPctOf(x.s);
+        if (!byDay.has(x.s.date)) byDay.set(x.s.date, []);
+        byDay.get(x.s.date)!.push(v);
+      }
+      const dayKeys = [...byDay.keys()].sort();
+      const rng = mulberry32(101);
+      const means: number[] = [];
+      for (let it = 0; it < 2000; it++) {
+        let sum = 0, cnt = 0;
+        for (let j = 0; j < dayKeys.length; j++) {
+          const pick = dayKeys[Math.floor(rng() * dayKeys.length)];
+          for (const v of byDay.get(pick)!) { sum += v; cnt++; }
+        }
+        means.push(sum / Math.max(1, cnt));
+      }
+      const s2 = [...means].sort((a, b) => a - b);
+      const allV: number[] = [];
+      for (const v of byDay.values()) for (const x of v) allV.push(x);
+      const obs = mean(allV);
+      const lo = quantile(s2, 0.025), hi = quantile(s2, 0.975);
+      const p = means.filter(v => v <= 0).length / means.length;
+      cells.push({ dec: d + 1, k, n: chunk.length, days: dayKeys.length, meanRNet: obs,
+                   lo, hi, p, excludesZero: lo > 0 });
+    }
+  }
+
+  const admissible = cells.filter(c => c.n >= 30 && c.days >= 10);
+  const nHyp = nHypotheses();
+  const alphaEffective = 0.05 / (1 + nHyp);
+  const alphaBonferroni = admissible.length > 0 ? 0.05 / admissible.length : null;
+  const triggerMet = haveSetups >= 100 && haveDays >= 30;
+  const survivors = admissible.filter(c => c.meanRNet > 0 && c.excludesZero &&
+    c.p < alphaEffective && (alphaBonferroni === null || c.p < alphaBonferroni));
+  const status = !triggerMet ? 'not_yet_evaluable' : (survivors.length > 0 ? 'survives' : 'closed');
+
+  log(`  trigger: setup ${haveSetups}/100 · giorni ${haveDays}/30 -> ${triggerMet ? 'soddisfatto' : 'NON soddisfatto'}`);
+  log(`  celle: ${cells.length} totali · ${admissible.length} ammissibili (n>=30 e giorni>=10)`);
+  log(`  soglie: alphaEffective=${num(alphaEffective, 4)} · Bonferroni=${alphaBonferroni === null ? 'n/d' : num(alphaBonferroni, 4)}`);
+  const g4 = (surfArt.EMESSI as { nCellsN10?: number; nPositiveN10?: number } | undefined);
+  log(`  cross-check con ai_surface.json: celle n>=10=${g4?.nCellsN10 ?? 'n/d'} positive=${g4?.nPositiveN10 ?? 'n/d'} (qui la soglia e n>=30)`);
+  for (const c of admissible) {
+    log(`    d${c.dec} k=${c.k} n=${c.n} giorni=${c.days} meanR_net=${num(c.meanRNet)} CI=[${num(c.lo)}, ${num(c.hi)}] p=${num(c.p, 4)}`);
+  }
+  const best = admissible.length ? admissible.reduce((a, b) => (a.meanRNet >= b.meanRNet ? a : b)) : null;
+  if (best) log(`  migliore ammissibile: d${best.dec} k=${best.k} meanR_net=${num(best.meanRNet)}`);
+  const reason = status === 'not_yet_evaluable'
+    ? `trigger non soddisfatto (${haveSetups}/100 setup, ${haveDays}/30 giorni) e ${admissible.length} celle ammissibili su ${cells.length}`
+    : status === 'survives'
+      ? `${survivors.length} celle ammissibili superano entrambe le soglie`
+      : `nessuna delle ${admissible.length} celle ammissibili supera entrambe le soglie`;
+  log(`  STATO: ${status} — ${reason}`);
+  log('  Nessun addestramento, nessuna applicazione, promote non chiamato.');
+
+  if (shadow) {
+    const dc = (shadow.deathCriterion ?? {}) as Record<string, unknown>;
+    log(`  artefatto shadow: ${String(dc.status ?? 'n/d')} · celle ammissibili ${String(dc.nAdmissibleCells ?? 'n/d')} (accordo: ${dc.status === status ? 'si' : 'NO'})`);
+  }
+  writeFileSync(join(ART, 'ai_deathcheck.json'), JSON.stringify({
+    status, trigger: { needSetups: 100, haveSetups, needDays: 30, haveDays },
+    nCells: cells.length, nAdmissibleCells: admissible.length,
+    alphaEffective, alphaBonferroni, bestAdmissibleCell: best, survivors: survivors.length,
+    reason, frictionPct: 0.1, cells,
+  }, null, 2));
+  return { status, nAdmissibleCells: admissible.length, alphaEffective, alphaBonferroni };
+}
+
 // ---------------------------------------------------------------- dispatch
 
 switch (CMD) {
@@ -1352,9 +1468,10 @@ switch (CMD) {
   case 'upstream': upstream(); break;
   case 'surface':  surface(); break;
   case 'population': population(); break;
+  case 'deathcheck': deathcheck(); break;
   case 'postmortem': postmortem(); break;
   case 'train':    train(); break;
   case 'cycle':    cycle(); break;
   case 'promote':  promote(); break;
-  default: fail(2, `sottocomando sconosciuto: ${CMD}. Usa payoff|surface|population|g4fill|upstream|postmortem|train|cycle|promote`);
+  default: fail(2, `sottocomando sconosciuto: ${CMD}. Usa payoff|surface|population|deathcheck|g4fill|upstream|postmortem|train|cycle|promote`);
 }
