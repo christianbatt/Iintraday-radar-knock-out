@@ -189,9 +189,7 @@ export const CessationSection: React.FC<{ data?: ShadowPanelData['cessation'] | 
     </div>
   );
 };
-export const CessazioneSection = CessationSection;
-export const CausazioneSection = CessationSection;
-export const Causazione = CessationSection;
+
 
 export const ShadowResearchPanel: React.FC<{ data: ShadowPanelData | null }> = ({ data }) => {
   if (data === null || data.available !== true) {
