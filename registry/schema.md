@@ -93,6 +93,24 @@ esiste già. `postmortem` è read-only rispetto al registro.
   emissione (diff 0 bp); il gap di 0.533 R a k=1.0 e' un look-ahead della
   scelta dell'ultima emissione, non una proprieta' dell'entry.
 
+## Passo R — catena dei gate, eterogeneita, giorni per cella
+
+- `reason`: symbolsWithReasonBefore=5, symbolsWithReasonAfter=5.
+  righe con reason=15145, missing_input=0, senza reason=12143.
+  I 4 simbodi aggiunti hanno 0 reason (gate mai girati: snapshot con 5 simbodi,
+  replay_adapter.ts:54 ritorna null senza quote).
+- `perSymbol`: setup per simbodo su 30 symbol-day:
+  BAMI.MI 7, BAYN.DE 0, ENI.MI 0, LDO.MI 0, RHM.DE 1, SAP.DE 7,
+  SIE.DE 0, STLAM.MI 0, UCG.MI 0. Tasso medio 0.0556/symbol-day.
+  chi-quadro=44.4000 gdl=8 p=4.78e-7: tasso non uniforme.
+- `daysNeeded`: definizione setupTotali = setupPerCella / frazioneBanda.
+  frazioneBanda=0.7157. setupPerCella 30 -> 41.9; 62 -> 86.6.
+  giorni emitting: 36.3 / 75.1. giorni calendario: 83.8 / 173.3.
+  Q riportava 41.9 -> 36.3/83.8 (corretto) e 62 -> 53.7/124.0 (errato).
+- `elasticity`: simbodi con reason prima=5, dopo=5; setup nei 4 aggiunti=0;
+  non misurabile; limite superiore 3/120=0.025 setup/symbol-day;
+  leva 173.3 gg (elasticita 0) vs 86.6 gg (elasticita 1).
+
 ## Passo Q — perimetro per simbodi
 
 - `perimeter`: symbolsOld=5, symbolsNew=9, daysOld=30, daysNew=30.
