@@ -41,7 +41,7 @@ const PROBE      = ARGS.has('probe');
 const HORIZON    = Number(ARGS.get('horizon') ?? 3600);
 const BE_TRIGGER = ARGS.has('be-trigger') ? Number(ARGS.get('be-trigger')) : null;
 const BOOT       = Number(ARGS.get('boot') ?? 10000);
-const PAIR_KEY   = ARGS.get('pair-key') ?? 'auto';
+const PAIR_KEY   = ARGS.get('pair-key') ?? 'ts-norm|dir';
 const SHIFTS     = [0, 15, 20];
 
 const MAP = new Map<string, string>();
@@ -156,6 +156,8 @@ interface Setup {
   barrierR: number | null; barrierExit: string; barrierBars: number;
 }
 
+type Variant = 'direct' | 'markRReplay' | 'lastBefore' | 'firstAfter' | 'nearest';
+
 // ---------------------------------------------------------------- caricamento
 
 function loadSetups(shift: number): any[] {
@@ -195,16 +197,24 @@ function normBars(raw: any): Bar[] {
 }
 
 const BAR_CACHE = new Map<string, Bar[] | null>();
+const BAR_FILE = new Map<string, string>();
 function loadBars(symbol: string): Bar[] | null {
   if (BAR_CACHE.has(symbol)) return BAR_CACHE.get(symbol)!;
   let result: Bar[] | null = null;
   if (existsSync(BARSD)) {
-    const files = readdirSync(BARSD).filter(f => f.endsWith('.json'));
-    const norm = (s: string) => s.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-    const target = norm(symbol);
-    const hit = files.find(f => norm(f).startsWith(target))
-             ?? files.find(f => norm(f).includes(target));
+    const files = readdirSync(BARSD).filter(f => f.endsWith('.json')).sort();
+    const base = symbol.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    const cands = files.map(f => {
+        const m = f.match(/^(.+)_(\d+)d\.json$/);
+        if (!m) return null;
+        const s = m[1].replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+        return s === base ? { f, days: Number(m[2]) } : null;
+      })
+      .filter((x): x is { f: string; days: number } => x !== null)
+      .sort((a, b) => b.days - a.days);
+    const hit = cands.length > 0 ? cands[0].f : null;
     if (hit) {
+      BAR_FILE.set(symbol, hit);
       try { result = normBars(JSON.parse(readFileSync(join(BARSD, hit), 'utf8'))); }
       catch { result = null; }
       if (result && result.length === 0) result = null;
@@ -214,10 +224,14 @@ function loadBars(symbol: string): Bar[] | null {
   return result;
 }
 
+const EMITTED_COUNT: Record<number, number> = {};
+
 function buildSetups(raw: any[], shift: number): Setup[] {
   const out: Setup[] = [];
   let skipped = 0;
+  let notEmitted = 0;
   for (const r of raw) {
+    if (r?.emitted !== true) { notEmitted++; continue; }
     const sym   = pick(r, ['symbol', 'ticker', 'sym', 'underlying']);
     const dirR  = pick(r, ['direction', 'side', 'dir', 'signal']);
     const entry = pick(r, ['entry', 'entryPrice', 'entry_price', 'entryPx']);
@@ -238,7 +252,9 @@ function buildSetups(raw: any[], shift: number): Setup[] {
       markR: null, barrierR: null, barrierExit: '', barrierBars: 0,
     });
   }
-  if (skipped) log(`  (shift ${shift}: ${skipped} righe scartate per campi mancanti o non validi)`);
+  EMITTED_COUNT[shift] = raw.length - notEmitted;
+  log(`  (shift ${shift}: ${raw.length} righe, ${notEmitted} non emesse, ` +
+      `${skipped} scartate per campi mancanti, ${out.length} valide)`);
   return out;
 }
 
@@ -260,6 +276,25 @@ function markRAt(s: Setup, bars: Bar[], horizonSec: number,
   }
   if (!bar) return null;
   return s.dir * (bar.c - s.entry) / risk;
+}
+
+/**
+ * Regola del mark LETTA da scripts/delay_replay.ts:181-204 (non indovinata):
+ *   exit = close dell'ultima barra con t <= decisionTs + HORIZON  (priceAt)
+ *   R    = dir*(exit - entry)/(entry - stop)                     (rMultiple)
+ * Chiamata originale: delay_replay.ts:349-350, priceAt(bars, decisionTs + HORIZON_SEC).
+ */
+function markRReplay(s: Setup, bars: Bar[]): number | null {
+  const risk = Math.abs(s.entry - s.stop);
+  if (!(risk > 0)) return null;
+  const tgt = s.entryTs + HORIZON * 1000;
+  let exitPrice: number | null = null;
+  for (const b of bars) {
+    if (b.t <= tgt) exitPrice = b.c;
+    else break;
+  }
+  if (exitPrice === null) return null;
+  return s.dir * (exitPrice - s.entry) / risk;
 }
 
 function directR(s: Setup): number | null {
@@ -437,12 +472,10 @@ function main() {
   // ---- FASE 0: validazione del metodo
   log('=== FASE 0 — validazione (riproduzione dei sumR pubblicati) ===');
   const direct = directR(data[0][0] ?? { raw: {} } as Setup) !== null;
-  const variants: Array<'lastBefore' | 'firstAfter' | 'nearest'> =
-    ['lastBefore', 'firstAfter', 'nearest'];
-  let chosen: 'direct' | 'lastBefore' | 'firstAfter' | 'nearest' | null = null;
+  let chosen: Variant | null = null;
   let chosenSums: Record<number, number> | null = null;
 
-  const computeSums = (v: 'direct' | 'lastBefore' | 'firstAfter' | 'nearest') => {
+  const computeSums = (v: Variant) => {
     const sums: Record<number, number> = {};
     const counts: Record<number, number> = {};
     for (const sh of SHIFTS) {
@@ -450,7 +483,10 @@ function main() {
       for (const s of data[sh]) {
         let r: number | null = null;
         if (v === 'direct') r = directR(s);
-        else {
+        else if (v === 'markRReplay') {
+          const bars = loadBars(s.symbol);
+          if (bars) r = markRReplay(s, bars);
+        } else {
           const bars = loadBars(s.symbol);
           if (bars) r = markRAt(s, bars, HORIZON, v);
         }
@@ -461,9 +497,9 @@ function main() {
     return { sums, counts };
   };
 
-  const candidates: Array<'direct' | 'lastBefore' | 'firstAfter' | 'nearest'> =
-    direct ? ['direct', 'lastBefore', 'firstAfter', 'nearest']
-           : ['lastBefore', 'firstAfter', 'nearest'];
+  const candidates: Variant[] = direct
+    ? ['direct', 'markRReplay', 'lastBefore', 'firstAfter', 'nearest']
+    : ['markRReplay', 'lastBefore', 'firstAfter', 'nearest'];
 
   for (const v of candidates) {
     const { sums, counts } = computeSums(v);
@@ -472,8 +508,32 @@ function main() {
     if (ok && chosen === null) { chosen = v; chosenSums = sums; }
   }
 
+  // COPERTURA: se i setup validi non coincidono con gli emessi, il problema e'
+  // barre mancanti, non popolazione. Diagnosi distinta (exit 6).
+  const coverageGaps: string[] = [];
+  for (const sh of SHIFTS) {
+    const nEm = EMITTED_COUNT[sh] ?? NaN;
+    const nValid = data[sh].length;
+    if (nValid !== nEm) {
+      coverageGaps.push(`[COPERTURA] shift ${sh}: n_validi=${nValid} n_emessi=${nEm} ` +
+                        `mancanti=${nEm - nValid}`);
+    }
+  }
+  if (coverageGaps.length > 0) {
+    for (const g of coverageGaps) log(g);
+  } else {
+    log(`[COPERTURA] completa: ${SHIFTS.map(sh => `${sh}: ${data[sh].length}/${EMITTED_COUNT[sh] ?? 'n/a'}`).join('  ')}`);
+  }
+
   if (chosen === null) {
     log('');
+    if (coverageGaps.length > 0) {
+      fail(6, [
+        'Copertura barre INCOMPLETA e validazione mark fallita: la diagnosi e\' copertura, non popolazione.',
+        coverageGaps.join('\n'),
+        'I setup emessi non hanno tutti le barre necessarie: il mark non e\' ricostruibile su tutta la popolazione.',
+      ].join('\n'));
+    }
     fail(2, [
       'Nessuna variante riproduce i sumR pubblicati entro la tolleranza ' + SUMP_TOL + '.',
       `Attesi: ${SHIFTS.map(sh => `${sh}=${EXPECTED_SUMR[sh]}`).join(', ')}`,
@@ -491,7 +551,10 @@ function main() {
   for (const sh of SHIFTS) {
     for (const s of data[sh]) {
       if (chosen === 'direct') s.markR = directR(s);
-      else {
+      else if (chosen === 'markRReplay') {
+        const bars = loadBars(s.symbol);
+        s.markR = bars ? markRReplay(s, bars) : null;
+      } else {
         const bars = loadBars(s.symbol);
         s.markR = bars ? markRAt(s, bars, HORIZON, chosen) : null;
       }
@@ -543,35 +606,23 @@ function main() {
 
   // ---- FASE 2: I3-quater, confronto appaiato
   log('=== FASE 2 (I3-quater) — confronto appaiato ===');
-  const keyFns: Record<string, (s: Setup) => string> = {
-    'symbol|date|direction': s => `${s.symbol}|${s.date}|${s.dir}`,
-    'symbol|date':           s => `${s.symbol}|${s.date}`,
-    'symbol|direction':      s => `${s.symbol}|${s.dir}`,
+  // Chiave normalizzata sullo shift: un setup a shift X si riconosce perche'
+  // decisionTs - X*60s e' lo stesso istante di mercato. NON si usa
+  // symbol|date|direction|ora: collassa setup diversi dello stesso giorno.
+  const keyFns: Record<string, (s: Setup, sh: number) => string> = {
+    'ts-norm':     (s, sh) => `${s.symbol}|${Math.round((s.entryTs - sh * 60000) / 1000)}`,
+    'ts-norm|dir': (s, sh) => `${s.symbol}|${Math.round((s.entryTs - sh * 60000) / 1000)}|${s.dir}`,
   };
-  let keyName = PAIR_KEY;
-  if (PAIR_KEY === 'auto') {
-    // sceglie la chiave con il maggior numero di appaiati senza superare il minimo dei due shift
-    let best = '', bestScore = -1;
-    for (const [name, fn] of Object.entries(keyFns)) {
-      const k0 = new Set(data[0].map(fn)), k15 = new Set(data[15].map(fn));
-      let inter = 0;
-      for (const k of k0) if (k15.has(k)) inter++;
-      const score = inter;
-      log(`  chiave ${pad(name, 24)} appaiati=${inter}`);
-      if (score > bestScore) { bestScore = score; best = name; }
-    }
-    keyName = best;
-    log(`  chiave scelta: ${keyName}\n`);
-  }
+  const keyName = PAIR_KEY;
   const keyFn = keyFns[keyName];
   if (!keyFn) fail(4, `--pair-key sconosciuta: ${keyName}. Valori: ${Object.keys(keyFns).join(', ')}`);
 
   const quater: Record<string, any> = {};
   for (const sh of [15, 20]) {
     const map0 = new Map<string, Setup>();
-    for (const s of data[0]) map0.set(keyFn(s), s);
+    for (const s of data[0]) map0.set(keyFn(s, 0), s);
     const mapS = new Map<string, Setup>();
-    for (const s of data[sh]) mapS.set(keyFn(s), s);
+    for (const s of data[sh]) mapS.set(keyFn(s, sh), s);
 
     const paired: Array<{ date: string; dMark: number; dBarrier: number }> = [];
     const onlyNew: Setup[] = [];
@@ -663,6 +714,24 @@ function main() {
     const b = bySym[sym];
     log(`  ${pad(sym, 10)} n=${pad(b.n, 4)} meanR=${pad(num(b.meanR), 8)} hit=${pad(num(b.hitRate * 100, 1), 6)}% ` +
         `stop%=${pad(num(b.stopPctMedian, 2), 6)} move1h%=${num(b.move1hPctMean, 3)}`);
+  }
+
+  // ---- file barre scelti (deterministico, loggato)
+  log('\n  --- file barre scelti per simbolo (BAR_FILE) ---');
+  for (const [sym, f] of [...BAR_FILE.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const b = loadBars(sym);
+    let info = 'barre non caricate';
+    if (b && b.length > 1) {
+      const diffs: number[] = [];
+      for (let i = 1; i < b.length; i++) diffs.push(b[i].t - b[i - 1].t);
+      diffs.sort((x, y) => x - y);
+      const med = quantile(diffs, 0.5) / 1000;
+      info = `barre=${b.length} intervallo=${med}s (${med / 60} min) ` +
+             `${new Date(b[0].t).toISOString()} .. ${new Date(b[b.length - 1].t).toISOString()}`;
+    } else if (b) {
+      info = `barre=${b.length}`;
+    }
+    log(`  ${pad(sym, 10)} -> ${pad(f, 18)} ${info}`);
   }
 
   // ---- output
