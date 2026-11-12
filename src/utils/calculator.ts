@@ -43,6 +43,7 @@ import { TRADING_PARAMS, adxThresholds, vwapMaxStaleMin, vwapMaxZeroVolumeBars }
 export { adxThresholds };
 import { getMarketTime, getExchangeDateStr } from './timezone';
 import { SETUP_SELECTOR_LIVE } from '../config/liveSelector';
+import { STALENESS_USE_MARKET_TS } from '../config/stalenessFlag';
 import { applyCalendarSelector } from './setupSelector';
 
 export interface DailyBarInput {
@@ -1911,17 +1912,26 @@ export function calculateAdrInfo(quote: RawQuoteData): {
 export function checkQuoteStaleness(
   quote: RawQuoteData,
   currentTime: Date = new Date(),
-  options?: { euStalenessMin?: number; usStalenessMin?: number }
+  options?: { euStalenessMin?: number; usStalenessMin?: number; useMarketTs?: boolean }
 ): { isStale: boolean; minutesDelay: number | null; warning: string | null } {
   const threshold = quote.market === 'EU'
     ? options?.euStalenessMin ?? 5
     : options?.usStalenessMin ?? 3;
 
-  if (!quote.timestamp) {
+  // I2b: con useMarketTs il tempo della quota e' il tempo di MERCATO, non
+  // l'orario di risposta. marketTs assente -> fallback sul timestamp, senza
+  // cambiare l'esito rispetto al comportamento storico.
+  const useMarketTs = options?.useMarketTs === true;
+  const marketTs =
+    useMarketTs && typeof quote.marketTs === 'number' && Number.isFinite(quote.marketTs)
+      ? quote.marketTs
+      : null;
+
+  if (!quote.timestamp && marketTs === null) {
     return { isStale: true, minutesDelay: null, warning: 'Timestamp assente: dato non verificabile' };
   }
 
-  const quoteTime = new Date(quote.timestamp);
+  const quoteTime = marketTs !== null ? new Date(marketTs * 1000) : new Date(quote.timestamp);
   if (Number.isNaN(quoteTime.getTime())) {
     return { isStale: true, minutesDelay: null, warning: 'Timestamp non valido: dato non verificabile' };
   }
@@ -1949,6 +1959,9 @@ export function buildExecutionSetup(
     customLeve?: readonly number[];
     macroEvents?: MacroEvent[];
     macroCalendar?: MacroCalendarState;
+    // I2b: override per-esecuzione del flag STALENESS_USE_MARKET_TS. Assente =
+    // si legge la costante di config (default 'off').
+    stalenessFlag?: 'on' | 'off';
   }
 ): ExecutionSetup {
   const currentTime = options?.currentTime || new Date();
@@ -2121,7 +2134,13 @@ export function buildExecutionSetup(
       ? (quote.orbBreakoutTimeShort ?? null)
       : null;
   const marketTime = getMarketTime(marketType, currentTime);
-  const staleness = checkQuoteStaleness(quote, currentTime);
+  // I2b: G13 non e' piu' cieco. Con il flag 'on' legge quote.marketTs (tempo di
+  // mercato); con 'off' resta esattamente il comportamento storico.
+  const g13UseMarketTs =
+    options?.stalenessFlag === undefined
+      ? STALENESS_USE_MARKET_TS === 'on'
+      : options.stalenessFlag === 'on';
+  const staleness = checkQuoteStaleness(quote, currentTime, { useMarketTs: g13UseMarketTs });
 
   // 8. Evaluation of Gates G1 to G11 in exact sequence
   const gateResults: Record<string, { passed: boolean; label: string; message?: string }> = {};

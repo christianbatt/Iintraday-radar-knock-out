@@ -578,6 +578,9 @@ export interface RawQuoteData {
   rvol20m?: number | null;
   orderFlow?: OrderFlowMetrics | null;
   timestamp: string;
+  // I2a: tempo di MERCATO della quota (unix secondi). Opzionale: i siti di
+  // costruzione nel repo sono >8. Inerte con STALENESS_USE_MARKET_TS = 'off'.
+  marketTs?: number | null;
   source: string;
 }
 
@@ -1302,6 +1305,9 @@ async function fetchQuoteForTicker(
       const result = yJson?.chart?.result?.[0];
       if (result) {
         const meta = result.meta || {};
+        // I2a: tempo di mercato dichiarato dal feed (unix secondi). Nessun lettore:
+        // il campo diventa operativo solo con STALENESS_USE_MARKET_TS = 'on'.
+        quoteData.marketTs = typeof meta.regularMarketTime === 'number' ? meta.regularMarketTime : null;
         const timestamps: number[] = result.timestamp || [];
         const quotes = result.indicators?.quote?.[0];
 
@@ -1620,6 +1626,7 @@ async function fetchQuoteForTicker(
     rsi5m: quoteData.rsi5m ?? intraday5m.rsi5m,
     orderFlow: quoteData.orderFlow ?? intraday5m.orderFlow ?? null,
     timestamp: new Date().toISOString(),
+    marketTs: quoteData.marketTs ?? null,
     source: quoteData.currentPrice ? source : 'Dati di mercato non disponibili',
   };
 
