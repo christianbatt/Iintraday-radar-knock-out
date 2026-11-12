@@ -93,6 +93,19 @@ esiste già. `postmortem` è read-only rispetto al registro.
   emissione (diff 0 bp); il gap di 0.533 R a k=1.0 e' un look-ahead della
   scelta dell'ultima emissione, non una proprieta' dell'entry.
 
+## Passo Q — perimetro per simbodi
+
+- `perimeter`: symbolsOld=5, symbolsNew=9, daysOld=30, daysNew=30.
+  OLD 15160 = 5 x 30 x 101.07; NEW 27288 = 9 x 30 x 101.07.
+  La crescita e' interamente attribuibile ai 4 simbodi aggiunti
+  (BAYN.DE, LDO.MI, SIE.DE, STLAM.MI). Passo O e la lettura precedente
+  avevano attribuito la crescita ai giorni: errore dichiarato.
+- `reason` (per simbodo): i 4 simbodi aggiunti hanno 0 candidati e 0 reason
+  (non misurati: snapshot con 5 simbodi). Le 12128 righe senza reason sono
+  esattamente le loro righe. 'missing_input' come valore: 0 righe.
+- `concentration`: expected=0.7157, observed=0.800, z=0.724. Non anomala.
+  Il fatto strutturale e' il range 33.4 bp su bande da 25 bp.
+
 ## Passo P — reason sull'universo nuovo
 
 - `reason` (perimetro): contato sull'universo nuovo (27288 righe, 9 simboli x
