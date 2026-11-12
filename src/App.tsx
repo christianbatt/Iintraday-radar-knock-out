@@ -82,6 +82,7 @@ import { SystemOptimizerModal } from './components/SystemOptimizerModal';
 import { FilteringAuditBanner } from './components/FilteringAuditBanner';
 import { FilteringAuditModal } from './components/FilteringAuditModal';
 import { ExcludedSetupsAnalyzerModal } from './components/ExcludedSetupsAnalyzerModal';
+import { ShadowResearchModal } from './components/ShadowResearchModal';
 
 function migrateUnderlyings(items: UnderlyingItem[]): UnderlyingItem[] {
   const seen = new Set<string>();
@@ -1817,6 +1818,10 @@ export default function App() {
 
       {/* Main Trading Terminal Body */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6">
+        {/* Passo M: pannello shadow research, raggiungibile e in sola lettura */}
+        <div className="mb-4 flex justify-end">
+          <ShadowResearchModal />
+        </div>
         {/* Error Notification if any */}
         {scanError && (
           <div className="mb-6 p-4 rounded-xl bg-rose-950/40 border border-rose-800 text-rose-300 text-xs">

@@ -64,3 +64,12 @@ Va scritto nella riga: non si ricalcola dopo.
 4. Lo split è temporale; mai casuale.
 5. Massimo 4 parametri liberi in `selector_config.json`.
 6. `SETUP_SELECTOR_LIVE` resta `off`: il registro documenta, non accende.
+
+## Righe VOID (Passo M)
+
+Due righe `AI-0001 result` sono state prodotte dal bug di idempotenza di
+`train` (append non guardato da `hasRow`) fino a Passo M: ogni esecuzione di
+`train` ne aggiungeva una. Sono **VOID**: non contano in `nTrials`, non contano
+in `alphaEffective`, non contano in nessuna statistica. Restano nel file per
+append-only. Il bug è stato corretto in Passo M: `train` non appende se la riga
+esiste già. `postmortem` è read-only rispetto al registro.
