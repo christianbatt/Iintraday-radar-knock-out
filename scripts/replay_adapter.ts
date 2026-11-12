@@ -16,6 +16,7 @@
 
 import { readFileSync } from 'node:fs';
 import { runPipelineFromBars, type Bar5m, type Snapshot } from './headless_pipeline';
+import { reasonLabel } from './emission_guard';
 
 const SNAPSHOT_PATH = 'src/utils/__tests__/fixtures/pipeline_snapshot.json';
 
@@ -37,6 +38,7 @@ type SetupOut = {
   stop: number | null;
   target: number | null;
   gates: string[] | null;
+  reason: string | null;
 };
 
 function num(v: unknown): number | null {
@@ -66,10 +68,18 @@ export function runPipeline(input: {
   const decision = typeof setup.decision === 'string' ? setup.decision : 'NESSUN_TRADE';
   const direction = typeof setup.direction === 'string' ? setup.direction : null;
 
+  // Passo N: causa del blocco, additiva. Non cambia nessun esito.
+  const blocked = typeof setup.blockedGate === 'string' ? setup.blockedGate : null;
+  const reasonNoTrade = typeof setup.reasonNoTrade === 'string' ? setup.reasonNoTrade : null;
+  const reason = decision === 'TRADE'
+    ? null
+    : (reasonLabel(gateResults) ?? (blocked !== null ? `${blocked}` : reasonNoTrade));
+
   return {
     symbol: input.symbol,
     decisionTs: input.decisionTs,
     emitted: decision === 'TRADE',
+    reason,
     direction: direction === 'LONG' || direction === 'SHORT' ? direction : null,
     // entry: il replay usa il livello di ingresso effettivo del setup.
     entry: num(setup.entryLevel) ?? num(setup.triggerLevel),
