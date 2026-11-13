@@ -171,3 +171,21 @@ esiste già. `postmortem` è read-only rispetto al registro.
   `hypothesis` nel registro al momento della scrittura. Il valore 0.0016667
   corrispondeva a 30 ipotesi; il registro ne contiene 33. Valore corretto
   per Passo S: 0.05/33 = 0.0015152.
+
+## Passo T — reasonByGate, liquidity, heterogeneity esatta, alpha
+
+- `reasonByGate`: matrice simbolo x gate G1..G13, più SESSION, REEMISSIONE ed
+  EMITTED. Il gate si legge dal token `G<n>` nel campo `reason`; SESSION =
+  "Nessun titolo presente o analizzato per la sessione."; REEMISSIONE = riga
+  declassata dalla guardia.
+- `liquidity`: per i 5 simboli noti, `true` = liqEur20d dello snapshot a 5,
+  `estimated` = volume medio delle barre non nulle x primo close, `deltaPct` =
+  (estimated - true) / true * 100. Per i 4 aggiunti si riporta solo lo stimato
+  di snapshot_9. Soglia G1: LIQ_MIN_EUR = 3.000.000 EUR.
+- `heterogeneity`: `exactP` = P(al più 3 simboli occupati su 9 con 15 setup
+  sotto uniformità), calcolato con numeri di Stirling; `approxValid=false`
+  perché 9/9 celle hanno atteso 1.667 < 5. Il chi-quadro resta 44.4000, df 8,
+  p asintotico 4.78e-7, ma non è ammissibile.
+- `alpha`: formula dichiarata `alphaEffective = 0.05 / n`, con `n` = numero di
+  ipotesi dopo l'append del blocco. Per il blocco T n=41, alpha=0.0012195.
+  `hypothesesCovered=41`. La formula 0.05/33 usata in S copriva 33 ipotesi.
