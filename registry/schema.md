@@ -158,3 +158,16 @@ esiste già. `postmortem` è read-only rispetto al registro.
 - `reason` (replay): una delle 7 cause `liquidita, struttura, leva, rischio,
   orario, barriera, vari`, dal primo gate fallito in ordine numerico, oppure
   `REEMISSIONE` per le righe declassate dalla guardia.
+
+## Passo S — gateChain, heterogeneity, alpha
+
+- `gateChain`: ogni riga con `reason` porta la lista ordinata dei gate falliti
+  (`gates`), dall'ultimo gate superato al primo gate fallito. Chi-quadro
+  calcolato sui soli simbodi con `reason` (non sugli zeri strutturali).
+- `heterogeneity`: chi-quadro sui setup per simbodo, gdl = simbodi valutati - 1.
+  Dopo l'estensione a 9 simbodi i 4 aggiunti hanno 0 setup, ma restano
+  valutati (reason presente); il chi-quadro resta 44.4000, gdl=8, p=4.78e-7.
+- `alpha`: `alphaEffective = 0.05 / nHypotheses`, con `nHypotheses` = numero di
+  `hypothesis` nel registro al momento della scrittura. Il valore 0.0016667
+  corrispondeva a 30 ipotesi; il registro ne contiene 33. Valore corretto
+  per Passo S: 0.05/33 = 0.0015152.
