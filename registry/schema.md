@@ -189,3 +189,25 @@ esiste già. `postmortem` è read-only rispetto al registro.
 - `alpha`: formula dichiarata `alphaEffective = 0.05 / n`, con `n` = numero di
   ipotesi dopo l'append del blocco. Per il blocco T n=41, alpha=0.0012195.
   `hypothesesCovered=41`. La formula 0.05/33 usata in S copriva 33 ipotesi.
+
+## Passo V — media per barra vs aggregato, giorni civili vs borsa, alpha congelato
+
+- `adrConsumptionFraction`: (high ORB - low ORB) / `adr14`. Se `adr14` e'
+  una media per barra 5m invece di un aggregato daily, la frazione e' gonfiata
+  di circa il rapporto daily/5m. Il passo V misura questa distribuzione con
+  `ai_cycle.ts adrfrac` e la confronta con `TRADING_PARAMS.ADR_MAX`.
+- `nHypothesesAtMeasurement`: numero di righe `kind=hypothesis` al momento
+  della misura. Per V: **46**; alpha = 0.05/46 = **0.0010869565**. Alpha va
+  congelato al momento della misura e non ricalcolato dopo l'append dei
+  risultati.
+- `denominator`: distinzione fra media su 20 **giorni civili** e media su 20
+  **giorni di borsa**. La seconda usa solo sessioni presenti nei timestamp.
+- `bitIdentity`: dopo ogni rigenerazione di snapshot, il sottoinsieme dei 5
+  simboli originali va filtrato e confrontato con l'artefatto pre-rigenerazione
+  (righe, setup, hash). Senza questo confronto la rigenerazione non e'
+  chiudibile.
+- `gateBlocking` vs `gateUnmeasured`: un gate con 0 righe raggiunte (G8, G10,
+  G11 nei 4 aggiunti) e' **non misurato**, non evidenza di pass o fallimento.
+  Solo i gate raggiunti possono essere letti come bloccanti.
+- `verdict.not_evaluable`: usato quando la regola di stop del passo scatta
+  prima della misura prevista; il motivo va scritto nella riga `result`.
