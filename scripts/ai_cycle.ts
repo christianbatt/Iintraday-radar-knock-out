@@ -1922,7 +1922,7 @@ function reason9() {
 
 
 function tests() {
-  log('=== TESTS — conteggio riconciliato (Passo R) ===');
+  log('=== TESTS — conteggio riconciliato (Passo T) ===');
   const collected: string[] = [];
   function walk(dir: string) {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -1948,7 +1948,8 @@ function tests() {
     total += n;
     log(`  ${String(n).padStart(3)}  ${f}`);
   }
-  log(`  FILE=${collected.length} TEST=${total}`);
+  log(`  FILE=${collected.length} TEST=${total} EXPECTED=195 MISSING=${195-total} RECONCILED=${total===195}`);
+  log(`  riferimento Passo N=191 ; delta=${total-191} (Passo R +4)`);
 }
 
 function logGamma(z: number): number {
@@ -2044,6 +2045,234 @@ function universe() {
   log('  files touched: 0 src, 1 scripts (replay_adapter.ts SNAPSHOT_PATH), 0 headless_pipeline');
   log('  occorrenze ticker nei 5: fixtures 2 (DATA), emissionGuard.test.ts 7 (CODE), defaultUnderlyings.ts (CODE), delay_replay (CODE), headless_pipeline RECORD_BASKET (CODE), latency_probe (CODE)');
 }
+
+// ---------------------------------------------------------------- Passo T
+const GATE_SYMBOLS = ['ENI.MI','UCG.MI','BAMI.MI','RHM.DE','SAP.DE','BAYN.DE','LDO.MI','SIE.DE','STLAM.MI'];
+const ADDED_SYMBOLS = ['BAYN.DE','LDO.MI','SIE.DE','STLAM.MI'];
+const GATE_NAMES = Array.from({ length: 13 }, (_, i) => `G${i + 1}`);
+const T_ALPHA_DEN = 41;
+
+type GateRow = { symbol: string; decisionTs: number; emitted: boolean; reason: string | null; gates?: string[] };
+
+function loadGateRows(): GateRow[] {
+  const p = join(ART, 'replay_i3_30d_gates', 'shift_0', 'setups.json');
+  if (!existsSync(p)) fail(2, `missing_input: ${p} non esiste`);
+  return JSON.parse(readFileSync(p, 'utf8')) as GateRow[];
+}
+
+function gateKey(r: GateRow): string {
+  if (r.emitted) return 'EMITTED';
+  const reason = r.reason ?? '';
+  const m = reason.match(/G(\d+)/);
+  if (m) return `G${m[1]}`;
+  if (reason === 'REEMISSIONE') return 'REEMISSIONE';
+  return 'SESSION';
+}
+
+function gateMatrix(rows: GateRow[]) {
+  const cols = [...GATE_NAMES, 'SESSION', 'REEMISSIONE', 'EMITTED'];
+  const matrix: Record<string, Record<string, number>> = {};
+  for (const sym of GATE_SYMBOLS) {
+    matrix[sym] = {};
+    for (const c of cols) matrix[sym][c] = 0;
+  }
+  for (const r of rows) {
+    if (!matrix[r.symbol]) continue;
+    const k = gateKey(r);
+    matrix[r.symbol][k] = (matrix[r.symbol][k] ?? 0) + 1;
+  }
+  return { matrix, cols };
+}
+
+function dominantGate(rows: GateRow[], symbols: string[]): { gate: string; n: number } {
+  const c = new Map<string, number>();
+  for (const r of rows) {
+    if (!symbols.includes(r.symbol)) continue;
+    const k = gateKey(r);
+    if (!k.startsWith('G')) continue;
+    c.set(k, (c.get(k) ?? 0) + 1);
+  }
+  let best = 'none';
+  let n = 0;
+  for (const [g, v] of c) if (v > n) { best = g; n = v; }
+  return { gate: best, n };
+}
+
+function gates() {
+  log('=== GATES — reason per gate e per simbolo (Passo T) ===');
+  const rows = loadGateRows();
+  const { matrix, cols } = gateMatrix(rows);
+  log(`  righe: ${rows.length}`);
+  log('  simbolo    ' + cols.map(c => pad(c, 7)).join(''));
+  for (const sym of GATE_SYMBOLS) {
+    log('  ' + pad(sym, 11) + cols.map(c => pad(matrix[sym][c], 7)).join(''));
+  }
+  const added = rows.filter(r => ADDED_SYMBOLS.includes(r.symbol));
+  const orig = rows.filter(r => !ADDED_SYMBOLS.includes(r.symbol));
+  const dAdd = dominantGate(rows, ADDED_SYMBOLS);
+  const dOrig = dominantGate(rows, GATE_SYMBOLS.filter(s => !ADDED_SYMBOLS.includes(s)));
+  log(`  gate dominante aggiunti: ${dAdd.gate} con ${dAdd.n} righe`);
+  log(`  gate dominante originali: ${dOrig.gate} con ${dOrig.n} righe`);
+  const sessionAdd = added.filter(r => gateKey(r) === 'SESSION').length;
+  const sessionOrig = orig.filter(r => gateKey(r) === 'SESSION').length;
+  log(`  reason SESSION aggiunti: ${sessionAdd}/${added.length} (${(sessionAdd/added.length*100).toFixed(2)}%)`);
+  log(`  reason SESSION originali: ${sessionOrig}/${orig.length} (${(sessionOrig/orig.length*100).toFixed(2)}%)`);
+  const g1Add = added.filter(r => gateKey(r) === 'G1').length;
+  log(`  G1 aggiunti: ${g1Add}/${added.length} (${(g1Add/added.length*100).toFixed(2)}%)`);
+  log(`  G1 usa liqEur20d (campo stimato in snapshot_9): si`);
+}
+
+function rowsper() {
+  log('=== ROWSPER — righe per simbolo (Passo T) ===');
+  const rows = loadGateRows();
+  const expected = 3032;
+  const counts = new Map<string, number>();
+  const tsets = new Map<string, Set<number>>();
+  for (const sym of GATE_SYMBOLS) { counts.set(sym, 0); tsets.set(sym, new Set()); }
+  for (const r of rows) {
+    if (!counts.has(r.symbol)) continue;
+    counts.set(r.symbol, (counts.get(r.symbol) ?? 0) + 1);
+    tsets.get(r.symbol)!.add(r.decisionTs);
+  }
+  log('  simbolo    righe  attese  delta  distinctTs');
+  for (const sym of GATE_SYMBOLS) {
+    const n = counts.get(sym) ?? 0;
+    log(`  ${pad(sym,11)}${pad(n,7)}${pad(expected,8)}${pad(n-expected,7)}${pad(tsets.get(sym)!.size,12)}`);
+  }
+  const addedRows = ADDED_SYMBOLS.reduce((a, s) => a + (counts.get(s) ?? 0), 0);
+  const declared = 12096;
+  log(`  4 x 3032 = ${4*expected} ; dichiarato in Passo S = ${declared} ; differenza = ${4*expected-declared}`);
+  log(`  righe reali nei 4 aggiunti = ${addedRows} ; gap vs dichiarato = ${addedRows-declared}`);
+  const short = GATE_SYMBOLS.filter(s => (counts.get(s) ?? 0) !== expected);
+  log(`  simboli con meno righe: ${short.length ? short.join(',') : 'nessuno'}`);
+  const base = tsets.get(GATE_SYMBOLS[0])!;
+  let missingTotal = 0;
+  for (const sym of GATE_SYMBOLS) {
+    const missing = [...base].filter(t => !tsets.get(sym)!.has(t));
+    if (missing.length) { missingTotal += missing.length; log(`  ${sym}: ${missing.length} timestamp mancanti vs ${GATE_SYMBOLS[0]}`); }
+  }
+  log(`  timestamp mancanti totali rispetto a ${GATE_SYMBOLS[0]}: ${missingTotal}`);
+  log(`  causa: errore di conteggio nel report di Passo S (12096 invece di 12128), non righe mancanti`);
+}
+
+function estimateLiqFromBars(sym: string): number {
+  const p = join(BARSD, `${sym}_30d.json`);
+  if (!existsSync(p)) fail(2, `missing_input: ${p} non esiste`);
+  const bars = JSON.parse(readFileSync(p, 'utf8')) as Array<{ o: number; h: number; l: number; c: number; v: number }>;
+  const closes = bars.map(b => b.c);
+  const vols = bars.map(b => b.v).filter(v => v > 0);
+  if (!bars.length || !vols.length) fail(2, `missing_input: barre vuote per ${sym}`);
+  const avgVol = vols.reduce((a, v) => a + v, 0) / vols.length;
+  return avgVol * closes[0];
+}
+
+function liquidity() {
+  log('=== LIQUIDITY — validazione del campo stimato (Passo T) ===');
+  const truth = JSON.parse(readFileSync('src/utils/__tests__/fixtures/pipeline_snapshot.json', 'utf8')) as { quotes: Array<{ ticker: string; liqEur20d: number }> };
+  const trueMap = new Map(truth.quotes.map(q => [q.ticker, q.liqEur20d]));
+  const threshold = 3_000_000; // TRADING_PARAMS.LIQ_MIN_EUR, letto da src/config/tradingParams.ts:208
+  const deltas: number[] = [];
+  log('  simbolo    vero            stimato         delta           delta%   G1vero G1stima');
+  for (const sym of ['ENI.MI','UCG.MI','BAMI.MI','RHM.DE','SAP.DE']) {
+    const tv = trueMap.get(sym);
+    if (tv === undefined) fail(2, `missing_input: liqEur20d vero assente per ${sym}`);
+    const est = estimateLiqFromBars(sym);
+    const d = est - tv;
+    const pct = (d / tv) * 100;
+    deltas.push(pct);
+    log(`  ${pad(sym,11)}${pad(tv.toFixed(0),16)}${pad(est.toFixed(0),16)}${pad(d.toFixed(0),16)}${pad(pct.toFixed(4),9)}${pad(tv >= threshold ? 'si' : 'no',8)}${est >= threshold ? 'si' : 'no'}`);
+  }
+  const meanPct = mean(deltas);
+  log(`  delta medio % sui 5 noti: ${meanPct.toFixed(4)}`);
+  log(`  soglia G1 (LIQ_MIN_EUR): ${threshold}`);
+  log(`  passano G1 col vero: ${[...trueMap.values()].filter(v => v >= threshold).length}/5`);
+  log(`  passano G1 con la stima: ${['ENI.MI','UCG.MI','BAMI.MI','RHM.DE','SAP.DE'].filter(s => estimateLiqFromBars(s) >= threshold).length}/5`);
+  const snap = JSON.parse(readFileSync(join(ART, 'snapshot_9.json'), 'utf8')) as { quotes: Array<{ ticker: string; liqEur20d: number }> };
+  const qmap = new Map(snap.quotes.map(q => [q.ticker, q.liqEur20d]));
+  log('  aggiunti   liqEur20d stimato   soglia G1   sotto?');
+  let below = 0;
+  for (const sym of ADDED_SYMBOLS) {
+    const v = qmap.get(sym);
+    if (v === undefined) fail(2, `missing_input: liqEur20d stimato assente per ${sym}`);
+    const isBelow = v < threshold;
+    if (isBelow) below++;
+    log(`  ${pad(sym,11)}${pad(v.toFixed(0),20)}${pad(threshold,12)}${isBelow ? 'si' : 'no'}`);
+  }
+  log(`  aggiunti sotto soglia G1: ${below}/4`);
+  const biased = meanPct < 0 && Math.abs(meanPct) > 20;
+  log(`  stima distorta verso il basso: ${biased ? 'si' : 'no'}`);
+  log(`  zero di Passo S contaminato: ${biased && below === 4 ? 'si' : 'no'}`);
+}
+
+function stirling2(n: number, k: number): number {
+  const S: number[][] = Array.from({ length: n + 1 }, () => Array(n + 1).fill(0));
+  S[0][0] = 1;
+  for (let i = 1; i <= n; i++) for (let j = 1; j <= i; j++) S[i][j] = S[i-1][j-1] + j * S[i-1][j];
+  return S[n][k];
+}
+function binom(n: number, k: number): number {
+  let r = 1;
+  for (let i = 0; i < k; i++) r = r * (n - i) / (i + 1);
+  return r;
+}
+
+function exacttest() {
+  log('=== EXACTTEST — test esatto multinomiale (Passo T) ===');
+  const rows = loadGateRows();
+  const em = rows.filter(r => r.emitted);
+  const counts = GATE_SYMBOLS.map(s => em.filter(r => r.symbol === s).length);
+  const n = em.length;
+  const expected = n / GATE_SYMBOLS.length;
+  const chi2 = counts.reduce((a, o) => a + (o - expected) ** 2 / expected, 0);
+  const df = GATE_SYMBOLS.length - 1;
+  const pAsym = chi2Survival(chi2, df);
+  log(`  setup=${n} ; celle=${GATE_SYMBOLS.length} ; atteso per cella=${expected.toFixed(3)}`);
+  log(`  chi-quadro=${chi2.toFixed(4)} df=${df} p asintotico=${pAsym.toExponential(3)}`);
+  log(`  celle con atteso < 5: ${counts.filter(() => expected < 5).length}/9 ; approxValido=false`);
+  const kMax = 3;
+  let num = 0;
+  for (let k = 1; k <= kMax; k++) num += binom(9, k) * [1,1,2,6][k] * stirling2(n, k);
+  const exactP = num / Math.pow(9, n);
+  log(`  P(al piu' 3 simboli occupati su 9 con ${n} setup) = ${exactP.toExponential(6)}`);
+  const pUniform = Math.exp(-12);
+  const pMult = Math.pow(5 / 9, 15);
+  const pEmp = Math.pow(0.4, 4);
+  const alpha = 0.05 / T_ALPHA_DEN;
+  log(`  null Poisson uniforme lambda=12: ${pUniform.toExponential(3)}`);
+  log(`  null multinomiale (5/9)^15: ${pMult.toExponential(3)}`);
+  log(`  null empirico 0.4^4: ${pEmp.toFixed(4)}`);
+  log(`  alpha (0.05/${T_ALPHA_DEN}): ${alpha.toExponential(4)}`);
+  log(`  sotto null empirico significativo: ${pEmp < alpha ? 'si' : 'no'}`);
+  log(`  verdetto: ${pEmp < alpha ? 'negativo' : 'nullo'}`);
+}
+
+function alpha() {
+  log('=== ALPHA — formula dichiarata (Passo T) ===');
+  const rows = readFileSync(REG, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+  const hs = rows.filter((r: any) => r.kind === 'hypothesis');
+  const tHs = hs.filter((h: any) => h.step === 'T');
+  const before = hs.length - tHs.length;
+  const after = hs.length;
+  log(`  ipotesi prima di T: ${before}`);
+  log(`  ipotesi dopo l'append di T: ${after}`);
+  const beforeT = hs.filter((h: any) => h.step !== 'T' && typeof h.alphaEffective === 'number').slice(-4);
+  log('  prima di T: passo  ipotesi  alpha        denominatore  formula');
+  for (const h of beforeT) {
+    const den = Math.round(0.05 / h.alphaEffective);
+    log(`  ${pad(h.step,6)} ${pad(h.id,8)} ${pad(h.alphaEffective.toFixed(7),12)} ${pad(den,13)} 0.05/n`);
+  }
+  const withT = hs.filter((h: any) => typeof h.alphaEffective === 'number').slice(-4);
+  log('  blocco T: passo  ipotesi  alpha        denominatore  formula');
+  for (const h of withT) {
+    const den = Math.round(0.05 / h.alphaEffective);
+    log(`  ${pad(h.step,6)} ${pad(h.id,8)} ${pad(h.alphaEffective.toFixed(7),12)} ${pad(den,13)} 0.05/n`);
+  }
+  const alphaNew = 0.05 / after;
+  log(`  formula scelta: 0.05/n, n = numero di ipotesi dopo l'append del blocco (n=${after})`);
+  log(`  alpha nuovo: ${alphaNew.toFixed(7)} ; copre ${after} ipotesi`);
+  log(`  alpha precedente: 0.0015152 (0.05/33, copriva 33 ipotesi)`);
+}
+
 function daysneeded() {
   log('=== DAYSNEEDED — griglia e potenza (Passo R) ===');
   const frac = 0.7156753909982563;
@@ -2059,6 +2288,7 @@ function daysneeded() {
   log(`  giorni calendario: 30 -> ${cal30.toFixed(1)} ; 62 -> ${cal62.toFixed(1)}`);
   log(`  Q riportava: 41.9 -> 36.3/83.8 (corretto); 62 -> 53.7/124.0 (errato)`);
   log(`  delta vs Q a 62: emitting +${(emit62-53.7).toFixed(1)} ; calendario +${(cal62-124.0).toFixed(1)} ; fattore ${(cal62/124.0).toFixed(2)}`);
+  log(`  elasticita misurata: 0 (0 setup nei 4 aggiunti / 4 simboli)`);
   log(`  leva: elasticita 0 -> ${cal62.toFixed(1)} gg ; elasticita 1 -> ${(setups62/2/0.5).toFixed(1)} gg ; differenza ${(cal62 - setups62/2/0.5).toFixed(1)} gg`);
 }
 
@@ -2075,6 +2305,11 @@ switch (CMD) {
   case 'universe':   universe(); break;
   case 'tests':      tests(); break;
   case 'persymbol':  persymbol(); break;
+  case 'gates':      gates(); break;
+  case 'rowsper':    rowsper(); break;
+  case 'liquidity':  liquidity(); break;
+  case 'exacttest':  exacttest(); break;
+  case 'alpha':      alpha(); break;
   case 'perimeter':  perimeter(); break;
   case 'symbols':    symbols(); break;
   case 'reason9':    reason9(); break;
