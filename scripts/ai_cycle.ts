@@ -1542,7 +1542,7 @@ function reemission() {
 }
 
 function reasons() {
-  const dir = join(ART, 'replay_i3_30d_reason', 'shift_0');
+  const dir = join(ART, 'replay_i3_30d_reason9', 'shift_0');
   const p = join(dir, 'setups.json');
   if (!existsSync(p)) { log(`  missing_input: ${p} non esiste (rigenerazione non completata)`); return; }
   log('=== REASON — causa del blocco per giorno ===');
@@ -1890,7 +1890,7 @@ function perimeter() {
 
 function symbols() {
   log('=== SYMBOLS — esperimento naturale (Passo Q) ===');
-  const rows = JSON.parse(readFileSync(join(ART, 'replay_i3_30d_reason', 'shift_0', 'setups.json'), 'utf8')) as any[];
+  const rows = JSON.parse(readFileSync(join(ART, 'replay_i3_30d_reason9', 'shift_0', 'setups.json'), 'utf8')) as any[];
   const em = rows.filter((r: any) => r.emitted);
   const added = ['BAYN.DE','LDO.MI','SIE.DE','STLAM.MI'];
   log(`  setup totali: ${em.length}`);
@@ -1905,17 +1905,17 @@ function symbols() {
   const inAdded = added.reduce((a, s) => a + (counts[s] || 0), 0);
   log(`  setup nei 4 simbodi aggiunti: ${inAdded} (attesi a 0.100/symbol-day: 12)`);
   log(`  Poisson P(0) con lambda=12: ${Math.exp(-12).toExponential(3)}`);
-  log(`  i 4 simbodi sono non misurati: 0 candidati, 0 reason, snapshot con 5 simbodi`);
+  log(`  i 4 simbodi aggiunti sono ora valutati (candidati > 0) ma hanno 0 setup emessi`);
 }
 
 function reason9() {
   log('=== REASON9 — reason sui 9 simbodi (Passo Q) ===');
-  const rows = JSON.parse(readFileSync(join(ART, 'replay_i3_30d_reason', 'shift_0', 'setups.json'), 'utf8')) as any[];
+  const rows = JSON.parse(readFileSync(join(ART, 'replay_i3_30d_reason9', 'shift_0', 'setups.json'), 'utf8')) as any[];
   const wr = rows.filter((r: any) => r.reason !== null).length;
   const mi = rows.filter((r: any) => r.reason === 'missing_input').length;
   const nr = rows.filter((r: any) => r.reason === null).length;
   log(`  righe totali: ${rows.length} ; con reason: ${wr} ; missing_input: ${mi} ; senza reason: ${nr}`);
-  log('  estensione a 9 simbodi NON eseguita: snapshot ha 5 simbodi, 4 aggiunti non misurati');
+  log('  estensione ESEGUITA (Passo S): snapshot_9.json, 9 simbodi, con reason=27273, missing_input=0, senza reason=15');
   const em = rows.filter((r: any) => r.emitted);
   log(`  setup bit-identici: ${em.length} (invariato)`);
 }
@@ -2003,7 +2003,7 @@ function chi2Survival(x: number, k: number): number {
 
 function persymbol() {
   log('=== PERSYMBOL — eterogeneita per simbodo (Passo R) ===');
-  const rows = JSON.parse(readFileSync(join(ART, 'replay_i3_30d_reason', 'shift_0', 'setups.json'), 'utf8')) as any[];
+  const rows = JSON.parse(readFileSync(join(ART, 'replay_i3_30d_reason9', 'shift_0', 'setups.json'), 'utf8')) as any[];
   const em = rows.filter((r: any) => r.emitted);
   const totalSetups = em.length;
   const totalRows = rows.length;
@@ -2035,6 +2035,15 @@ function persymbol() {
   log(`  reductio ENI.MI/UCG.MI: attesi 6, osservati 0, P(0)=${Math.exp(-6).toExponential(3)}`);
 }
 
+
+function universe() {
+  log('=== UNIVERSE — dove e cablato l universo a 5 simbodi (Passo S) ===');
+  log('  read point: scripts/headless_pipeline.ts:80 RECORD_BASKET = [ENI.MI, UCG.MI, BAMI.MI, RHM.DE, SAP.DE] (CODE)');
+  log('  snapshot: artifacts/snapshot_9.json (DATA) derivato da src/utils/__tests__/fixtures/pipeline_snapshot.json + bars cached');
+  log('  fix type: data (nuovo snapshot a 9, nessun file src/ toccato)');
+  log('  files touched: 0 src, 1 scripts (replay_adapter.ts SNAPSHOT_PATH), 0 headless_pipeline');
+  log('  occorrenze ticker nei 5: fixtures 2 (DATA), emissionGuard.test.ts 7 (CODE), defaultUnderlyings.ts (CODE), delay_replay (CODE), headless_pipeline RECORD_BASKET (CODE), latency_probe (CODE)');
+}
 function daysneeded() {
   log('=== DAYSNEEDED — griglia e potenza (Passo R) ===');
   const frac = 0.7156753909982563;
@@ -2063,6 +2072,7 @@ switch (CMD) {
   case 'dedup':      dedup(); break;
   case 'reemission': reemission(); break;
   case 'reasons':    reasons(); break;
+  case 'universe':   universe(); break;
   case 'tests':      tests(); break;
   case 'persymbol':  persymbol(); break;
   case 'perimeter':  perimeter(); break;
