@@ -22,6 +22,8 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, appendFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
+import { TRADING_PARAMS } from '../src/config/tradingParams';
+import { calculateOrbFromIntradayBars } from '../src/utils/calculator';
 
 const ARGS = new Map<string, string>();
 for (const a of process.argv.slice(2)) {
@@ -2050,14 +2052,22 @@ function universe() {
 const GATE_SYMBOLS = ['ENI.MI','UCG.MI','BAMI.MI','RHM.DE','SAP.DE','BAYN.DE','LDO.MI','SIE.DE','STLAM.MI'];
 const ADDED_SYMBOLS = ['BAYN.DE','LDO.MI','SIE.DE','STLAM.MI'];
 const GATE_NAMES = Array.from({ length: 13 }, (_, i) => `G${i + 1}`);
-const T_ALPHA_DEN = 41;
 
 type GateRow = { symbol: string; decisionTs: number; emitted: boolean; reason: string | null; gates?: string[] };
 
+function gateReplayDir(): string {
+  return ARGS.get('replay') ?? join(ART, 'replay_i3_30d_gates');
+}
+
 function loadGateRows(): GateRow[] {
-  const p = join(ART, 'replay_i3_30d_gates', 'shift_0', 'setups.json');
+  const p = join(gateReplayDir(), 'shift_0', 'setups.json');
   if (!existsSync(p)) fail(2, `missing_input: ${p} non esiste`);
   return JSON.parse(readFileSync(p, 'utf8')) as GateRow[];
+}
+
+function hypothesesCount(): number {
+  const rows = readFileSync(REG, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+  return rows.filter((r: any) => r.kind === 'hypothesis').length;
 }
 
 function gateKey(r: GateRow): string {
@@ -2099,7 +2109,7 @@ function dominantGate(rows: GateRow[], symbols: string[]): { gate: string; n: nu
 }
 
 function gates() {
-  log('=== GATES — reason per gate e per simbolo (Passo T) ===');
+  log('=== GATES — reason per gate e per simbolo (Passo U) ===');
   const rows = loadGateRows();
   const { matrix, cols } = gateMatrix(rows);
   log(`  righe: ${rows.length}`);
@@ -2119,7 +2129,7 @@ function gates() {
   log(`  reason SESSION originali: ${sessionOrig}/${orig.length} (${(sessionOrig/orig.length*100).toFixed(2)}%)`);
   const g1Add = added.filter(r => gateKey(r) === 'G1').length;
   log(`  G1 aggiunti: ${g1Add}/${added.length} (${(g1Add/added.length*100).toFixed(2)}%)`);
-  log(`  G1 usa liqEur20d (campo stimato in snapshot_9): si`);
+  log(`  G1 usa liqEur20d (daily in snapshot_9, derivato dalle barre): si`);
 }
 
 function rowsper() {
@@ -2155,53 +2165,247 @@ function rowsper() {
   log(`  causa: errore di conteggio nel report di Passo S (12096 invece di 12128), non righe mancanti`);
 }
 
-function estimateLiqFromBars(sym: string): number {
+type Bar5 = { t: number; o: number; h: number; l: number; c: number; v: number };
+
+function loadBars(sym: string): Bar5[] {
   const p = join(BARSD, `${sym}_30d.json`);
   if (!existsSync(p)) fail(2, `missing_input: ${p} non esiste`);
-  const bars = JSON.parse(readFileSync(p, 'utf8')) as Array<{ o: number; h: number; l: number; c: number; v: number }>;
-  const closes = bars.map(b => b.c);
-  const vols = bars.map(b => b.v).filter(v => v > 0);
-  if (!bars.length || !vols.length) fail(2, `missing_input: barre vuote per ${sym}`);
-  const avgVol = vols.reduce((a, v) => a + v, 0) / vols.length;
-  return avgVol * closes[0];
+  const bars = JSON.parse(readFileSync(p, 'utf8')) as Bar5[];
+  if (!bars.length) fail(2, `missing_input: barre vuote per ${sym}`);
+  return bars;
+}
+
+function dailySeries(sym: string): Array<{ day: string; volume: number; close: number; high: number; low: number; liq: number; bars: number }> {
+  const days = new Map<string, Bar5[]>();
+  for (const b of loadBars(sym)) {
+    const d = sessionDate(b.t * 1000);
+    if (!days.has(d)) days.set(d, []);
+    days.get(d)!.push(b);
+  }
+  const out = [...days.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([day, bars]) => {
+    const sorted = [...bars].sort((a, b) => a.t - b.t);
+    const volume = sorted.reduce((a, b) => a + b.v, 0);
+    const close = sorted[sorted.length - 1].c;
+    const high = Math.max(...sorted.map(b => b.h));
+    const low = Math.min(...sorted.map(b => b.l));
+    return { day, volume, close, high, low, liq: volume * close, bars: sorted.length };
+  });
+  return out;
+}
+
+function dailyLiq(sym: string, nDays = 20): { liq: number; avgVol: number; days: number } {
+  const s = dailySeries(sym);
+  if (s.length < nDays) fail(2, `missing_input: ${sym} ha ${s.length} giorni, servono ${nDays}`);
+  const last = s.slice(-nDays);
+  return {
+    liq: mean(last.map(d => d.liq)),
+    avgVol: mean(last.map(d => d.volume)),
+    days: last.length,
+  };
+}
+function dailyAdr(sym: string, nDays = 20): { adr: number; days: number } {
+  const s = dailySeries(sym);
+  if (s.length < nDays) fail(2, `missing_input: ${sym} ha ${s.length} giorni, servono ${nDays}`);
+  const last = s.slice(-nDays);
+  return { adr: mean(last.map(d => d.high - d.low)), days: last.length };
+}
+
+function fiveMinAdr(sym: string): number {
+  return mean(loadBars(sym).map(b => b.h - b.l));
+}
+
+function orbRange(sym: string): Map<string, { high: number | null; low: number | null }> {
+  const days = new Map<string, Bar5[]>();
+  for (const b of loadBars(sym)) {
+    const d = sessionDate(b.t * 1000);
+    if (!days.has(d)) days.set(d, []);
+    days.get(d)!.push(b);
+  }
+  const out = new Map<string, { high: number | null; low: number | null }>();
+  for (const [day, bars] of days) {
+    const sorted = [...bars].sort((a, b) => a.t - b.t);
+    const candles = sorted.map(b => ({
+      timestamp: new Date(b.t * 1000), open: b.o, high: b.h, low: b.l, close: b.c,
+    }));
+    const orb = calculateOrbFromIntradayBars(
+      candles, 'EU', new Date(sorted[0].t * 1000), undefined, new Date(sorted[sorted.length - 1].t * 1000)
+    );
+    out.set(day, { high: orb.orbHigh, low: orb.orbLow });
+  }
+  return out;
+}
+
+function gateIndexOf(reason: string | null): number | null {
+  if (!reason) return null;
+  const m = reason.match(/G(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+
+function reachesG7(r: GateRow): boolean {
+  if (r.emitted) return true;
+  const i = gateIndexOf(r.reason);
+  return i !== null && i >= 7;
 }
 
 function liquidity() {
-  log('=== LIQUIDITY — validazione del campo stimato (Passo T) ===');
+  log('=== LIQUIDITY — validazione del campo daily (Passo U) ===');
   const truth = JSON.parse(readFileSync('src/utils/__tests__/fixtures/pipeline_snapshot.json', 'utf8')) as { quotes: Array<{ ticker: string; liqEur20d: number }> };
   const trueMap = new Map(truth.quotes.map(q => [q.ticker, q.liqEur20d]));
-  const threshold = 3_000_000; // TRADING_PARAMS.LIQ_MIN_EUR, letto da src/config/tradingParams.ts:208
+  const threshold = TRADING_PARAMS.LIQ_MIN_EUR;
   const deltas: number[] = [];
-  log('  simbolo    vero            stimato         delta           delta%   G1vero G1stima');
+  log('  simbolo    vero            daily           delta           delta%   G1vero G1daily');
   for (const sym of ['ENI.MI','UCG.MI','BAMI.MI','RHM.DE','SAP.DE']) {
     const tv = trueMap.get(sym);
     if (tv === undefined) fail(2, `missing_input: liqEur20d vero assente per ${sym}`);
-    const est = estimateLiqFromBars(sym);
-    const d = est - tv;
+    const dly = dailyLiq(sym);
+    const d = dly.liq - tv;
     const pct = (d / tv) * 100;
     deltas.push(pct);
-    log(`  ${pad(sym,11)}${pad(tv.toFixed(0),16)}${pad(est.toFixed(0),16)}${pad(d.toFixed(0),16)}${pad(pct.toFixed(4),9)}${pad(tv >= threshold ? 'si' : 'no',8)}${est >= threshold ? 'si' : 'no'}`);
+    log(`  ${pad(sym,11)}${pad(tv.toFixed(0),16)}${pad(dly.liq.toFixed(0),16)}${pad(d.toFixed(0),16)}${pad(pct.toFixed(4),9)}${pad(tv >= threshold ? 'si' : 'no',8)}${dly.liq >= threshold ? 'si' : 'no'}`);
   }
   const meanPct = mean(deltas);
   log(`  delta medio % sui 5 noti: ${meanPct.toFixed(4)}`);
-  log(`  soglia G1 (LIQ_MIN_EUR): ${threshold}`);
+  log(`  soglia G1 (TRADING_PARAMS.LIQ_MIN_EUR): ${threshold}`);
   log(`  passano G1 col vero: ${[...trueMap.values()].filter(v => v >= threshold).length}/5`);
-  log(`  passano G1 con la stima: ${['ENI.MI','UCG.MI','BAMI.MI','RHM.DE','SAP.DE'].filter(s => estimateLiqFromBars(s) >= threshold).length}/5`);
+  log(`  passano G1 col daily: ${['ENI.MI','UCG.MI','BAMI.MI','RHM.DE','SAP.DE'].filter(s => dailyLiq(s).liq >= threshold).length}/5`);
   const snap = JSON.parse(readFileSync(join(ART, 'snapshot_9.json'), 'utf8')) as { quotes: Array<{ ticker: string; liqEur20d: number }> };
   const qmap = new Map(snap.quotes.map(q => [q.ticker, q.liqEur20d]));
-  log('  aggiunti   liqEur20d stimato   soglia G1   sotto?');
+  log('  aggiunti   liqEur20d daily   soglia G1   sotto?');
   let below = 0;
   for (const sym of ADDED_SYMBOLS) {
     const v = qmap.get(sym);
-    if (v === undefined) fail(2, `missing_input: liqEur20d stimato assente per ${sym}`);
+    if (v === undefined) fail(2, `missing_input: liqEur20d daily assente per ${sym}`);
     const isBelow = v < threshold;
     if (isBelow) below++;
     log(`  ${pad(sym,11)}${pad(v.toFixed(0),20)}${pad(threshold,12)}${isBelow ? 'si' : 'no'}`);
   }
   log(`  aggiunti sotto soglia G1: ${below}/4`);
   const biased = meanPct < 0 && Math.abs(meanPct) > 20;
-  log(`  stima distorta verso il basso: ${biased ? 'si' : 'no'}`);
-  log(`  zero di Passo S contaminato: ${biased && below === 4 ? 'si' : 'no'}`);
+  log(`  stima daily distorta verso il basso: ${biased ? 'si' : 'no'}`);
+  log(`  zero di Passo S contaminato da G1: ${biased && below === 4 ? 'si' : 'no'}`);
+}
+
+function snapshot9() {
+  log('=== SNAPSHOT9 — liqEur20d daily (Passo U) ===');
+  const p = join(ART, 'snapshot_9.json');
+  if (!existsSync(p)) fail(2, `missing_input: ${p} non esiste`);
+  const snap = JSON.parse(readFileSync(p, 'utf8')) as { quotes: Array<any> };
+  for (const sym of ADDED_SYMBOLS) {
+    const q = snap.quotes.find(x => x.ticker === sym);
+    if (!q) fail(2, `missing_input: quote ${sym} assente in snapshot_9`);
+    const dly = dailyLiq(sym);
+    const before = q.liqEur20d;
+    q.liqEur20d = dly.liq;
+    q.avgVolume20d = dly.avgVol;
+    log(`  ${pad(sym,11)} liq ${String(before).padStart(12)} -> ${dly.liq.toFixed(0).padStart(12)} (${dly.days} giorni daily)`);
+  }
+  writeFileSync(p, JSON.stringify(snap, null, 2) + '\n');
+  log(`  scritto ${p}`);
+}
+
+function snapshot9daily2() {
+  log('=== SNAPSHOT9DAILY2 — correzione a due fattori (Passo V) ===');
+  const inPath = join(ART, 'snapshot_9.json');
+  const outPath = join(ART, 'snapshot_9_daily2.json');
+  if (!existsSync(inPath)) fail(2, `missing_input: ${inPath} non esiste`);
+  const snap = JSON.parse(readFileSync(inPath, 'utf8')) as { quotes: Array<any> };
+  for (const sym of ADDED_SYMBOLS) {
+    const q = snap.quotes.find(x => x.ticker === sym);
+    if (!q) fail(2, `missing_input: quote ${sym} assente in snapshot_9`);
+    const oldAdr = q.adr14;
+    const dAdr = dailyAdr(sym);
+    const oldLiq = q.liqEur20d;
+    const dLiq = dailyLiq(sym);
+    q.adr14 = dAdr.adr;
+    q.liqEur20d = dLiq.liq;
+    q.avgVolume20d = dLiq.avgVol;
+    log(`  ${pad(sym,11)} adr ${String(oldAdr).padStart(10)} -> ${dAdr.adr.toFixed(6).padStart(12)} (${dAdr.days} gg borsa) delta ${(((dAdr.adr-oldAdr)/oldAdr)*100).toFixed(2)}%`);
+    log(`  ${pad(sym,11)} liq ${String(oldLiq).padStart(12)} -> ${dLiq.liq.toFixed(0).padStart(12)} delta ${(((dLiq.liq-oldLiq)/oldLiq)*100).toFixed(2)}%`);
+  }
+  writeFileSync(outPath, JSON.stringify(snap, null, 2) + '\n');
+  log(`  scritto ${outPath}`);
+}
+
+function adrfrac() {
+  log('=== ADRFRAC — adrConsumptionFraction (Passo V) ===');
+  const rows = loadGateRows();
+  const snap = JSON.parse(readFileSync(join(ART, 'snapshot_9.json'), 'utf8')) as { quotes: Array<{ ticker: string; adr14: number }> };
+  const adrMap = new Map(snap.quotes.map(q => [q.ticker, q.adr14]));
+  const orbCache = new Map<string, Map<string, { high: number | null; low: number | null }>>();
+  const fractions = new Map<string, number[]>();
+  for (const sym of GATE_SYMBOLS) fractions.set(sym, []);
+  for (const r of rows) {
+    if (!reachesG7(r)) continue;
+    const adr = adrMap.get(r.symbol);
+    if (adr === undefined || !(adr > 0)) continue;
+    if (!orbCache.has(r.symbol)) orbCache.set(r.symbol, orbRange(r.symbol));
+    const day = sessionDate(r.decisionTs * 1000);
+    const orb = orbCache.get(r.symbol)!.get(day);
+    if (!orb || orb.high === null || orb.low === null) continue;
+    fractions.get(r.symbol)!.push((orb.high - orb.low) / adr);
+  }
+  const threshold = TRADING_PARAMS.ADR_MAX;
+  log(`  soglia G7 (TRADING_PARAMS.ADR_MAX): ${threshold}`);
+  log('  simbolo    n     p5       p25      p50      p75      p95      min      max');
+  for (const sym of GATE_SYMBOLS) {
+    const a = fractions.get(sym)!.sort((x, y) => x - y);
+    if (!a.length) { log(`  ${pad(sym,11)}0     n/a`); continue; }
+    log(`  ${pad(sym,11)}${pad(a.length,6)}${pad(quantile(a,0.05).toFixed(4),9)}${pad(quantile(a,0.25).toFixed(4),9)}${pad(quantile(a,0.5).toFixed(4),9)}${pad(quantile(a,0.75).toFixed(4),9)}${pad(quantile(a,0.95).toFixed(4),9)}${pad(a[0].toFixed(4),9)}${a[a.length-1].toFixed(4)}`);
+  }
+  const med = (syms: string[]) => {
+    const all = syms.flatMap(s => fractions.get(s)!);
+    return quantile([...all].sort((a, b) => a - b), 0.5);
+  };
+  const mAdd = med(ADDED_SYMBOLS);
+  const mOrig = med(GATE_SYMBOLS.filter(s => !ADDED_SYMBOLS.includes(s)));
+  log(`  mediana aggiunti: ${mAdd.toFixed(4)} ; mediana originali: ${mOrig.toFixed(4)} ; rapporto: ${(mAdd/mOrig).toFixed(2)}`);
+  const addAll = ADDED_SYMBOLS.flatMap(s => fractions.get(s)!);
+  const above = addAll.filter(x => x > threshold).length;
+  const ratios = addAll.filter(x => x > threshold).map(x => x / threshold).sort((a,b)=>a-b);
+  log(`  aggiunte sopra soglia: ${above}/${addAll.length} ; mediana frazione/soglia: ${quantile(ratios,0.5).toFixed(2)}`);
+  log(`  AI-0049: ${mAdd > 20 && (mAdd/mOrig) > 20 ? 'confermata' : 'falsificata'}`);
+}
+
+function adrdelta() {
+  log('=== ADRDELTA — diagnosi di adr14 (Passo V) ===');
+  const truth = JSON.parse(readFileSync('src/utils/__tests__/fixtures/pipeline_snapshot.json', 'utf8')) as { quotes: Array<{ ticker: string; adr14: number }> };
+  const trueAdr = new Map(truth.quotes.map(q => [q.ticker, q.adr14]));
+  const snap = JSON.parse(readFileSync(join(ART, 'snapshot_9.json'), 'utf8')) as { quotes: Array<{ ticker: string; adr14: number; liqEur20d: number }> };
+  const snapAdr = new Map(snap.quotes.map(q => [q.ticker, q.adr14]));
+  const oldSnap = JSON.parse(readFileSync(join(ART, 'snapshot_9_5m_liq.json'), 'utf8')) as { quotes: Array<{ ticker: string; liqEur20d: number }> };
+  const oldLiq = new Map(oldSnap.quotes.map(q => [q.ticker, q.liqEur20d]));
+  const liqDaily = new Map(snap.quotes.map(q => [q.ticker, q.liqEur20d]));
+  log('  simbolo    adr vero      adr 5m       adr daily    daily/5m   vero/daily');
+  for (const sym of ['ENI.MI','UCG.MI','BAMI.MI','RHM.DE','SAP.DE']) {
+    const five = fiveMinAdr(sym);
+    const daily = dailyAdr(sym).adr;
+    const tv = trueAdr.get(sym);
+    log(`  ${pad(sym,11)}${pad(tv === undefined ? 'n/a' : tv.toFixed(6),13)}${pad(five.toFixed(6),13)}${pad(daily.toFixed(6),13)}${pad((daily/five).toFixed(2),11)}${tv === undefined ? 'n/a' : (tv/daily).toFixed(4)}`);
+  }
+  log('  aggiunti   adr 5m       adr daily    daily/5m   liq daily/5m   diff%');
+  for (const sym of ADDED_SYMBOLS) {
+    const five = snapAdr.get(sym);
+    const daily = dailyAdr(sym).adr;
+    if (five === undefined) fail(2, `missing_input: adr14 5m assente per ${sym}`);
+    const oldL = oldLiq.get(sym);
+    const newL = liqDaily.get(sym);
+    if (oldL === undefined || newL === undefined) fail(2, `missing_input: liq assente per ${sym}`);
+    const adrRatio = daily / five;
+    const liqRatio = newL / oldL;
+    log(`  ${pad(sym,11)}${pad(five.toFixed(6),13)}${pad(daily.toFixed(6),13)}${pad(adrRatio.toFixed(2),11)}${pad(liqRatio.toFixed(2),15)}${((adrRatio/liqRatio-1)*100).toFixed(2)}`);
+  }
+  const s = dailySeries('BAYN.DE');
+  const barsPer = mean(s.map(d => d.bars));
+  log(`  barre 5m per sessione (media 30 gg): ${barsPer.toFixed(1)}`);
+  const lastTs = Math.max(...loadBars('BAYN.DE').map(b => b.t));
+  const cutoff = lastTs - 19 * 86400;
+  const tradingIn20 = dailySeries('BAYN.DE').filter(d => {
+    const ts = Math.floor(new Date(`${d.day}T12:00:00+01:00`).getTime() / 1000);
+    return ts >= cutoff;
+  }).length;
+  log(`  giorni di borsa in 20 giorni civili: ${tradingIn20}`);
+  log('  AI-0047: verifica daily/5m in [95,120] per almeno 3/4 e divergenza adr/liq <=20%');
+  log('  AI-0048: verifica 20*daily/vero in [12,15] per tutti i 5');
 }
 
 function stirling2(n: number, k: number): number {
@@ -2217,7 +2421,7 @@ function binom(n: number, k: number): number {
 }
 
 function exacttest() {
-  log('=== EXACTTEST — test esatto multinomiale (Passo T) ===');
+  log('=== EXACTTEST — test esatto multinomiale (Passo U) ===');
   const rows = loadGateRows();
   const em = rows.filter(r => r.emitted);
   const counts = GATE_SYMBOLS.map(s => em.filter(r => r.symbol === s).length);
@@ -2237,11 +2441,12 @@ function exacttest() {
   const pUniform = Math.exp(-12);
   const pMult = Math.pow(5 / 9, 15);
   const pEmp = Math.pow(0.4, 4);
-  const alpha = 0.05 / T_ALPHA_DEN;
+  const nHyp = hypothesesCount();
+  const alpha = 0.05 / nHyp;
   log(`  null Poisson uniforme lambda=12: ${pUniform.toExponential(3)}`);
   log(`  null multinomiale (5/9)^15: ${pMult.toExponential(3)}`);
   log(`  null empirico 0.4^4: ${pEmp.toFixed(4)}`);
-  log(`  alpha (0.05/${T_ALPHA_DEN}): ${alpha.toExponential(4)}`);
+  log(`  alpha (0.05/${nHyp}, dal registro): ${alpha.toExponential(4)}`);
   log(`  sotto null empirico significativo: ${pEmp < alpha ? 'si' : 'no'}`);
   log(`  verdetto: ${pEmp < alpha ? 'negativo' : 'nullo'}`);
 }
@@ -2310,6 +2515,10 @@ switch (CMD) {
   case 'liquidity':  liquidity(); break;
   case 'exacttest':  exacttest(); break;
   case 'alpha':      alpha(); break;
+  case 'snapshot9':  snapshot9(); break;
+  case 'snapshot9daily2': snapshot9daily2(); break;
+  case 'adrfrac':    adrfrac(); break;
+  case 'adrdelta':   adrdelta(); break;
   case 'perimeter':  perimeter(); break;
   case 'symbols':    symbols(); break;
   case 'reason9':    reason9(); break;
