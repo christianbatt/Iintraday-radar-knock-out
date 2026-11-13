@@ -66,3 +66,73 @@ da 4771 bloccate a 0). La contaminazione da `adr14` 5m **non e' stata rimossa
 in Passo V**: la correzione e' stata fermata dalla regola di stop. Non e'
 corretto dire che la contaminazione non sia mai esistita: la stima 5m l'aveva
 prodotta, come stabilito in Passo T.
+
+## Ripresa dopo la regola di stop (override esplicito)
+
+La regola di stop e' stata superata su richiesta esplicita. Comandi eseguiti:
+
+`bun scripts/ai_cycle.ts adrdelta`,
+`bun scripts/ai_cycle.ts snapshot9daily2`,
+`REPLAY_SNAPSHOT=artifacts/snapshot_9_daily2.json bun scripts/delay_replay.ts ... --out=artifacts/replay_i3_30d_gates_daily2`,
+`bun scripts/ai_cycle.ts gates --replay=artifacts/replay_i3_30d_gates_daily2`,
+`bun scripts/ai_cycle.ts adrfrac --replay=artifacts/replay_i3_30d_gates_daily2 --snapshot=artifacts/snapshot_9_daily2.json`,
+`bun scripts/ai_cycle.ts exacttest --replay=artifacts/replay_i3_30d_gates_daily2`,
+`bun scripts/ai_cycle.ts bitid`.
+
+### Diagnosi adr14
+
+`adrdelta` sui 5 noti: `daily/5m` = 12.86, 12.01, 14.62, 13.93, 12.35;
+`vero/daily` = 0.8776-1.1025; `20*daily/vero` = 18.14-22.79. La divergenza
+`adr14`/`liqEur20d` sui 4 aggiunti e' 86.98-88.56%. AI-0047 e AI-0048:
+**falsificate**. `adr14` non scala come `liqEur20d`: e' una media per barra,
+non un aggregato giornaliero con lo stesso fattore 108.
+
+### Correzione congiunta
+
+`snapshot9daily2` porta `adr14` a 20 giorni di borsa: BAYN 0.102176 -> 1.378499,
+LDO 0.118986 -> 1.562999, SIE 0.510327 -> 6.996247, STLAM 0.013998 -> 0.178750
+(delta +1177%..+1271%). `liqEur20d` era gia' daily in Passo U: delta **0.00%**,
+non +46.7% come atteso dal prompt. Il replay `daily2` produce **16 setup**
+(contro 15 nel ramo a 5) e **4 simboli occupati** (BAMI 7, RHM 1, SAP 7, SIE 1).
+
+### G7 dopo la correzione
+
+| simbolo | raggiunte | bloccate G7 | pass | pass% | setup |
+|---|---:|---:|---:|---:|---:|
+| ENI.MI | 750 | 20 | 730 | 97.33 | 0 |
+| UCG.MI | 668 | 101 | 567 | 84.88 | 0 |
+| BAMI.MI | 788 | 29 | 759 | 96.32 | 7 |
+| RHM.DE | 458 | 117 | 341 | 74.45 | 1 |
+| SAP.DE | 867 | 113 | 754 | 86.97 | 7 |
+| BAYN.DE | 991 | 242 | 749 | 75.58 | 0 |
+| LDO.MI | 616 | 54 | 562 | 91.23 | 0 |
+| SIE.DE | 862 | 66 | 796 | 92.34 | 1 |
+| STLAM.MI | 668 | 0 | 668 | 100.00 | 0 |
+
+- G7 aggiunti: **2775/3137 = 88.46%**; sola correzione di calendario:
+  **0/3137 = 0.00%**. AI-0050: **confermata**.
+- `adrConsumptionFraction` aggiunti: mediana **0.3636**, originali **0.3339**,
+  rapporto **1.09**; sopra soglia **362/3137**; mediana frazione/soglia
+  **1.13**. AI-0049: **falsificata** (anche dopo la correzione).
+- Gate dominante aggiunti: **G8** con 2119 righe; G10 171, G11 484.
+- Partizione: ogni simbolo chiude a 3032 righe (early + reached + session +
+  reemissione).
+
+### Zero e bit-identita'
+
+- Setup nei 4 aggiunti: **1** (SIE.DE), non piu' 0. Lo zero e' **rotto**,
+  quindi **non strutturale**; resta un campione piccolo (1 setup su 4 simboli),
+  non un esito negativo.
+- Ramo a 5: **15160 righe**, **15 setup**, hash
+  `7fd90b4dfcedeeb761ba681d0d9ff7570f83a2756017a6ff1c07969c23495a0b`
+  identico al replay pre-correzione. AI-0051: **confermata**.
+
+### Test esatto
+
+16 setup, 4 simboli occupati, celle attese 1.778; chi-quadro 40.2500 df 8
+(p asintotico 2.878e-6) ma **9/9 celle con atteso <5**, quindi non valido.
+P(al piu' 3 occupati) = **1.943729e-6**; null Poisson lambda=12 =
+**6.144e-6**; null multinomiale (5/9)^16 = **8.235e-5** (il valore
+precedente 1.482e-4 era hardcoded a 15 setup); null empirico 0.4^4 =
+**0.0256**. Alpha 0.0010870. Verdetto del comando: **nullo** (null empirico
+sopra alpha).

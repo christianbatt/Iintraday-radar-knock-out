@@ -22,6 +22,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, appendFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { TRADING_PARAMS } from '../src/config/tradingParams';
 import { calculateOrbFromIntradayBars } from '../src/utils/calculator';
 
@@ -2109,7 +2110,7 @@ function dominantGate(rows: GateRow[], symbols: string[]): { gate: string; n: nu
 }
 
 function gates() {
-  log('=== GATES — reason per gate e per simbolo (Passo U) ===');
+  log('=== GATES — reason per gate e per simbolo (Passo V) ===');
   const rows = loadGateRows();
   const { matrix, cols } = gateMatrix(rows);
   log(`  righe: ${rows.length}`);
@@ -2130,6 +2131,23 @@ function gates() {
   const g1Add = added.filter(r => gateKey(r) === 'G1').length;
   log(`  G1 aggiunti: ${g1Add}/${added.length} (${(g1Add/added.length*100).toFixed(2)}%)`);
   log(`  G1 usa liqEur20d (daily in snapshot_9, derivato dalle barre): si`);
+  log('  G7 per simbolo: raggiunte  bloccate  pass  pass%  setup');
+  for (const sym of GATE_SYMBOLS) {
+    const rs = rows.filter(r => r.symbol === sym);
+    const reached = rs.filter(reachesG7);
+    const blocked = reached.filter(r => !r.emitted && gateIndexOf(r.reason) === 7);
+    const setups = rs.filter(r => r.emitted).length;
+    log(`  ${pad(sym,11)}${pad(reached.length,10)}${pad(blocked.length,10)}${pad(reached.length-blocked.length,6)}${pad(reached.length ? ((reached.length-blocked.length)/reached.length*100).toFixed(2) : 'n/a',7)}${pad(setups,6)}`);
+  }
+  log('  partizione: simbolo  totale  earlyG1G6  reachedG7  session  reemissione  (early+reached+session+reem)');
+  for (const sym of GATE_SYMBOLS) {
+    const rs = rows.filter(r => r.symbol === sym);
+    const early = rs.filter(r => !r.emitted && (gateIndexOf(r.reason) ?? 0) >= 1 && (gateIndexOf(r.reason) ?? 0) <= 6).length;
+    const reached = rs.filter(reachesG7).length;
+    const session = rs.filter(r => gateKey(r) === 'SESSION').length;
+    const reem = rs.filter(r => gateKey(r) === 'REEMISSIONE').length;
+    log(`  ${pad(sym,11)}${pad(rs.length,8)}${pad(early,11)}${pad(reached,11)}${pad(session,9)}${pad(reem,13)}  ${early+reached+session+reem}`);
+  }
 }
 
 function rowsper() {
@@ -2329,7 +2347,8 @@ function snapshot9daily2() {
 function adrfrac() {
   log('=== ADRFRAC — adrConsumptionFraction (Passo V) ===');
   const rows = loadGateRows();
-  const snap = JSON.parse(readFileSync(join(ART, 'snapshot_9.json'), 'utf8')) as { quotes: Array<{ ticker: string; adr14: number }> };
+  const snapPath = ARGS.get('snapshot') ?? join(ART, 'snapshot_9.json');
+  const snap = JSON.parse(readFileSync(snapPath, 'utf8')) as { quotes: Array<{ ticker: string; adr14: number }> };
   const adrMap = new Map(snap.quotes.map(q => [q.ticker, q.adr14]));
   const orbCache = new Map<string, Map<string, { high: number | null; low: number | null }>>();
   const fractions = new Map<string, number[]>();
@@ -2421,7 +2440,7 @@ function binom(n: number, k: number): number {
 }
 
 function exacttest() {
-  log('=== EXACTTEST — test esatto multinomiale (Passo U) ===');
+  log('=== EXACTTEST — test esatto multinomiale (Passo V) ===');
   const rows = loadGateRows();
   const em = rows.filter(r => r.emitted);
   const counts = GATE_SYMBOLS.map(s => em.filter(r => r.symbol === s).length);
@@ -2439,16 +2458,41 @@ function exacttest() {
   const exactP = num / Math.pow(9, n);
   log(`  P(al piu' 3 simboli occupati su 9 con ${n} setup) = ${exactP.toExponential(6)}`);
   const pUniform = Math.exp(-12);
-  const pMult = Math.pow(5 / 9, 15);
+  const pMult = Math.pow(5 / 9, n);
   const pEmp = Math.pow(0.4, 4);
   const nHyp = hypothesesCount();
   const alpha = 0.05 / nHyp;
   log(`  null Poisson uniforme lambda=12: ${pUniform.toExponential(3)}`);
-  log(`  null multinomiale (5/9)^15: ${pMult.toExponential(3)}`);
+  log(`  null multinomiale (5/9)^${n}: ${pMult.toExponential(3)}`);
   log(`  null empirico 0.4^4: ${pEmp.toFixed(4)}`);
   log(`  alpha (0.05/${nHyp}, dal registro): ${alpha.toExponential(4)}`);
   log(`  sotto null empirico significativo: ${pEmp < alpha ? 'si' : 'no'}`);
   log(`  verdetto: ${pEmp < alpha ? 'negativo' : 'nullo'}`);
+}
+
+function bitid() {
+  log('=== BITID — bit-identita del ramo a 5 (Passo V) ===');
+  const newRows = loadGateRows().filter(r => !ADDED_SYMBOLS.includes(r.symbol));
+  const baselinePath = ARGS.get('baseline') ?? join(ART, 'replay_i3_30d_gates', 'shift_0', 'setups.json');
+  if (!existsSync(baselinePath)) fail(2, `missing_input: ${baselinePath} non esiste`);
+  const oldRows = (JSON.parse(readFileSync(baselinePath, 'utf8')) as GateRow[]).filter(r => !ADDED_SYMBOLS.includes(r.symbol));
+  const hash = (rows: GateRow[]) => createHash('sha256').update(JSON.stringify(rows)).digest('hex');
+  const oldSetup = oldRows.filter(r => r.emitted).length;
+  const newSetup = newRows.filter(r => r.emitted).length;
+  log(`  righe: baseline=${oldRows.length} nuovo=${newRows.length}`);
+  log(`  setup: baseline=${oldSetup} nuovo=${newSetup}`);
+  log(`  hash baseline=${hash(oldRows)}`);
+  log(`  hash nuovo   =${hash(newRows)}`);
+  log(`  bit-identico: ${hash(oldRows) === hash(newRows) ? 'si' : 'no'}`);
+  if (hash(oldRows) !== hash(newRows)) {
+    let n = 0;
+    for (let i = 0; i < Math.min(oldRows.length, newRows.length) && n < 10; i++) {
+      if (JSON.stringify(oldRows[i]) !== JSON.stringify(newRows[i])) {
+        log(`  diff #${i}: ${JSON.stringify(oldRows[i])} != ${JSON.stringify(newRows[i])}`);
+        n++;
+      }
+    }
+  }
 }
 
 function alpha() {
@@ -2519,6 +2563,7 @@ switch (CMD) {
   case 'snapshot9daily2': snapshot9daily2(); break;
   case 'adrfrac':    adrfrac(); break;
   case 'adrdelta':   adrdelta(); break;
+  case 'bitid':      bitid(); break;
   case 'perimeter':  perimeter(); break;
   case 'symbols':    symbols(); break;
   case 'reason9':    reason9(); break;

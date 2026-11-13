@@ -211,3 +211,30 @@ esiste già. `postmortem` è read-only rispetto al registro.
   Solo i gate raggiunti possono essere letti come bloccanti.
 - `verdict.not_evaluable`: usato quando la regola di stop del passo scatta
   prima della misura prevista; il motivo va scritto nella riga `result`.
+
+### Passo V — ripresa con correzione congiunta
+
+- `adrfrac --snapshot=<path>`: la distribuzione va letta sullo snapshot usato
+  dal replay. Dopo la correzione: `--snapshot=artifacts/snapshot_9_daily2.json`.
+- `REPLAY_SNAPSHOT=<path>` in `replay_adapter.ts`: seleziona lo snapshot del
+  replay senza sovrascrivere `snapshot_9.json`. Il default resta
+  `artifacts/snapshot_9.json`.
+- `bitid`: confronta il sottoinsieme dei 5 simboli con il replay
+  pre-correzione e stampa righe, setup e hash SHA-256. Hash atteso per V:
+  `7fd90b4dfcedeeb761ba681d0d9ff7570f83a2756017a6ff1c07969c23495a0b`.
+- `adrdelta` distingue tre grandezze: `adr 5m` (media per barra), `adr daily`
+  (aggregato su 20 giorni di borsa) e `adr vero` (ADR classico). Il rapporto
+  `daily/5m` di `adr14` e' **12.01-14.62**, non 95-120; `liqEur20d` ha
+  invece rapporto **104.97-117.92**. Le due grandezze non sono omogenee.
+- `snapshot9daily2` e' la correzione congiunta: ricalcola `adr14` a 20 giorni
+  di borsa e lascia `liqEur20d` invariato se gia' daily. Delta `liqEur20d` =
+  **0.00%** (non +46.7%): la correzione di calendario era gia' stata applicata
+  in Passo U.
+- Il verdetto sullo zero distingue **zero rotto** (setup > 0 dopo la
+  correzione) da **zero strutturale** (setup = 0 con G8/G10/G11 raggiunti a 0).
+  Per V: **1 setup**, quindi zero rotto e non strutturale, con campione
+  piccolo dichiarato.
+- I risultati della ripresa sono righe `kind=result` appese dopo le righe
+  `not_evaluable` della prima chiusura. Il registro resta append-only: le righe
+  precedenti non vengono riscritte; l'ultima riga `result` per `hypothesisId`
+  e' quella valida.

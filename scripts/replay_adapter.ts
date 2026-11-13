@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 import { runPipelineFromBars, type Bar5m, type Snapshot } from './headless_pipeline';
 import { reasonLabel } from './emission_guard';
 
-const SNAPSHOT_PATH = 'artifacts/snapshot_9.json';
+const SNAPSHOT_PATH = process.env.REPLAY_SNAPSHOT ?? 'artifacts/snapshot_9.json';
 
 let cached: Snapshot | null = null;
 
