@@ -384,3 +384,42 @@ esiste già. `postmortem` è read-only rispetto al registro.
   registrate. Il conteggio si fa DOPO la classificazione e PRIMA della misura.
   Le ipotesi `exploratory` non entrano nel denominatore e si riportano come stime con IC.
   Passo Z: 57 confirmatory, alpha = 0.05/57 = 0.000877193. AI-0062 resta confirmatory.
+
+## Passo AA — chiusura della fase comparativa, rumore vero, censo, criterio
+
+- `verdict` ammesso solo per confirmatory — una riga `result` con
+  `tier: exploratory` non porta `verdict` (ne' `confirmed` ne' `falsified`).
+  Le ipotesi exploratory si riportano come stime direzionali, non come verdetti.
+  Il difetto nasce in Passo Y (AI-0063..AI-0067) ed e' proseguito in Passo Z
+  (AI-0068..AI-0073): le righe originali restano (append-only), il ritiro vive
+  nelle righe `AI-00XX-r` con `verdict: null`,
+  `retracted_reason: "prediction_supplied_in_registration_block"`,
+  `retracted_in: "AA"`.
+- `prediction exploratory` — si esprime come RELAZIONE o DIREZIONE (es. "l'effetto
+  del periodo supera quello della fonte", "il delta e' negativo"), MAI come
+  valore numerico gia' calcolato. Se il valore e' gia' noto, l'ipotesi non si
+  registra: si riporta come misura. Una prediction che coincide con il numero
+  fornito nel blocco di registrazione non produce informazione.
+- `linea confirmatoria chiusa` — le 56 ipotesi `tier: null` sono confirmatory per
+  default e NON vanno riclassificate; con AI-0062 fanno 57 confirmatory.
+  `alpha = 0.05/57 = 0.000877193`. Nessuna nuova confirmatory: la linea e' chiusa.
+  Le exploratory non entrano nel denominatore.
+- `rumore vero` — due pull nella stessa sessione con barre 1d identiche (stesse
+  date, stessi valori) producono un replay bit-identico: delta G7 massimo
+  **0.00 pp**. Il valore **8.52 pp** di Passo Y era un limite superiore
+  contaminato dal rinnovo della finestra (3 sedute di calendario = 21.4% di adr14
+  e 15% di liqEur20d), non il rumore. Va ritirato come pavimento.
+- `censo dei gate` — per ogni gate: righe raggiunte, righe bloccate, percentuale.
+  Un gate e' **inerte** se bloccano zero righe su tutti i 9 simboli. Distinzione:
+  **inerte per costruzione** (soglia lontana o griglia che non lo attraversa) vs
+  **inerte per caso** (soglia vicina ma nessuna riga la attraversa nella finestra).
+  Passo AA: 7 inerti (G1, G3, G5, G6, G9, G12, G13), 6 attivi (G2, G4, G7, G8,
+  G10, G11). G12 e' inerte per caso (in holdout BAMI 38.10%).
+- `criterio di decisione` — `registry/decision_criteria.md` e' un documento
+  obbligatorio: condizioni numeriche e verificabili per accendere
+  `SETUP_SELECTOR_LIVE`, con valore richiesto, misurato e stato. Non modifica
+  `src/config/liveSelector.ts`. Il criterio non e' soddisfatto (2/5).
+- `verifica dello stato` — lo stato di partenza si verifica con
+  `git show origin/main:registry/ai_registry.jsonl | wc -l` e confronto di
+  prefisso, MAI contro un conteggio atteso scritto a mano. Il conteggio atteso
+  puo' essere aritmeticamente errato; il registro no.
