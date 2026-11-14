@@ -423,3 +423,22 @@ esiste già. `postmortem` è read-only rispetto al registro.
   `git show origin/main:registry/ai_registry.jsonl | wc -l` e confronto di
   prefisso, MAI contro un conteggio atteso scritto a mano. Il conteggio atteso
   puo' essere aritmeticamente errato; il registro no.
+
+## Passo AB — stime per simbolo con intervallo (nessun confronto fra gruppi)
+
+- `stime per simbolo` — dopo la decisione di perimetro (Passo AA, strada A) non si
+  fanno piu' confronti fra gruppi. Si riportano solo stime per singolo simbolo:
+  tasso G7 (pass/reached), tasso di blocco G8 (bloccati G8 / raggiunti G8) e
+  tasso di emissione (emessi / reached G7).
+- `intervallo` — intervallo di Wilson al 95% (z = 1.959964) sulla proporzione,
+  calcolato per simbolo. E' l'intervallo corretto per proporzioni vicine a 0 o 1,
+  dove l'intervallo normale e' inadeguato.
+- `definizioni` — reached G7 = `emitted` oppure `reason` G7..G13 (REEMISSIONE
+  esclusa). Raggiunti G8 = `emitted` oppure `reason` G8..G13. Emissione = emessi /
+  reached G7.
+- `nessun confronto` — le stime di finestra principale e holdout si riportano
+  affiancate come misure, senza test di uguaglianza, senza differenze fra gruppi e
+  senza verdetti. Se due intervalli si sovrappongono, non si conclude nulla: e' una
+  descrizione, non un test.
+- `n per simbolo` — ogni stima porta il denominatore. Con denominatori di 450-1000
+  righe gli intervalli sono stretti; con emissioni di 0-13 eventi sono larghi.
