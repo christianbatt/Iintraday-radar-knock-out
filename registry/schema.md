@@ -238,3 +238,40 @@ esiste già. `postmortem` è read-only rispetto al registro.
   `not_evaluable` della prima chiusura. Il registro resta append-only: le righe
   precedenti non vengono riscritte; l'ultima riga `result` per `hypothesisId`
   e' quella valida.
+
+## Passo W — provenienza, denominatore, definizione unica, ritiro uniformita'
+
+- `aggregazione` — i campi derivati dalle barre 5m non seguono la stessa legge:
+  i **volumi** si aggregano linearmente sul numero di barre, i **range** in
+  radice. Per gli aggiunti `adr daily/5m / sqrt(liq daily/5m)` = **1.242–1.336**,
+  media **1.277**, CV **3.4%**. L'eccesso 1.277 e' una correzione di forma, non
+  un errore di denominatore.
+- `provenienza` — i valori "vero" di `adr14` e `liqEur20d` dei 5 noti vengono da
+  `src/utils/__tests__/fixtures/pipeline_snapshot.json`, catturato dal server
+  live; il server li calcola da barre **giornaliere** Yahoo (`interval=1d`,
+  `range=1mo`), non dalle 5m in cache. Per i 4 aggiunti non esiste un vero
+  indipendente: ogni loro validazione contro se stessi e' circolare.
+- `denominatore` — `snapshot9liqtd` usa 20 **barre giornaliere** (giorni di
+  borsa), non 20 giorni civili. Per gli aggiunti il delta rispetto a daily2 e'
+  **0.00%** perche' la correzione di calendario era gia' in Passo U. Sui 5 noti
+  `daily/vero` resta **0.6261–0.7221**: la funzione e' ancora sbagliata e il
+  residuo non e' spiegato dal calendario.
+- `definizione raggiunte G7` — **`emitted` oppure `reason` G7..G13;
+  REEMISSIONE esclusa**. La re-emissione e' un declassamento della guardia, non
+  un passaggio di G7. Includerla gonfia i noti da 3151/3531 a 3259/3639
+  (differenza 108). La partizione completa include **SESSION**: senza SESSION la
+  somma dei terminali non chiude a 3032.
+- `ritiro uniformita'` — `exacttest` e' ritirato: il null uniforme su 9 celle non
+  e' plausibile (2/5 noti a zero setup, distribuzione {0,0,1,7,7}), il
+  multinomiale (5/9)^n testa lo stato pre-correzione, il chi-quadro non e'
+  ammissibile (9/9 celle attese <5), e P(al piu' 3 occupati) e' una coda, non
+  il p del risultato osservato. Sostituito da confronto a due campioni stadio
+  per stadio e Fisher a livello di simbolo.
+- `cattura exit code replay` — il replay va lanciato con exit code catturato
+  esplicitamente (`echo $? > file`); un processo in background senza file di
+  exit non e' una misura. `summary.json` va verificato con hash e numero di
+  righe indipendenti.
+- `alpha` — Passo W: 51 ipotesi, `alphaEffective = 0.05/51 = 0.0009804`, scritto
+  nelle righe `hypothesis` e `result`.
+- `AI-0047` — la formulazione corretta e': **falsificata la legge lineare,
+  confermato il meccanismo per-barra**. Non e' "diagnosi sbagliata".
