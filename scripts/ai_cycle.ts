@@ -2421,6 +2421,25 @@ function counts() {
   }
 }
 
+function snapshot9adr2x2() {
+  const mode = ARGS.get('mode') ?? '5m14';
+  const out = ARGS.get('out');
+  if (!out) fail(2, 'missing_arg: --out=...');
+  if (mode !== '5m14') fail(2, `invalid_mode: ${mode}`);
+  const inPath = join(ART, 'snapshot_9_daily3.json');
+  const snap = JSON.parse(readFileSync(inPath, 'utf8')) as { quotes: Array<any> };
+  for (const sym of ADDED_SYMBOLS) {
+    const q = snap.quotes.find(x => x.ticker === sym);
+    if (!q) fail(2, `missing_input: quote ${sym} assente`);
+    const d = dailyAdr(sym, 14);
+    const before = q.adr14;
+    q.adr14 = d.adr;
+    log(`  ${sym} adr14 20gg ${before.toFixed(6)} -> 14gg 5m ${d.adr.toFixed(6)}`);
+  }
+  writeFileSync(out, JSON.stringify(snap, null, 2) + '\n');
+  log(`  scritto ${out}`);
+}
+
 function snapshot9adrscale() {
   const scale = Number(ARGS.get('scale') ?? '1');
   const out = ARGS.get('out');
@@ -2492,6 +2511,44 @@ function permutation() {
   }
 }
 
+function bootstrap() {
+  log('=== BOOTSTRAP — 10000 repliche sui simboli (Passo Y) ===');
+  const by = countRows();
+  const syms = GATE_SYMBOLS;
+  const known = syms.filter(s => !ADDED_SYMBOLS.includes(s));
+  const added = ADDED_SYMBOLS;
+  const stageDefs: Array<[string, (s: string) => number]> = [
+    ['G7 pass', s => { const c = by.get(s)!; const r = c.G.slice(7,14).reduce((a,b)=>a+b,0)+c.EMITTED; return r ? (r-c.G[7])/r : 0; }],
+    ['G8', s => { const c = by.get(s)!; const r = c.G.slice(7,14).reduce((a,b)=>a+b,0)+c.EMITTED; const p = r-c.G[7]; return p ? c.G[8]/p : 0; }],
+    ['G10', s => { const c = by.get(s)!; const r = c.G.slice(7,14).reduce((a,b)=>a+b,0)+c.EMITTED; const p = r-c.G[7]; return p ? c.G[10]/p : 0; }],
+    ['G11', s => { const c = by.get(s)!; const r = c.G.slice(7,14).reduce((a,b)=>a+b,0)+c.EMITTED; const p = r-c.G[7]; return p ? c.G[11]/p : 0; }],
+    ['emissione', s => { const c = by.get(s)!; const r = c.G.slice(7,14).reduce((a,b)=>a+b,0)+c.EMITTED; const p = r-c.G[7]; return p ? c.EMITTED/p : 0; }],
+  ];
+  const B = Number(ARGS.get('reps') ?? '10000');
+  let seed = Number(ARGS.get('seed') ?? '42') >>> 0;
+  const rnd = () => { seed = (seed + 0x6D2B79F5) >>> 0; let t = seed; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const mean = (xs: number[]) => xs.reduce((a,b)=>a+b,0)/xs.length;
+  log(`  repliche=${B} seed=${ARGS.get('seed') ?? '42'} ; gruppi: aggiunti n=${added.length}, noti n=${known.length}`);
+  log('  stadio       diff pp    SD pp    IC95 basso  IC95 alto  larghezza');
+  for (const [name, fn] of stageDefs) {
+    const vals = new Map(syms.map(s => [s, fn(s)]));
+    const obs = mean(added.map(s => vals.get(s)!)) - mean(known.map(s => vals.get(s)!));
+    const ds: number[] = [];
+    for (let i = 0; i < B; i++) {
+      const a: number[] = [];
+      const k: number[] = [];
+      for (let j = 0; j < added.length; j++) a.push(vals.get(added[Math.floor(rnd() * added.length)])!);
+      for (let j = 0; j < known.length; j++) k.push(vals.get(known[Math.floor(rnd() * known.length)])!);
+      ds.push(mean(a) - mean(k));
+    }
+    ds.sort((a,b)=>a-b);
+    const lo = ds[Math.floor(0.025 * (B - 1))];
+    const hi = ds[Math.floor(0.975 * (B - 1))];
+    const sd = Math.sqrt(mean(ds.map(x => (x - mean(ds)) ** 2)));
+    log(`  ${pad(name,13)}${pad((obs*100).toFixed(2),9)}${pad((sd*100).toFixed(2),9)}${pad((lo*100).toFixed(2),11)}${pad((hi*100).toFixed(2),11)}${pad(((hi-lo)*100).toFixed(2),10)}`);
+  }
+}
+
 function fisherTwoSample() {
   log('=== FISHER — simboli con almeno un setup: noti 3/5 vs aggiunti 1/4 (Passo W) ===');
   const N = 9, K = 4, n = 5, kObs = 3;
@@ -2551,11 +2608,11 @@ function adrfrac() {
   }
   const threshold = TRADING_PARAMS.ADR_MAX;
   log(`  soglia G7 (TRADING_PARAMS.ADR_MAX): ${threshold}`);
-  log('  simbolo    n     p5       p25      p50      p75      p95      min      max');
+  log('  simbolo    n     p10      p50      p90      >0.6     min      max');
   for (const sym of GATE_SYMBOLS) {
     const a = fractions.get(sym)!.sort((x, y) => x - y);
     if (!a.length) { log(`  ${pad(sym,11)}0     n/a`); continue; }
-    log(`  ${pad(sym,11)}${pad(a.length,6)}${pad(quantile(a,0.05).toFixed(4),9)}${pad(quantile(a,0.25).toFixed(4),9)}${pad(quantile(a,0.5).toFixed(4),9)}${pad(quantile(a,0.75).toFixed(4),9)}${pad(quantile(a,0.95).toFixed(4),9)}${pad(a[0].toFixed(4),9)}${a[a.length-1].toFixed(4)}`);
+    log(`  ${pad(sym,11)}${pad(a.length,6)}${pad(quantile(a,0.10).toFixed(4),9)}${pad(quantile(a,0.5).toFixed(4),9)}${pad(quantile(a,0.90).toFixed(4),9)}${pad(a.filter(x=>x>threshold).length,8)}${pad(a[0].toFixed(4),9)}${a[a.length-1].toFixed(4)}`);
   }
   const med = (syms: string[]) => {
     const all = syms.flatMap(s => fractions.get(s)!);
@@ -2750,7 +2807,9 @@ switch (CMD) {
   case 'adrfrac':    adrfrac(); break;
   case 'snapshot9liqtd': snapshot9liqtd(); break;
   case 'snapshot9adrscale': snapshot9adrscale(); break;
+  case 'snapshot9adr2x2': snapshot9adr2x2(); break;
   case 'permutation': permutation(); break;
+  case 'bootstrap': bootstrap(); break;
   case 'counts':     counts(); break;
   case 'fisher':     fisherTwoSample(); break;
   case 'adrdelta':   adrdelta(); break;

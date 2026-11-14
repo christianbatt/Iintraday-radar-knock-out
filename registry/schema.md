@@ -314,3 +314,47 @@ esiste già. `postmortem` è read-only rispetto al registro.
   rho -0,37). Il segno e' stabile, la potenza no: 5-9 simboli non bastano.
 - `bit-identita'` — il ramo a 5 resta bit-identico (15.160 righe, 15 setup,
   hash `7fd90b4d...`) anche dopo la rigenerazione dei 4 aggiunti.
+
+## Passo Y — tier, pavimento, bootstrap, 2x2, holdout
+
+- `tier` — ogni ipotesi porta `tier: confirmatory | exploratory`. Le **56**
+  ipotesi pre-Y restano `confirmatory` per dichiarazione retroattiva (non si
+  riscrive il registro: le righe restano quelle di `origin/main`). Le ipotesi
+  del Passo Y sono `exploratory` tranne **AI-0062**, che e' `confirmatory` ma
+  resta **fuori dal denominatore** per congelamento dell'alpha: il denominatore
+  confirmatory resta **56**, `alphaEffective = 0.05/56 = 0.000892857`. Le
+  exploratory non entrano nel denominatore e si riportano come stime con IC.
+- `pavimento permutazione` — con 9 simboli C(9,4)=126, p minimo
+  **1/126 = 0.0079365 > alpha**. Il test non puo' rifiutare per costruzione.
+  Serve **n>=15** (C(15,4)=1365, p minimo 0.0007326) perche' la coda contenga
+  alpha. AI-0061 e' quindi `not_evaluable`; la riga `AI-0061-c` lo dichiara e
+  la permutazione resta descrittiva, non confermativa.
+- `bootstrap sui simboli` — sostituto del p quando n e' piccolo: 10000 repliche,
+  ricampionamento con reimmissione dei simboli (4 aggiunti + 5 noti), IC 95%
+  percentile della differenza fra medie non pesate. Con 9 unita' anche l'IC ha
+  incertezza: si riporta l'ampiezza come indeterminazione, non come test.
+- `nessun daily da 5m` — **regola**: nessun campo daily (`adr14`,
+  `liqEur20d`, `avgVolume20d`, `atr14`, `ema20`) si costruisce da barre 5m.
+  I daily vengono da Yahoo 1d; le 5m servono solo per prezzi/ORB/VWAP/volume
+  intraday. Questo elimina la circolarita' e la dipendenza dalla copertura.
+- `2x2 fonte/periodo` — per separare fonte (5m vs 1d) e periodo (14 vs 20
+  sedute) si usano quattro celle: A 5m/20, B 5m/14, C 1d/20, D 1d/14.
+  Effetto fonte = (C+D)/2-(A+B)/2; effetto periodo = (B+D)/2-(A+C)/2;
+  interazione = (D-C)-(B-A). Non attribuire a una sola causa un guadagno che
+  e' quasi tutto interazione.
+- `endpoint incomparabili` — "copertura" era un'etichetta imprecisa: le barre
+  5m ci sono tutte (102/giorno), ma il volume 5m e il volume 1d non sono
+  confrontabili come sovrainsieme/sottoinsieme. Il rapporto 5m/1d ha coda a
+  destra >1 e segno variabile; e' una discrepanza di consolidamento, non un
+  buco. Riportare sempre quanti giorni superano 1.02 per simbolo.
+- `holdout` — ogni conclusione sui tassi richiede una finestra temporale
+  disgiunta, con snapshot e barre ricostruiti con la stessa procedura. La
+  finestra va dichiarata; se l'API non consente 30 sedute disgiunte, si riporta
+  la durata effettiva (Passo Y: 28 sedute, 2026-08-24..2026-09-30) come limite.
+- `asimmetria date` — i 5 noti vengono dalla fixture catturata il 2026-11-11,
+  i 4 aggiunti da un pull del 2026-11-14. Ri-tirare i noti alla stessa data
+  cambia G7 fino a 8.52 pp: l'asimmetria e' un limite permanente, non si adotta
+  in silenzio una data unica. Per il futuro: stessa data di pull per tutti.
+- `soglia adrConsumptionFraction` — la soglia 0.6 non compare come `reason` e
+  le righe sopra 0.6 sono il 6.44%: e' un diagnostico, non un gate. Non usarla
+  come criterio di qualita' o di selezione.
