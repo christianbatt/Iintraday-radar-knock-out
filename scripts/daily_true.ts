@@ -24,9 +24,11 @@ for (const a of process.argv.slice(2)) {
 }
 const SYMBOLS = (ARGS.get('symbols') ?? 'ENI.MI,UCG.MI,BAMI.MI,RHM.DE,SAP.DE,BAYN.DE,LDO.MI,SIE.DE,STLAM.MI').split(',').filter(Boolean);
 const RANGE = ARGS.get('range') ?? '60d';
+const ADR_DAYS = Number(ARGS.get('adrDays') ?? '14');
 const OUT = ARGS.get('out') ?? join(ART, 'daily_true.json');
 const SNAP_IN = ARGS.get('snapshot') ?? join(ART, 'snapshot_9_daily3.json');
 const SNAP_OUT = ARGS.get('snapshotOut') ?? join(ART, 'snapshot_9_dailyx.json');
+const APPLY = ARGS.get('apply') ?? 'added';
 const KNOWN = ['ENI.MI', 'UCG.MI', 'BAMI.MI', 'RHM.DE', 'SAP.DE'];
 const ADDED = ['BAYN.DE', 'LDO.MI', 'SIE.DE', 'STLAM.MI'];
 
@@ -75,7 +77,7 @@ for (const sym of SYMBOLS) {
   const window = rows.filter(r => r.date <= lastDate).slice(-20);
   if (window.length < 20) throw new Error(`${sym}: only ${window.length} daily bars up to ${lastDate}`);
   // Server: calculateAdr14FromBars usa 14 sedute; calculateLiqEurFromBars usa 20.
-  const adrWindow = window.slice(-14);
+  const adrWindow = window.slice(-ADR_DAYS);
   const liqWindow = window.slice(-20);
   const adr14 = mean(adrWindow.map(r => r.high - r.low));
   const liq = mean(liqWindow.map(r => r.volume * r.close));
@@ -88,7 +90,7 @@ writeFileSync(OUT, JSON.stringify({ generatedAt: new Date().toISOString(), range
 console.log(`scritto ${OUT}`);
 
 if (snap) {
-  for (const sym of ADDED) {
+  for (const sym of (APPLY === 'all' ? SYMBOLS : ADDED)) {
     const t = out.find(x => x.symbol === sym);
     if (!t) throw new Error(`missing true row ${sym}`);
     const q = snap.quotes.find(x => x.ticker === sym);
