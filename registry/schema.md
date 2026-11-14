@@ -275,3 +275,42 @@ esiste già. `postmortem` è read-only rispetto al registro.
   nelle righe `hypothesis` e `result`.
 - `AI-0047` — la formulazione corretta e': **falsificata la legge lineare,
   confermato il meccanismo per-barra**. Non e' "diagnosi sbagliata".
+
+## Passo X — copertura, denominatore, disallineamento, permutazione per simbolo
+
+- `tre cause` — un rapporto `liq daily/vero < 1` puo' avere tre cause distinte:
+  (a) **denominatore di calendario** (giorni civili invece di sedute), (b)
+  **copertura** (le barre 5m esistono ma il loro volume aggregato e' una
+  frazione del volume giornaliero), (c) **disallineamento di finestra** (la
+  finestra del replay e la cattura del vero finiscono in giorni diversi). Si
+  distinguono solo misurando: (a) il numero di sedute al denominatore stampato
+  per simbolo; (b) il rapporto per-giorno 5m/Yahoo sullo stesso giorno e il
+  numero di barre/giorno; (c) la data di fine finestra contro `capturedAt`.
+  L'argomento `0,682 = 13,635/20` e' tautologico e non e' una prova.
+- `no-op` — prima di accettare una correzione, verificare che il comando non
+  riusi lo stesso percorso: due comandi che dovrebbero differire del +46,6%
+  ma danno delta 0,00% sono un no-op, non una conferma. In quel caso l'ipotesi
+  e' `not_evaluable` con `rejection_note`, non `falsified`.
+- `pass robusto su LIQ_MIN_EUR` — un simbolo e' **robusto** se
+  `liq_5m / coverage_high > LIQ_MIN_EUR` per TUTTO l'intervallo di copertura
+  osservato; **fragile** se passa solo in parte; **mai** se non passa mai. Il
+  fattore di copertura va misurato per simbolo: un unico 0,722 non e' un lower
+  bound per tutti (STLAM ha copertura 0,847).
+- `permutazione per simbolo` — l'unita' e' il simbolo, non la riga. Statistica:
+  differenza fra **media non pesata** degli aggiunti e media non pesata dei
+  noti. Il test di uniformita' e' ritirato; questa permutazione esatta su
+  C(9,4)=126 lo sostituisce come test di eterogeneita'. Riportare sempre anche
+  il pooled, che differisce dalla media non pesata.
+- `media non pesata` — con 4 aggiunti e 5 noti la media per simbolo e' l'unita'
+  di analisi; il pooled e' dominato dai simboli con piu' righe e non e' la
+  statistica del test.
+- `adr14` — `ADR_PERIOD` del server e' **14** sedute; `snapshot9daily3` usa una
+  media di range su **20** sedute. Le due grandezze non sono intercambiabili.
+  Il ramo "vero" ricalcola 14 sedute per `adr14` e 20 per `liqEur20d`, come il
+  server. Un errore di +-14% sul valore a 20 sedute e' un test di stabilita'
+  del valore corrente, non dell'ADR14 del server.
+- `copertura vs setup` — la copertura `liq_5m/liq_vero` e' associata
+  negativamente ai setup (5 noti rho -0,63, p unilaterale 0,167; 9 simboli
+  rho -0,37). Il segno e' stabile, la potenza no: 5-9 simboli non bastano.
+- `bit-identita'` — il ramo a 5 resta bit-identico (15.160 righe, 15 setup,
+  hash `7fd90b4d...`) anche dopo la rigenerazione dei 4 aggiunti.
