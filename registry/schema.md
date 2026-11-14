@@ -358,3 +358,29 @@ esiste già. `postmortem` è read-only rispetto al registro.
 - `soglia adrConsumptionFraction` — la soglia 0.6 non compare come `reason` e
   le righe sopra 0.6 sono il 6.44%: e' un diagnostico, non un gate. Non usarla
   come criterio di qualita' o di selezione.
+
+## Passo Z — scomposizione additiva, pavimento di rumore, MDE, riproducibilita'
+
+- `scomposizione additiva` — per una 2x2 fattoriale con celle A (riferimento), B, C, D:
+  effetto principale S = C - A; effetto principale P = B - A;
+  interazione I = (D - C) - (B - A). Verifica: S + P + I = D - A (entro 0.01 pp).
+  I valori "effetti semplici mediati" S+I/2 e P+I/2 contengono meta' dell'interazione
+  e la loro somma con I non decompone il totale. Obbligo: in ogni disegno fattoriale
+  riportare le righe raggiunte per cella, non solo il tasso.
+- `effetto semplice mediato` — (D-A)/2-style: media dei due effetti semplici di un
+  fattore, che incorpora meta' dell'interazione. Non e' un effetto principale.
+- `pavimento di rumore` — il rumore di misura (fra finestre e fra date di pull) supera
+  le differenze fra gruppi osservate: MDE a 80% potenza >= 20 pp (21.94/23.74/40.06 pp)
+  contro differenze osservate <= 11 pp (G7 +5.83, G8 +10.69, G10 -3.07, G11 -7.22).
+  MDE = z * sigma * sqrt(1/4 + 1/5) (n1=4 aggiunti, n2=5 noti; z=1.96 per alpha 0.05,
+  z=3.12 per alpha 0.000877), a 80% di potenza.
+- `pavimento di riproducibilita'` — il tasso G7 non e' riproducibile a meno di 5 pp fra
+  due pull della stessa fonte a date diverse (max 8.52 pp). Soglia minima per qualunque
+  confronto futuro: 8.52 pp.
+- `permutazione esatta prevale` — la permutazione esatta (C(9,4)=126, p minimo
+  0.0079365) prevale sul bootstrap percentile; il bootstrap e' diagnostica di ampiezza.
+  Con 9 cluster il bootstrap e' anti-conservativo (emissione: IC [-0.77,-0.03] vs p 0.2063).
+- `denominatore alpha` — il denominatore alpha e' il numero di ipotesi `confirmatory`
+  registrate. Il conteggio si fa DOPO la classificazione e PRIMA della misura.
+  Le ipotesi `exploratory` non entrano nel denominatore e si riportano come stime con IC.
+  Passo Z: 57 confirmatory, alpha = 0.05/57 = 0.000877193. AI-0062 resta confirmatory.
