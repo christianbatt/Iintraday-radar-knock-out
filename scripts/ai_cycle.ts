@@ -2110,7 +2110,7 @@ function dominantGate(rows: GateRow[], symbols: string[]): { gate: string; n: nu
 }
 
 function gates() {
-  log('=== GATES — reason per gate e per simbolo (Passo V) ===');
+  log('=== GATES — reason per gate e per simbolo (Passo W) ===');
   const rows = loadGateRows();
   const { matrix, cols } = gateMatrix(rows);
   log(`  righe: ${rows.length}`);
@@ -2130,7 +2130,8 @@ function gates() {
   log(`  reason SESSION originali: ${sessionOrig}/${orig.length} (${(sessionOrig/orig.length*100).toFixed(2)}%)`);
   const g1Add = added.filter(r => gateKey(r) === 'G1').length;
   log(`  G1 aggiunti: ${g1Add}/${added.length} (${(g1Add/added.length*100).toFixed(2)}%)`);
-  log(`  G1 usa liqEur20d (daily in snapshot_9, derivato dalle barre): si`);
+  log(`  G1 usa liqEur20d (daily nello snapshot, derivato dalle barre): si`);
+  log('  definizione raggiunte G7: emitted o reason G7..G13; REEMISSIONE esclusa');
   log('  G7 per simbolo: raggiunte  bloccate  pass  pass%  setup');
   for (const sym of GATE_SYMBOLS) {
     const rs = rows.filter(r => r.symbol === sym);
@@ -2139,6 +2140,11 @@ function gates() {
     const setups = rs.filter(r => r.emitted).length;
     log(`  ${pad(sym,11)}${pad(reached.length,10)}${pad(blocked.length,10)}${pad(reached.length-blocked.length,6)}${pad(reached.length ? ((reached.length-blocked.length)/reached.length*100).toFixed(2) : 'n/a',7)}${pad(setups,6)}`);
   }
+  const addReached = ADDED_SYMBOLS.reduce((a, s) => a + rows.filter(r => r.symbol === s && reachesG7(r)).length, 0);
+  const addPass = ADDED_SYMBOLS.reduce((a, s) => a + rows.filter(r => r.symbol === s && reachesG7(r) && (r.emitted || gateIndexOf(r.reason) !== 7)).length, 0);
+  const knownReached = GATE_SYMBOLS.filter(s => !ADDED_SYMBOLS.includes(s)).reduce((a, s) => a + rows.filter(r => r.symbol === s && reachesG7(r)).length, 0);
+  const knownPass = GATE_SYMBOLS.filter(s => !ADDED_SYMBOLS.includes(s)).reduce((a, s) => a + rows.filter(r => r.symbol === s && reachesG7(r) && (r.emitted || gateIndexOf(r.reason) !== 7)).length, 0);
+  log(`  G7 aggregato aggiunti: ${addPass}/${addReached} (${(addPass/addReached*100).toFixed(2)}%) ; noti: ${knownPass}/${knownReached} (${(knownPass/knownReached*100).toFixed(2)}%)`);
   log('  partizione: simbolo  totale  earlyG1G6  reachedG7  session  reemissione  (early+reached+session+reem)');
   for (const sym of GATE_SYMBOLS) {
     const rs = rows.filter(r => r.symbol === sym);
@@ -2342,6 +2348,115 @@ function snapshot9daily2() {
   }
   writeFileSync(outPath, JSON.stringify(snap, null, 2) + '\n');
   log(`  scritto ${outPath}`);
+}
+
+function snapshot9liqtd() {
+  log('=== SNAPSHOT9LIQTD — liqEur20d su 20 barre daily (Passo W) ===');
+  const inPath = join(ART, 'snapshot_9_daily2.json');
+  const outPath = join(ART, 'snapshot_9_daily3.json');
+  if (!existsSync(inPath)) fail(2, `missing_input: ${inPath} non esiste`);
+  const snap = JSON.parse(readFileSync(inPath, 'utf8')) as { quotes: Array<any> };
+  const threshold = TRADING_PARAMS.LIQ_MIN_EUR;
+  for (const sym of ADDED_SYMBOLS) {
+    const q = snap.quotes.find(x => x.ticker === sym);
+    if (!q) fail(2, `missing_input: quote ${sym} assente in snapshot_9_daily2`);
+    const before = q.liqEur20d;
+    const d = dailyLiq(sym);
+    q.liqEur20d = d.liq;
+    q.avgVolume20d = d.avgVol;
+    const delta = ((d.liq - before) / before) * 100;
+    log(`  ${pad(sym,11)} liq ${String(before).padStart(12)} -> ${d.liq.toFixed(0).padStart(12)} delta ${delta.toFixed(4)}% (${d.days} gg borsa, ${(d.liq/threshold).toFixed(2)}x soglia)`);
+  }
+  const truth = JSON.parse(readFileSync('src/utils/__tests__/fixtures/pipeline_snapshot.json', 'utf8')) as { quotes: Array<{ ticker: string; liqEur20d: number }> };
+  const trueMap = new Map(truth.quotes.map(q => [q.ticker, q.liqEur20d]));
+  log('  noti: daily/vero (stessa funzione, non scritta sui noti)');
+  let failCount = 0;
+  for (const sym of ['ENI.MI','UCG.MI','BAMI.MI','RHM.DE','SAP.DE']) {
+    const tv = trueMap.get(sym);
+    if (tv === undefined) fail(2, `missing_input: liqEur20d vero assente per ${sym}`);
+    const ratio = dailyLiq(sym).liq / tv;
+    if (Math.abs(ratio - 1) >= 0.10) failCount++;
+    log(`  ${pad(sym,11)} ${ratio.toFixed(4)}${Math.abs(ratio - 1) >= 0.10 ? '  FUORI [0.90,1.10]' : ''}`);
+  }
+  log(`  AI-0054: ${failCount === 0 ? 'confermata' : 'falsificata'} (${failCount}/5 fuori da |daily/vero-1|<0.10)`);
+  writeFileSync(outPath, JSON.stringify(snap, null, 2) + '\n');
+  log(`  scritto ${outPath}`);
+}
+
+function countRows() {
+  type Count = { G: number[]; SESSION: number; REEMISSIONE: number; EMITTED: number; NONE: number; total: number };
+  const by = new Map<string, Count>();
+  for (const sym of GATE_SYMBOLS) by.set(sym, { G: Array(14).fill(0), SESSION: 0, REEMISSIONE: 0, EMITTED: 0, NONE: 0, total: 0 });
+  for (const r of loadGateRows()) {
+    const c = by.get(r.symbol);
+    if (!c) continue;
+    c.total++;
+    if (r.emitted) { c.EMITTED++; continue; }
+    if (r.reason === 'REEMISSIONE') { c.REEMISSIONE++; continue; }
+    const i = gateIndexOf(r.reason);
+    if (i !== null && i >= 1 && i <= 13) c.G[i]++;
+    else if (r.reason === 'Nessun titolo presente o analizzato per la sessione.') c.SESSION++;
+    else c.NONE++;
+  }
+  return by;
+}
+
+function counts() {
+  log('=== COUNTS — definizione unica: raggiunte G7 = emitted o reason G7..G13 (re-emissioni ESCLUSE) ===');
+  const by = countRows();
+  log('  simbolo     tot   G1   G2   G3   G4   G5   G6   G7   G8   G9  G10  G11  G12  G13  SESS  REEM  EMIT  reach  pass  pass%');
+  for (const sym of GATE_SYMBOLS) {
+    const c = by.get(sym)!;
+    const reached = c.G.slice(7,14).reduce((a,b)=>a+b,0) + c.EMITTED;
+    const pass = reached - c.G[7];
+    log(`  ${pad(sym,11)}${pad(c.total,6)}${c.G.slice(1,14).map(x=>pad(x,5)).join('')}${pad(c.SESSION,6)}${pad(c.REEMISSIONE,6)}${pad(c.EMITTED,6)}${pad(reached,7)}${pad(pass,6)}${pad(reached ? (pass/reached*100).toFixed(2) : 'n/a',7)}`);
+  }
+  log('  chiusura: simbolo  earlyG1G6  G7bloc  G8  G10  G11  REEM  EMIT  SESS  somma  totale');
+  for (const sym of GATE_SYMBOLS) {
+    const c = by.get(sym)!;
+    const early = c.G.slice(1,7).reduce((a,b)=>a+b,0);
+    const sum = early + c.G[7] + c.G[8] + c.G[10] + c.G[11] + c.REEMISSIONE + c.EMITTED;
+    const sumAll = sum + c.SESSION;
+    log(`  ${pad(sym,11)}${pad(early,11)}${pad(c.G[7],7)}${pad(c.G[8],4)}${pad(c.G[10],5)}${pad(c.G[11],5)}${pad(c.REEMISSIONE,6)}${pad(c.EMITTED,6)}${pad(c.SESSION,6)}${pad(sumAll,7)}${pad(c.total,8)}${sumAll === c.total ? ' OK' : ' MISMATCH'}  senzaSessione=${sum}${sum === c.total ? '' : ' (manca SESSION)'}`);
+  }
+}
+
+function fisherTwoSample() {
+  log('=== FISHER — simboli con almeno un setup: noti 3/5 vs aggiunti 1/4 (Passo W) ===');
+  const N = 9, K = 4, n = 5, kObs = 3;
+  const p = (k: number) => binom(K, k) * binom(N - K, n - k) / binom(N, n);
+  let pOne = 0;
+  for (let k = kObs; k <= Math.min(K, n); k++) pOne += p(k);
+  const pObs = p(kObs);
+  let pTwo = 0;
+  for (let k = 0; k <= Math.min(K, n); k++) if (p(k) <= pObs + 1e-12) pTwo += p(k);
+  log(`  tabella: noti ${kObs}/5, aggiunti 1/4`);
+  log(`  Fisher unilaterale (noti > aggiunti): p=${pOne.toFixed(6)}`);
+  log(`  Fisher bilaterale: p=${pTwo.toFixed(6)}`);
+  let pAtMost1 = 0;
+  for (let k = 0; k <= 1; k++) pAtMost1 += binom(4, k) * Math.pow(0.4, k) * Math.pow(0.6, 4 - k);
+  log(`  P(al piu' 1 simbolo con setup su 4) sotto null empirico 0.4: ${pAtMost1.toFixed(4)}`);
+  const by = countRows();
+  const rate = (syms: string[], idx: number) => {
+    let num = 0, den = 0;
+    for (const s of syms) {
+      const c = by.get(s)!;
+      const reached = c.G.slice(7,14).reduce((a,b)=>a+b,0) + c.EMITTED;
+      const pass = reached - c.G[7];
+      num += idx === 0 ? pass : idx === 7 ? c.G[7] : idx === 8 ? c.G[8] : idx === 10 ? c.G[10] : idx === 11 ? c.G[11] : c.EMITTED;
+      den += idx === 0 ? reached : pass;
+    }
+    return { num, den, pct: den ? num / den * 100 : 0 };
+  };
+  const known = ['ENI.MI','UCG.MI','BAMI.MI','RHM.DE','SAP.DE'];
+  const added = ADDED_SYMBOLS;
+  log('  stadio       aggiunti        noti        diff pp');
+  for (const [label, idx] of [['G7 pass',0],['G8 blocco',8],['G10 blocco',10],['G11 blocco',11],['emissione',-1]] as Array<[string, number]>) {
+    const a = rate(added, idx);
+    const b = rate(known, idx);
+    log(`  ${pad(label,13)}${pad(`${a.num}/${a.den} ${a.pct.toFixed(2)}%`,16)}${pad(`${b.num}/${b.den} ${b.pct.toFixed(2)}%`,16)}${(a.pct-b.pct).toFixed(2)}`);
+  }
+  log(`  AI-0055: ${pOne > 0.05 ? 'confermata' : 'falsificata'} (unilaterale p=${pOne.toFixed(6)})`);
 }
 
 function adrfrac() {
@@ -2562,6 +2677,9 @@ switch (CMD) {
   case 'snapshot9':  snapshot9(); break;
   case 'snapshot9daily2': snapshot9daily2(); break;
   case 'adrfrac':    adrfrac(); break;
+  case 'snapshot9liqtd': snapshot9liqtd(); break;
+  case 'counts':     counts(); break;
+  case 'fisher':     fisherTwoSample(); break;
   case 'adrdelta':   adrdelta(); break;
   case 'bitid':      bitid(); break;
   case 'perimeter':  perimeter(); break;
