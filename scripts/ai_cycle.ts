@@ -2421,6 +2421,77 @@ function counts() {
   }
 }
 
+function snapshot9adrscale() {
+  const scale = Number(ARGS.get('scale') ?? '1');
+  const out = ARGS.get('out');
+  if (!out) fail(2, 'missing_arg: --out=...');
+  if (!isFinite(scale) || scale <= 0) fail(2, `invalid_scale: ${scale}`);
+  const inPath = join(ART, 'snapshot_9_daily3.json');
+  if (!existsSync(inPath)) fail(2, `missing_input: ${inPath} non esiste`);
+  const snap = JSON.parse(readFileSync(inPath, 'utf8')) as { quotes: Array<any> };
+  for (const sym of ADDED_SYMBOLS) {
+    const q = snap.quotes.find(x => x.ticker === sym);
+    if (!q) fail(2, `missing_input: quote ${sym} assente`);
+    q.adr14 = q.adr14 * scale;
+    log(`  ${sym} adr14 x ${scale} -> ${q.adr14.toFixed(6)}`);
+  }
+  writeFileSync(out, JSON.stringify(snap, null, 2) + '\n');
+  log(`  scritto ${out}`);
+}
+
+function permutation() {
+  log('=== PERMUTATION — 9 simboli, 4 aggiunti, C(9,4)=126 (Passo X) ===');
+  const by = countRows();
+  const syms = GATE_SYMBOLS;
+  const known = syms.filter(s => !ADDED_SYMBOLS.includes(s));
+  const added = ADDED_SYMBOLS;
+  const stages: Array<[string, (s: string) => number]> = [
+    ['G7 pass', s => { const c = by.get(s)!; const r = c.G.slice(7,14).reduce((a,b)=>a+b,0)+c.EMITTED; return r ? (r-c.G[7])/r : 0; }],
+    ['G8', s => { const c = by.get(s)!; const r = c.G.slice(7,14).reduce((a,b)=>a+b,0)+c.EMITTED; const p = r-c.G[7]; return p ? c.G[8]/p : 0; }],
+    ['G10', s => { const c = by.get(s)!; const r = c.G.slice(7,14).reduce((a,b)=>a+b,0)+c.EMITTED; const p = r-c.G[7]; return p ? c.G[10]/p : 0; }],
+    ['G11', s => { const c = by.get(s)!; const r = c.G.slice(7,14).reduce((a,b)=>a+b,0)+c.EMITTED; const p = r-c.G[7]; return p ? c.G[11]/p : 0; }],
+    ['emissione', s => { const c = by.get(s)!; const r = c.G.slice(7,14).reduce((a,b)=>a+b,0)+c.EMITTED; const p = r-c.G[7]; return p ? c.EMITTED/p : 0; }],
+  ];
+  const combos: string[][] = [];
+  const choose = (start: number, acc: string[]) => {
+    if (acc.length === 4) { combos.push([...acc]); return; }
+    for (let i = start; i < syms.length; i++) { acc.push(syms[i]); choose(i + 1, acc); acc.pop(); }
+  };
+  choose(0, []);
+  log(`  combinazioni: ${combos.length}`);
+  log('  stadio       media aggiunti  media noti  diff pp   p1      p2      pooled agg  pooled noti');
+  for (const [name, fn] of stages) {
+    const vals = new Map(syms.map(s => [s, fn(s)]));
+    const mean = (xs: string[]) => xs.reduce((a, s) => a + vals.get(s)!, 0) / xs.length;
+    const obs = mean(added) - mean(known);
+    let ge = 0, le = 0, abs = 0;
+    const diffs: number[] = [];
+    for (const c of combos) {
+      const other = syms.filter(s => !c.includes(s));
+      const d = mean(c) - mean(other);
+      diffs.push(d);
+      if (d >= obs - 1e-12) ge++;
+      if (d <= obs + 1e-12) le++;
+      if (Math.abs(d) >= Math.abs(obs) - 1e-12) abs++;
+    }
+    const pOne = obs >= 0 ? ge / combos.length : le / combos.length;
+    const pTwo = abs / combos.length;
+    const idx = name === 'G7 pass' ? 0 : name === 'G8' ? 8 : name === 'G10' ? 10 : name === 'G11' ? 11 : -1;
+    const pooled = (xs: string[]) => {
+      let num = 0, den = 0;
+      for (const s of xs) {
+        const c = by.get(s)!;
+        const r = c.G.slice(7,14).reduce((a,b)=>a+b,0)+c.EMITTED;
+        const p = r-c.G[7];
+        den += idx === 0 ? r : p;
+        num += idx === 0 ? p : idx === -1 ? c.EMITTED : c.G[idx];
+      }
+      return den ? num/den : 0;
+    };
+    log(`  ${pad(name,13)}${pad((mean(added)*100).toFixed(2)+'%',15)}${pad((mean(known)*100).toFixed(2)+'%',12)}${pad((obs*100).toFixed(2),8)}${pad(pOne.toFixed(4),8)}${pad(pTwo.toFixed(4),8)}${pad((pooled(added)*100).toFixed(2)+'%',11)}${pad((pooled(known)*100).toFixed(2)+'%',11)}`);
+  }
+}
+
 function fisherTwoSample() {
   log('=== FISHER — simboli con almeno un setup: noti 3/5 vs aggiunti 1/4 (Passo W) ===');
   const N = 9, K = 4, n = 5, kObs = 3;
@@ -2678,6 +2749,8 @@ switch (CMD) {
   case 'snapshot9daily2': snapshot9daily2(); break;
   case 'adrfrac':    adrfrac(); break;
   case 'snapshot9liqtd': snapshot9liqtd(); break;
+  case 'snapshot9adrscale': snapshot9adrscale(); break;
+  case 'permutation': permutation(); break;
   case 'counts':     counts(); break;
   case 'fisher':     fisherTwoSample(); break;
   case 'adrdelta':   adrdelta(); break;
