@@ -1,7 +1,8 @@
 # Post-mortem Passo W — 2026-11-13
 
-Comandi: `ai_cycle.ts adrdelta`, `snapshot9liqtd`, `counts`, `fisher`,
-`bitid`, `gates`. Alpha congelato a 0.05/51 = 0.0009804.
+Input da Passo V: `adrdelta` (non rieseguito in W). Comandi W:
+`ai_cycle.ts snapshot9liqtd`, `counts`, `fisher`, `bitid`, `gates`.
+Alpha congelato a 0.05/51 = 0.0009804.
 Nessuna modifica a `src/`, soglie o logica G1–G13.
 
 ## 1. Provenienza dei valori di riferimento
