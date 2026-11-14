@@ -120,7 +120,7 @@ Tre replay sui soli 4 aggiunti; i 5 noti invariati. `adr14` scalato 0,86 /
 | scenario | setup totali | setup aggiunti | G7 pass aggiunti | righe >0,6 adrfrac |
 |---|---:|---:|---:|---:|
 | 0,86 | 16 | 1 (SIE) | 84,15% | 538/3137 |
-| 1,00 (daily3) | 16 | 1 (SIE) | 84,15% | 362/3137 |
+| 1,00 (daily3) | 16 | 1 (SIE) | 89,79% | 362/3137 |
 | 1,14 | 16 | 1 (SIE) | 95,25% | 153/3137 |
 | vero 1d (14 sedute) | 16 | 1 (SIE) | 93,83% | 202/3137 |
 
@@ -209,7 +209,7 @@ Effetto misurato del ramo B (replay `xtrue`):
 - liq dei 4 aggiunti: BAYN 82,8M -> 145,1M; LDO 60,4M -> 94,3M;
   SIE 155,3M -> 295,1M; STLAM 178,6M -> 196,4M. Tutti sopra `LIQ_MIN_EUR`.
 - setup: 16 totali, 1 aggiunto (SIE), invariati per simbolo.
-- G7 pass aggiunti: 84,15% -> 93,83% (+9,68 pp).
+- G7 pass aggiunti: 89,79% -> 93,83% (+4,04 pp). Gli estremi artificiali 0,86/1,14 danno 84,15%-95,25% (11,10 pp); il vero 1d resta dentro i 5 pp.
 - righe >0,6 adrfrac: 362 -> 202.
 - 5 noti: bit-identici (STEP 9).
 
