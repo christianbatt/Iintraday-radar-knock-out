@@ -52,9 +52,18 @@ seguendo gli `supersedes`.
 
 ## Correzione per test multipli
 
-`alphaEffective = 0.05 / (1 + nTestsPrior)`, dove `nTestsPrior` è il numero di
-`hypothesis` già presenti nel registro **al momento della scrittura**.
-Va scritto nella riga: non si ricalcola dopo.
+Il denominatore Bonferroni è il numero di ipotesi **confirmatory**; le
+`exploratory` non entrano mai nel denominatore. Due casi distinti:
+
+- **famiglia attuale** (analisi e `alphaEffective` dei risultati già registrati):
+  `alphaEffective = 0.05 / N`, dove `N` è il numero di `hypothesis` confirmatory
+  già presenti nel registro. Oggi `N = 57`, quindi `0.05/57 = 0.000877193`.
+- **nuova pre-registrazione di un'ipotesi confirmatory**: `alphaEffective =
+  0.05 / (1 + N)`, dove `N` è il numero di confirmatory già presenti e `1` è
+  l'ipotesi che si sta registrando; dopo la registrazione la famiglia vale
+  `N+1`. Vale solo quando la linea confirmatoria viene riaperta.
+
+Il valore va scritto nella riga: non si ricalcola dopo.
 
 ## Regole
 
