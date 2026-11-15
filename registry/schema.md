@@ -404,6 +404,17 @@ esiste già. `postmortem` è read-only rispetto al registro.
   default e NON vanno riclassificate; con AI-0062 fanno 57 confirmatory.
   `alpha = 0.05/57 = 0.000877193`. Nessuna nuova confirmatory: la linea e' chiusa.
   Le exploratory non entrano nel denominatore.
+- `denominatore Bonferroni` — due casi distinti:
+  - **famiglia attuale** (analisi e `alphaEffective` dei risultati gia'
+    registrati): `alpha = 0.05/N`, con `N` = numero di ipotesi confirmatory
+    gia' presenti. Oggi `N = 57`, quindi `0.05/57 = 0.000877193`.
+  - **nuova pre-registrazione di un'ipotesi confirmatory** (solo quando la
+    linea viene riaperta): `alpha = 0.05/(1+N)`, dove `N` e' il numero di
+    confirmatory gia' presenti e `1` e' l'ipotesi che si sta registrando. Il
+    valore conta l'ipotesi stessa: dopo la registrazione la famiglia vale
+    `N+1`.
+  Le exploratory non entrano in nessuno dei due denominatori. Finche' la
+  linea confirmatoria resta chiusa, il secondo caso non si applica.
 - `rumore vero` — due pull nella stessa sessione con barre 1d identiche (stesse
   date, stessi valori) producono un replay bit-identico: delta G7 massimo
   **0.00 pp**. Il valore **8.52 pp** di Passo Y era un limite superiore
