@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 import { runPipelineFromBars, type Bar5m, type Snapshot } from './headless_pipeline';
 import { reasonLabel } from './emission_guard';
 
-const SNAPSHOT_PATH = process.env.REPLAY_SNAPSHOT ?? 'artifacts/snapshot_9.json';
+export const SNAPSHOT_PATH = process.env.REPLAY_SNAPSHOT ?? 'artifacts/snapshot_9.json';
 
 let cached: Snapshot | null = null;
 
@@ -39,6 +39,12 @@ type SetupOut = {
   target: number | null;
   gates: string[] | null;
   reason: string | null;
+  // Quantita' esatta su cui G11 applica la soglia: topCandidate.score.total,
+  // gia' calcolata dalla pipeline e esposta come topScore sul ramo di mercato.
+  score: number | null;
+  // R a orizzonte fisso per singolo setup: non esiste nel punto in cui questo
+  // record viene costruito (vedi delay_replay.ts, calcolo di sumR), quindi null.
+  markR: number | null;
 };
 
 function num(v: unknown): number | null {
@@ -86,5 +92,7 @@ export function runPipeline(input: {
     stop: num(setup.stopLossLevel),
     target: num(setup.target1Level),
     gates,
+    score: num(branch?.topScore),
+    markR: null,
   };
 }

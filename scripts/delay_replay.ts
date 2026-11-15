@@ -22,11 +22,12 @@
  * Output: artifacts/replay_<data>/ (dataset, risultati, summary.json). Non committare.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { applyEmissionGuard } from './emission_guard';
+import { SNAPSHOT_PATH } from './replay_adapter';
 
 type Bar = { t: number; o: number; h: number; l: number; c: number; v: number };
 
@@ -40,6 +41,10 @@ type SetupOut = {
   target: number | null;
   gates: string[] | null;
   reason: string | null;
+  // Campi di sola osservabilita': la quantita' su cui G11 applica la soglia e
+  // l'R a orizzonte fisso. Non intervengono in nessuna decisione.
+  score: number | null;
+  markR: number | null;
 };
 
 function arg(name: string, fallback: string): string {
@@ -253,6 +258,71 @@ function pad(v: string | number | null, width: number): string {
   return s.padStart(width);
 }
 
+type Provenance = {
+  commit: string | null;
+  dirty: boolean | null;
+  argv: string[];
+  cwd: string;
+  nodeVersion: string;
+  snapshotPath: string;
+  snapshotSha256: string | null;
+  snapshotMtime: string | null;
+  barsHash: string;
+  symbols: string[];
+  range: string;
+  shifts: number[];
+  startedAt: string;
+  finishedAt: string | null;
+};
+
+const STARTED_AT = new Date().toISOString();
+
+function gitOut(args: string[]): string | null {
+  const r = spawnSync('git', args, { encoding: 'utf8' });
+  return r.status === 0 && typeof r.stdout === 'string' ? r.stdout.trim() : null;
+}
+
+/**
+ * Identita' completa del run: senza questi campi un artefatto non e'
+ * riproducibile ne' confrontabile con un altro (H-nonies).
+ * snapshotPath e' il file effettivamente letto da replay_adapter.ts (stessa costante).
+ */
+function buildProvenance(barsHash: string): Provenance {
+  const status = gitOut(['status', '--porcelain']);
+  let snapshotSha256: string | null = null;
+  let snapshotMtime: string | null = null;
+  try {
+    snapshotSha256 = createHash('sha256').update(readFileSync(SNAPSHOT_PATH)).digest('hex');
+    snapshotMtime = statSync(SNAPSHOT_PATH).mtime.toISOString();
+  } catch {
+    snapshotSha256 = null;
+    snapshotMtime = null;
+  }
+  return {
+    commit: gitOut(['rev-parse', 'HEAD']),
+    dirty: status === null ? null : status.length > 0,
+    argv: process.argv.slice(2),
+    cwd: process.cwd(),
+    nodeVersion: process.version,
+    snapshotPath: SNAPSHOT_PATH,
+    snapshotSha256,
+    snapshotMtime,
+    barsHash,
+    symbols: SYMBOLS,
+    range: RANGE,
+    shifts: SHIFTS,
+    startedAt: STARTED_AT,
+    finishedAt: null,
+  };
+}
+
+function logProvenance(p: Provenance): void {
+  for (const [k, v] of Object.entries(p)) {
+    const text = Array.isArray(v) ? v.join(',') : v === null ? 'null' : String(v);
+    console.log(`  ${k}: ${text}`);
+  }
+}
+
 async function main(): Promise<void> {
   mkdirSync(OUT_DIR, { recursive: true });
 
@@ -284,6 +354,10 @@ async function main(): Promise<void> {
     .map((s) => ({ name: s.path, content: readFileSync(s.path, 'utf8') }));
   const barsHash = sha256OfFiles(barFiles);
   const runAt = new Date().toISOString();
+  // Provenance: scritta nel log a inizio run e nel summary.json.
+  const provenance = buildProvenance(barsHash);
+  console.log('provenance:');
+  logProvenance(provenance);
   const missingCache = barSources.filter((s) => !s.fromCache).map((s) => s.symbol);
   const hashPath = join(OUT_DIR, 'bars_hash.json');
   // Il confronto con il run precedente usa CACHE_DIR (persistente), non OUT_DIR:
@@ -377,6 +451,8 @@ async function main(): Promise<void> {
             target: null,
             gates: null,
             reason: null,
+            score: null,
+            markR: null,
           },
         );
       }
@@ -399,7 +475,12 @@ async function main(): Promise<void> {
     console.log('');
     console.log('shift  identico  bytes');
     for (const r of diffRows) console.log(`${pad(r.shift, 5)}${pad(String(r.identico), 9)}${pad(r.bytes, 7)}`);
-    writeFileSync(join(OUT_DIR, 'summary.json'), `${JSON.stringify({ mode: MODE, barsHash, runAt, diffRows }, null, 2)}\n`);
+    provenance.finishedAt = new Date().toISOString();
+    console.log(`  finishedAt: ${provenance.finishedAt}`);
+    writeFileSync(
+      join(OUT_DIR, 'summary.json'),
+      `${JSON.stringify({ mode: MODE, barsHash, runAt, diffRows, provenance }, null, 2)}\n`,
+    );
     return;
   }
 
@@ -470,9 +551,15 @@ async function main(): Promise<void> {
   }
   console.log('Nota: R e\' calcolato a orizzonte fisso sulle barre NON shiftate. Serve a confrontare gli shift, non e\' l\'R del trade.');
 
+  provenance.finishedAt = new Date().toISOString();
+  console.log(`  finishedAt: ${provenance.finishedAt}`);
   writeFileSync(
     join(OUT_DIR, 'summary.json'),
-    `${JSON.stringify({ mode: MODE, barsHash, runAt, horizonSec: HORIZON_SEC, rows: summaryRows }, null, 2)}\n`,
+    `${JSON.stringify(
+      { mode: MODE, barsHash, runAt, horizonSec: HORIZON_SEC, rows: summaryRows, provenance },
+      null,
+      2,
+    )}\n`,
   );
   console.log(`riepilogo scritto in ${join(OUT_DIR, 'summary.json')}`);
 }
