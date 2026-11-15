@@ -536,13 +536,8 @@ function probe() {
 // ---------------------------------------------------------------- decili
 
 function decileRows(items: Item[], cuts: number[], ndec: number): DecileRow[] {
-  const buckets: Item[][] = Array.from({ length: ndec }, () => []);
-  for (const it of items) {
-    if (it.s.score === null) continue;
-    let d = 1;
-    for (const c of cuts) if (it.s.score > c) d++;
-    buckets[Math.min(d, ndec) - 1].push(it);
-  }
+  // Stesso raggruppamento di FASE 7: una sola implementazione (groupByDecile).
+  const buckets = groupByDecile(items, cuts, ndec);
   const rows: DecileRow[] = [];
   for (let i = 0; i < ndec; i++) {
     const b = buckets[i];
