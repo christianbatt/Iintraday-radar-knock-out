@@ -601,7 +601,7 @@ function main() {
   log('');
 
   // ---- FASE 0: validazione del mark
-  log('=== FASE 0 — validazione (riproduzione dei sumR pubblicati) ===');
+  log('=== FASE 0 — validazione (riproduzione dei sumR pubblicati, sempre sui soli emessi) ===');
   const direct = data[PRIMARY_SHIFT][0] ? directR(data[PRIMARY_SHIFT][0]) !== null : false;
   const candidates: Array<'direct' | 'markRReplay' | 'lastBefore' | 'firstAfter' | 'nearest'> = direct
     ? ['direct', 'markRReplay', 'lastBefore', 'firstAfter', 'nearest']
@@ -615,7 +615,7 @@ function main() {
     const counts: Record<number, number> = {};
     for (const sh of SHIFTS) {
       let sum = 0, n = 0;
-      for (const s of data[sh]) {
+      for (const s of data[sh].filter(x => x.emitted)) {
         let r: number | null = null;
         if (v === 'direct') r = directR(s);
         else {
@@ -633,6 +633,7 @@ function main() {
 
   const coverageGaps: string[] = [];
   for (const sh of SHIFTS) {
+    if (INCLUDE_BLOCKED) break;
     const nEm = EMITTED_COUNT[sh] ?? NaN;
     if (data[sh].length !== nEm) {
       coverageGaps.push(`[COPERTURA] shift ${sh}: n_validi=${data[sh].length} n_emessi=${nEm} mancanti=${nEm - data[sh].length}`);
