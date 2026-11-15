@@ -291,8 +291,18 @@ function readRegistry(): Array<Record<string, unknown>> {
   }
   return out;
 }
-function nHypotheses() { return readRegistry().filter(r => r.kind === 'hypothesis').length; }
-function alphaEff() { return 0.05 / (1 + nHypotheses()); }
+// Denominatore Bonferroni: solo le ipotesi confirmatory. Le 56 righe con `tier`
+// assente/null sono confirmatory per default e non vanno riclassificate; con
+// AI-0062 fanno 57. Le exploratory non entrano nel denominatore. Regola letta in
+// registry/schema.md, sezione Passo AA ("linea confirmatoria chiusa", alpha =
+// 0.05/57 = 0.000877193).
+function nHypotheses() {
+  return readRegistry().filter(r =>
+    r.kind === 'hypothesis' &&
+    (r.tier === undefined || r.tier === null || r.tier === 'confirmatory')
+  ).length;
+}
+function alphaEff() { return 0.05 / nHypotheses(); }
 function hasRow(id: string, kind: string): boolean {
   return readRegistry().some(r => r.id === id && r.kind === kind);
 }
@@ -312,7 +322,7 @@ function writeResult(id: string, status: string, measured: Record<string, unknow
   if (hasRow(id, 'result')) return;
   const nPrior = nHypotheses();
   appendRow({ id, ts: new Date().toISOString(), kind: 'result', status, measured, reason,
-              alphaEffective: 0.05 / (1 + nPrior) });
+              alphaEffective: 0.05 / Math.max(1, nPrior) });
 }
 
 // ---------------------------------------------------------------- netto (Passo J)
