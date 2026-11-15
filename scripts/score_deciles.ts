@@ -44,6 +44,8 @@ for (const a of process.argv.slice(2)) {
 }
 const PROBE           = ARGS.has('probe');
 const INCLUDE_BLOCKED = ARGS.has('include-blocked');
+const G4_REALIZABLE   = ARGS.has('g4-realizable');
+const CROSS_TAB       = ARGS.has('cross-tab');
 
 const HORIZON_RAW  = ARGS.get('horizon') ?? 'resolution';
 const HORIZON_MODE: 'resolution' | 'fixed' = HORIZON_RAW === 'resolution' ? 'resolution' : 'fixed';
@@ -534,13 +536,8 @@ function probe() {
 // ---------------------------------------------------------------- decili
 
 function decileRows(items: Item[], cuts: number[], ndec: number): DecileRow[] {
-  const buckets: Item[][] = Array.from({ length: ndec }, () => []);
-  for (const it of items) {
-    if (it.s.score === null) continue;
-    let d = 1;
-    for (const c of cuts) if (it.s.score > c) d++;
-    buckets[Math.min(d, ndec) - 1].push(it);
-  }
+  // Stesso raggruppamento di FASE 7: una sola implementazione (groupByDecile).
+  const buckets = groupByDecile(items, cuts, ndec);
   const rows: DecileRow[] = [];
   for (let i = 0; i < ndec; i++) {
     const b = buckets[i];
@@ -627,6 +624,63 @@ function reasonRows(items: Item[]) {
     });
   }
   return out;
+}
+
+// ---------------------------------------------------------------- resolver / G4
+
+/**
+ * Convenzione identica a scripts/delay_replay.ts:205-212 (priceAt): ultima barra
+ * con t <= istante, si prende la close. `t` qui e' in millisecondi.
+ */
+function priceAtClose(bars: Bar[], tsMs: number): number | null {
+  let best: number | null = null;
+  for (const b of bars) {
+    if (b.t <= tsMs) best = b.c;
+    else break;
+  }
+  return best;
+}
+
+/**
+ * Firma del resolver: un Item e' risolto da barrierR(s, bars, HORIZON, BE_TRIGGER),
+ * esattamente come nella FASE 1/5. Estratta perche' la FASE 6 la riusa con
+ * l'entry realizzabile, senza duplicare la logica di barriera.
+ */
+function resolveR(s: Setup, bars: Bar[]): { r: number | null; exit: string } {
+  const b = barrierR(s, bars, HORIZON, BE_TRIGGER);
+  s.barrierR = b.r;
+  s.barrierExit = b.exit;
+  return { r: b.r, exit: b.exit };
+}
+
+function decileAssign(score: number, cuts: number[], ndec: number): number {
+  let d = 1;
+  for (const c of cuts) if (score > c) d++;
+  return Math.min(d, ndec);
+}
+
+function groupByDecile(items: Item[], cuts: number[], ndec: number): Item[][] {
+  const buckets: Item[][] = Array.from({ length: ndec }, () => []);
+  for (const it of items) {
+    if (it.s.score === null) continue;
+    buckets[decileAssign(it.s.score, cuts, ndec) - 1].push(it);
+  }
+  return buckets;
+}
+
+/** Sintesi di monotonicita' per un insieme gia' raggruppato (stessi tagli della FASE 1). */
+function decileSummary(buckets: Item[][]) {
+  const rows = buckets.map((b, i) => {
+    const res = b.filter(x => x.r !== null && x.exit !== 'censored');
+    return { decile: i + 1, n: b.length, nResolved: res.length, meanR: mean(res.map(x => x.r!)) };
+  });
+  const interp = rows.filter(r => r.nResolved >= MIN_N);
+  const rho = spearman(interp.map(r => r.decile), interp.map(r => r.meanR));
+  const slope = olsSlope(interp.map(r => r.decile), interp.map(r => r.meanR));
+  const ne = rows.filter(r => r.n > 0);
+  const spread = ne.length >= 2 ? ne[ne.length - 1].meanR - ne[0].meanR : NaN;
+  const at = (d: number) => rows[d - 1]?.meanR ?? NaN;
+  return { rows, rho, slope, spread, decile1: at(1), decileLast: at(rows.length) };
 }
 
 // ---------------------------------------------------------------- main
@@ -746,8 +800,7 @@ function main() {
       }
       const bars = loadBars(s.symbol);
       if (!bars) { unresolved++; items[sh].push({ s, r: null, exit: 'unresolved' }); continue; }
-      const b = barrierR(s, bars, HORIZON, BE_TRIGGER);
-      s.barrierR = b.r; s.barrierExit = b.exit;
+      const b = resolveR(s, bars);
       items[sh].push({ s, r: b.r, exit: b.exit });
     }
   }
@@ -776,12 +829,121 @@ function main() {
   }
   log('');
 
-  // ---- FASE 1: decili
+  // Tagli dei decili: stessa definizione della FASE 1, calcolati qui perche'
+  // FASE 6/7 li usano prima.
   const primary = items[PRIMARY_SHIFT].filter(x => x.s.score !== null);
   const scores = primary.map(x => x.s.score!).sort((a, b) => a - b);
   const cuts: number[] = [];
   for (let k = 1; k < NDEC; k++) cuts.push(quantile(scores, k / NDEC));
 
+  // ---- FASE 6: G4 con entry realizzabile
+  const g4Realizable: Record<string, unknown> = {};
+  if (G4_REALIZABLE) {
+    log(`=== FASE 6 — G4 con entry realizzabile (shift ${PRIMARY_SHIFT}) ===`);
+    const isG4 = (it: Item) => {
+      const raw = (it.s.raw as any)?.reason;
+      return typeof raw === 'string' && raw.startsWith('leva:G4:');
+    };
+    const g4 = items[PRIMARY_SHIFT].filter(isG4);
+    let skippedNoPrice = 0, skippedZeroRisk = 0, valutati = 0;
+    const regR: number[] = [];
+    const realR: Array<{ date: string; v: number }> = [];
+    const slips: number[] = [];
+    const lowSlipR: number[] = [];
+    for (const it of g4) {
+      if (it.r !== null && it.exit !== 'censored') regR.push(it.r);
+      const st = it.s;
+      const bars = loadBars(st.symbol);
+      const entryReal = bars ? priceAtClose(bars, st.entryTs) : null;
+      if (entryReal === null || bars === null ||
+          !Number.isFinite(st.stop) || !Number.isFinite(st.target) || !Number.isFinite(st.entry)) {
+        skippedNoPrice++;
+        continue;
+      }
+      const riskReg = Math.abs(st.entry - st.stop);
+      const riskReal = Math.abs(entryReal - st.stop);
+      if (!(riskReal > 0) || !(riskReg > 0)) { skippedZeroRisk++; continue; }
+      const slip = st.dir * (entryReal - st.entry) / riskReg;
+      slips.push(slip);
+      const clone: Setup = { ...st, entry: entryReal };
+      const b = resolveR(clone, bars);
+      valutati++;
+      if (b.r !== null && b.exit !== 'censored') {
+        realR.push({ date: st.date, v: b.r });
+        if (slip <= 0.25) lowSlipR.push(b.r);
+      }
+    }
+    const control = mean(regR);
+    const realVals = realR.map(x => x.v);
+    const boot = blockBootstrap(realR, BOOT);
+    const srtSlip = [...slips].sort((a, b) => a - b);
+    const shareOver05 = slips.length ? slips.filter(x => x > 0.5).length / slips.length * 100 : NaN;
+    log(`  setup G4: ${g4.length}   valutati: ${valutati}   skippedNoPrice: ${skippedNoPrice}   skippedZeroRisk: ${skippedZeroRisk}`);
+    log(`  controllo entry registrato:  meanR=${control >= 0 ? '+' : ''}${num(control)}  hit%=${num(regR.filter(r => r > 0).length / regR.length * 100, 1)}   (deve coincidere con FASE 5)`);
+    log(`  entry realizzabile:          meanR=${num(mean(realVals))}       hit%=${num(realVals.filter(r => r > 0).length / realVals.length * 100, 1)}      CI95=[${num(boot.lo)}, ${num(boot.hi)}]`);
+    log(`  slippage (R, positivo=avverso): media=${num(mean(slips))}  mediana=${num(quantile(srtSlip, 0.5))}  p90=${num(quantile(srtSlip, 0.9))}  max=${num(srtSlip[srtSlip.length - 1] ?? NaN)}`);
+    log(`  quota di setup con slippage > 0.5R: ${num(shareOver05, 1)}%`);
+    log(`  R realizzabile medio con slippage <= 0.25R: ${num(mean(lowSlipR))} (n=${lowSlipR.length}, hit%=${num(lowSlipR.filter(r => r > 0).length / lowSlipR.length * 100, 1)})`);
+    log('');
+    Object.assign(g4Realizable, {
+      nG4: g4.length, valutati, skippedNoPrice, skippedZeroRisk,
+      controlMeanR: control, controlHitRate: regR.filter(r => r > 0).length / regR.length,
+      realMeanR: mean(realVals), realHitRate: realVals.filter(r => r > 0).length / realVals.length,
+      realCi95: [boot.lo, boot.hi],
+      slipMean: mean(slips), slipMedian: quantile(srtSlip, 0.5), slipP90: quantile(srtSlip, 0.9),
+      slipMax: srtSlip[srtSlip.length - 1] ?? null, shareOver05,
+      lowSlipMeanR: mean(lowSlipR), lowSlipN: lowSlipR.length,
+    });
+  }
+
+  // ---- FASE 7: composizione dei decili e confondimento
+  const crossTab: Record<string, unknown> = {};
+  if (CROSS_TAB) {
+    log(`=== FASE 7 — composizione e confondimento (shift ${PRIMARY_SHIFT}) ===`);
+    const primaryAll = items[PRIMARY_SHIFT].filter(x => x.s.score !== null);
+    const buckets = groupByDecile(primaryAll, cuts, NDEC);
+    const shortReason = (raw: any): string => {
+      const v = raw?.reason;
+      if (v === null || v === undefined) return 'EMESSO';
+      const m = String(v).match(/G(\d+)/);
+      return m ? `G${m[1]}` : String(v).slice(0, 12);
+    };
+    const THRESH: Record<number, number> = { 1: 44.4, 2: 27.5 };
+    log('  --- 7a: composizione dei decili ---');
+    const comp: Record<string, unknown> = {};
+    for (const d of [1, 2, 10]) {
+      const b = buckets[d - 1] ?? [];
+      const resolved = b.filter(x => x.r !== null && x.exit !== 'censored');
+      const counts = new Map<string, number>();
+      for (const x of resolved) {
+        const k = shortReason(x.s.raw);
+        counts.set(k, (counts.get(k) ?? 0) + 1);
+      }
+      const parts = [...counts.entries()].sort((a, b2) => b2[1] - a[1])
+        .map(([k, v]) => `${k} ${num(v / resolved.length * 100, 1)}%`);
+      const g4share = resolved.length ? (counts.get('G4') ?? 0) / resolved.length * 100 : NaN;
+      const thr = THRESH[d];
+      log(`  decile ${d} (n=${b.length}, risolte ${resolved.length}): ${parts.join('  ')}` +
+          (thr !== undefined ? `   [quota G4 misurata ${num(g4share, 1)}% vs soglia ${thr}%]` : ''));
+      comp[`decile${d}`] = { n: b.length, nResolved: resolved.length, shares: Object.fromEntries(counts), g4share };
+    }
+    log('  --- 7b: decili senza G4 ---');
+    const noG4 = primaryAll.filter(x => shortReason(x.s.raw) !== 'G4');
+    const sum7b = decileSummary(groupByDecile(noG4, cuts, NDEC));
+    log(`  rho=${num(sum7b.rho, 3)}  pendenza=${num(sum7b.slope, 4)}  spread=${num(sum7b.spread)}  decile1 meanR=${num(sum7b.decile1)}  decile10 meanR=${num(sum7b.decileLast)}   (n=${noG4.length})`);
+    log('  --- 7c: decili dentro G4 ---');
+    const onlyG4 = primaryAll.filter(x => shortReason(x.s.raw) === 'G4');
+    const sum7c = decileSummary(groupByDecile(onlyG4, cuts, NDEC));
+    log(`  rho=${num(sum7c.rho, 3)}  pendenza=${num(sum7c.slope, 4)}  decile1 meanR=${num(sum7c.decile1)}  decile10 meanR=${num(sum7c.decileLast)}   (n=${onlyG4.length})`);
+    log('');
+    Object.assign(crossTab, {
+      composition: comp,
+      noG4: { n: noG4.length, rho: sum7b.rho, slope: sum7b.slope, spread: sum7b.spread, decile1: sum7b.decile1, decileLast: sum7b.decileLast },
+      onlyG4: { n: onlyG4.length, rho: sum7c.rho, slope: sum7c.slope, decile1: sum7c.decile1, decileLast: sum7c.decileLast },
+    });
+  }
+
+  // ---- FASE 1: decili
   log(`=== FASE 1 — decili di punteggio, shift ${PRIMARY_SHIFT} (${primary.length} setup) ===`);
   log(`  tagli: ${cuts.map(c => num(c, 1)).join(' | ')}`);
   const rowsPrimary = decileRows(primary, cuts, NDEC);
@@ -874,6 +1036,9 @@ function main() {
     })),
     deciles: { cuts, primary: rowsPrimary, ...stability },
     reasonStats,
+    // Presenti solo se i rami sono attivi: senza flag il report resta identico.
+    ...(Object.keys(g4Realizable).length ? { g4Realizable } : {}),
+    ...(Object.keys(crossTab).length ? { crossTab } : {}),
     selectionCurve: { tops: curve, full: base },
     monotonicity: { rho, slope, spread, interpretableDeciles: interp.length },
     verdict,
