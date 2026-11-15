@@ -48,6 +48,7 @@ const G4_REALIZABLE   = ARGS.has('g4-realizable');
 const CROSS_TAB       = ARGS.has('cross-tab');
 const FILL_CONDITIONAL = ARGS.has('fill-conditional');
 const TARGET_SWEEP     = ARGS.has('target-sweep');
+const EXCLUDE_G4       = ARGS.has('exclude-g4');
 
 const HORIZON_RAW  = ARGS.get('horizon') ?? 'resolution';
 const HORIZON_MODE: 'resolution' | 'fixed' = HORIZON_RAW === 'resolution' ? 'resolution' : 'fixed';
@@ -966,7 +967,13 @@ function main() {
   const filledSample: Array<{ s: Setup; bars: Bar[] }> = [];
   if (FILL_CONDITIONAL || TARGET_SWEEP) {
     log(`=== FASE 8 — R condizionato al fill (shift ${PRIMARY_SHIFT}) ===`);
-    const all = items[PRIMARY_SHIFT];
+    // --exclude-g4: le tre fasi vetrino gli stessi setup. G4 e' l'unico motivo
+    // con distR < 0 (trigger gia' dietro il mercato), quindi l'unico che il
+    // fill non puo' correggere: escluderlo mostra il resto della popolazione.
+    const all = EXCLUDE_G4
+      ? items[PRIMARY_SHIFT].filter(it => !String((it.s.raw as any)?.reason ?? '').startsWith('leva:G4:'))
+      : items[PRIMARY_SHIFT];
+    if (EXCLUDE_G4) log(`  [--exclude-g4] setup leva:G4 esclusi: ${items[PRIMARY_SHIFT].length - all.length}`);
     const distAll: number[] = [];
     const barsToFillAll: number[] = [];
     const comeSeR: number[] = [];
@@ -1035,6 +1042,7 @@ function main() {
     log(`  meanR dei noFill "come se":     ${num(mean(noFillR))}   (n=${noFillR.length})`);
     log('');
     Object.assign(fillStats, {
+      excludeG4: EXCLUDE_G4,
       n: all.length, filled: filledCount, noFill: noFillCount,
       fillPct: filledCount / all.length * 100,
       barsToFillMedian: quantile(srtBars, 0.5), barsToFillP90: quantile(srtBars, 0.9),
