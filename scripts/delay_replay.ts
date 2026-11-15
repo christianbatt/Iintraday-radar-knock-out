@@ -23,6 +23,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { applyEmissionGuard } from './emission_guard';
@@ -98,6 +99,22 @@ function inSession(tsSec: number): boolean {
 
 function cachePath(symbol: string): string {
   return join(CACHE_DIR, `${symbol.replace(/[^A-Za-z0-9._-]/g, '_')}_${RANGE}.json`);
+}
+
+/**
+ * Riproducibilita': SHA-256 sui file di barre effettivamente letti, ordinati per
+ * nome, ciascuno preceduto dal proprio nome e seguito dal contenuto.
+ */
+function sha256OfFiles(files: Array<{ name: string; content: string }>): string {
+  const h = createHash('sha256');
+  const sorted = [...files].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  for (const f of sorted) {
+    h.update(f.name);
+    h.update('\0');
+    h.update(f.content);
+    h.update('\n');
+  }
+  return h.digest('hex');
 }
 
 async function fetchBars(symbol: string): Promise<Bar[]> {
@@ -245,17 +262,55 @@ async function main(): Promise<void> {
   console.log(`output: ${OUT_DIR}`);
 
   const series = new Map<string, Bar[]>();
+  const barSources: Array<{ symbol: string; path: string; fromCache: boolean }> = [];
   for (const sym of SYMBOLS) {
+    const path = cachePath(sym);
+    const fromCache = existsSync(path);
     try {
       const bars = await loadOrFetch(sym);
       const session = bars.filter((b) => inSession(b.t));
       series.set(sym, session);
+      barSources.push({ symbol: sym, path, fromCache });
       console.log(`  ${sym}: ${session.length} barre in sessione (${bars.length} totali)`);
     } catch (e: unknown) {
       console.log(`  ${sym}: ERRORE ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   if (series.size === 0) throw new Error('nessuna serie disponibile');
+
+  // Riproducibilita': hash delle barre effettivamente usate + data di run.
+  const barFiles = barSources
+    .filter((s) => existsSync(s.path))
+    .map((s) => ({ name: s.path, content: readFileSync(s.path, 'utf8') }));
+  const barsHash = sha256OfFiles(barFiles);
+  const runAt = new Date().toISOString();
+  const missingCache = barSources.filter((s) => !s.fromCache).map((s) => s.symbol);
+  const hashPath = join(OUT_DIR, 'bars_hash.json');
+  let previousHash: string | null = null;
+  if (existsSync(hashPath)) {
+    try {
+      const prev: unknown = JSON.parse(readFileSync(hashPath, 'utf8'));
+      if (isObj(prev) && typeof prev.hash === 'string') previousHash = prev.hash;
+    } catch {
+      previousHash = null;
+    }
+  }
+  const hashStable = previousHash !== null && previousHash === barsHash;
+  console.log(`barre: hash ${barsHash} (${barFiles.length} file, run ${runAt})`);
+  if (missingCache.length > 0) {
+    console.log(`ATTENZIONE cache assente per ${missingCache.join(' ')}: barre scaricate e scritte, non riusate in silenzio.`);
+  }
+  if (previousHash === null) {
+    console.log('hash precedente: assente (primo run in questa directory)');
+  } else if (!hashStable) {
+    console.log(`ATTENZIONE hash barre diverso dal run precedente: ${previousHash} -> ${barsHash}`);
+  } else {
+    console.log('hash barre stabile rispetto al run precedente');
+  }
+  writeFileSync(
+    hashPath,
+    `${JSON.stringify({ hash: barsHash, runAt, files: barFiles.map((f) => f.name), missingCache, previousHash, stable: hashStable }, null, 2)}\n`,
+  );
 
   const gridSet = new Set<number>();
   for (const bars of series.values()) {
@@ -335,7 +390,7 @@ async function main(): Promise<void> {
     console.log('');
     console.log('shift  identico  bytes');
     for (const r of diffRows) console.log(`${pad(r.shift, 5)}${pad(String(r.identico), 9)}${pad(r.bytes, 7)}`);
-    writeFileSync(join(OUT_DIR, 'summary.json'), `${JSON.stringify({ mode: MODE, diffRows }, null, 2)}\n`);
+    writeFileSync(join(OUT_DIR, 'summary.json'), `${JSON.stringify({ mode: MODE, barsHash, runAt, diffRows }, null, 2)}\n`);
     return;
   }
 
@@ -408,7 +463,7 @@ async function main(): Promise<void> {
 
   writeFileSync(
     join(OUT_DIR, 'summary.json'),
-    `${JSON.stringify({ mode: MODE, horizonSec: HORIZON_SEC, rows: summaryRows }, null, 2)}\n`,
+    `${JSON.stringify({ mode: MODE, barsHash, runAt, horizonSec: HORIZON_SEC, rows: summaryRows }, null, 2)}\n`,
   );
   console.log(`riepilogo scritto in ${join(OUT_DIR, 'summary.json')}`);
 }
