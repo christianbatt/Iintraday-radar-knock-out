@@ -462,3 +462,26 @@ esiste già. `postmortem` è read-only rispetto al registro.
   descrizione, non un test.
 - `n per simbolo` — ogni stima porta il denominatore. Con denominatori di 450-1000
   righe gli intervalli sono stretti; con emissioni di 0-13 eventi sono larghi.
+
+## Parametri provvisori di tuning (non congelati)
+
+I valori seguenti di `src/config/tradingParams.ts` sono parametri di tuning, non
+soglie di ricerca congelate.
+
+| parametro | valore | file:riga | stato |
+|---|---|---|---|
+| `LIQ_MIN_EUR` | `3_000_000` | `src/config/tradingParams.ts:208` | tuning, non congelato |
+| `EST_MAX` | `0.004` | `src/config/tradingParams.ts:213` | tuning, non congelato |
+| `ADR_MAX` | `0.60` | `src/config/tradingParams.ts:214` | tuning, non congelato |
+| `ADR_OPTIMAL_MAX_PCT` | `45` | `src/config/tradingParams.ts:215` | tuning, non congelato |
+| `FRESH_MIN` | `60` | `src/config/tradingParams.ts:216` | tuning, non congelato |
+| `BUF_BAR` | `0.001` | `src/config/tradingParams.ts:217` | tuning, non congelato |
+| `STOP_BUF` | `0.002` | `src/config/tradingParams.ts:218` | tuning, non congelato |
+
+- **Regola 1** — questi valori non sono soglie di ricerca fisse: non vanno usati
+  per dichiarare un esito confirmatory.
+- **Regola 2** — qualsiasi modifica di uno di questi valori va tracciata con una
+  nuova riga nel registro (append-only) che indichi valore precedente, nuovo
+  valore e motivo.
+- **Regola 3** — il tuning non puo' usare il holdout per la scelta dei valori; il
+  holdout va usato una sola volta per ogni ipotesi confirmatory.
