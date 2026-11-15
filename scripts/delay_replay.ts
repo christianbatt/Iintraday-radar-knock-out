@@ -286,10 +286,13 @@ async function main(): Promise<void> {
   const runAt = new Date().toISOString();
   const missingCache = barSources.filter((s) => !s.fromCache).map((s) => s.symbol);
   const hashPath = join(OUT_DIR, 'bars_hash.json');
+  // Il confronto con il run precedente usa CACHE_DIR (persistente), non OUT_DIR:
+  // OUT_DIR cambia ogni giorno (replay_<data>) e perderebbe lo storico.
+  const lastHashPath = join(CACHE_DIR, 'bars_hash_last.json');
   let previousHash: string | null = null;
-  if (existsSync(hashPath)) {
+  if (existsSync(lastHashPath)) {
     try {
-      const prev: unknown = JSON.parse(readFileSync(hashPath, 'utf8'));
+      const prev: unknown = JSON.parse(readFileSync(lastHashPath, 'utf8'));
       if (isObj(prev) && typeof prev.hash === 'string') previousHash = prev.hash;
     } catch {
       previousHash = null;
@@ -310,6 +313,12 @@ async function main(): Promise<void> {
   writeFileSync(
     hashPath,
     `${JSON.stringify({ hash: barsHash, runAt, files: barFiles.map((f) => f.name), missingCache, previousHash, stable: hashStable }, null, 2)}\n`,
+  );
+  // Ultimo hash persistente per la cache: confronto valido anche tra giorni.
+  mkdirSync(CACHE_DIR, { recursive: true });
+  writeFileSync(
+    lastHashPath,
+    `${JSON.stringify({ hash: barsHash, runAt, files: barFiles.map((f) => f.name) }, null, 2)}\n`,
   );
 
   const gridSet = new Set<number>();
