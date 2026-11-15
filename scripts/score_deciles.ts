@@ -73,13 +73,11 @@ const TOPS = (ARGS.get('tops') ?? '0.1,0.2,0.3,0.5')
   .split(',').map(Number).filter(x => Number.isFinite(x) && x > 0 && x <= 1);
 
 const ART    = 'artifacts';
-const REPLAY = join(ART, 'replay_i3_30d');
+const REPLAY = ARGS.get('replay-dir') ?? join(ART, 'replay_i3_30d');
 const BARSD  = join(ART, 'bars');
-const OUT    = join(ART, 'score_deciles.json');
+const OUT    = ARGS.get('out') ?? join(ART, 'score_deciles.json');
 
-// sumR pubblicati e validati in H-bis/H-quinquies (riferimento di validazione)
-const EXPECTED_SUMR: Record<number, number> = { 0: -43.953, 15: -57.432, 20: -60.546 };
-const SUMP_TOL = 0.10;
+const SUMP_TOL = Number(ARGS.get('sumr-tol') ?? 0.10);
 
 // Nomi candidati del punteggio. Se nessuno esiste, exit 4 con le chiavi reali.
 const SCORE_CANDIDATES = [
@@ -175,6 +173,50 @@ function olsSlope(x: number[], y: number[]): number {
   let n = 0, d = 0;
   for (let i = 0; i < x.length; i++) { n += (x[i] - mx) * (y[i] - my); d += (x[i] - mx) ** 2; }
   return d > 0 ? n / d : NaN;
+}
+
+/**
+ * I sumR di riferimento vengono dal summary.json dello STESSO run che ha
+ * prodotto gli artefatti. La validazione e' quindi auto-coerente: non dipende
+ * da numeri storici non riproducibili. --expected-sumr li forza a mano.
+ */
+function loadExpectedSumR(): Record<number, number> {
+  const override = ARGS.get('expected-sumr');
+  if (override) {
+    const out: Record<number, number> = {};
+    for (const part of override.split(',')) {
+      const [k, v] = part.split(':');
+      const sh = Number(k), val = Number(v);
+      if (!Number.isFinite(sh) || !Number.isFinite(val)) {
+        fail(7, `--expected-sumr non valido: '${part}'. Formato: 0:-4.909,15:-8.371,20:-7.955`);
+      }
+      out[sh] = val;
+    }
+    return out;
+  }
+  const p = join(REPLAY, 'summary.json');
+  if (!existsSync(p)) {
+    fail(3, `mancante: ${p}. Passa --expected-sumr=0:<v>,15:<v>,20:<v>.`);
+  }
+  const s = JSON.parse(readFileSync(p, 'utf8'));
+  const out: Record<number, number> = {};
+  const visit = (node: any): void => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) { for (const x of node) visit(x); return; }
+    // delay_replay scrive 'shiftMin'; restano accettati 'shift' e 'shiftSec'.
+    const sh = node.shift ?? node.shiftSec ?? node.shiftMin;
+    const sum = node.sumR ?? node.sum_r;
+    if (sh !== undefined && sum !== undefined) {
+      const a = Number(sh), b = Number(sum);
+      if (Number.isFinite(a) && Number.isFinite(b)) out[a] = b;
+    }
+    for (const v of Object.values(node)) visit(v);
+  };
+  visit(s);
+  if (Object.keys(out).length === 0) {
+    fail(3, `summary.json non contiene coppie {shift, sumR}. Chiavi di primo livello: ${Object.keys(s).join(', ')}. Passa --expected-sumr.`);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- tipi
@@ -561,6 +603,32 @@ function topK(items: Item[], frac: number) {
   };
 }
 
+function reasonRows(items: Item[]) {
+  const groups = new Map<string, Item[]>();
+  for (const it of items) {
+    const raw = (it.s.raw as any)?.reason;
+    const key = raw === null || raw === undefined ? 'EMESSO' : String(raw);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(it);
+  }
+  const out: Array<{
+    reason: string; n: number; nResolved: number;
+    meanR: number; hitRate: number; ci95: [number, number];
+  }> = [];
+  for (const [reason, arr] of [...groups.entries()].sort((a, b) => b[1].length - a[1].length)) {
+    const resolved = arr.filter(x => x.r !== null && x.exit !== 'censored');
+    const rs = resolved.map(x => x.r!);
+    const boot = blockBootstrap(resolved.map(x => ({ date: x.s.date, v: x.r! })), BOOT);
+    out.push({
+      reason, n: arr.length, nResolved: resolved.length,
+      meanR: mean(rs),
+      hitRate: rs.length ? rs.filter(r => r > 0).length / rs.length : NaN,
+      ci95: [boot.lo, boot.hi] as [number, number],
+    });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- main
 
 function main() {
@@ -599,6 +667,13 @@ function main() {
     log(`  ATTENZIONE: ${all.length - withScore.length} setup senza punteggio, esclusi dai decili.`);
   }
   log('');
+
+  const EXPECTED_SUMR = loadExpectedSumR();
+  for (const sh of SHIFTS) {
+    if (!Number.isFinite(EXPECTED_SUMR[sh])) {
+      fail(3, `manca il sumR atteso per lo shift ${sh}. Trovati: ${Object.keys(EXPECTED_SUMR).join(', ')}. Passa --expected-sumr.`);
+    }
+  }
 
   // ---- FASE 0: validazione del mark
   log('=== FASE 0 — validazione (riproduzione dei sumR pubblicati, sempre sui soli emessi) ===');
@@ -688,6 +763,16 @@ function main() {
     log(`  shift ${pad(sh, 3)} n=${pad(both.length, 4)} segno diverso=${pad(signDiff, 4)} ` +
         `(${num(signDiff / both.length * 100, 1)}%)  |mark-barriera| medio=${num(absDiff)}  ` +
         `meanMark=${num(mean(both.map(x => x.s.markR!)))}  meanBarriera=${num(mean(both.map(x => x.r!)))}`);
+  }
+  log('');
+
+  // ---- FASE 5: R per motivo di blocco
+  log(`=== FASE 5 — R per motivo (shift ${PRIMARY_SHIFT}) ===`);
+  const reasonStats = reasonRows(items[PRIMARY_SHIFT]);
+  log(`  ${pad('motivo', 54)} ${pad('n', 5)} ${pad('ris', 5)} ${pad('meanR', 9)} ${pad('hit%', 7)} CI95`);
+  for (const r of reasonStats) {
+    log(`  ${pad(r.reason.slice(0, 52), 54)} ${pad(r.n, 5)} ${pad(r.nResolved, 5)} ${pad(num(r.meanR), 9)} ` +
+        `${pad(num(r.hitRate * 100, 1), 7)} [${num(r.ci95[0])}, ${num(r.ci95[1])}]`);
   }
   log('');
 
@@ -788,6 +873,7 @@ function main() {
       }];
     })),
     deciles: { cuts, primary: rowsPrimary, ...stability },
+    reasonStats,
     selectionCurve: { tops: curve, full: base },
     monotonicity: { rho, slope, spread, interpretableDeciles: interp.length },
     verdict,
