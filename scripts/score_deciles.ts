@@ -55,6 +55,9 @@ const TARGET_SWEEP_FIXED = ARGS.has('target-sweep-fixed');
 const TERM_STRUCTURE   = ARGS.has('term-structure');
 const TIMING_NULL      = ARGS.has('timing-null');
 const RAW_PREDICTABILITY = ARGS.has('raw-predictability');
+const FILL_AUDIT       = ARGS.has('fill-audit');
+const TERM_CENSORED    = ARGS.has('term-censored');
+const TIMING_NULL_FIXED = ARGS.has('timing-null-fixed');
 
 const HORIZON_RAW  = ARGS.get('horizon') ?? 'resolution';
 const HORIZON_MODE: 'resolution' | 'fixed' = HORIZON_RAW === 'resolution' ? 'resolution' : 'fixed';
@@ -1149,12 +1152,15 @@ function main() {
   const termStats: Array<Record<string, unknown>> = [];
   const timingStats: Record<string, unknown> = {};
   const predStats: Record<string, unknown> = {};
+  const auditStats: Record<string, unknown> = {};
+  const termCensStats: Array<Record<string, unknown>> = [];
+  const timingFixedStats: Record<string, unknown> = {};
   const filledSample: Array<{
     s: Setup; bars: Bar[]; decIdx: number; fillIdx: number;
     fillR: number | null; comeSe: number | null; date: string; decTs: number;
   }> = [];
   if (FILL_CONDITIONAL || TARGET_SWEEP || FILL_AGE || MARK_FROM_FILL || TARGET_SWEEP_FIXED
-      || TERM_STRUCTURE || TIMING_NULL) {
+      || TERM_STRUCTURE || TIMING_NULL || FILL_AUDIT || TERM_CENSORED || TIMING_NULL_FIXED) {
     log(`=== FASE 8 — R condizionato al fill (shift ${PRIMARY_SHIFT}) ===`);
     // --exclude-g4: le tre fasi vetrino gli stessi setup. G4 e' l'unico motivo
     // con distR < 0 (trigger gia' dietro il mercato), quindi l'unico che il
@@ -1420,6 +1426,199 @@ function main() {
         fullSample: { n: filledSample.length, rows: allRows },
         censoringGap: fixedRows.map((r, i) => ({ k: r.k, gap: (r.meanR as number) - (allRows[i].meanR as number) })),
       });
+    }
+
+    // ---- FASE 17: decomposizione del R fill-conditional (tie-break e fill realistico)
+    if (FILL_AUDIT) {
+      log(`=== FASE 17 — decomposizione del R fill-conditional (shift ${PRIMARY_SHIFT}${G4_TAG}) ===`);
+      const pack = new Map<string, Array<{ date: string; v: number }>>([
+        ['R0', []], ['R1', []], ['R2', []], ['R3', []],
+      ]);
+      const pairs = new Map<string, Array<{ date: string; v: number }>>([
+        ['R0-R1', []], ['R0-R2', []], ['R0-R3', []],
+      ]);
+      let gapN = 0, gapSum = 0, touchStop = 0, touchTgt = 0, touchBoth = 0, beyond = 0, nAll = 0;
+      for (const f of filledSample) {
+        const risk = Math.abs(f.s.entry - f.s.stop);
+        if (!(risk > 0)) continue;
+        const fb = f.bars[f.fillIdx];
+        nAll++;
+        const r0 = f.fillR;
+        // R1: barriera dalla barra SUCCESSIVA al fill (la barra di fill e' esclusa)
+        const b1 = barrierR({ ...f.s, entryTs: fb.t }, f.bars, HORIZON, BE_TRIGGER);
+        const r1 = b1.r !== null && b1.exit !== 'censored' ? b1.r : null;
+        // R2: fill realistico. Con un ordine stop, se l'open della barra di fill e'
+        // gia' oltre il trigger si entra all'open, non al trigger.
+        const gapR = f.s.dir * (fb.o - f.s.entry) / risk;
+        const fillPrice = f.s.dir > 0 ? Math.max(f.s.entry, fb.o) : Math.min(f.s.entry, fb.o);
+        if (f.s.dir * (fillPrice - f.s.entry) / risk > 1e-9) { gapN++; gapSum += gapR; }
+        const stopHitBar = f.s.dir > 0 ? fb.l <= f.s.stop : fb.h >= f.s.stop;
+        const tgtHitBar = f.s.dir > 0 ? fb.h >= f.s.target : fb.l <= f.s.target;
+        if (stopHitBar) touchStop++;
+        if (tgtHitBar) touchTgt++;
+        if (stopHitBar && tgtHitBar) touchBoth++;
+        const beyondTarget = f.s.dir * (fillPrice - f.s.target) / risk >= 0;
+        const beyondStop = f.s.dir * (fillPrice - f.s.stop) / risk <= 0;
+        if (beyondTarget || beyondStop) beyond++;
+        // L'uscita (barra e livello) dipende solo da stop/target assoluti, non
+        // dall'entry: si ricava dall'R gia' calcolato, senza duplicare barrierR.
+        const exitOf = (r: number | null) => (r === null ? null : f.s.entry + f.s.dir * r * risk);
+        const mk = (r: number | null) => {
+          if (beyondTarget || beyondStop) return 0;
+          const xp = exitOf(r);
+          return xp === null ? null : f.s.dir * (xp - fillPrice) / risk;
+        };
+        const r2 = mk(r0);
+        const r3 = mk(r1);
+        if (r0 !== null) pack.get('R0')!.push({ date: f.date, v: r0 });
+        if (r1 !== null) pack.get('R1')!.push({ date: f.date, v: r1 });
+        if (r2 !== null) pack.get('R2')!.push({ date: f.date, v: r2 });
+        if (r3 !== null) pack.get('R3')!.push({ date: f.date, v: r3 });
+        if (r0 !== null && r1 !== null) pairs.get('R0-R1')!.push({ date: f.date, v: r0 - r1 });
+        if (r0 !== null && r2 !== null) pairs.get('R0-R2')!.push({ date: f.date, v: r0 - r2 });
+        if (r0 !== null && r3 !== null) pairs.get('R0-R3')!.push({ date: f.date, v: r0 - r3 });
+      }
+      log(`  ${pad('variante', 10)} ${pad('n', 6)} ${pad('meanR', 9)} ${pad('hit%', 7)} CI95`);
+      for (const tag of ['R0', 'R1', 'R2', 'R3']) {
+        const arr = pack.get(tag)!;
+        const vals = arr.map(x => x.v);
+        const boot = blockBootstrap(arr, BOOT);
+        const hit = vals.length ? vals.filter(x => x > 0).length / vals.length : NaN;
+        log(`  ${pad(tag, 10)} ${pad(vals.length, 6)} ${pad(num(mean(vals)), 9)} ${pad(num(hit * 100, 1), 7)} [${num(boot.lo)}, ${num(boot.hi)}]`);
+        Object.assign(auditStats, { [tag]: { n: vals.length, meanR: mean(vals), hitRate: hit, ci95: [boot.lo, boot.hi] } });
+      }
+      log('  --- differenze appaiate ---');
+      log(`  ${pad('coppia', 10)} ${pad('meanΔ', 8)} ${pad('n', 6)} CI95`);
+      for (const tag of ['R0-R1', 'R0-R2', 'R0-R3']) {
+        const arr = pairs.get(tag)!;
+        const boot = blockBootstrap(arr, BOOT);
+        log(`  ${pad(tag, 10)} ${pad(num(mean(arr.map(x => x.v))), 8)} ${pad(arr.length, 6)} [${num(boot.lo)}, ${num(boot.hi)}]`);
+        Object.assign(auditStats, { [tag]: { meanDelta: mean(arr.map(x => x.v)), n: arr.length, ci95: [boot.lo, boot.hi] } });
+      }
+      log('  --- diagnostica ---');
+      const pct = (x: number) => num(x / nAll * 100, 1) + '%';
+      log(`  gap-through: ${pct(gapN)}   gap medio: ${num(gapN ? gapSum / gapN : NaN)}R`);
+      log(`  barra di fill tocca: stop ${pct(touchStop)}  target ${pct(touchTgt)}  entrambi ${pct(touchBoth)}`);
+      log(`  fill gia' oltre una barriera: ${pct(beyond)}`);
+      log('');
+      Object.assign(auditStats, {
+        n: nAll,
+        gapThroughPct: gapN / nAll * 100, gapMeanR: gapN ? gapSum / gapN : NaN,
+        touchStopPct: touchStop / nAll * 100, touchTargetPct: touchTgt / nAll * 100,
+        touchBothPct: touchBoth / nAll * 100, beyondBarrierPct: beyond / nAll * 100,
+      });
+    }
+
+    // ---- FASE 18: term structure con censura vera
+    if (TERM_CENSORED) {
+      const H_LIST = [3600, 7200, 14400, 86400, 172800, 259200, 432000, 864000];
+      const hLabel = (h: number) => (h < 86400 ? `${h / 3600}h` : `${h / 86400}d`);
+      log(`=== FASE 18 — term structure con censura vera (shift ${PRIMARY_SHIFT}${G4_TAG}) ===`);
+      log(`  ${pad('orizzonte', 11)} ${pad('n', 6)} ${pad('meanR', 9)} ${pad('CI95', 18)} ${pad('placebo', 9)} ${pad('diff', 8)} CI95 diff`);
+      const rngC = mulberry32(5151);
+      for (const H of H_LIST) {
+        const real: Array<{ date: string; v: number }> = [];
+        const diffs: Array<{ date: string; v: number }> = [];
+        let psum = 0, pn = 0;
+        for (const f of filledSample) {
+          const risk = Math.abs(f.s.entry - f.s.stop);
+          if (!(risk > 0)) continue;
+          const fb = f.bars[f.fillIdx];
+          const lastBar = f.bars[f.bars.length - 1].t;
+          if (fb.t + H * 1000 > lastBar) continue;            // orizzonte intero non disponibile
+          const xp = priceAtClose(f.bars, fb.t + H * 1000);
+          if (xp === null) continue;
+          const mr = f.s.dir * (xp - f.s.entry) / risk;
+          const ex = exitIdxFor(f.s.symbol, f.bars, H);
+          let ps = 0, cnt = 0;
+          for (let d = 0; d < PLACEBO_DRAWS; d++) {
+            let ok = false, i = 0, j = 0;
+            for (let t = 0; t < 5; t++) {
+              i = Math.floor(rngC() * f.bars.length);
+              if (i >= f.bars.length) i = f.bars.length - 1;
+              j = ex[i];
+              if (f.bars[j].t >= f.bars[i].t + H * 1000) { ok = true; break; }
+            }
+            if (!ok) continue;
+            ps += f.s.dir * (f.bars[j].c - f.bars[i].c) / risk;
+            cnt++;
+          }
+          if (cnt === 0) continue;
+          real.push({ date: f.date, v: mr });
+          diffs.push({ date: f.date, v: mr - ps / cnt });
+          psum += ps / cnt; pn++;
+        }
+        const vals = real.map(x => x.v);
+        const boot = blockBootstrap(real, BOOT);
+        const dBoot = blockBootstrap(diffs, BOOT);
+        const dm = mean(diffs.map(x => x.v));
+        log(`  ${pad(hLabel(H), 11)} ${pad(vals.length, 6)} ${pad(num(mean(vals)), 9)} [${num(boot.lo)}, ${num(boot.hi)}] ${pad(num(pn ? psum / pn : NaN), 9)} ${pad(num(dm), 8)} [${num(dBoot.lo)}, ${num(dBoot.hi)}]`);
+        termCensStats.push({ horizonSec: H, label: hLabel(H), n: vals.length, meanR: mean(vals), ci95: [boot.lo, boot.hi], placebo: pn ? psum / pn : NaN, diff: dm, diffCi95: [dBoot.lo, dBoot.hi] });
+      }
+      log('');
+    }
+
+    // ---- FASE 19: null del timing con geometria vincolata
+    if (TIMING_NULL_FIXED) {
+      log(`=== FASE 19 — null del timing con geometria vincolata (shift ${PRIMARY_SHIFT}${G4_TAG}) ===`);
+      const rngV = mulberry32(888);
+      const obs16: Array<{ date: string; v: number }> = [];
+      const obs06: Array<{ date: string; v: number }> = [];
+      const n16: Array<{ date: string; v: number }> = [];
+      const n06: Array<{ date: string; v: number }> = [];
+      const w16: Array<{ date: string; v: number }> = [];
+      const w06: Array<{ date: string; v: number }> = [];
+      const dR: number[] = [];
+      for (const f of filledSample) {
+        const risk = Math.abs(f.s.entry - f.s.stop);
+        if (!(risk > 0)) continue;
+        const p0 = priceAtClose(f.bars, f.decTs);
+        if (p0 === null) continue;
+        const distR = f.s.dir * (f.s.entry - p0) / risk;
+        dR.push(distR);
+        // osservato con lo stesso k del null (target ricalcolato, non registrato)
+        const o16: Setup = { ...f.s, target: f.s.entry + f.s.dir * 1.6 * risk };
+        const r16 = resolveR(o16, f.bars);
+        if (r16.r !== null && r16.exit !== 'censored') obs16.push({ date: f.date, v: r16.r });
+        const o06: Setup = { ...f.s, target: f.s.entry + f.s.dir * 0.6 * risk };
+        const r06o = resolveR(o06, f.bars);
+        if (r06o.r !== null && r06o.exit !== 'censored') obs06.push({ date: f.date, v: r06o.r });
+        let s16 = 0, c16 = 0, k16 = 0, s06 = 0, c06 = 0, k06 = 0;
+        for (let d = 0; d < TIMING_DRAWS; d++) {
+          const j = Math.floor(rngV() * Math.max(1, f.bars.length - 1));
+          if (j + 1 >= f.bars.length) continue;
+          const pj = f.bars[j].c;
+          const entry = pj + f.s.dir * distR * risk;
+          const stop = entry - f.s.dir * risk;
+          const base: Setup = { ...f.s, entry, stop, entryTs: f.bars[j].t };
+          if (findFillBar(base, f.bars) === null) continue;
+          const b16 = barrierR({ ...base, target: entry + f.s.dir * 1.6 * risk }, f.bars, HORIZON, BE_TRIGGER);
+          if (b16.r !== null && b16.exit !== 'censored') { s16 += b16.r; c16++; if (b16.r > 0) k16++; }
+          const b06 = barrierR({ ...base, target: entry + f.s.dir * 0.6 * risk }, f.bars, HORIZON, BE_TRIGGER);
+          if (b06.r !== null && b06.exit !== 'censored') { s06 += b06.r; c06++; if (b06.r > 0) k06++; }
+        }
+        if (c16 > 0) { n16.push({ date: f.date, v: s16 / c16 }); w16.push({ date: f.date, v: k16 / c16 * 100 }); }
+        if (c06 > 0) { n06.push({ date: f.date, v: s06 / c06 }); w06.push({ date: f.date, v: k06 / c06 * 100 }); }
+      }
+      log(`  ${pad('misura', 20)} ${pad('osservato', 11)} ${pad('null media', 10)} ${pad('null SD', 8)} ${pad('null 2.5%', 10)} ${pad('null 97.5%', 12)} percentile`);
+      const rowX = (label: string, obs: number, nullSet: Array<{ date: string; v: number }>) => {
+        const seq = bootstrapMeans(nullSet, BOOT, 99);
+        if (seq.length === 0) { log(`  ${pad(label, 20)} ${num(obs)}   (bootstrap non calcolabile)`); return null; }
+        const lo = quantile(seq, 0.025), hi = quantile(seq, 0.975);
+        const pct = 100 * seq.filter(x => x <= obs).length / seq.length;
+        log(`  ${pad(label, 20)} ${pad(num(obs), 11)} ${pad(num(mean(seq)), 10)} ${pad(num(stdev(seq)), 8)} ${pad(num(lo), 10)} ${pad(num(hi), 12)} ${num(pct, 1)}%`);
+        return { observed: obs, nullMean: mean(seq), nullSd: stdev(seq), nullLo: lo, nullHi: hi, percentile: pct };
+      };
+      const rowsF: Record<string, unknown> = {};
+      const o16m = obs16.filter(x => x.v > 0).length / (obs16.length || NaN);
+      const o06m = obs06.filter(x => x.v > 0).length / (obs06.length || NaN);
+      rowsF['meanR k=1.6'] = rowX('meanR k=1.6', mean(obs16.map(x => x.v)), n16);
+      rowsF['hit% k=1.6'] = rowX('hit% k=1.6', o16m * 100, w16);
+      rowsF['meanR k=0.6'] = rowX('meanR k=0.6', mean(obs06.map(x => x.v)), n06);
+      rowsF['hit% k=0.6'] = rowX('hit% k=0.6', o06m * 100, w06);
+      log(`  ${pad('distR null medio', 20)} ${pad('—', 11)} ${pad(num(mean(dR)), 10)} ${pad(num(stdev(dR)), 8)} ${pad('—', 10)} ${pad('—', 12)} —`);
+      log('');
+      Object.assign(timingFixedStats, rowsF, { distRNullMean: mean(dR), distRNullSd: stdev(dR), nDistR: dR.length });
     }
 
     // ---- FASE 14: term structure del mark dall'entry di fill
@@ -1707,6 +1906,9 @@ function main() {
     ...(termStats.length ? { termStructure: termStats } : {}),
     ...(Object.keys(timingStats).length ? { timingNull: timingStats } : {}),
     ...(Object.keys(predStats).length ? { rawPredictability: predStats } : {}),
+    ...(Object.keys(auditStats).length ? { fillAudit: auditStats } : {}),
+    ...(termCensStats.length ? { termCensored: termCensStats } : {}),
+    ...(Object.keys(timingFixedStats).length ? { timingNullFixed: timingFixedStats } : {}),
     selectionCurve: { tops: curve, full: base },
     monotonicity: { rho, slope, spread, interpretableDeciles: interp.length },
     verdict,
