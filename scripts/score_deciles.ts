@@ -61,6 +61,7 @@ const TIMING_NULL_FIXED = ARGS.has('timing-null-fixed');
 const PLACEBO_MATCHED  = ARGS.has('placebo-matched');
 const FILL_CONSERVATIVE = ARGS.has('fill-conservative');
 const IMMEDIATE_ENTRY  = ARGS.has('immediate-entry');
+const TERM_FIXED       = ARGS.has('term-fixed');
 
 const HORIZON_RAW  = ARGS.get('horizon') ?? 'resolution';
 const HORIZON_MODE: 'resolution' | 'fixed' = HORIZON_RAW === 'resolution' ? 'resolution' : 'fixed';
@@ -1159,6 +1160,7 @@ function main() {
   const predStats: Record<string, unknown> = {};
   const auditStats: Record<string, unknown> = {};
   const termCensStats: Array<Record<string, unknown>> = [];
+  const termFixedStats: Array<Record<string, unknown>> = [];
   const timingFixedStats: Record<string, unknown> = {};
   const placeboMatchedStats: Array<Record<string, unknown>> = [];
   const consStats: Record<string, unknown> = {};
@@ -1169,7 +1171,7 @@ function main() {
   }> = [];
   if (FILL_CONDITIONAL || TARGET_SWEEP || FILL_AGE || MARK_FROM_FILL || TARGET_SWEEP_FIXED
       || TERM_STRUCTURE || TIMING_NULL || FILL_AUDIT || TERM_CENSORED || TIMING_NULL_FIXED
-      || PLACEBO_MATCHED || FILL_CONSERVATIVE || IMMEDIATE_ENTRY) {
+      || PLACEBO_MATCHED || FILL_CONSERVATIVE || IMMEDIATE_ENTRY || TERM_FIXED) {
     log(`=== FASE 8 — R condizionato al fill (shift ${PRIMARY_SHIFT}) ===`);
     // --exclude-g4: le tre fasi vetrino gli stessi setup. G4 e' l'unico motivo
     // con distR < 0 (trigger gia' dietro il mercato), quindi l'unico che il
@@ -1773,6 +1775,64 @@ function main() {
       log('');
     }
 
+    // ---- FASE 24: FASE 18 con la condizione di placebo corretta
+    if (TERM_FIXED) {
+      // Stessa geometria di FASE 18 (draw uniforme su tutta la serie, nessun
+      // vincolo di sessione), ma la draw e' valida se la finestra intera esiste
+      // (bars[i].t + H <= lastBar) e l'uscita usa exitIdxFor, cioe' l'ultima
+      // barra con t <= t_i + H, come priceAtClose sul lato reale. FASE 18
+      // chiedeva bars[j].t >= bars[i].t + H, che richiede una barra esattamente
+      // su t_i+H e scarta quasi tutte le draw.
+      const H_LIST = [3600, 7200, 14400, 86400, 172800, 259200, 432000, 864000];
+      const hLabel = (h: number) => (h < 86400 ? `${h / 3600}h` : `${h / 86400}d`);
+      log(`=== FASE 24 — term structure, placebo con condizione corretta (shift ${PRIMARY_SHIFT}${G4_TAG}) ===`);
+      log(`  ${pad('orizzonte', 11)} ${pad('n', 6)} ${pad('meanR', 9)} ${pad('CI95', 18)} ${pad('placebo', 9)} ${pad('diff', 8)} CI95 diff`);
+      const rngT = mulberry32(5252);
+      for (const H of H_LIST) {
+        const real: Array<{ date: string; v: number }> = [];
+        const diffs: Array<{ date: string; v: number }> = [];
+        let psum = 0, pn = 0, nAvail = 0, nDraw0 = 0;
+        for (const f of filledSample) {
+          const risk = Math.abs(f.s.entry - f.s.stop);
+          if (!(risk > 0)) continue;
+          const fb = f.bars[f.fillIdx];
+          const lastBar = f.bars[f.bars.length - 1].t;
+          if (fb.t + H * 1000 > lastBar) continue;            // orizzonte intero non disponibile
+          nAvail++;
+          const xp = priceAtClose(f.bars, fb.t + H * 1000);
+          if (xp === null) continue;
+          const mr = f.s.dir * (xp - f.s.entry) / risk;
+          const ex = exitIdxFor(f.s.symbol, f.bars, H);
+          let ps = 0, cnt = 0;
+          for (let d = 0; d < PLACEBO_DRAWS; d++) {
+            let ok = false, i = 0, j = 0;
+            for (let t = 0; t < 5; t++) {
+              i = Math.floor(rngT() * f.bars.length);
+              if (i >= f.bars.length) i = f.bars.length - 1;
+              if (f.bars[i].t + H * 1000 > lastBar) continue;
+              j = ex[i];
+              ok = true; break;
+            }
+            if (!ok) continue;
+            ps += f.s.dir * (f.bars[j].c - f.bars[i].c) / risk;
+            cnt++;
+          }
+          if (cnt === 0) { nDraw0++; continue; }
+          real.push({ date: f.date, v: mr });
+          diffs.push({ date: f.date, v: mr - ps / cnt });
+          psum += ps / cnt; pn++;
+        }
+        const vals = real.map(x => x.v);
+        const boot = blockBootstrap(real, BOOT);
+        const dBoot = blockBootstrap(diffs, BOOT);
+        const dm = mean(diffs.map(x => x.v));
+        log(`  ${pad(hLabel(H), 11)} ${pad(vals.length, 6)} ${pad(num(mean(vals)), 9)} [${num(boot.lo)}, ${num(boot.hi)}] ${pad(num(pn ? psum / pn : NaN), 9)} ${pad(num(dm), 8)} [${num(dBoot.lo)}, ${num(dBoot.hi)}]`);
+        log(`  [${hLabel(H)}] orizzonte intero disponibile: ${nAvail}/${filledSample.length}  placebo senza draw valida: ${nDraw0}`);
+        termFixedStats.push({ horizonSec: H, label: hLabel(H), n: vals.length, meanR: mean(vals), ci95: [boot.lo, boot.hi], placebo: pn ? psum / pn : NaN, diff: dm, diffCi95: [dBoot.lo, dBoot.hi], nAvail, nNoDraw: nDraw0 });
+      }
+      log('');
+    }
+
     // ---- FASE 19: null del timing con geometria vincolata
     if (TIMING_NULL_FIXED) {
       log(`=== FASE 19 — null del timing con geometria vincolata (shift ${PRIMARY_SHIFT}${G4_TAG}) ===`);
@@ -2123,6 +2183,7 @@ function main() {
     ...(Object.keys(predStats).length ? { rawPredictability: predStats } : {}),
     ...(Object.keys(auditStats).length ? { fillAudit: auditStats } : {}),
     ...(termCensStats.length ? { termCensored: termCensStats } : {}),
+    ...(termFixedStats.length ? { termFixed: termFixedStats } : {}),
     ...(Object.keys(timingFixedStats).length ? { timingNullFixed: timingFixedStats } : {}),
     ...(placeboMatchedStats.length ? { placeboMatched: placeboMatchedStats } : {}),
     ...(Object.keys(consStats).length ? { fillConservative: consStats } : {}),
