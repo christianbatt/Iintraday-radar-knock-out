@@ -62,6 +62,7 @@ const PLACEBO_MATCHED  = ARGS.has('placebo-matched');
 const FILL_CONSERVATIVE = ARGS.has('fill-conservative');
 const IMMEDIATE_ENTRY  = ARGS.has('immediate-entry');
 const TERM_FIXED       = ARGS.has('term-fixed');
+const NULL_FIXED       = ARGS.has('null-fixed');
 
 const HORIZON_RAW  = ARGS.get('horizon') ?? 'resolution';
 const HORIZON_MODE: 'resolution' | 'fixed' = HORIZON_RAW === 'resolution' ? 'resolution' : 'fixed';
@@ -1161,6 +1162,8 @@ function main() {
   const auditStats: Record<string, unknown> = {};
   const termCensStats: Array<Record<string, unknown>> = [];
   const termFixedStats: Array<Record<string, unknown>> = [];
+  const markFixedStats: Record<string, unknown> = {};
+  const timingFixed2Stats: Record<string, unknown> = {};
   const timingFixedStats: Record<string, unknown> = {};
   const placeboMatchedStats: Array<Record<string, unknown>> = [];
   const consStats: Record<string, unknown> = {};
@@ -1171,7 +1174,7 @@ function main() {
   }> = [];
   if (FILL_CONDITIONAL || TARGET_SWEEP || FILL_AGE || MARK_FROM_FILL || TARGET_SWEEP_FIXED
       || TERM_STRUCTURE || TIMING_NULL || FILL_AUDIT || TERM_CENSORED || TIMING_NULL_FIXED
-      || PLACEBO_MATCHED || FILL_CONSERVATIVE || IMMEDIATE_ENTRY || TERM_FIXED) {
+      || PLACEBO_MATCHED || FILL_CONSERVATIVE || IMMEDIATE_ENTRY || TERM_FIXED || NULL_FIXED) {
     log(`=== FASE 8 — R condizionato al fill (shift ${PRIMARY_SHIFT}) ===`);
     // --exclude-g4: le tre fasi vetrino gli stessi setup. G4 e' l'unico motivo
     // con distR < 0 (trigger gia' dietro il mercato), quindi l'unico che il
@@ -1833,6 +1836,139 @@ function main() {
       log('');
     }
 
+    // ---- FASE 25: FASE 12 con la finestra del placebo intera
+    if (NULL_FIXED) {
+      // 12a/12c come FASE 12, ma la draw e' valida solo se la finestra intera
+      // esiste (bars[i].t + MARK_HORIZON <= lastBar, la stessa richiesta fatta al
+      // lato reale) e l'uscita e' exitIdxFor, come markRReplay. In FASE 12 le
+      // draw vicine alla fine della serie avevano un orizzonte troncato.
+      log(`=== FASE 25 — mark a orizzonte fisso, placebo con finestra intera (shift ${PRIMARY_SHIFT}${G4_TAG}) ===`);
+      const H = MARK_HORIZON;
+      const aVals: Array<{ date: string; v: number }> = [];
+      const pVals: Array<{ date: string; v: number }> = [];
+      const diffs: Array<{ date: string; v: number }> = [];
+      const rngMF = mulberry32(4243);
+      let nSkipH = 0, nDraw0 = 0;
+      for (const f of filledSample) {
+        const risk = Math.abs(f.s.entry - f.s.stop);
+        if (!(risk > 0) || f.bars.length === 0) continue;
+        const bars = f.bars;
+        const lastBar = bars[bars.length - 1].t;
+        if (f.decTs + H * 1000 > lastBar) { nSkipH++; continue; }
+        const ma = markRReplay(f.s, bars);
+        if (ma === null) continue;
+        const ex = exitIdxFor(f.s.symbol, bars, H);
+        let ps = 0, cnt = 0;
+        for (let d = 0; d < PLACEBO_DRAWS; d++) {
+          let ok = false, i = 0, j = 0;
+          for (let t = 0; t < 5; t++) {
+            i = Math.floor(rngMF() * bars.length);
+            if (i >= bars.length) i = bars.length - 1;
+            if (bars[i].t + H * 1000 > lastBar) continue;
+            j = ex[i];
+            ok = true; break;
+          }
+          if (!ok) continue;
+          ps += f.s.dir * (bars[j].c - bars[i].c) / risk;
+          cnt++;
+        }
+        if (cnt === 0) { nDraw0++; continue; }
+        const pm = ps / cnt;
+        aVals.push({ date: f.date, v: ma });
+        pVals.push({ date: f.date, v: pm });
+        diffs.push({ date: f.date, v: ma - pm });
+      }
+      const aM = mean(aVals.map(x => x.v));
+      const pM = mean(pVals.map(x => x.v));
+      const aMed = quantile(aVals.map(x => x.v).sort((x, y) => x - y), 0.5);
+      const pMed = quantile(pVals.map(x => x.v).sort((x, y) => x - y), 0.5);
+      const aPos = aVals.length ? aVals.filter(x => x.v > 0).length / aVals.length : NaN;
+      const aBoot = blockBootstrap(aVals, BOOT);
+      const pBoot = blockBootstrap(pVals, BOOT);
+      const dBoot = blockBootstrap(diffs, BOOT);
+      const dm = mean(diffs.map(x => x.v));
+      log(`  25a  dall'entry di fill:            n=${aVals.length}  media=${num(aM)}  mediana=${num(aMed)}  pos%=${num(aPos * 100, 1)}  CI95=[${num(aBoot.lo)}, ${num(aBoot.hi)}]`);
+      log(`  25c  placebo (finestra intera):     n=${pVals.length}  media=${num(pM)}  mediana=${num(pMed)}  CI95=[${num(pBoot.lo)}, ${num(pBoot.hi)}]`);
+      log(`  differenza 25a - 25c: ${num(dm)}   CI95=[${num(dBoot.lo)}, ${num(dBoot.hi)}]`);
+      log(`  setup esclusi per orizzonte non disponibile: ${nSkipH}   scartati per placebo senza draw valida: ${nDraw0}`);
+      log('');
+      Object.assign(markFixedStats, {
+        fromFill: { n: aVals.length, mean: aM, median: aMed, posRate: aPos, ci95: [aBoot.lo, aBoot.hi] },
+        placeboFullWindow: { n: pVals.length, mean: pM, median: pMed, ci95: [pBoot.lo, pBoot.hi] },
+        diff: dm, diffCi95: [dBoot.lo, dBoot.hi], skippedHorizon: nSkipH, skippedNoDraw: nDraw0,
+      });
+    }
+
+    // ---- FASE 26: FASE 19 con la draw vincolata alla stessa finestra residua
+    if (NULL_FIXED) {
+      // Il null di FASE 19 estrae entry su tutta la serie: una draw vicina alla
+      // fine ha meno storia davanti del setup reale, quindi la sua probabilita'
+      // di censura e' diversa (e le censurate vengono poi scartate). Qui la draw
+      // e' uniforme su [0, fillIdx]: stessa finestra residua del setup valutato.
+      log(`=== FASE 26 — null del timing, draw con la stessa finestra residua (shift ${PRIMARY_SHIFT}${G4_TAG}) ===`);
+      const rngV2 = mulberry32(889);
+      const obs16: Array<{ date: string; v: number }> = [];
+      const obs06: Array<{ date: string; v: number }> = [];
+      const n16: Array<{ date: string; v: number }> = [];
+      const n06: Array<{ date: string; v: number }> = [];
+      const w16: Array<{ date: string; v: number }> = [];
+      const w06: Array<{ date: string; v: number }> = [];
+      const dR: number[] = [];
+      let nNoDraw = 0;
+      for (const f of filledSample) {
+        const risk = Math.abs(f.s.entry - f.s.stop);
+        if (!(risk > 0)) continue;
+        const p0 = priceAtClose(f.bars, f.decTs);
+        if (p0 === null) continue;
+        const distR = f.s.dir * (f.s.entry - p0) / risk;
+        dR.push(distR);
+        const o16: Setup = { ...f.s, target: f.s.entry + f.s.dir * 1.6 * risk };
+        const r16 = resolveR(o16, f.bars);
+        if (r16.r !== null && r16.exit !== 'censored') obs16.push({ date: f.date, v: r16.r });
+        const o06: Setup = { ...f.s, target: f.s.entry + f.s.dir * 0.6 * risk };
+        const r06o = resolveR(o06, f.bars);
+        if (r06o.r !== null && r06o.exit !== 'censored') obs06.push({ date: f.date, v: r06o.r });
+        const limit = Math.max(1, f.fillIdx);            // indici 0..fillIdx-1
+        let s16 = 0, c16 = 0, k16 = 0, s06 = 0, c06 = 0, k06 = 0;
+        for (let d = 0; d < TIMING_DRAWS; d++) {
+          const j = Math.floor(rngV2() * limit);
+          if (j + 1 >= f.bars.length) continue;
+          const pj = f.bars[j].c;
+          const entry = pj + f.s.dir * distR * risk;
+          const stop = entry - f.s.dir * risk;
+          const base: Setup = { ...f.s, entry, stop, entryTs: f.bars[j].t };
+          if (findFillBar(base, f.bars) === null) continue;
+          const b16 = barrierR({ ...base, target: entry + f.s.dir * 1.6 * risk }, f.bars, HORIZON, BE_TRIGGER);
+          if (b16.r !== null && b16.exit !== 'censored') { s16 += b16.r; c16++; if (b16.r > 0) k16++; }
+          const b06 = barrierR({ ...base, target: entry + f.s.dir * 0.6 * risk }, f.bars, HORIZON, BE_TRIGGER);
+          if (b06.r !== null && b06.exit !== 'censored') { s06 += b06.r; c06++; if (b06.r > 0) k06++; }
+        }
+        if (c16 === 0 && c06 === 0) nNoDraw++;
+        if (c16 > 0) { n16.push({ date: f.date, v: s16 / c16 }); w16.push({ date: f.date, v: k16 / c16 * 100 }); }
+        if (c06 > 0) { n06.push({ date: f.date, v: s06 / c06 }); w06.push({ date: f.date, v: k06 / c06 * 100 }); }
+      }
+      log(`  ${pad('misura', 20)} ${pad('osservato', 11)} ${pad('null media', 10)} ${pad('null SD', 8)} ${pad('null 2.5%', 10)} ${pad('null 97.5%', 12)} percentile`);
+      const rowsF2: Record<string, unknown> = {};
+      const rowX2 = (label: string, obs: number, nullSet: Array<{ date: string; v: number }>) => {
+        const seq = bootstrapMeans(nullSet, BOOT, 99);
+        if (seq.length === 0) { log(`  ${pad(label, 20)} ${num(obs)}   (bootstrap non calcolabile)`); return null; }
+        const lo = quantile(seq, 0.025), hi = quantile(seq, 0.975);
+        const pct = 100 * seq.filter(x => x <= obs).length / seq.length;
+        log(`  ${pad(label, 20)} ${pad(num(obs), 11)} ${pad(num(mean(seq)), 10)} ${pad(num(stdev(seq)), 8)} ${pad(num(lo), 10)} ${pad(num(hi), 12)} ${num(pct, 1)}%`);
+        return { observed: obs, nullMean: mean(seq), nullSd: stdev(seq), nullLo: lo, nullHi: hi, percentile: pct };
+      };
+      const o16m = obs16.filter(x => x.v > 0).length / (obs16.length || NaN);
+      const o06m = obs06.filter(x => x.v > 0).length / (obs06.length || NaN);
+      rowsF2['meanR k=1.6'] = rowX2('meanR k=1.6', mean(obs16.map(x => x.v)), n16);
+      rowsF2['hit% k=1.6'] = rowX2('hit% k=1.6', o16m * 100, w16);
+      rowsF2['meanR k=0.6'] = rowX2('meanR k=0.6', mean(obs06.map(x => x.v)), n06);
+      rowsF2['hit% k=0.6'] = rowX2('hit% k=0.6', o06m * 100, w06);
+      log(`  ${pad('distR null medio', 20)} ${pad('—', 11)} ${pad(num(mean(dR)), 10)} ${pad(num(stdev(dR)), 8)} ${pad('—', 10)} ${pad('—', 12)} —`);
+      log(`  setup senza alcuna draw risolta: ${nNoDraw}`);
+      log('');
+      Object.assign(timingFixed2Stats, rowsF2, { distRNullMean: mean(dR), distRNullSd: stdev(dR), nDistR: dR.length, nNoDraw });
+    }
+
     // ---- FASE 19: null del timing con geometria vincolata
     if (TIMING_NULL_FIXED) {
       log(`=== FASE 19 — null del timing con geometria vincolata (shift ${PRIMARY_SHIFT}${G4_TAG}) ===`);
@@ -2184,6 +2320,8 @@ function main() {
     ...(Object.keys(auditStats).length ? { fillAudit: auditStats } : {}),
     ...(termCensStats.length ? { termCensored: termCensStats } : {}),
     ...(termFixedStats.length ? { termFixed: termFixedStats } : {}),
+    ...(Object.keys(markFixedStats).length ? { markFromFillFixed: markFixedStats } : {}),
+    ...(Object.keys(timingFixed2Stats).length ? { timingNullFixed2: timingFixed2Stats } : {}),
     ...(Object.keys(timingFixedStats).length ? { timingNullFixed: timingFixedStats } : {}),
     ...(placeboMatchedStats.length ? { placeboMatched: placeboMatchedStats } : {}),
     ...(Object.keys(consStats).length ? { fillConservative: consStats } : {}),
