@@ -1352,28 +1352,12 @@ function main() {
       log(`  12a  dall'entry di fill:   n=${aVals.length}  media=${num(aM)}  mediana=${num(aMed)}  pos%=${num(aPos * 100, 1)}  CI95=[${num(aBoot.lo)}, ${num(aBoot.hi)}]`);
       log(`  12b  dall'entry di decisione (controllo): n=${bVals.length}  media=${num(bM)}  mediana=${num(bMed)}  CI95=[${num(bBoot.lo)}, ${num(bBoot.hi)}]`);
       // placebo: barra di partenza casuale, stesso dir/risk, stesso orizzonte
-      const exitIdxCache = new Map<string, Int32Array>();
-      const exitIdxFor = (sym: string, bars: Bar[]): Int32Array => {
-        const hit = exitIdxCache.get(sym);
-        if (hit) return hit;
-        const n = bars.length;
-        const m = new Int32Array(n);
-        let j = 0;
-        for (let i = 0; i < n; i++) {
-          if (j < i) j = i;
-          const lim = bars[i].t + MARK_HORIZON * 1000;
-          while (j + 1 < n && bars[j + 1].t <= lim) j++;
-          m[i] = j;
-        }
-        exitIdxCache.set(sym, m);
-        return m;
-      };
       const rngP = mulberry32(42);
       const placebo: Array<{ date: string; v: number }> = [];
       for (const f of filledSample) {
         const risk = Math.abs(f.s.entry - f.s.stop);
         if (!(risk > 0) || f.bars.length === 0) continue;
-        const ex = exitIdxFor(f.s.symbol, f.bars);
+        const ex = exitIdxFor(f.s.symbol, f.bars, MARK_HORIZON);
         let sum = 0;
         for (let d = 0; d < PLACEBO_DRAWS; d++) {
           const i = Math.floor(rngP() * f.bars.length);
