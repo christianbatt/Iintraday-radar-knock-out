@@ -46,6 +46,9 @@ const PROBE           = ARGS.has('probe');
 const INCLUDE_BLOCKED = ARGS.has('include-blocked');
 const G4_REALIZABLE   = ARGS.has('g4-realizable');
 const CROSS_TAB       = ARGS.has('cross-tab');
+const FILL_CONDITIONAL = ARGS.has('fill-conditional');
+const TARGET_SWEEP     = ARGS.has('target-sweep');
+const EXCLUDE_G4       = ARGS.has('exclude-g4');
 
 const HORIZON_RAW  = ARGS.get('horizon') ?? 'resolution';
 const HORIZON_MODE: 'resolution' | 'fixed' = HORIZON_RAW === 'resolution' ? 'resolution' : 'fixed';
@@ -642,6 +645,21 @@ function priceAtClose(bars: Bar[], tsMs: number): number | null {
 }
 
 /**
+ * Prima barra successiva alla decisione in cui il trigger viene toccato.
+ * Fill su high/low (le barre hanno h e l): un trigger toccato solo intra-barra
+ * viene visto, ma resta un'approssimazione al minuto del campione (barre a 5m).
+ */
+function findFillBar(s: Setup, bars: Bar[]): { bar: Bar; idx: number } | null {
+  for (let i = 0; i < bars.length; i++) {
+    const b = bars[i];
+    if (b.t <= s.entryTs) continue;
+    const touched = s.dir > 0 ? b.h >= s.entry : b.l <= s.entry;
+    if (touched) return { bar: b, idx: i };
+  }
+  return null;
+}
+
+/**
  * Firma del resolver: un Item e' risolto da barrierR(s, bars, HORIZON, BE_TRIGGER),
  * esattamente come nella FASE 1/5. Estratta perche' la FASE 6 la riusa con
  * l'entry realizzabile, senza duplicare la logica di barriera.
@@ -943,6 +961,150 @@ function main() {
     });
   }
 
+  // ---- FASE 8/9/10: fill del trigger, popolazione realizzabile, sweep del target
+  const fillStats: Record<string, unknown> = {};
+  const targetSweep: Array<Record<string, number>> = [];
+  const filledSample: Array<{ s: Setup; bars: Bar[] }> = [];
+  if (FILL_CONDITIONAL || TARGET_SWEEP) {
+    log(`=== FASE 8 — R condizionato al fill (shift ${PRIMARY_SHIFT}) ===`);
+    // --exclude-g4: le tre fasi vetrino gli stessi setup. G4 e' l'unico motivo
+    // con distR < 0 (trigger gia' dietro il mercato), quindi l'unico che il
+    // fill non puo' correggere: escluderlo mostra il resto della popolazione.
+    const all = EXCLUDE_G4
+      ? items[PRIMARY_SHIFT].filter(it => !String((it.s.raw as any)?.reason ?? '').startsWith('leva:G4:'))
+      : items[PRIMARY_SHIFT];
+    if (EXCLUDE_G4) log(`  [--exclude-g4] setup leva:G4 esclusi: ${items[PRIMARY_SHIFT].length - all.length}`);
+    const distAll: number[] = [];
+    const barsToFillAll: number[] = [];
+    const comeSeR: number[] = [];
+    const noFillR: number[] = [];
+    const filledR: Array<{ date: string; v: number }> = [];
+    let noFillCount = 0;
+    const byReason = new Map<string, { n: number; filled: number; dist: number[]; r: Array<{ date: string; v: number }> }>();
+    for (const it of all) {
+      const st = it.s;
+      const rawReason = (st.raw as any)?.reason;
+      const key = typeof rawReason === 'string' ? rawReason : 'EMESSO';
+      if (!byReason.has(key)) byReason.set(key, { n: 0, filled: 0, dist: [], r: [] });
+      const g = byReason.get(key)!;
+      g.n++;
+      if (it.r !== null && it.exit !== 'censored') comeSeR.push(it.r);
+      const risk = Math.abs(st.entry - st.stop);
+      const bars = loadBars(st.symbol);
+      if (!(risk > 0) || bars === null) { noFillCount++; continue; }
+      const p0 = priceAtClose(bars, st.entryTs);
+      if (p0 === null) { noFillCount++; continue; }
+      const distR = st.dir * (st.entry - p0) / risk;
+      distAll.push(distR);
+      g.dist.push(distR);
+      const fill = findFillBar(st, bars);
+      if (fill === null) {
+        noFillCount++;
+        if (it.r !== null && it.exit !== 'censored') noFillR.push(it.r);
+        continue;
+      }
+      let barsFromDecision = 0;
+      for (const b of bars) { if (b.t > st.entryTs && b.t <= fill.bar.t) barsFromDecision++; }
+      barsToFillAll.push(barsFromDecision);
+      // Il resolver riparte dalla barra di fill: stessa barrierR, horizon che
+      // decorre dal fill (nessuna riga di barrierR modificata).
+      const fromFill: Setup = { ...st, entryTs: fill.bar.t - 1 };
+      const res = resolveR(fromFill, bars);
+      g.filled++;
+      if (res.r !== null && res.exit !== 'censored') {
+        filledR.push({ date: st.date, v: res.r });
+        g.r.push({ date: st.date, v: res.r });
+      }
+      filledSample.push({ s: fromFill, bars });
+    }
+    const filledCount = barsToFillAll.length;
+    const srtDist = [...distAll].sort((a, b) => a - b);
+    const srtBars = [...barsToFillAll].sort((a, b) => a - b);
+    log(`  setup: ${all.length}   con fill: ${filledCount} (${num(filledCount / all.length * 100, 1)}%)   noFill: ${noFillCount} (${num(noFillCount / all.length * 100, 1)}%)`);
+    log(`  barre al fill: mediana=${num(quantile(srtBars, 0.5), 1)}  p90=${num(quantile(srtBars, 0.9), 1)}`);
+    log(`  distR (trigger davanti al mercato): media=${num(mean(distAll))}  mediana=${num(quantile(srtDist, 0.5))}  p10=${num(quantile(srtDist, 0.1))}  p90=${num(quantile(srtDist, 0.9))}`);
+    log('  --- per motivo ---');
+    log(`  ${pad('motivo', 46)} ${pad('n', 6)} ${pad('fill%', 7)} ${pad('distR med', 10)} ${pad('meanR fill', 11)} ${pad('hit%', 7)} CI95`);
+    const reasonRowsOut: Array<Record<string, unknown>> = [];
+    for (const [reason, g] of [...byReason.entries()].sort((a, b) => b[1].n - a[1].n)) {
+      const gs = [...g.dist].sort((a, b) => a - b);
+      const gm = mean(g.r.map(x => x.v));
+      const ghit = g.r.length ? g.r.filter(x => x.v > 0).length / g.r.length : NaN;
+      const gboot = blockBootstrap(g.r, BOOT);
+      log(`  ${pad(reason.slice(0, 44), 46)} ${pad(g.n, 6)} ${pad(num(g.filled / g.n * 100, 1), 7)} ${pad(num(quantile(gs, 0.5)), 10)} ${pad(num(gm), 11)} ${pad(num(ghit * 100, 1), 7)} [${num(gboot.lo)}, ${num(gboot.hi)}]`);
+      reasonRowsOut.push({ reason, n: g.n, filled: g.filled, distMedian: quantile(gs, 0.5), meanR: gm, hitRate: ghit, ci95: [gboot.lo, gboot.hi] });
+    }
+    const comeSeAll = mean(comeSeR);
+    const meanFilled = mean(filledR.map(x => x.v));
+    log('  --- confronto ---');
+    log(`  meanR "come se" (tutti):        ${num(comeSeAll)}`);
+    log(`  meanR con fill (solo fillati):  ${num(meanFilled)}`);
+    log(`  meanR dei noFill "come se":     ${num(mean(noFillR))}   (n=${noFillR.length})`);
+    log('');
+    Object.assign(fillStats, {
+      excludeG4: EXCLUDE_G4,
+      n: all.length, filled: filledCount, noFill: noFillCount,
+      fillPct: filledCount / all.length * 100,
+      barsToFillMedian: quantile(srtBars, 0.5), barsToFillP90: quantile(srtBars, 0.9),
+      distMean: mean(distAll), distMedian: quantile(srtDist, 0.5),
+      distP10: quantile(srtDist, 0.1), distP90: quantile(srtDist, 0.9),
+      meanComeSe: comeSeAll, meanFilled, meanNoFill: mean(noFillR), nNoFillResolved: noFillR.length,
+      byReason: reasonRowsOut,
+    });
+
+    if (FILL_CONDITIONAL) {
+      log(`=== FASE 9 — popolazione realizzabile (shift ${PRIMARY_SHIFT}) ===`);
+      const popR: Array<{ date: string; v: number }> = [];
+      for (const it of all) {
+        const st = it.s;
+        const isG4 = String((st.raw as any)?.reason ?? '').startsWith('leva:G4:');
+        const bars = loadBars(st.symbol);
+        if (bars === null) continue;
+        let target: Setup = st;
+        if (isG4) {
+          const e = priceAtClose(bars, st.entryTs);
+          if (e === null) continue;
+          target = { ...st, entry: e };
+        }
+        const res = resolveR(target, bars);
+        if (res.r !== null && res.exit !== 'censored') popR.push({ date: st.date, v: res.r });
+      }
+      const popVals = popR.map(x => x.v);
+      const popHit = popVals.filter(x => x > 0).length / popVals.length;
+      const popBoot = blockBootstrap(popR, BOOT);
+      const breakeven = 1 / (1 + 1.6);
+      log(`  n=${popVals.length}  meanR=${num(mean(popVals))}  hit%=${num(popHit * 100, 1)}  CI95=[${num(popBoot.lo)}, ${num(popBoot.hi)}]`);
+      log(`  breakeven a W/L 1.60: ${num(breakeven * 100, 2)}%`);
+      log(`  gap: ${num((popHit - breakeven) * 100, 1)} punti percentuali`);
+      log('');
+      Object.assign(fillStats, {
+        realizable: { n: popVals.length, meanR: mean(popVals), hitRate: popHit, ci95: [popBoot.lo, popBoot.hi], breakeven, gapPoints: (popHit - breakeven) * 100 },
+      });
+    }
+
+    if (TARGET_SWEEP) {
+      log(`=== FASE 10 — sweep del multiplo target (shift ${PRIMARY_SHIFT}, solo fillati) ===`);
+      log(`  ${pad('k', 5)} ${pad('n', 6)} ${pad('meanR', 9)} ${pad('hit%', 7)} ${pad('breakeven', 11)} CI95`);
+      for (const k of [1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0]) {
+        const vals: Array<{ date: string; v: number }> = [];
+        for (const f of filledSample) {
+          const risk = Math.abs(f.s.entry - f.s.stop);
+          if (!(risk > 0)) continue;
+          const clone: Setup = { ...f.s, target: f.s.entry + f.s.dir * k * risk };
+          const res = resolveR(clone, f.bars);
+          if (res.r !== null && res.exit !== 'censored') vals.push({ date: f.s.date, v: res.r });
+        }
+        const kv = vals.map(x => x.v);
+        const kHit = kv.length ? kv.filter(x => x > 0).length / kv.length : NaN;
+        const kBoot = blockBootstrap(vals, BOOT);
+        const be = 1 / (1 + k);
+        log(`  ${pad(k.toFixed(1), 5)} ${pad(kv.length, 6)} ${pad(num(mean(kv)), 9)} ${pad(num(kHit * 100, 1), 7)} ${pad(num(be * 100, 2) + '%', 11)} [${num(kBoot.lo)}, ${num(kBoot.hi)}]`);
+        targetSweep.push({ k, n: kv.length, meanR: mean(kv), hitRate: kHit, breakeven: be, ciLo: kBoot.lo, ciHi: kBoot.hi });
+      }
+      log('');
+    }
+  }
+
   // ---- FASE 1: decili
   log(`=== FASE 1 — decili di punteggio, shift ${PRIMARY_SHIFT} (${primary.length} setup) ===`);
   log(`  tagli: ${cuts.map(c => num(c, 1)).join(' | ')}`);
@@ -1039,6 +1201,8 @@ function main() {
     // Presenti solo se i rami sono attivi: senza flag il report resta identico.
     ...(Object.keys(g4Realizable).length ? { g4Realizable } : {}),
     ...(Object.keys(crossTab).length ? { crossTab } : {}),
+    ...(Object.keys(fillStats).length ? { fillStats } : {}),
+    ...(targetSweep.length ? { targetSweep } : {}),
     selectionCurve: { tops: curve, full: base },
     monotonicity: { rho, slope, spread, interpretableDeciles: interp.length },
     verdict,
