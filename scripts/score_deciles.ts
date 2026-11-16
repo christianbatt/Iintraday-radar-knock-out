@@ -93,7 +93,7 @@ const TOPS = (ARGS.get('tops') ?? '0.1,0.2,0.3,0.5')
 
 const ART    = 'artifacts';
 const REPLAY = ARGS.get('replay-dir') ?? join(ART, 'replay_i3_30d');
-const BARSD  = join(ART, 'bars');
+const BARSD  = ARGS.get('bars') ?? join(ART, 'bars');
 const OUT    = ARGS.get('out') ?? join(ART, 'score_deciles.json');
 
 const SUMP_TOL = Number(ARGS.get('sumr-tol') ?? 0.10);
@@ -306,10 +306,12 @@ function loadBars(symbol: string): Bar[] | null {
     const files = readdirSync(BARSD).filter(f => f.endsWith('.json')).sort();
     const base = symbol.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
     const cands = files.map(f => {
-        const m = f.match(/^(.+)_(\d+)d\.json$/);
+        const m = f.match(/^(.+)_(?:(\d+)d|holdout)\.json$/);
         if (!m) return null;
         const s = m[1].replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-        return s === base ? { f, days: Number(m[2]) } : null;
+        // 'holdout' vale 0 giorni: in una directory che contiene sia 30d sia
+        // holdout resta scelto il file piu' lungo, come prima.
+        return s === base ? { f, days: m[2] === undefined ? 0 : Number(m[2]) } : null;
       })
       .filter((x): x is { f: string; days: number } => x !== null)
       .sort((a, b) => b.days - a.days);
@@ -1565,7 +1567,12 @@ function main() {
         const beyondTarget = f.s.dir * (fillPrice - f.s.target) / risk >= 0;
         const beyondStop = f.s.dir * (fillPrice - f.s.stop) / risk <= 0;
         const exitPrice = f.s.entry + f.s.dir * f.fillR * risk;
-        const r2 = beyondTarget || beyondStop ? 0 : f.s.dir * (exitPrice - f.s.entry) / risk;   // come FASE 17
+        // R2 = fill realistico di FASE 17 (max(entry, open della barra di fill));
+        // R4 = stesso fill ma mai migliore del prezzo disponibile alla decisione.
+        // Il beyond* e' calcolato sul fill piu' conservativo e azzera entrambe le
+        // varianti, per tenere la coppia appaiata.
+        const fillPrice2 = f.s.dir > 0 ? Math.max(f.s.entry, fb.o) : Math.min(f.s.entry, fb.o);
+        const r2 = beyondTarget || beyondStop ? 0 : f.s.dir * (exitPrice - fillPrice2) / risk;
         const r4 = beyondTarget || beyondStop ? 0 : f.s.dir * (exitPrice - fillPrice) / risk;
         const barsToFill = f.fillIdx - f.decIdx;
         const distR = f.s.dir * (f.s.entry - db.c) / risk;
