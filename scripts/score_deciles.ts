@@ -49,6 +49,9 @@ const CROSS_TAB       = ARGS.has('cross-tab');
 const FILL_CONDITIONAL = ARGS.has('fill-conditional');
 const TARGET_SWEEP     = ARGS.has('target-sweep');
 const EXCLUDE_G4       = ARGS.has('exclude-g4');
+const FILL_AGE         = ARGS.has('fill-age');
+const MARK_FROM_FILL   = ARGS.has('mark-from-fill');
+const TARGET_SWEEP_FIXED = ARGS.has('target-sweep-fixed');
 
 const HORIZON_RAW  = ARGS.get('horizon') ?? 'resolution';
 const HORIZON_MODE: 'resolution' | 'fixed' = HORIZON_RAW === 'resolution' ? 'resolution' : 'fixed';
@@ -57,6 +60,7 @@ if (HORIZON_MODE === 'fixed' && !Number.isFinite(HORIZON)) {
   fail(7, `--horizon non valido: '${HORIZON_RAW}'. Usa un numero di secondi oppure 'resolution'.`);
 }
 const MARK_HORIZON = 3600;
+const PLACEBO_DRAWS = 200;
 
 const BE_RAW = ARGS.has('be-trigger') ? (ARGS.get('be-trigger') ?? '') : null;
 let BE_TRIGGER: number | null = null;
@@ -964,8 +968,14 @@ function main() {
   // ---- FASE 8/9/10: fill del trigger, popolazione realizzabile, sweep del target
   const fillStats: Record<string, unknown> = {};
   const targetSweep: Array<Record<string, number>> = [];
-  const filledSample: Array<{ s: Setup; bars: Bar[] }> = [];
-  if (FILL_CONDITIONAL || TARGET_SWEEP) {
+  const fillAgeStats: Array<Record<string, unknown>> = [];
+  const markStats: Record<string, unknown> = {};
+  const sweepFixedStats: Record<string, unknown> = {};
+  const filledSample: Array<{
+    s: Setup; bars: Bar[]; decIdx: number; fillIdx: number;
+    fillR: number | null; comeSe: number | null; date: string; decTs: number;
+  }> = [];
+  if (FILL_CONDITIONAL || TARGET_SWEEP || FILL_AGE || MARK_FROM_FILL || TARGET_SWEEP_FIXED) {
     log(`=== FASE 8 — R condizionato al fill (shift ${PRIMARY_SHIFT}) ===`);
     // --exclude-g4: le tre fasi vetrino gli stessi setup. G4 e' l'unico motivo
     // con distR < 0 (trigger gia' dietro il mercato), quindi l'unico che il
@@ -1003,8 +1013,9 @@ function main() {
         if (it.r !== null && it.exit !== 'censored') noFillR.push(it.r);
         continue;
       }
-      let barsFromDecision = 0;
-      for (const b of bars) { if (b.t > st.entryTs && b.t <= fill.bar.t) barsFromDecision++; }
+      let decIdx = -1;
+      for (let i = 0; i < bars.length; i++) { if (bars[i].t <= st.entryTs) decIdx = i; else break; }
+      const barsFromDecision = fill.idx - decIdx;
       barsToFillAll.push(barsFromDecision);
       // Il resolver riparte dalla barra di fill: stessa barrierR, horizon che
       // decorre dal fill (nessuna riga di barrierR modificata).
@@ -1015,7 +1026,12 @@ function main() {
         filledR.push({ date: st.date, v: res.r });
         g.r.push({ date: st.date, v: res.r });
       }
-      filledSample.push({ s: fromFill, bars });
+      filledSample.push({
+        s: fromFill, bars, decIdx, fillIdx: fill.idx,
+        fillR: res.r !== null && res.exit !== 'censored' ? res.r : null,
+        comeSe: it.r !== null && it.exit !== 'censored' ? it.r : null,
+        date: st.date, decTs: st.entryTs,
+      });
     }
     const filledCount = barsToFillAll.length;
     const srtDist = [...distAll].sort((a, b) => a - b);
@@ -1082,7 +1098,7 @@ function main() {
       });
     }
 
-    if (TARGET_SWEEP) {
+    if (TARGET_SWEEP && !TARGET_SWEEP_FIXED) {
       log(`=== FASE 10 — sweep del multiplo target (shift ${PRIMARY_SHIFT}, solo fillati) ===`);
       log(`  ${pad('k', 5)} ${pad('n', 6)} ${pad('meanR', 9)} ${pad('hit%', 7)} ${pad('breakeven', 11)} CI95`);
       for (const k of [1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0]) {
@@ -1102,6 +1118,145 @@ function main() {
         targetSweep.push({ k, n: kv.length, meanR: mean(kv), hitRate: kHit, breakeven: be, ciLo: kBoot.lo, ciHi: kBoot.hi });
       }
       log('');
+    }
+
+    const G4_TAG = EXCLUDE_G4 ? ', non-G4' : '';
+
+    // ---- FASE 11: R per eta' del fill
+    if (FILL_AGE) {
+      log(`=== FASE 11 — R per eta' del fill (shift ${PRIMARY_SHIFT}${G4_TAG}) ===`);
+      log(`  ${pad('bucket', 10)} ${pad('n', 6)} ${pad('quota', 7)} ${pad('meanR fill', 12)} ${pad('hit%', 7)} ${pad('CI95', 18)} ${pad('meanR "come se"', 16)} divario`);
+      const buckets = [
+        { label: '0-1', lo: 0, hi: 1 },
+        { label: '2-5', lo: 2, hi: 5 },
+        { label: '6-20', lo: 6, hi: 20 },
+        { label: '21-60', lo: 21, hi: 60 },
+        { label: '61+', lo: 61, hi: Infinity },
+      ];
+      const ageOf = (f: { fillIdx: number; decIdx: number }) => f.fillIdx - f.decIdx;
+      const rowsAge: Array<{ label: string; sel: typeof filledSample }> = [];
+      for (const b of buckets) rowsAge.push({ label: b.label, sel: filledSample.filter(f => ageOf(f) >= b.lo && ageOf(f) <= b.hi) });
+      rowsAge.push({ label: 'totale', sel: filledSample });
+      for (const r of rowsAge) {
+        const fr = r.sel.filter(f => f.fillR !== null).map(f => ({ date: f.date, v: f.fillR! }));
+        const cs = r.sel.filter(f => f.fillR !== null && f.comeSe !== null).map(f => ({ date: f.date, v: f.comeSe! }));
+        const fm = mean(fr.map(x => x.v));
+        const cm = mean(cs.map(x => x.v));
+        const hit = fr.length ? fr.filter(x => x.v > 0).length / fr.length : NaN;
+        const boot = blockBootstrap(fr, BOOT);
+        log(`  ${pad(r.label, 10)} ${pad(fr.length, 6)} ${pad(num(r.sel.length / filledSample.length * 100, 1) + '%', 7)} ${pad(num(fm), 12)} ${pad(num(hit * 100, 1), 7)} [${num(boot.lo)}, ${num(boot.hi)}] ${pad(num(cm), 16)} ${num(fm - cm)}`);
+        fillAgeStats.push({ bucket: r.label, n: r.sel.length, nResolved: fr.length, quota: r.sel.length / filledSample.length, meanRFill: fm, hitRate: hit, ci95: [boot.lo, boot.hi], meanRComeSe: cm, gap: fm - cm });
+      }
+      log('');
+    }
+
+    // ---- FASE 12: mark a orizzonte fisso dall'entry di fill, con placebo
+    if (MARK_FROM_FILL) {
+      log(`=== FASE 12 — mark a orizzonte fisso (shift ${PRIMARY_SHIFT}${G4_TAG}) ===`);
+      const aVals: Array<{ date: string; v: number }> = [];
+      const bVals: Array<{ date: string; v: number }> = [];
+      for (const f of filledSample) {
+        const risk = Math.abs(f.s.entry - f.s.stop);
+        if (!(risk > 0)) continue;
+        const ma = markRReplay(f.s, f.bars);                        // entryTs = fillTs - 1
+        if (ma !== null) aVals.push({ date: f.date, v: ma });
+        const mb = markRReplay({ ...f.s, entryTs: f.decTs }, f.bars); // controllo: entryTs = decisionTs
+        if (mb !== null) bVals.push({ date: f.date, v: mb });
+      }
+      const aM = mean(aVals.map(x => x.v));
+      const bM = mean(bVals.map(x => x.v));
+      const aMed = quantile(aVals.map(x => x.v).sort((x, y) => x - y), 0.5);
+      const bMed = quantile(bVals.map(x => x.v).sort((x, y) => x - y), 0.5);
+      const aPos = aVals.length ? aVals.filter(x => x.v > 0).length / aVals.length : NaN;
+      const aBoot = blockBootstrap(aVals, BOOT);
+      const bBoot = blockBootstrap(bVals, BOOT);
+      log(`  12a  dall'entry di fill:   n=${aVals.length}  media=${num(aM)}  mediana=${num(aMed)}  pos%=${num(aPos * 100, 1)}  CI95=[${num(aBoot.lo)}, ${num(aBoot.hi)}]`);
+      log(`  12b  dall'entry di decisione (controllo): n=${bVals.length}  media=${num(bM)}  mediana=${num(bMed)}  CI95=[${num(bBoot.lo)}, ${num(bBoot.hi)}]`);
+      // placebo: barra di partenza casuale, stesso dir/risk, stesso orizzonte
+      const exitIdxCache = new Map<string, Int32Array>();
+      const exitIdxFor = (sym: string, bars: Bar[]): Int32Array => {
+        const hit = exitIdxCache.get(sym);
+        if (hit) return hit;
+        const n = bars.length;
+        const m = new Int32Array(n);
+        let j = 0;
+        for (let i = 0; i < n; i++) {
+          if (j < i) j = i;
+          const lim = bars[i].t + MARK_HORIZON * 1000;
+          while (j + 1 < n && bars[j + 1].t <= lim) j++;
+          m[i] = j;
+        }
+        exitIdxCache.set(sym, m);
+        return m;
+      };
+      const rngP = mulberry32(42);
+      const placebo: Array<{ date: string; v: number }> = [];
+      for (const f of filledSample) {
+        const risk = Math.abs(f.s.entry - f.s.stop);
+        if (!(risk > 0) || f.bars.length === 0) continue;
+        const ex = exitIdxFor(f.s.symbol, f.bars);
+        let sum = 0;
+        for (let d = 0; d < PLACEBO_DRAWS; d++) {
+          const i = Math.floor(rngP() * f.bars.length);
+          sum += f.s.dir * (f.bars[ex[i]].c - f.bars[i].c) / risk;
+        }
+        placebo.push({ date: f.date, v: sum / PLACEBO_DRAWS });
+      }
+      const pM = mean(placebo.map(x => x.v));
+      const pMed = quantile(placebo.map(x => x.v).sort((x, y) => x - y), 0.5);
+      const pBoot = blockBootstrap(placebo, BOOT);
+      log(`  12c  placebo (${PLACEBO_DRAWS} barre casuali per setup): media=${num(pM)}  mediana=${num(pMed)}  CI95=[${num(pBoot.lo)}, ${num(pBoot.hi)}]`);
+      log(`  differenza 12a - 12c: ${num(aM - pM)}   (positivo = l'entry di fill batte una barra a caso)`);
+      log('');
+      Object.assign(markStats, {
+        fromFill: { n: aVals.length, mean: aM, median: aMed, posRate: aPos, ci95: [aBoot.lo, aBoot.hi] },
+        fromDecision: { n: bVals.length, mean: bM, median: bMed, ci95: [bBoot.lo, bBoot.hi] },
+        placebo: { draws: PLACEBO_DRAWS, n: placebo.length, mean: pM, median: pMed, ci95: [pBoot.lo, pBoot.hi] },
+        diffFromFillMinusPlacebo: aM - pM,
+      });
+    }
+
+    // ---- FASE 13: sweep a campione fisso, esteso sotto k=1.0
+    if (TARGET_SWEEP_FIXED) {
+      const KS = [0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0];
+      log(`=== FASE 13 — sweep del target (shift ${PRIMARY_SHIFT}${G4_TAG}, solo fillati) ===`);
+      const perK: Array<Array<{ date: string; v: number } | null>> = [];
+      for (const k of KS) {
+        const col: Array<{ date: string; v: number } | null> = [];
+        for (const f of filledSample) {
+          const risk = Math.abs(f.s.entry - f.s.stop);
+          if (!(risk > 0)) { col.push(null); continue; }
+          const clone: Setup = { ...f.s, target: f.s.entry + f.s.dir * k * risk };
+          const r = resolveR(clone, f.bars);
+          col.push(r.r !== null && r.exit !== 'censored' ? { date: f.date, v: r.r } : null);
+        }
+        perK.push(col);
+      }
+      const fixedIdx = filledSample.map((_, i) => i).filter(i => perK.every(col => col[i] !== null));
+      const row13 = (idx: number[], tag: string) => {
+        const out: Array<Record<string, unknown>> = [];
+        log(`  ${tag}: n=${idx.length}`);
+        log(`  ${pad('k', 5)} ${pad('n', 6)} ${pad('meanR', 9)} ${pad('hit%', 7)} ${pad('breakeven', 11)} ${pad('deficit pp', 11)} CI95`);
+        KS.forEach((k, ki) => {
+          const vals = idx.map(i => perK[ki][i]!).filter(Boolean);
+          const kv = vals.map(x => x.v);
+          const hit = kv.length ? kv.filter(x => x > 0).length / kv.length : NaN;
+          const boot = blockBootstrap(vals, BOOT);
+          const be = 100 / (1 + k);
+          log(`  ${pad(k.toFixed(1), 5)} ${pad(kv.length, 6)} ${pad(num(mean(kv)), 9)} ${pad(num(hit * 100, 1), 7)} ${pad(num(be, 2), 11)} ${pad(num(hit * 100 - be, 1), 11)} [${num(boot.lo)}, ${num(boot.hi)}]`);
+          out.push({ k, n: kv.length, meanR: mean(kv), hitRate: hit, breakeven: be / 100, deficitPp: hit * 100 - be, ci95: [boot.lo, boot.hi] });
+        });
+        return out;
+      };
+      const fixedRows = row13(fixedIdx, '13a campione fisso');
+      log('');
+      const allRows = row13(filledSample.map((_, i) => i), '13b campione intero');
+      log('');
+      Object.assign(sweepFixedStats, {
+        fixedSample: { n: fixedIdx.length, rows: fixedRows },
+        fullSample: { n: filledSample.length, rows: allRows },
+        censoringGap: fixedRows.map((r, i) => ({ k: r.k, gap: (r.meanR as number) - (allRows[i].meanR as number) })),
+      });
     }
   }
 
@@ -1203,6 +1358,9 @@ function main() {
     ...(Object.keys(crossTab).length ? { crossTab } : {}),
     ...(Object.keys(fillStats).length ? { fillStats } : {}),
     ...(targetSweep.length ? { targetSweep } : {}),
+    ...(fillAgeStats.length ? { fillAge: fillAgeStats } : {}),
+    ...(Object.keys(markStats).length ? { markFromFill: markStats } : {}),
+    ...(Object.keys(sweepFixedStats).length ? { targetSweepFixed: sweepFixedStats } : {}),
     selectionCurve: { tops: curve, full: base },
     monotonicity: { rho, slope, spread, interpretableDeciles: interp.length },
     verdict,
