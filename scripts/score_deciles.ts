@@ -52,6 +52,9 @@ const EXCLUDE_G4       = ARGS.has('exclude-g4');
 const FILL_AGE         = ARGS.has('fill-age');
 const MARK_FROM_FILL   = ARGS.has('mark-from-fill');
 const TARGET_SWEEP_FIXED = ARGS.has('target-sweep-fixed');
+const TERM_STRUCTURE   = ARGS.has('term-structure');
+const TIMING_NULL      = ARGS.has('timing-null');
+const RAW_PREDICTABILITY = ARGS.has('raw-predictability');
 
 const HORIZON_RAW  = ARGS.get('horizon') ?? 'resolution';
 const HORIZON_MODE: 'resolution' | 'fixed' = HORIZON_RAW === 'resolution' ? 'resolution' : 'fixed';
@@ -61,6 +64,7 @@ if (HORIZON_MODE === 'fixed' && !Number.isFinite(HORIZON)) {
 }
 const MARK_HORIZON = 3600;
 const PLACEBO_DRAWS = 200;
+const TIMING_DRAWS  = 200;
 
 const BE_RAW = ARGS.has('be-trigger') ? (ARGS.get('be-trigger') ?? '') : null;
 let BE_TRIGGER: number | null = null;
@@ -446,6 +450,40 @@ function blockBootstrap(items: Array<{ date: string; v: number }>, iters: number
   return { lo, hi, nBlocks: dates.length, excludesZero: lo > 0 || hi < 0 };
 }
 
+// ---------------------------------------------------------------- bootstrap (distribuzione)
+
+function stdev(a: number[]) {
+  if (a.length < 2) return NaN;
+  const m = mean(a);
+  return Math.sqrt(a.reduce((s, x) => s + (x - m) * (x - m), 0) / (a.length - 1));
+}
+
+/**
+ * Come blockBootstrap ma restituisce l'intero campione bootstrap di medie
+ * (serve per SD e percentile del valore osservato, non solo il CI).
+ */
+function bootstrapMeans(items: Array<{ date: string; v: number }>, iters: number, seed = 42): number[] {
+  const byDate = new Map<string, number[]>();
+  for (const it of items) {
+    if (!Number.isFinite(it.v)) continue;
+    if (!byDate.has(it.date)) byDate.set(it.date, []);
+    byDate.get(it.date)!.push(it.v);
+  }
+  const dates = [...byDate.keys()].sort();
+  if (dates.length < 2) return [];
+  const rng = mulberry32(seed);
+  const out: number[] = [];
+  for (let i = 0; i < iters; i++) {
+    let sum = 0, n = 0;
+    for (let d = 0; d < dates.length; d++) {
+      const pick = dates[Math.floor(rng() * dates.length)];
+      for (const v of byDate.get(pick)!) { sum += v; n++; }
+    }
+    out.push(sum / n);
+  }
+  return out.sort((a, b) => a - b);
+}
+
 // ---------------------------------------------------------------- setup
 
 const EMITTED_COUNT: Record<number, number> = {};
@@ -663,6 +701,29 @@ function findFillBar(s: Setup, bars: Bar[]): { bar: Bar; idx: number } | null {
   return null;
 }
 
+const EXIT_IDX_CACHE = new Map<string, Int32Array>();
+/**
+ * Per ogni barra i, indice dell'ultima barra con t <= bars[i].t + horizonSec*1000
+ * (stessa convenzione di priceAt/priceAtClose). Precalcolato una volta per
+ * simbolo e orizzonte: serve al placebo, che fa 200 estrazioni per setup.
+ */
+function exitIdxFor(sym: string, bars: Bar[], horizonSec: number): Int32Array {
+  const key = `${sym}:${horizonSec}`;
+  const hit = EXIT_IDX_CACHE.get(key);
+  if (hit) return hit;
+  const n = bars.length;
+  const m = new Int32Array(n);
+  let j = 0;
+  for (let i = 0; i < n; i++) {
+    if (j < i) j = i;
+    const lim = bars[i].t + horizonSec * 1000;
+    while (j + 1 < n && bars[j + 1].t <= lim) j++;
+    m[i] = j;
+  }
+  EXIT_IDX_CACHE.set(key, m);
+  return m;
+}
+
 /**
  * Firma del resolver: un Item e' risolto da barrierR(s, bars, HORIZON, BE_TRIGGER),
  * esattamente come nella FASE 1/5. Estratta perche' la FASE 6 la riusa con
@@ -703,6 +764,120 @@ function decileSummary(buckets: Item[][]) {
   const spread = ne.length >= 2 ? ne[ne.length - 1].meanR - ne[0].meanR : NaN;
   const at = (d: number) => rows[d - 1]?.meanR ?? NaN;
   return { rows, rho, slope, spread, decile1: at(1), decileLast: at(rows.length) };
+}
+
+// ---------------------------------------------------------------- predicibilita' grezza barre
+
+const AC_LAGS = [1, 2, 3, 6, 12];
+const VR_QS = [2, 4, 12, 78];
+const DRIFT_HS = [12, 78, 390];
+
+/**
+ * Aggregati per giorno (blocco = giorno UTC) delle quantita' che servono a
+ * AC, variance ratio e drift. Il bootstrap per sessione ricampiona i giorni e
+ * ricombina questi aggregati: non si ricostruisce la serie, si somma.
+ * AC usa solo coppie (t, t-lag) dentro la stessa sessione; VR e drift usano
+ * tutte le finestre (una finestra a 78 o 390 barre attraversa comunque le sessioni).
+ */
+type BarAgg = {
+  days: number[];
+  num: Record<number, number[]>; den: number[];
+  vrNum1: Record<number, number[]>; vrNum2: Record<number, number[]>; vrCnt: Record<number, number[]>;
+  r1: number[]; r2: number[]; rCnt: number[];
+  drift1: Record<number, number[]>; driftCnt: Record<number, number[]>;
+  nRet: number;
+};
+
+function barAggregates(bars: Bar[]): BarAgg {
+  const c = bars.map(b => b.c);
+  const n = c.length;
+  const r: number[] = new Array(n).fill(NaN);
+  for (let i = 1; i < n; i++) r[i] = Math.log(c[i] / c[i - 1]);
+  const dayOf = bars.map(b => Math.floor(b.t / 86400000));
+  const daySet = [...new Set(dayOf)].sort((a, b) => a - b);
+  const idx = new Map<number, number>();
+  daySet.forEach((d, i) => idx.set(d, i));
+  const nd = daySet.length;
+  let sum = 0, cnt = 0;
+  for (let i = 1; i < n; i++) if (Number.isFinite(r[i])) { sum += r[i]; cnt++; }
+  const mu = cnt ? sum / cnt : NaN;
+
+  const num: Record<number, number[]> = {};
+  const vrNum1: Record<number, number[]> = {};
+  const vrNum2: Record<number, number[]> = {};
+  const vrCnt: Record<number, number[]> = {};
+  const drift1: Record<number, number[]> = {};
+  const driftCnt: Record<number, number[]> = {};
+  for (const L of AC_LAGS) num[L] = new Array(nd).fill(0);
+  for (const q of VR_QS) { vrNum1[q] = new Array(nd).fill(0); vrNum2[q] = new Array(nd).fill(0); vrCnt[q] = new Array(nd).fill(0); }
+  for (const h of DRIFT_HS) { drift1[h] = new Array(nd).fill(0); driftCnt[h] = new Array(nd).fill(0); }
+  const den = new Array(nd).fill(0);
+  const r1 = new Array(nd).fill(0), r2 = new Array(nd).fill(0), rCnt = new Array(nd).fill(0);
+
+  for (let i = 1; i < n; i++) {
+    const x = r[i];
+    if (!Number.isFinite(x)) continue;
+    const di = idx.get(dayOf[i])!;
+    den[di] += (x - mu) * (x - mu);
+    r1[di] += x; r2[di] += x * x; rCnt[di] += 1;
+    for (const L of AC_LAGS) {
+      if (i - L >= 1 && dayOf[i - L] === dayOf[i] && Number.isFinite(r[i - L])) num[L][di] += (x - mu) * (r[i - L] - mu);
+    }
+  }
+  for (const q of VR_QS) {
+    for (let i = 1 + q; i < n; i++) {
+      const d = Math.log(c[i] / c[i - q]);
+      if (!Number.isFinite(d)) continue;
+      const di = idx.get(dayOf[i])!;
+      vrNum1[q][di] += d; vrNum2[q][di] += d * d; vrCnt[q][di] += 1;
+    }
+  }
+  for (const h of DRIFT_HS) {
+    for (let i = 1; i + h < n; i++) {
+      const d = Math.log(c[i + h] / c[i]);
+      if (!Number.isFinite(d)) continue;
+      const di = idx.get(dayOf[i])!;
+      drift1[h][di] += d; driftCnt[h][di] += 1;
+    }
+  }
+  return { days: daySet, num, den, vrNum1, vrNum2, vrCnt, r1, r2, rCnt, drift1, driftCnt, nRet: cnt };
+}
+
+function statsFromAgg(agg: BarAgg, mult: Map<number, number>) {
+  const sumOver = (arr: number[]) => {
+    let s = 0;
+    for (let i = 0; i < arr.length; i++) s += (mult.get(agg.days[i]) ?? 0) * arr[i];
+    return s;
+  };
+  const ac: Record<number, number> = {};
+  const dn = sumOver(agg.den);
+  for (const L of AC_LAGS) ac[L] = dn > 0 ? sumOver(agg.num[L]) / dn : NaN;
+  const sR1 = sumOver(agg.r1), sR2 = sumOver(agg.r2), nR = sumOver(agg.rCnt);
+  const varR = nR > 0 ? sR2 / nR - (sR1 / nR) ** 2 : NaN;
+  const vr: Record<number, number> = {};
+  for (const q of VR_QS) {
+    const nD = sumOver(agg.vrCnt[q]);
+    const varD = nD > 0 ? sumOver(agg.vrNum2[q]) / nD - (sumOver(agg.vrNum1[q]) / nD) ** 2 : NaN;
+    vr[q] = varR > 0 && Number.isFinite(varD) ? varD / (q * varR) : NaN;
+  }
+  const drift: Record<number, number> = {};
+  for (const h of DRIFT_HS) {
+    const nH = sumOver(agg.driftCnt[h]);
+    drift[h] = nH > 0 ? 1e4 * sumOver(agg.drift1[h]) / nH : NaN;
+  }
+  return { ac, vr, drift };
+}
+
+function pooledFromAggs(aggs: Array<{ agg: BarAgg }>, mult: Map<number, number>) {
+  const parts = aggs.map(a => statsFromAgg(a.agg, mult));
+  const avg = (get: (p: (typeof parts)[number]) => number) => mean(parts.map(get).filter(Number.isFinite));
+  const ac: Record<number, number> = {};
+  const vr: Record<number, number> = {};
+  const drift: Record<number, number> = {};
+  for (const L of AC_LAGS) ac[L] = avg(p => p.ac[L]);
+  for (const q of VR_QS) vr[q] = avg(p => p.vr[q]);
+  for (const h of DRIFT_HS) drift[h] = avg(p => p.drift[h]);
+  return { ac, vr, drift };
 }
 
 // ---------------------------------------------------------------- main
@@ -971,11 +1146,15 @@ function main() {
   const fillAgeStats: Array<Record<string, unknown>> = [];
   const markStats: Record<string, unknown> = {};
   const sweepFixedStats: Record<string, unknown> = {};
+  const termStats: Array<Record<string, unknown>> = [];
+  const timingStats: Record<string, unknown> = {};
+  const predStats: Record<string, unknown> = {};
   const filledSample: Array<{
     s: Setup; bars: Bar[]; decIdx: number; fillIdx: number;
     fillR: number | null; comeSe: number | null; date: string; decTs: number;
   }> = [];
-  if (FILL_CONDITIONAL || TARGET_SWEEP || FILL_AGE || MARK_FROM_FILL || TARGET_SWEEP_FIXED) {
+  if (FILL_CONDITIONAL || TARGET_SWEEP || FILL_AGE || MARK_FROM_FILL || TARGET_SWEEP_FIXED
+      || TERM_STRUCTURE || TIMING_NULL) {
     log(`=== FASE 8 — R condizionato al fill (shift ${PRIMARY_SHIFT}) ===`);
     // --exclude-g4: le tre fasi vetrino gli stessi setup. G4 e' l'unico motivo
     // con distR < 0 (trigger gia' dietro il mercato), quindi l'unico che il
@@ -1125,7 +1304,7 @@ function main() {
     // ---- FASE 11: R per eta' del fill
     if (FILL_AGE) {
       log(`=== FASE 11 — R per eta' del fill (shift ${PRIMARY_SHIFT}${G4_TAG}) ===`);
-      log(`  ${pad('bucket', 10)} ${pad('n', 6)} ${pad('quota', 7)} ${pad('meanR fill', 12)} ${pad('hit%', 7)} ${pad('CI95', 18)} ${pad('meanR "come se"', 16)} divario`);
+      log(`  ${pad('bucket', 10)} ${pad('n', 6)} ${pad('cens', 6)} ${pad('quota', 7)} ${pad('meanR fill', 12)} ${pad('hit%', 7)} ${pad('CI95', 18)} ${pad('meanR "come se"', 16)} divario`);
       const buckets = [
         { label: '0-1', lo: 0, hi: 1 },
         { label: '2-5', lo: 2, hi: 5 },
@@ -1144,7 +1323,7 @@ function main() {
         const cm = mean(cs.map(x => x.v));
         const hit = fr.length ? fr.filter(x => x.v > 0).length / fr.length : NaN;
         const boot = blockBootstrap(fr, BOOT);
-        log(`  ${pad(r.label, 10)} ${pad(fr.length, 6)} ${pad(num(r.sel.length / filledSample.length * 100, 1) + '%', 7)} ${pad(num(fm), 12)} ${pad(num(hit * 100, 1), 7)} [${num(boot.lo)}, ${num(boot.hi)}] ${pad(num(cm), 16)} ${num(fm - cm)}`);
+        log(`  ${pad(r.label, 10)} ${pad(fr.length, 6)} ${pad(r.sel.length - fr.length, 6)} ${pad(num(r.sel.length / filledSample.length * 100, 1) + '%', 7)} ${pad(num(fm), 12)} ${pad(num(hit * 100, 1), 7)} [${num(boot.lo)}, ${num(boot.hi)}] ${pad(num(cm), 16)} ${num(fm - cm)}`);
         fillAgeStats.push({ bucket: r.label, n: r.sel.length, nResolved: fr.length, quota: r.sel.length / filledSample.length, meanRFill: fm, hitRate: hit, ci95: [boot.lo, boot.hi], meanRComeSe: cm, gap: fm - cm });
       }
       log('');
@@ -1258,6 +1437,186 @@ function main() {
         censoringGap: fixedRows.map((r, i) => ({ k: r.k, gap: (r.meanR as number) - (allRows[i].meanR as number) })),
       });
     }
+
+    // ---- FASE 14: term structure del mark dall'entry di fill
+    if (TERM_STRUCTURE) {
+      const H_LIST = [3600, 7200, 14400, 86400, 172800, 259200, 432000, 864000];
+      const hLabel = (h: number) => (h < 86400 ? `${h / 3600}h` : `${h / 86400}d`);
+      log(`=== FASE 14 — term structure del mark dall'entry di fill (shift ${PRIMARY_SHIFT}${G4_TAG}) ===`);
+      const riskBpAll = filledSample
+        .filter(f => f.s.entry > 0)
+        .map(f => Math.abs(f.s.entry - f.s.stop) / f.s.entry * 1e4)
+        .sort((a, b) => a - b);
+      log(`  [costo] risk/entry in bp: mediana=${num(quantile(riskBpAll, 0.5), 1)}  p10=${num(quantile(riskBpAll, 0.1), 1)}  p90=${num(quantile(riskBpAll, 0.9), 1)}`);
+      log(`  ${pad('orizzonte', 11)} ${pad('n', 6)} ${pad('meanR', 9)} ${pad('mediana', 9)} ${pad('pos%', 7)} ${pad('CI95', 18)} ${pad('placebo', 9)} ${pad('diff', 8)} CI95 diff`);
+      const rngT = mulberry32(4242);
+      const byDir = new Map<string, { n: number; sum: number; dsum: number }>();
+      for (const H of H_LIST) {
+        const real: Array<{ date: string; v: number }> = [];
+        const diffs: Array<{ date: string; v: number }> = [];
+        let psum = 0, pn = 0;
+        for (const f of filledSample) {
+          const risk = Math.abs(f.s.entry - f.s.stop);
+          if (!(risk > 0)) continue;
+          const fillTs = f.bars[f.fillIdx].t;
+          const xp = priceAtClose(f.bars, fillTs + H * 1000);
+          if (xp === null) continue;
+          const mr = f.s.dir * (xp - f.s.entry) / risk;
+          const ex = exitIdxFor(f.s.symbol, f.bars, H);
+          let ps = 0;
+          for (let d = 0; d < PLACEBO_DRAWS; d++) {
+            let i = Math.floor(rngT() * f.bars.length);
+            if (i >= f.bars.length) i = f.bars.length - 1;
+            if (i < 0) i = 0;
+            const j = ex[i];
+            ps += f.s.dir * (f.bars[j].c - f.bars[i].c) / risk;
+          }
+          const pm = ps / PLACEBO_DRAWS;
+          real.push({ date: f.date, v: mr });
+          diffs.push({ date: f.date, v: mr - pm });
+          psum += pm; pn++;
+          const dk = `${f.s.dir > 0 ? 'LONG' : 'SHORT'}:${H}`;
+          const cur = byDir.get(dk) ?? { n: 0, sum: 0, dsum: 0 };
+          cur.n++; cur.sum += mr; cur.dsum += mr - pm;
+          byDir.set(dk, cur);
+        }
+        const vals = real.map(x => x.v);
+        const sortedV = [...vals].sort((a, b) => a - b);
+        const boot = blockBootstrap(real, BOOT);
+        const dBoot = blockBootstrap(diffs, BOOT);
+        const pos = vals.length ? vals.filter(x => x > 0).length / vals.length : NaN;
+        const dm = mean(diffs.map(x => x.v));
+        log(`  ${pad(hLabel(H), 11)} ${pad(vals.length, 6)} ${pad(num(mean(vals)), 9)} ${pad(num(quantile(sortedV, 0.5)), 9)} ${pad(num(pos * 100, 1), 7)} [${num(boot.lo)}, ${num(boot.hi)}] ${pad(num(pn ? psum / pn : NaN), 9)} ${pad(num(dm), 8)} [${num(dBoot.lo)}, ${num(dBoot.hi)}]`);
+        termStats.push({ horizonSec: H, label: hLabel(H), n: vals.length, meanR: mean(vals), median: quantile(sortedV, 0.5), posRate: pos, ci95: [boot.lo, boot.hi], placebo: pn ? psum / pn : NaN, diff: dm, diffCi95: [dBoot.lo, dBoot.hi] });
+      }
+      log('  --- per direzione ---');
+      log(`  ${pad('orizzonte', 11)} ${pad('n LONG', 8)} ${pad('meanR LONG', 12)} ${pad('n SHORT', 9)} ${pad('meanR SHORT', 13)} ${pad('diff LONG', 11)} diff SHORT`);
+      for (const H of H_LIST) {
+        const L = byDir.get(`LONG:${H}`) ?? { n: 0, sum: 0, dsum: 0 };
+        const S = byDir.get(`SHORT:${H}`) ?? { n: 0, sum: 0, dsum: 0 };
+        log(`  ${pad(hLabel(H), 11)} ${pad(L.n, 8)} ${pad(num(L.n ? L.sum / L.n : NaN), 12)} ${pad(S.n, 9)} ${pad(num(S.n ? S.sum / S.n : NaN), 13)} ${pad(num(L.n ? L.dsum / L.n : NaN), 11)} ${num(S.n ? S.dsum / S.n : NaN)}`);
+        termStats.push({ horizonSec: H, label: hLabel(H), long: { n: L.n, meanR: L.n ? L.sum / L.n : NaN, diff: L.n ? L.dsum / L.n : NaN }, short: { n: S.n, meanR: S.n ? S.sum / S.n : NaN, diff: S.n ? S.dsum / S.n : NaN } });
+      }
+      log('');
+    }
+
+    // ---- FASE 15: null per il timing
+    if (TIMING_NULL) {
+      log(`=== FASE 15 — null per il timing (shift ${PRIMARY_SHIFT}${G4_TAG}) ===`);
+      const rngN = mulberry32(777);
+      const obs16: Array<{ date: string; v: number }> = [];
+      const obs06: Array<{ date: string; v: number }> = [];
+      const n16: Array<{ date: string; v: number }> = [];
+      const n06: Array<{ date: string; v: number }> = [];
+      const w16: Array<{ date: string; v: number }> = [];
+      const w06: Array<{ date: string; v: number }> = [];
+      const nf: Array<{ date: string; v: number }> = [];
+      for (const f of filledSample) {
+        const risk = Math.abs(f.s.entry - f.s.stop);
+        if (!(risk > 0)) continue;
+        if (f.fillR !== null) obs16.push({ date: f.date, v: f.fillR });
+        const c06: Setup = { ...f.s, target: f.s.entry + f.s.dir * 0.6 * risk };
+        const r06 = resolveR(c06, f.bars);
+        if (r06.r !== null && r06.exit !== 'censored') obs06.push({ date: f.date, v: r06.r });
+        let s16 = 0, c16 = 0, k16 = 0, s06 = 0, c06n = 0, k06 = 0, fills = 0;
+        for (let d = 0; d < TIMING_DRAWS; d++) {
+          let j = Math.floor(rngN() * f.bars.length);
+          let tries = 0;
+          while (j + 1 >= f.bars.length && tries < 5) { j = Math.floor(rngN() * f.bars.length); tries++; }
+          if (j + 1 >= f.bars.length) continue;
+          const shifted: Setup = { ...f.s, entryTs: f.bars[j].t };
+          const fl = findFillBar(shifted, f.bars);
+          if (fl === null) continue;
+          fills++;
+          const b16 = barrierR(shifted, f.bars, HORIZON, BE_TRIGGER);
+          if (b16.r !== null && b16.exit !== 'censored') { s16 += b16.r; c16++; if (b16.r > 0) k16++; }
+          const sRisk = Math.abs(shifted.entry - shifted.stop);
+          const sh06: Setup = { ...shifted, target: shifted.entry + shifted.dir * 0.6 * sRisk };
+          const b06 = barrierR(sh06, f.bars, HORIZON, BE_TRIGGER);
+          if (b06.r !== null && b06.exit !== 'censored') { s06 += b06.r; c06n++; if (b06.r > 0) k06++; }
+        }
+        if (c16 > 0) { n16.push({ date: f.date, v: s16 / c16 }); w16.push({ date: f.date, v: k16 / c16 * 100 }); }
+        if (c06n > 0) { n06.push({ date: f.date, v: s06 / c06n }); w06.push({ date: f.date, v: k06 / c06n * 100 }); }
+        nf.push({ date: f.date, v: fills / TIMING_DRAWS * 100 });
+      }
+      log(`  ${pad('misura', 20)} ${pad('osservato', 11)} ${pad('null media', 10)} ${pad('null SD', 8)} ${pad('null 2.5%', 10)} ${pad('null 97.5%', 12)} percentile`);
+      const rows: Record<string, unknown> = {};
+      const row = (label: string, obs: number, nullSet: Array<{ date: string; v: number }>) => {
+        const seq = bootstrapMeans(nullSet, BOOT, 99);
+        if (seq.length === 0) { log(`  ${pad(label, 20)} ${num(obs)}   (bootstrap non calcolabile: <2 blocchi)`); return null; }
+        const nm = mean(seq);
+        const sd = stdev(seq);
+        const lo = quantile(seq, 0.025), hi = quantile(seq, 0.975);
+        const pct = 100 * seq.filter(x => x <= obs).length / seq.length;
+        log(`  ${pad(label, 20)} ${pad(num(obs), 11)} ${pad(num(nm), 10)} ${pad(num(sd), 8)} ${pad(num(lo), 10)} ${pad(num(hi), 12)} ${num(pct, 1)}%`);
+        return { observed: obs, nullMean: nm, nullSd: sd, nullLo: lo, nullHi: hi, percentile: pct, blocks: new Set(nullSet.map(x => x.date)).size };
+      };
+      const obsHit16 = obs16.length ? obs16.filter(x => x.v > 0).length / obs16.length : NaN;
+      const obsHit06 = obs06.length ? obs06.filter(x => x.v > 0).length / obs06.length : NaN;
+      const obsFill = all.length ? filledSample.length / all.length : NaN;
+      rows['meanR k=1.6'] = row('meanR k=1.6', mean(obs16.map(x => x.v)), n16);
+      rows['hit% k=1.6'] = row('hit% k=1.6', obsHit16 * 100, w16);
+      rows['meanR k=0.6'] = row('meanR k=0.6', mean(obs06.map(x => x.v)), n06);
+      rows['hit% k=0.6'] = row('hit% k=0.6', obsHit06 * 100, w06);
+      rows['fill rate'] = row('fill rate', obsFill * 100, nf);
+      log('');
+      Object.assign(timingStats, rows);
+    }
+  }
+
+  // ---- FASE 16: predicibilita' grezza delle barre (indipendente dai setup)
+  if (RAW_PREDICTABILITY) {
+    const syms = [...new Set(data[PRIMARY_SHIFT].map(x => x.symbol))].sort();
+    const aggs: Array<{ sym: string; agg: BarAgg; n: number }> = [];
+    for (const sym of syms) {
+      const bars = loadBars(sym);
+      if (!bars || bars.length < 500) continue;
+      aggs.push({ sym, agg: barAggregates(bars), n: bars.length });
+    }
+    log(`=== FASE 16 — predicibilita' grezza delle barre (5m, ${aggs.length} simboli) ===`);
+    log(`  ${pad('simbolo', 10)} ${pad('n', 6)} ${pad('AC1', 8)} ${pad('AC2', 8)} ${pad('AC3', 8)} ${pad('AC6', 8)} ${pad('AC12', 8)} ${pad('VR2', 8)} ${pad('VR4', 8)} ${pad('VR12', 8)} ${pad('VR78', 8)}`);
+    const daysAll = [...new Set(aggs.flatMap(a => a.agg.days))].sort((x, y) => x - y);
+    const fullMult = new Map<number, number>(daysAll.map(d => [d, 1]));
+    for (const a of aggs) {
+      const st = statsFromAgg(a.agg, fullMult);
+      log(`  ${pad(a.sym, 10)} ${pad(a.n, 6)} ${AC_LAGS.map(L => pad(num(st.ac[L]), 8)).join(' ')} ${VR_QS.map(q => pad(num(st.vr[q]), 8)).join(' ')}`);
+    }
+    const pooled = pooledFromAggs(aggs, fullMult);
+    log(`  ${pad('pooled', 10)} ${pad(aggs.reduce((s, a) => s + a.agg.nRet, 0), 6)} ${AC_LAGS.map(L => pad(num(pooled.ac[L]), 8)).join(' ')} ${VR_QS.map(q => pad(num(pooled.vr[q]), 8)).join(' ')}`);
+    const bs: Array<ReturnType<typeof pooledFromAggs>> = [];
+    const rngB = mulberry32(2026);
+    for (let b = 0; b < BOOT; b++) {
+      const mult = new Map<number, number>();
+      for (let k = 0; k < daysAll.length; k++) {
+        const d = daysAll[Math.floor(rngB() * daysAll.length)];
+        mult.set(d, (mult.get(d) ?? 0) + 1);
+      }
+      bs.push(pooledFromAggs(aggs, mult));
+    }
+    const ciOf = (get: (x: ReturnType<typeof pooledFromAggs>) => number) => {
+      const seq = bs.map(get).filter(Number.isFinite).sort((x, y) => x - y);
+      return [quantile(seq, 0.025), quantile(seq, 0.975)];
+    };
+    log(`  blocchi bootstrap: ${daysAll.length} giorni UTC (${aggs.length} simboli)`);
+    const c1 = ciOf(x => x.ac[1]), c12 = ciOf(x => x.ac[12]);
+    const v12 = ciOf(x => x.vr[12]), v78 = ciOf(x => x.vr[78]);
+    log(`  CI95 pooled: AC1 [${num(c1[0])}, ${num(c1[1])}]  AC12 [${num(c12[0])}, ${num(c12[1])}]  VR12 [${num(v12[0])}, ${num(v12[1])}]  VR78 [${num(v78[0])}, ${num(v78[1])}]`);
+    log(`  --- drift incondizionato (bp) ---`);
+    log(`  ${pad('orizzonte', 11)} ${pad('n', 8)} ${pad('media', 9)} CI95`);
+    const driftOut: Array<Record<string, unknown>> = [];
+    for (const h of DRIFT_HS) {
+      const nObs = aggs.reduce((s, a) => s + a.agg.driftCnt[h].reduce((x, y) => x + y, 0), 0);
+      const ci = ciOf(x => x.drift[h]);
+      log(`  ${pad(h === 12 ? '1h' : h === 78 ? '1d' : '5d', 11)} ${pad(nObs, 8)} ${pad(num(pooled.drift[h], 1), 9)} [${num(ci[0], 1)}, ${num(ci[1], 1)}]`);
+      driftOut.push({ horizonBars: h, label: h === 12 ? '1h' : h === 78 ? '1d' : '5d', n: nObs, meanBp: pooled.drift[h], ci95: ci });
+    }
+    log('');
+    Object.assign(predStats, {
+      symbols: aggs.map(a => a.sym), blocks: daysAll.length,
+      pooled: { ac: pooled.ac, vr: pooled.vr, ac1Ci95: c1, ac12Ci95: c12, vr12Ci95: v12, vr78Ci95: v78 },
+      drift: driftOut,
+      perSymbol: aggs.map(a => ({ sym: a.sym, n: a.n, ...statsFromAgg(a.agg, fullMult) })),
+    });
   }
 
   // ---- FASE 1: decili
@@ -1361,6 +1720,9 @@ function main() {
     ...(fillAgeStats.length ? { fillAge: fillAgeStats } : {}),
     ...(Object.keys(markStats).length ? { markFromFill: markStats } : {}),
     ...(Object.keys(sweepFixedStats).length ? { targetSweepFixed: sweepFixedStats } : {}),
+    ...(termStats.length ? { termStructure: termStats } : {}),
+    ...(Object.keys(timingStats).length ? { timingNull: timingStats } : {}),
+    ...(Object.keys(predStats).length ? { rawPredictability: predStats } : {}),
     selectionCurve: { tops: curve, full: base },
     monotonicity: { rho, slope, spread, interpretableDeciles: interp.length },
     verdict,
