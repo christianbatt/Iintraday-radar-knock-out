@@ -108,7 +108,7 @@ export const IntradaySeasonalityAnalysis: React.FC<IntradaySeasonalityAnalysisPr
               >
                 {report.isJournalDataAvailable
                   ? `Diario Reale: ${report.totalAnalyzedTrades} Trade Analizzati`
-                  : 'Benchmark Mercati Cash (In attesa di eseguiti nel diario)'}
+                  : `In attesa di dati reali (${report.totalAnalyzedTrades}/3 trade chiusi nel diario)`}
               </span>
             </div>
             <p className="text-xs text-slate-400 font-sans mt-0.5">
@@ -329,16 +329,18 @@ export const IntradaySeasonalityAnalysis: React.FC<IntradaySeasonalityAnalysisPr
                           <div className="grid grid-cols-2 gap-2 text-[11px] pt-1">
                             <div>
                               <span className="text-slate-500 block text-[10px]">Win Rate:</span>
-                              <span className="font-bold text-emerald-400">{item.winRate}%</span>
+                              <span className="font-bold text-emerald-400">{item.trades > 0 ? `${item.winRate}%` : 'n/d'}</span>
                             </div>
                             <div>
                               <span className="text-slate-500 block text-[10px]">R-Medio:</span>
-                              <span className="font-bold text-sky-400">{item.avgR > 0 ? `+${item.avgR}` : item.avgR}R</span>
+                              <span className="font-bold text-sky-400">
+                                {item.trades > 0 ? `${item.avgR > 0 ? `+${item.avgR}` : item.avgR}R` : 'n/d'}
+                              </span>
                             </div>
                             <div>
                               <span className="text-slate-500 block text-[10px]">P&L Totale:</span>
                               <span className={`font-bold ${item.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                {item.pnl >= 0 ? `+${item.pnl}` : item.pnl} €
+                                {item.trades > 0 ? `${item.pnl >= 0 ? `+${item.pnl}` : item.pnl} €` : 'n/d'}
                               </span>
                             </div>
                             <div>
@@ -361,9 +363,10 @@ export const IntradaySeasonalityAnalysis: React.FC<IntradaySeasonalityAnalysisPr
                     className="cursor-pointer"
                   >
                     {chartData.map((entry, index) => {
-                      let fillColor = '#6366f1';
+                      let fillColor = '#475569';
                       if (entry.status === 'HIGH_CONVICTION') fillColor = '#10b981';
                       else if (entry.status === 'CHOP_RISK') fillColor = '#f43f5e';
+                      else if (entry.status === 'NEUTRAL') fillColor = '#6366f1';
 
                       return (
                         <Cell
@@ -425,6 +428,8 @@ export const IntradaySeasonalityAnalysis: React.FC<IntradaySeasonalityAnalysisPr
                             ? 'text-emerald-400'
                             : slot.status === 'CHOP_RISK'
                             ? 'text-rose-400'
+                            : slot.status === 'INSUFFICIENT_DATA'
+                            ? 'text-slate-500'
                             : 'text-indigo-400'
                         }`}
                       >
@@ -432,6 +437,8 @@ export const IntradaySeasonalityAnalysis: React.FC<IntradaySeasonalityAnalysisPr
                           ? 'Alta Convinzione'
                           : slot.status === 'CHOP_RISK'
                           ? 'Rischio Chop'
+                          : slot.status === 'INSUFFICIENT_DATA'
+                          ? 'Dati insuff.'
                           : 'Neutrale'}
                       </span>
                     </div>
@@ -439,12 +446,14 @@ export const IntradaySeasonalityAnalysis: React.FC<IntradaySeasonalityAnalysisPr
                     <div className="grid grid-cols-3 gap-2 text-center text-xs mb-2">
                       <div className="bg-slate-900/60 p-1.5 rounded border border-slate-800">
                         <span className="text-[10px] text-slate-500 block">Win Rate</span>
-                        <span className="font-bold text-white">{slot.winRate}%</span>
+                        <span className="font-bold text-white">{slot.tradesCount > 0 ? `${slot.winRate}%` : 'n/d'}</span>
                       </div>
                       <div className="bg-slate-900/60 p-1.5 rounded border border-slate-800">
                         <span className="text-[10px] text-slate-500 block">R-Medio</span>
                         <span className="font-bold text-sky-400">
-                          {slot.avgRMultiple > 0 ? `+${slot.avgRMultiple}` : slot.avgRMultiple}R
+                          {slot.tradesCount > 0
+                            ? `${slot.avgRMultiple > 0 ? `+${slot.avgRMultiple}` : slot.avgRMultiple}R`
+                            : 'n/d'}
                         </span>
                       </div>
                       <div className="bg-slate-900/60 p-1.5 rounded border border-slate-800">
@@ -492,8 +501,12 @@ export const IntradaySeasonalityAnalysis: React.FC<IntradaySeasonalityAnalysisPr
                       </span>
                     )}
                   </div>
-                  <div className="text-sm font-bold text-emerald-400 mb-0.5">{day.winRate}%</div>
-                  <div className="text-[10px] text-slate-400">R-Medio: {day.avgRMultiple > 0 ? `+${day.avgRMultiple}` : day.avgRMultiple}R</div>
+                  <div className="text-sm font-bold text-emerald-400 mb-0.5">
+                    {day.tradesCount > 0 ? `${day.winRate}%` : 'n/d'}
+                  </div>
+                  <div className="text-[10px] text-slate-400">
+                    R-Medio: {day.tradesCount > 0 ? `${day.avgRMultiple > 0 ? `+${day.avgRMultiple}` : day.avgRMultiple}R` : 'n/d'}
+                  </div>
                   <div className="text-[10px] text-slate-500 mt-1">{day.tradesCount} Trade eseguiti</div>
                 </div>
               ))}

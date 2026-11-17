@@ -222,13 +222,13 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
 
   const isEU = market === 'EU';
   const minScore = getHeroMinScore(market);
-  const minRvol = isEU ? 0.85 : 1.15;
+  const minRvol = isEU ? TRADING_PARAMS.MIN_RVOL_EU : TRADING_PARAMS.MIN_RVOL_US;
   const minGap = isEU ? 0.5 : 0.8;
   const currentScore = candidate?.score?.total;
-  const currentRvol = quote?.rvol != null ? quote.rvol : 1.0;
+  const currentRvol = quote?.rvol ?? null;
   const currentGap = Math.abs(quote?.gapPercent ?? 0);
   const isScorePass = currentScore != null ? currentScore >= minScore : false;
-  const isRvolPass = currentRvol >= minRvol;
+  const isRvolPass = currentRvol != null ? currentRvol >= minRvol : false;
   const isGapPass = currentGap >= minGap;
 
   const isTarget1Reached = Boolean(
@@ -602,7 +602,7 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
               <div className="bg-slate-950/70 px-2.5 py-1.5 rounded-lg border border-slate-800 flex items-center justify-between">
                 <span className="text-slate-400">Volume Relativo:</span>
                 <span className={`font-bold flex items-center gap-1 ${isRvolPass ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {currentRvol.toFixed(2)}x (min {minRvol}x) {isRvolPass ? '✓' : '✗'}
+                  {currentRvol != null ? `${currentRvol.toFixed(2)}x` : 'nd'} (min {minRvol}x) {isRvolPass ? '✓' : '✗'}
                 </span>
               </div>
 

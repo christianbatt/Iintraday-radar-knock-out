@@ -90,6 +90,47 @@ export type ShadowPanelData = {
     reasonBreakdown?: Array<{ causa: string; prima: number; dopo: number; deltaPt: number | null }>;
     assumption?: string | null;
   } | null;
+  shadowV2?: {
+    strategyName?: string;
+    generatedAt?: string | null;
+    nSessions: number;
+    nSignals: number;
+    nResolved: number;
+    nOpen: number;
+    nPendingOpen: number;
+    nBlocked: number;
+    wins: number;
+    losses: number;
+    koHits: number;
+    timeouts: number;
+    winRatePct: number | null;
+    meanRGross: number | null;
+    meanRNet: number | null;
+    medianFrictionR: number | null;
+    medianFrictionR2500: number | null;
+    profitFactor: number | null;
+    maxDrawdownR: number | null;
+    dsr: number | null;
+    dsrNote?: string;
+    clusterBootstrapPValue: number | null;
+    nDayClusters?: number;
+    limitations?: string[];
+    recentSignals?: Array<{
+      id: string;
+      ticker: string;
+      market: string;
+      sessionDate: string;
+      direction: string;
+      triggerType: string;
+      status: string;
+      outcome: string;
+      blockedReason: string | null;
+      leverage: number | null;
+      rGross: number | null;
+      rNet: number | null;
+      totalFrictionR: number | null;
+    }>;
+  } | null;
   limitations?: string[];
   flags?: { SETUP_SELECTOR_LIVE: string; STALENESS_USE_MARKET_TS: string };
 };
@@ -191,16 +232,108 @@ export const CessationSection: React.FC<{ data?: ShadowPanelData['cessation'] | 
 };
 
 
+export const ShadowV2Section: React.FC<{ shadowV2?: ShadowPanelData['shadowV2'] }> = ({ shadowV2 }) => {
+  const recent = shadowV2?.recentSignals ?? [];
+  return (
+    <div className={SECTION} data-testid="shadow-v2" data-section="shadow-v2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs font-bold uppercase tracking-wider text-indigo-300">
+          Shadow V2 — CUSUM Displacement + VWAP Pullback-Reclaim (KO Vol-Matched)
+        </div>
+        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-950/70 border border-indigo-700/50 text-indigo-200">
+          SOLO SHADOW · IPOTESI
+        </span>
+      </div>
+      {!shadowV2 || shadowV2.nSignals === 0 ? (
+        <p className="text-xs text-slate-400">
+          In attesa di segnali reali su barre 5m chiuse durante le scansioni live. Nessun trade sintetico generato.
+        </p>
+      ) : (
+        <div className="space-y-2 text-[11px] font-mono text-slate-300">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="rounded bg-slate-900/70 p-2">
+              <div className="text-[10px] text-slate-500">Sessioni / Segnali</div>
+              <div className="font-bold text-white">{shadowV2.nSessions} / {shadowV2.nSignals}</div>
+            </div>
+            <div className="rounded bg-slate-900/70 p-2">
+              <div className="text-[10px] text-slate-500">Risolti / Aperti / Bloccati</div>
+              <div className="font-bold text-white">{shadowV2.nResolved} / {shadowV2.nOpen + shadowV2.nPendingOpen} / {shadowV2.nBlocked}</div>
+            </div>
+            <div className="rounded bg-slate-900/70 p-2">
+              <div className="text-[10px] text-slate-500">Win Rate (n={shadowV2.nResolved})</div>
+              <div className="font-bold text-white">{shadowV2.winRatePct != null ? `${shadowV2.winRatePct.toFixed(1)}%` : 'n/d'}</div>
+            </div>
+            <div className="rounded bg-slate-900/70 p-2">
+              <div className="text-[10px] text-slate-500">Mean R Lordo / Netto</div>
+              <div className="font-bold text-white">{fmt(shadowV2.meanRGross)}R / {fmt(shadowV2.meanRNet)}R</div>
+            </div>
+            <div className="rounded bg-slate-900/70 p-2">
+              <div className="text-[10px] text-slate-500">Friction Med. (€1k / €2.5k)</div>
+              <div>{fmt(shadowV2.medianFrictionR)}R / {fmt(shadowV2.medianFrictionR2500)}R</div>
+            </div>
+            <div className="rounded bg-slate-900/70 p-2">
+              <div className="text-[10px] text-slate-500">Profit Factor / Max DD</div>
+              <div>{fmt(shadowV2.profitFactor, 2)} / {fmt(shadowV2.maxDrawdownR, 2)}R</div>
+            </div>
+            <div className="rounded bg-slate-900/70 p-2">
+              <div className="text-[10px] text-slate-500">DSR</div>
+              <div>{fmt(shadowV2.dsr, 3)}</div>
+            </div>
+            <div className="rounded bg-slate-900/70 p-2">
+              <div className="text-[10px] text-slate-500">Cluster Bootstrap p</div>
+              <div>{fmt(shadowV2.clusterBootstrapPValue, 4)} ({shadowV2.nDayClusters ?? 0} cl.)</div>
+            </div>
+          </div>
+
+          {recent.length > 0 && (
+            <div className="max-h-48 overflow-auto border-t border-slate-900 pt-2">
+              <table className="w-full text-[11px] font-mono">
+                <thead className="text-slate-500">
+                  <tr>
+                    <th className="text-left">data</th>
+                    <th className="text-left">ticker</th>
+                    <th className="text-left">dir</th>
+                    <th className="text-left">trigger</th>
+                    <th className="text-left">esito</th>
+                    <th className="text-right">leva</th>
+                    <th className="text-right">R netto</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recent.slice(0, 12).map((s) => (
+                    <tr key={s.id} className="text-slate-300 border-t border-slate-900/80">
+                      <td>{s.sessionDate}</td>
+                      <td className="font-bold">{s.ticker}</td>
+                      <td>{s.direction}</td>
+                      <td className="text-slate-400">{s.triggerType}</td>
+                      <td>{s.blockedReason ? `BLOCK:${s.blockedReason}` : s.outcome}</td>
+                      <td className="text-right">{s.leverage ? `${s.leverage}x` : 'n/d'}</td>
+                      <td className="text-right">{s.rNet != null ? `${s.rNet >= 0 ? '+' : ''}${s.rNet.toFixed(2)}R` : 'n/d'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const ShadowResearchPanel: React.FC<{ data: ShadowPanelData | null }> = ({ data }) => {
   if (data === null || data.available !== true) {
     return (
-      <div className={SECTION} data-testid="shadow-panel" data-section="empty">
-        <div className="text-sm font-bold text-white">Shadow Research</div>
-        <p className="text-xs text-slate-400">
-          nessun artefatto{data?.reason ? ` (${data.reason})` : ''}: esegui{' '}
-          <code className="text-purple-300">bun scripts/shadow_report.ts</code> e{' '}
-          <code className="text-purple-300">bun scripts/ai_cycle.ts deathcheck</code>.
-        </p>
+      <div className="space-y-3" data-testid="shadow-panel" data-section="empty">
+        <div className={SECTION}>
+          <div className="text-sm font-bold text-white">Shadow Research</div>
+          <p className="text-xs text-slate-400">
+            nessun artefatto{data?.reason ? ` (${data.reason})` : ''}: esegui{' '}
+            <code className="text-purple-300">bun scripts/shadow_report.ts</code> e{' '}
+            <code className="text-purple-300">bun scripts/ai_cycle.ts deathcheck</code>.
+          </p>
+        </div>
+        <ShadowV2Section shadowV2={data?.shadowV2 ?? null} />
       </div>
     );
   }
@@ -432,6 +565,9 @@ export const ShadowResearchPanel: React.FC<{ data: ShadowPanelData | null }> = (
           </span>
         </div>
       </div>
+
+      {/* 5b. shadow v2 (sola lettura) */}
+      <ShadowV2Section shadowV2={data.shadowV2 ?? null} />
 
       {/* limiti */}
       <div className={SECTION} data-testid="shadow-limits" data-section="limits">

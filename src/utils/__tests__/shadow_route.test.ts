@@ -88,6 +88,28 @@ describe('T1 — artefatto valido: campi propagati', () => {
     assert.equal(reg.hypotheses, 1);
     const flags = out.body.flags as { SETUP_SELECTOR_LIVE: string };
     assert.equal(flags.SETUP_SELECTOR_LIVE, 'off');
+    assert.equal(out.body.cessation, null);
+    assert.equal(out.body.shadowV2, null);
+
+    // With shadow_v2 summary and cessation present on disk
+    const outWithV2 = getShadowLatest(
+      deps({
+        ...VALID,
+        'artifacts/shadow/shadow_2026-11-12.json': JSON.stringify({
+          ...ARTIFACT,
+          cessation: { available: true, dominantCauseAfter: 'G8', daysNeededCalendar: 14 },
+        }),
+        'artifacts/shadow_v2/summary.json': JSON.stringify({
+          strategyName: 'Shadow V2',
+          nSessions: 2,
+          nSignals: 3,
+          nResolved: 2,
+          meanRNet: 0.42,
+        }),
+      })
+    );
+    assert.equal((outWithV2.body.cessation as { dominantCauseAfter: string }).dominantCauseAfter, 'G8');
+    assert.equal((outWithV2.body.shadowV2 as { nSignals: number }).nSignals, 3);
   });
 });
 

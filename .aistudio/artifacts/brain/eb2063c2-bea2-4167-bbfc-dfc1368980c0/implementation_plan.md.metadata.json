@@ -1,6 +1,0 @@
-{
-  "summary":  "Piano di implementazione per l'integrazione di FinanceCalendar.com API, la correzione della gestione di date, orari di trading (chiusura mercati nei weekend) e blackout dinamico reale per i certificati Knock-Out.",
-  "updatedAt":  "2026-11-01T15:16:01.185552339Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

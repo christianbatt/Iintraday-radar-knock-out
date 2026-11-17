@@ -81,13 +81,14 @@ function registryCounts(fs: ShadowFs, path: string): { rows: number | null; hypo
  * Restituisce `available: false` con HTTP 200 se l'artefatto manca o e' rotto.
  */
 export function getShadowLatest(deps: ShadowDeps): ShadowResponse {
+  const shadowV2 = readJsonSafe(deps.fs, `${deps.artifactDir}/shadow_v2/summary.json`);
   const path = latestShadowPath(deps.fs, deps.artifactDir);
   if (path === null) {
-    return { status: 200, body: { ...MISSING, reason: 'nessun artefatto', flags: deps.flags } };
+    return { status: 200, body: { ...MISSING, reason: 'nessun artefatto', shadowV2, flags: deps.flags } };
   }
   const artifact = readJsonSafe(deps.fs, path);
   if (artifact === null) {
-    return { status: 200, body: { ...MISSING, reason: 'artefatto illeggibile', flags: deps.flags } };
+    return { status: 200, body: { ...MISSING, reason: 'artefatto illeggibile', shadowV2, flags: deps.flags } };
   }
   const deathcheck = readJsonSafe(deps.fs, deps.deathcheckPath);
   return {
@@ -104,6 +105,8 @@ export function getShadowLatest(deps: ShadowDeps): ShadowResponse {
       spreadEstimate: artifact.spreadEstimate ?? null,
       deflatedSharpe: artifact.deflatedSharpe ?? null,
       proposals: artifact.proposals ?? [],
+      cessation: artifact.cessation ?? null,
+      shadowV2,
       limitations: artifact.limitations ?? [],
       registry: registryCounts(deps.fs, deps.registryPath),
       flags: deps.flags,

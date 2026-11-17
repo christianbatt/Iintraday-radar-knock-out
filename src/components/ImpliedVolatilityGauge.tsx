@@ -75,7 +75,7 @@ export const ImpliedVolatilityGauge: React.FC<ImpliedVolatilityGaugeProps> = ({
         <div className="flex items-center gap-1.5">
           <Gauge className={`w-3.5 h-3.5 ${regimeConfig.textColor}`} />
           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-200">
-            Implied Volatility (IV) vs Media 30gg
+            {m.metricTitle || (m.isRealOptionsIv ? 'Implied Volatility (IV) vs HV30' : 'Dispersione Intraday (ATR) vs HV30')}
           </span>
         </div>
 
@@ -180,28 +180,28 @@ export const ImpliedVolatilityGauge: React.FC<ImpliedVolatilityGaugeProps> = ({
         {/* Numeric Comparison Breakdown */}
         <div className="flex-1 w-full space-y-1.5">
           <div className="grid grid-cols-2 gap-2">
-            {/* IV Current */}
+            {/* Current Volatility */}
             <div className="bg-slate-900/90 border border-slate-800 rounded-lg p-2">
               <span className="text-[10px] text-slate-400 block leading-tight">
-                IV Attuale (Derivati)
+                {m.isRealOptionsIv ? 'IV Opzioni Attuale' : 'Dispersione Intraday'}
               </span>
               <div className="text-base font-black text-white tabular-nums mt-0.5">
-                {m.impliedVol.toFixed(1)}%
+                {m.dataAvailable === false ? 'n/d' : `${m.impliedVol.toFixed(1)}%`}
               </div>
               <span className="text-[9px] text-slate-500">
-                IV Rank: <strong className="text-slate-300">{m.ivRank}%</strong>
+                Rank relativo: <strong className="text-slate-300">{m.dataAvailable === false ? 'n/d' : `${m.ivRank}%`}</strong>
               </span>
             </div>
 
             {/* 30d Average Realized Vol */}
             <div className="bg-slate-900/90 border border-slate-800 rounded-lg p-2">
               <span className="text-[10px] text-slate-400 block leading-tight">
-                Media Storica (30gg)
+                HV30 Realizzata (30gg)
               </span>
               <div className="text-base font-bold text-slate-300 tabular-nums mt-0.5">
-                {m.avg30dVol.toFixed(1)}%
+                {m.dataAvailable === false ? 'n/d' : `${m.avg30dVol.toFixed(1)}%`}
               </div>
-              <span className="text-[9px] text-slate-500">Benchmark Realized</span>
+              <span className="text-[9px] text-slate-500">Realized Historical</span>
             </div>
           </div>
 
@@ -209,25 +209,31 @@ export const ImpliedVolatilityGauge: React.FC<ImpliedVolatilityGaugeProps> = ({
           <div className="bg-slate-900/60 border border-slate-800/80 rounded-lg px-2.5 py-1.5 flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
               <TrendingUp className="w-3 h-3 text-slate-400" />
-              <span>Premio al Rischio:</span>
+              <span>Scostamento vs HV30:</span>
             </div>
             <div className="flex items-center gap-1 text-[11px] font-bold tabular-nums">
-              <span
-                className={
-                  m.riskPremium > 0
-                    ? m.riskPremiumPercent > 25
-                      ? 'text-rose-400'
-                      : 'text-amber-400'
-                    : 'text-emerald-400'
-                }
-              >
-                {m.riskPremium > 0 ? '+' : ''}
-                {m.riskPremium.toFixed(1)}%
-              </span>
-              <span className="text-slate-400 font-normal text-[10px]">
-                ({m.riskPremiumPercent > 0 ? '+' : ''}
-                {m.riskPremiumPercent.toFixed(1)}% vs media)
-              </span>
+              {m.dataAvailable === false ? (
+                <span className="text-slate-500">n/d</span>
+              ) : (
+                <>
+                  <span
+                    className={
+                      m.riskPremium > 0
+                        ? m.riskPremiumPercent > 25
+                          ? 'text-rose-400'
+                          : 'text-amber-400'
+                        : 'text-emerald-400'
+                    }
+                  >
+                    {m.riskPremium > 0 ? '+' : ''}
+                    {m.riskPremium.toFixed(1)}%
+                  </span>
+                  <span className="text-slate-400 font-normal text-[10px]">
+                    ({m.riskPremiumPercent > 0 ? '+' : ''}
+                    {m.riskPremiumPercent.toFixed(1)}% vs HV30)
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>

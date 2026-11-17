@@ -128,12 +128,20 @@ export async function clearServerCache(): Promise<void> {
   await fetchWithFirebaseAuth('/api/cache/clear', { method: 'POST' });
 }
 
+function canUseGatewaySync(): boolean {
+  if (auth?.currentUser) return true;
+  return Boolean((import.meta as any)?.env?.VITE_ALLOW_LEGACY_SYNC === 'true');
+}
+
 export async function fetchSharedAppState(sinceVersion?: number): Promise<{
   hasUpdates: boolean;
   version?: number;
   updatedAt?: string;
   state?: any;
 }> {
+  if (!canUseGatewaySync()) {
+    return { hasUpdates: false };
+  }
   try {
     const url = sinceVersion ? `/api/sync/state?sinceVersion=${sinceVersion}` : '/api/sync/state';
     const res = await fetchWithFirebaseAuth(url);
@@ -145,6 +153,9 @@ export async function fetchSharedAppState(sinceVersion?: number): Promise<{
 }
 
 export async function pushSharedAppState(patch: any): Promise<{ success: boolean; version?: number }> {
+  if (!canUseGatewaySync()) {
+    return { success: false };
+  }
   try {
     const res = await fetchWithFirebaseAuth('/api/sync/state', {
       method: 'POST',

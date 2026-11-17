@@ -85,6 +85,9 @@ export interface ImpliedVolatilityMetrics {
   label: string;
   gaugePercent: number; // 0 - 100 mapped for needle/arc
   implication: string;
+  isRealOptionsIv?: boolean;
+  dataAvailable?: boolean;
+  metricTitle?: string;
 }
 
 // Stato VWAP di sessione per candidato (IPOTESI: vedi TRADING_PARAMS.VWAP_*)

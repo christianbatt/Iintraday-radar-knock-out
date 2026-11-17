@@ -497,6 +497,11 @@ export default function App() {
       }
     };
 
+    if (!currentUser && !((import.meta as any)?.env?.VITE_ALLOW_LEGACY_SYNC === 'true')) {
+      hasInitialSyncCompletedRef.current = true;
+      return;
+    }
+
     performSync();
     const pollTimer = setInterval(performSync, 6000);
 
@@ -512,7 +517,7 @@ export default function App() {
       window.removeEventListener('visibilitychange', handleFocusOrVis);
       window.removeEventListener('focus', handleFocusOrVis);
     };
-  }, []);
+  }, [currentUser]);
 
   // Real-time Cloud Sync with Firebase across PC, Mobile, and Tablet
   useEffect(() => {
@@ -714,8 +719,11 @@ export default function App() {
   // Run Screening Function (Dual-Market Europe & USA)
   // AUDIT ROUND2 V6: una nuova scansione annulla la precedente.
   const scanAbortRef = React.useRef<AbortController | null>(null);
+  const nextScanForceRefreshRef = React.useRef<boolean>(true);
 
   const handleRunScreening = useCallback(async () => {
+    const forceRefresh = nextScanForceRefreshRef.current;
+    nextScanForceRefreshRef.current = true;
     scanAbortRef.current?.abort();
     const controller = new AbortController();
     scanAbortRef.current = controller;
@@ -748,8 +756,8 @@ export default function App() {
       });
 
       const [freshFutures, rawQuotes] = await Promise.all([
-        fetchBenchmarkFutures(true).catch(() => futures),
-        fetchMarketData(scanBasket, true),
+        fetchBenchmarkFutures(forceRefresh).catch(() => futures),
+        fetchMarketData(scanBasket, forceRefresh),
       ]);
       if (!isAlive()) return;
 
@@ -767,7 +775,7 @@ export default function App() {
       const futuresMapping = { EU: euChange, US: usChange };
 
       // 3. Dual-Market Ranking: Top 1 Europe, Top 1 USA, and All Ranked
-      const dual = getDualTopCandidates(rawQuotes, futuresMapping, { rsiFilterActive, parameters });
+      const dual = getDualTopCandidates(rawQuotes, futuresMapping, { rsiFilterActive, parameters, catalysts: catalystCacheRef.current });
 
       const freezeEU = freezeStateEURef.current;
       const freezeUS = freezeStateUSRef.current;
@@ -965,7 +973,7 @@ export default function App() {
     const usChange = activeFut?.usa?.sp500?.changePercent ?? (activeFut?.usa?.nasdaq?.changePercent ?? 0);
     const futuresMapping = { EU: euChange, US: usChange };
 
-    const dual = getDualTopCandidates(quotes, futuresMapping, { rsiFilterActive, parameters });
+    const dual = getDualTopCandidates(quotes, futuresMapping, { rsiFilterActive, parameters, catalysts: catalystCacheRef.current });
     const freezeEU = freezeStateEURef.current;
     const freezeUS = freezeStateUSRef.current;
 
@@ -1089,7 +1097,10 @@ export default function App() {
       const next = base <= 1 ? 20 : base - 1;
       autoRefreshCountdownRef.current = next;
       setAutoRefreshCountdown(next);
-      if (next === 20) handleRunScreeningRef.current();
+      if (next === 20) {
+        nextScanForceRefreshRef.current = false;
+        handleRunScreeningRef.current();
+      }
     }, 1000);
 
     return () => clearInterval(timer);

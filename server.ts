@@ -35,6 +35,7 @@ import { SETUP_PROMPT_BLOCK } from './src/config/setupPrompt';
 import { AILearnedInsight, VwapSignalState, VwapDataQuality, SetupIndicators, IndicatorBarInput } from './src/types/radar';
 import { runNightlyLearning } from './scripts/nightly_learning';
 import { authStartupWarning } from './src/utils/authStartupWarning';
+import { recordClosedBarsForShadowV2, observeShadowV2Scan } from './src/server/shadowV2Collector';
 
 dotenv.config();
 
@@ -418,7 +419,7 @@ if (process.env.GEMINI_API_KEY) {
   (async () => {
     try {
       await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-4-hydrogen',
         contents: 'ping',
       });
       console.info('[AI Gemini] API attiva e verificata con successo.');
@@ -1188,6 +1189,9 @@ async function getIntraday5mMetrics(
         priorSessionsUsed: warmup.priorSessionsUsed,
         droppedFutureBars: warmup.droppedFutureBars,
       });
+
+      const barsForShadowV2 = warmup.bars.length > inMemoryBars.length ? warmup.bars : inMemoryBars;
+      recordClosedBarsForShadowV2(ticker, market, barsForShadowV2);
     } catch {
       setupIndicators = null;
     }
@@ -2141,7 +2145,7 @@ app.post('/api/market-data', async (req: Request, res: Response) => {
 
     // Log di scan (IPOTESI): per candidato breakdown, veti e stati indicatori; poi distribuzione punteggi.
     try {
-      const futuresScan = await getFutures();
+      const futuresScan = await getFutures(false);
       const changeFor = (market: 'EU' | 'US') =>
         market === 'EU'
           ? (typeof futuresScan?.europe?.dax?.changePercent === 'number' ? futuresScan.europe.dax.changePercent : null)
@@ -2153,14 +2157,16 @@ app.post('/api/market-data', async (req: Request, res: Response) => {
           barTime: quote.lastBarTime ?? null,
         }),
       }));
-      for (const { quote, score } of scanScores) {
-        const ind = quote.setupIndicators;
-        const indTxt = ind
-          ? `ST ${ind.supertrend.status}${ind.supertrend.status === 'OK' ? `(dir ${ind.supertrend.direction}, flip ${ind.supertrend.barsSinceFlip ?? 'nd'})` : ''} | ADX ${ind.adx.status}${ind.adx.status === 'OK' ? `(${ind.adx.value})` : ''} | StochRSI ${ind.stochRsi.status}${ind.stochRsi.status === 'OK' ? `(K ${ind.stochRsi.k}/D ${ind.stochRsi.d}, ${ind.stochRsi.lastCross})` : ''} | PSAR ${ind.psar.status}`
-          : 'indicatori non disponibili';
-        console.log(
-          `[Setup score] ${quote.ticker}: ${score.total}/100 | veto ${score.veto ?? 'nessuno'} | ${indTxt} | breakdown ${JSON.stringify(score.scoreBreakdown)}`
-        );
+      if (process.env.DEBUG_SCAN_LOGS === 'true') {
+        for (const { quote, score } of scanScores) {
+          const ind = quote.setupIndicators;
+          const indTxt = ind
+            ? `ST ${ind.supertrend.status}${ind.supertrend.status === 'OK' ? `(dir ${ind.supertrend.direction}, flip ${ind.supertrend.barsSinceFlip ?? 'nd'})` : ''} | ADX ${ind.adx.status}${ind.adx.status === 'OK' ? `(${ind.adx.value})` : ''} | StochRSI ${ind.stochRsi.status}${ind.stochRsi.status === 'OK' ? `(K ${ind.stochRsi.k}/D ${ind.stochRsi.d}, ${ind.stochRsi.lastCross})` : ''} | PSAR ${ind.psar.status}`
+            : 'indicatori non disponibili';
+          console.log(
+            `[Setup score] ${quote.ticker}: ${score.total}/100 | veto ${score.veto ?? 'nessuno'} | ${indTxt} | breakdown ${JSON.stringify(score.scoreBreakdown)}`
+          );
+        }
       }
       const summarize = (market: 'EU' | 'US') => {
         const rows = scanScores.filter((r) => r.quote.market === market);
@@ -2265,6 +2271,9 @@ app.post('/api/market-data', async (req: Request, res: Response) => {
     } catch (err: any) {
       console.log(`[Setup score] log non disponibile: ${err?.message || err}`);
     }
+
+    // Shadow V2 parallelo: sola osservazione su barre chiuse reali, zero impatto live.
+    observeShadowV2Scan(results);
 
     res.json({
       count: results.length,
@@ -2744,7 +2753,7 @@ async function callGeminiModel(
     }
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-4-hydrogen',
       contents: userPrompt,
       config,
     });
@@ -3060,7 +3069,7 @@ newsBonusScore: numero intero da 0 a 15 (punti bonus aggiuntivi per forza del ca
 
       if (gemRes?.data?.decisione) {
         parsed = gemRes.data;
-        parsed.aiProvider = 'gemini:gemini-3.8-flash';
+        parsed.aiProvider = 'gemini:gemini-4-hydrogen';
       }
     }
 

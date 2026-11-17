@@ -287,29 +287,37 @@ export function calculateOrbFromIntradayBars(
       continue;
     }
 
-    // Validazione rigorosa prezzi OHLC
-    if (
-      b.high == null ||
-      b.low == null ||
-      b.close == null ||
-      isNaN(b.high) ||
-      isNaN(b.low) ||
-      isNaN(b.close) ||
-      b.high <= 0 ||
-      b.low <= 0 ||
-      b.close <= 0 ||
-      b.high < b.low
-    ) {
-      hasDuplicateOrInvalid = true;
-      continue;
-    }
-
+    // Controllo data di sessione PRIMA di validare OHLC: barre storiche o estese fuori sessione non devono invalidare l'ORB odierno
     const mt = getMarketTime(market, d);
     if (mt.dateFormatted !== sessionDateStr) continue;
 
     const startMin = mt.totalMinutes;
+    const isOrbSlot = startMin >= openM && startMin < orbEndM;
+    const isPostOrbRegular = startMin >= orbEndM && startMin + 5 <= closeM;
 
-    if (startMin >= openM && startMin < orbEndM) {
+    // Ignora barre pre-market/post-market per il calcolo ORB (inclusi placeholder null del feed Yahoo)
+    if (!isOrbSlot && !isPostOrbRegular) continue;
+
+    const validOhlc =
+      b.high != null &&
+      b.low != null &&
+      b.close != null &&
+      !isNaN(b.high) &&
+      !isNaN(b.low) &&
+      !isNaN(b.close) &&
+      b.high > 0 &&
+      b.low > 0 &&
+      b.close > 0 &&
+      b.high >= b.low;
+
+    if (!validOhlc) {
+      if (isOrbSlot) {
+        hasDuplicateOrInvalid = true;
+      }
+      continue;
+    }
+
+    if (isOrbSlot) {
       // Verifica allineamento intervallo 5m
       const offset = startMin - openM;
       if (offset % 5 !== 0 || !expectedSlots.includes(startMin)) {
@@ -335,17 +343,16 @@ export function calculateOrbFromIntradayBars(
         }
       }
 
-      slotMap.set(startMin, { high: b.high, low: b.low, close: b.close, dateObj: d });
-    } else if (startMin >= orbEndM) {
+      slotMap.set(startMin, { high: b.high!, low: b.low!, close: b.close!, dateObj: d });
+    } else if (isPostOrbRegular) {
       // AUDIT P1-5: breakout validi solo dentro la sessione regolare (fine esclusa) e solo su
       // barre gia' chiuse rispetto ad asOf: nessun breakout after-hours o futuro.
-      if (startMin + 5 > closeM) continue;
       if (asOfTime) {
         const asOfMt = getMarketTime(market, asOfTime);
         if (asOfMt.dateFormatted !== sessionDateStr) continue;
         if (asOfMt.totalMinutes < startMin + 5) continue;
       }
-      postOrbCandles.push({ high: b.high, low: b.low, close: b.close, dateObj: d });
+      postOrbCandles.push({ high: b.high!, low: b.low!, close: b.close!, dateObj: d });
     }
   }
 
@@ -1142,6 +1149,7 @@ export interface ScreeningFilterOptions {
   rsiFilterActive?: boolean;
   parameters?: SystemParameters;
   catalystCache?: Record<string, GeminiCatalystAnalysis>;
+  catalysts?: Record<string, GeminiCatalystAnalysis>;
   newsCache?: Record<string, NewsItem[]>;
 }
 
@@ -1480,11 +1488,13 @@ export function rankMarketCandidates(
     marketQuotes = marketQuotes.filter((q) => !isRsiExtreme(q.rsi5m ?? q.rsi14));
   }
 
+  const catMap = options?.catalystCache ?? options?.catalysts;
+
   if (TRADING_PARAMS.VWAP_HARD_GATE) {
     marketQuotes = marketQuotes.filter((q) =>
       passesVwapHardGate(
         q.vwapState ?? null,
-        candidateOperationalDirection(q, options?.catalystCache?.[q.ticker])
+        candidateOperationalDirection(q, catMap?.[q.ticker])
       )
     );
   }
@@ -1497,9 +1507,9 @@ export function rankMarketCandidates(
       : futuresChange.EU;
 
   const scored = marketQuotes.map((quote) => {
-    const catalystOrNews = options?.catalystCache?.[quote.ticker] || options?.newsCache?.[quote.ticker];
+    const catalystOrNews = catMap?.[quote.ticker] || options?.newsCache?.[quote.ticker];
     // AUDIT P1-10: direzione allineata a quella del catalyst (score e veto).
-    const dir = candidateOperationalDirection(quote, options?.catalystCache?.[quote.ticker]);
+    const dir = candidateOperationalDirection(quote, catMap?.[quote.ticker]);
     const knockOutGuard = calculateKnockOutBarrierGuard(quote, dir);
     return {
       quote,
@@ -1547,6 +1557,7 @@ export function rankTopCandidates(
     );
   }
 
+  const catMap = options?.catalystCache ?? options?.catalysts;
   const scored = targetQuotes.map((quote) => {
     const change =
       typeof futuresChange === 'number'
@@ -1554,7 +1565,7 @@ export function rankTopCandidates(
         : quote.market === 'US'
         ? futuresChange.US
         : futuresChange.EU;
-    const catalystOrNews = options?.catalystCache?.[quote.ticker] || options?.newsCache?.[quote.ticker];
+    const catalystOrNews = catMap?.[quote.ticker] || options?.newsCache?.[quote.ticker];
     const dir: 'LONG' | 'SHORT' = (quote.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT';
     const knockOutGuard = calculateKnockOutBarrierGuard(quote, dir);
     return {
@@ -2886,53 +2897,64 @@ function formatCompactNumber(num: number): string {
 export function calculateImpliedVolatilityMetrics(
   quote: RawQuoteData | undefined | null
 ): ImpliedVolatilityMetrics {
+  const unavailableResult = (reason: string): ImpliedVolatilityMetrics => ({
+    impliedVol: 0,
+    avg30dVol: 0,
+    riskPremium: 0,
+    riskPremiumPercent: 0,
+    ivRank: 0,
+    regime: 'FAIR',
+    label: 'Dati Volatilità Non Disponibili',
+    gaugePercent: 50,
+    implication: reason,
+    isRealOptionsIv: false,
+    dataAvailable: false,
+    metricTitle: 'Volatilità Realizzata Intraday vs HV30',
+  });
+
   if (!quote) {
-    return {
-      impliedVol: 22.0,
-      avg30dVol: 22.0,
-      riskPremium: 0,
-      riskPremiumPercent: 0,
-      ivRank: 50,
-      regime: 'FAIR',
-      label: 'Neutro (Dati Iniziali)',
-      gaugePercent: 45,
-      implication: 'Dati di volatilità in caricamento dal feed di mercato.',
-    };
+    return unavailableResult('Feed quote non disponibile: impossibile calcolare la volatilità reale.');
   }
 
-  const p = quote.preMarketPrice ?? quote.currentPrice ?? quote.prevClose ?? 100;
-  const atr = quote.atr14 ?? null;
+  const p = quote.preMarketPrice ?? quote.currentPrice ?? quote.prevClose ?? null;
+  const atr = quote.atr14 != null && quote.atr14 > 0 ? quote.atr14 : null;
 
-  // 1. Determine Historical 30d Average Volatility
-  let avg30d = quote.historicalVolatility30d ?? null;
+  // 1. Historical 30d Volatility strictly from real quote HV30 or real ATR(14)/price
+  let avg30d = quote.historicalVolatility30d != null && quote.historicalVolatility30d > 0
+    ? quote.historicalVolatility30d
+    : (atr != null && p != null && p > 0 ? +((atr / p) * Math.sqrt(252) * 100).toFixed(1) : null);
+
   if (avg30d == null || avg30d <= 0) {
-    avg30d = atr != null && p > 0 ? +((atr / p) * Math.sqrt(252) * 100).toFixed(1) : 22.5;
+    return unavailableResult('HV30 e ATR(14) reali assenti nel feed: nessun default sintetico applicato.');
   }
-  avg30d = Math.max(8.0, Math.min(avg30d, 120.0));
+  avg30d = +Math.max(1.0, Math.min(avg30d, 150.0)).toFixed(1);
 
-  // 2. Determine Implied Volatility (IV)
-  let iv = quote.impliedVolatility ?? null;
-  if (iv == null || iv <= 0) {
+  // 2. Real Options IV if present; otherwise explicitly mark realized intraday ATR/gap expansion vs HV30
+  const hasRealOptionsIv = quote.impliedVolatility != null && quote.impliedVolatility > 0;
+  let iv: number;
+  if (hasRealOptionsIv) {
+    iv = +(quote.impliedVolatility as number).toFixed(1);
+  } else {
     const rawGap = Math.abs(quote.gapPercent ?? 0);
-    const gapExp = rawGap * 1.35;
-    const rvolExp = (quote.rvol ?? 1) > 1.2 ? Math.min(((quote.rvol ?? 1) - 1) * 3.5, 12) : 0;
-    iv = +(avg30d * 1.05 + gapExp + rvolExp).toFixed(1);
+    const atrAnn = atr != null && p != null && p > 0 ? (atr / p) * Math.sqrt(252) * 100 : avg30d;
+    const gapExpansion = rawGap * 1.35;
+    const rvolExpansion = quote.rvol != null && quote.rvol > 1.2 ? Math.min((quote.rvol - 1) * 3.5, 12) : 0;
+    iv = +Math.max(atrAnn + gapExpansion + rvolExpansion, avg30d * 0.7).toFixed(1);
   }
-  iv = Math.max(9.0, Math.min(iv, 150.0));
+  iv = Math.max(1.0, Math.min(iv, 150.0));
 
-  // 3. Compute Risk Premium Spread & %
+  // 3. Spread & Ratio vs 30d Realized HV
   const riskPremium = +(iv - avg30d).toFixed(1);
   const riskPremiumPercent = avg30d > 0 ? +((riskPremium / avg30d) * 100).toFixed(1) : 0;
 
-  // 4. Calculate IV Rank
+  // 4. Relative Volatility Rank over observed bounds
   let ivRank = quote.ivRank;
   if (ivRank == null) {
     const lowerBound = avg30d * 0.75;
     const upperBound = Math.max(avg30d * 1.5, iv * 1.15);
-    ivRank = Math.min(
-      100,
-      Math.max(0, Math.round(((iv - lowerBound) / (upperBound - lowerBound)) * 100))
-    );
+    ivRank = upperBound > lowerBound
+      ? Math.min(100, Math.max(0, Math.round(((iv - lowerBound) / (upperBound - lowerBound)) * 100)))
+      : 50;
   }
 
   // 5. Gauge Position Percentage (0 to 100)
@@ -2941,31 +2963,31 @@ export function calculateImpliedVolatilityMetrics(
     Math.max(0, Math.round(45 + riskPremiumPercent * 1.1))
   );
 
-  // 6. Regime classification & tactical derivatives advice
+  // 6. Regime classification
   let regime: 'COMPRESSED' | 'FAIR' | 'ELEVATED' | 'EXTREME' = 'FAIR';
-  let label = 'Premio Equo / Neutro';
+  let label = 'Volatilità in Linea con HV30';
   let implication = '';
 
   if (riskPremiumPercent < -5) {
     regime = 'COMPRESSED';
-    label = 'Sconto Volatilità (IV < Media 30gg)';
+    label = 'Volatilità Compressa vs HV30';
     implication =
-      'Volatilità implicita compressa rispetto alla media 30gg. Spread del market maker sui knock-out ridotto al minimo; favorevole a espansioni direzionali repentine.';
+      'Espansione intraday compressa rispetto alla volatilità realizzata a 30gg (HV30). Rischio di espansione direzionale su breakout.';
   } else if (riskPremiumPercent <= 12) {
     regime = 'FAIR';
-    label = 'Premio Equo / Bilanciato';
+    label = 'Regime Volatilità Normale';
     implication =
-      'Prezzatura in linea con la norma storica a 30 giorni. Spread equilibrato e attrito ordinario per il trading con certificati a leva intraday.';
+      'Dispersione intraday coerente con la norma storica a 30 giorni (HV30). Condizioni ordinarie per gestione stop/barriera.';
   } else if (riskPremiumPercent <= 32) {
     regime = 'ELEVATED';
-    label = 'Premio al Rischio Elevato';
+    label = 'Espansione Intraday Elevata';
     implication =
-      `Premio al rischio espanso (+${riskPremiumPercent}% rispetto alla media a 30 giorni). I market maker allargano lo spread bid-ask del knock-out: gestire l'uscita a target rigorosamente.`;
+      `Dispersione intraday sopra HV30 (+${riskPremiumPercent}%): possibili spread bid/ask più ampi da parte dell'emittente sui certificati KO.`;
   } else {
     regime = 'EXTREME';
-    label = 'Rischio Estremo / Volatilità Espansa';
+    label = 'Volatilità Estrema vs HV30';
     implication =
-      `Sovrapprezzo estremo (+${riskPremiumPercent}% vs media 30gg). Alto rischio di contrazione della volatilità (IV crush) e spread penalizzante; preferire barriere più conservative.`;
+      `Forte stress di volatilità (+${riskPremiumPercent}% vs HV30). Rischio elevato di spike e knock-out anticipato: verificare margine barriera KO.`;
   }
 
   return {
@@ -2978,6 +3000,11 @@ export function calculateImpliedVolatilityMetrics(
     label,
     gaugePercent: normalizedGauge,
     implication,
+    isRealOptionsIv: hasRealOptionsIv,
+    dataAvailable: true,
+    metricTitle: hasRealOptionsIv
+      ? 'Implied Volatility (IV Opzioni) vs HV30'
+      : 'Dispersione Intraday (ATR/Gap) vs HV30',
   };
 }
 
@@ -3564,43 +3591,36 @@ export function calculateIntradaySeasonality(
       startHour: 8.0,
       endHour: 9.0,
       marketSession: 'EU' as const,
-      description: 'Aste di apertura ed elaborazione gap mattutini. Volumi in formazione.',
-      tacticalAdvice: 'Monitorare i gap emergenti e attendere la prima chiusura a 5m per evitare trappole di apertura.',
-      benchmarkWinRate: 52,
-      benchmarkAvgR: 0.95,
+      description: 'Aste di pre-apertura europee ed elaborazione gap mattutini.',
+      tacticalAdvice: 'Monitorare i gap emergenti e attendere la chiusura ORB 5m/15m prima di operare.',
     },
     {
       slotKey: '09:00 - 10:00',
-      label: 'Golden Hour Europa (Apertura Cash)',
+      label: 'Apertura Cash Europa',
       startHour: 9.0,
       endHour: 10.0,
       marketSession: 'EU' as const,
-      description: 'Massimo volume ed espansione del range sui sottostanti XETRA, Euronext e Piazza Affari.',
-      tacticalAdvice: 'Finestra d\'oro per breakout ORB 5m/15m e setup Gap and Go con catalizzatore confermato.',
-      benchmarkWinRate: 71,
-      benchmarkAvgR: 1.68,
+      description: 'Finestra di apertura cash XETRA, Euronext e Piazza Affari.',
+      tacticalAdvice: 'Valutare breakout ORB 15m o pullback sul VWAP solo con RVOL e catalizzatore confermati.',
     },
     {
       slotKey: '10:00 - 11:30',
-      label: 'Espansione Trend Europa',
+      label: 'Continuazione Mattutina Europa',
       startHour: 10.0,
       endHour: 11.5,
       marketSession: 'EU' as const,
-      description: 'Fase di consolidamento direzionale prima del cutoff temporale europeo delle 11:30 CET.',
-      tacticalAdvice: 'Alzare lo stop loss a pareggio (breakeven); evitare nuovi ingressi ritardati con R/R sfavorevole.',
-      benchmarkWinRate: 64,
-      benchmarkAvgR: 1.35,
+      description: 'Fase pre-cutoff mattutina sui listini europei prima della pausa di metà seduta.',
+      tacticalAdvice: 'Proteggere eventuali posizioni aperte e verificare la distanza residua rispetto al cutoff EU.',
     },
     {
       slotKey: '11:30 - 14:30',
-      label: 'Midday Chop & Bassa Liquidità',
+      label: 'Fascia Mezzogiorno EU / Pre-Market USA',
       startHour: 11.5,
       endHour: 14.5,
       marketSession: 'GLOBAL' as const,
-      description: 'Pausa pranzo istituzionale. Crollo dei volumi medi e frequenti finte di breakout (whipsaw).',
-      tacticalAdvice: 'Sconsigliata l\'apertura di nuovi trade a leva; proteggere le posizioni o restare flat.',
-      benchmarkWinRate: 36,
-      benchmarkAvgR: 0.42,
+      description: 'Pausa pranzo istituzionale in Europa; spread spesso più ampi e liquidità inferiore sui book.',
+      tacticalAdvice: 'Finestra strutturalmente meno liquida: evitare forzature senza volumi confermati.',
+      isStructuralLowLiquidity: true,
     },
     {
       slotKey: '14:30 - 15:30',
@@ -3608,32 +3628,26 @@ export function calculateIntradaySeasonality(
       startHour: 14.5,
       endHour: 15.5,
       marketSession: 'US' as const,
-      description: 'Rilascio dei dati macroeconomici USA (CPI, NFP, PPI) e primi scambi istituzionali a New York.',
-      tacticalAdvice: 'Verificare la reazione dei futures ES/NQ; non anticipare l\'apertura prima delle 15:30 CET.',
-      benchmarkWinRate: 57,
-      benchmarkAvgR: 1.15,
+      description: 'Finestra di pubblicazione dati macro USA (es. CPI, NFP, PPI) e aste pre-market NY.',
+      tacticalAdvice: 'Controllare sempre il calendario macro e attendere l’apertura cash NYSE/Nasdaq per l’ORB.',
     },
     {
       slotKey: '15:30 - 16:30',
-      label: 'Golden Hour Wall Street',
+      label: 'Apertura Cash Wall Street',
       startHour: 15.5,
       endHour: 16.5,
       marketSession: 'US' as const,
-      description: 'Apertura cash NYSE/Nasdaq. Esplosione di liquidità e momentum sui titoli tech a forte beta.',
-      tacticalAdvice: 'Finestra ad altissima convinzione per titoli USA (NVDA, TSLA, AAPL). Esecuzione immediata sui trigger.',
-      benchmarkWinRate: 74,
-      benchmarkAvgR: 1.75,
+      description: 'Apertura cash NYSE/Nasdaq con massima scoperta di prezzo e scambi iniziali.',
+      tacticalAdvice: 'Attendere conferma chiusa delle 3 candele ORB 5m (15:45 CET/CEST) e verificare il VWAP.',
     },
     {
       slotKey: '16:30 - 17:30',
-      label: 'Fix Europa & Pre-Cutoff USA',
+      label: 'Sovrapposizione Chiusura EU / USA',
       startHour: 16.5,
       endHour: 17.5,
       marketSession: 'GLOBAL' as const,
-      description: 'Coincidenza tra la chiusura delle borse europee (17:35 CET) e il cutoff orario dei setup USA.',
-      tacticalAdvice: 'Chiusura tassativa dei setup europei; stringere il trailing stop sui titoli americani.',
-      benchmarkWinRate: 60,
-      benchmarkAvgR: 1.22,
+      description: 'Finestra tra aste di chiusura europee (17:35 CET) e consolidamento pomeridiano USA.',
+      tacticalAdvice: 'Chiusura delle operazioni intraday EU; gestire rigorosamente gli stop sui titoli USA.',
     },
     {
       slotKey: '17:30 - 20:00',
@@ -3641,21 +3655,17 @@ export function calculateIntradaySeasonality(
       startHour: 17.5,
       endHour: 20.0,
       marketSession: 'US' as const,
-      description: 'Mercato USA in fase di trend pomeridiano consolidato senza interferenze europee.',
-      tacticalAdvice: 'Operare unicamente a favore di trend conclamato e confermato dai futures di riferimento.',
-      benchmarkWinRate: 56,
-      benchmarkAvgR: 1.10,
+      description: 'Sessione USA successiva alla chiusura dei listini europei.',
+      tacticalAdvice: 'Operare solo in presenza di trend intraday consolidato rispetto a VWAP e benchmark S&P/NDX.',
     },
     {
       slotKey: '20:00 - 22:00',
-      label: 'Power Hour & Chiusura New York',
+      label: 'Chiusura New York (MOC)',
       startHour: 20.0,
       endHour: 22.0,
       marketSession: 'US' as const,
-      description: 'Ultima ora di negoziazione a Wall Street con ribilanciamenti fondi e ordini MOC (Market on Close).',
-      tacticalAdvice: 'Evitare posizioni overnight sui certificati Knock-Out per scongiurare il rischio gap del giorno successivo.',
-      benchmarkWinRate: 50,
-      benchmarkAvgR: 0.85,
+      description: 'Ultima parte della seduta di Wall Street e ordini Market on Close.',
+      tacticalAdvice: 'Non aprire nuove posizioni intraday a leva verso la chiusura per evitare rischio overnight.',
     },
   ];
 
@@ -3667,11 +3677,10 @@ export function calculateIntradaySeasonality(
 
   const isJournalDataAvailable = relevantEntries.length >= 3;
 
-  // Process Hourly Slots
+  // Process Hourly Slots strictly from real closed journal trades (zero invented benchmark rates)
   const hourlySlots: HourlySeasonalitySlot[] = CANONICAL_SLOTS_DEF.map((def) => {
     const isCurrentHour = currentHourDecimal >= def.startHour && currentHourDecimal < def.endHour;
 
-    // Filter trades belonging to this time window
     const slotTrades = relevantEntries.filter((entry) => {
       try {
         const d = new Date(entry.timestamp);
@@ -3697,10 +3706,10 @@ export function calculateIntradaySeasonality(
     const beCount = slotTrades.filter((t) => t.outcome === 'BREAKEVEN').length;
     const expiredCount = slotTrades.filter((t) => t.outcome === 'EXPIRED').length;
 
-    let winRate = def.benchmarkWinRate;
-    let avgRMultiple = def.benchmarkAvgR;
+    let winRate = 0;
+    let avgRMultiple = 0;
     let netPnlEur = 0;
-    let profitFactor = 1.5;
+    let profitFactor = 0;
 
     if (tradesCount > 0) {
       winRate = +((winCount / tradesCount) * 100).toFixed(1);
@@ -3711,19 +3720,19 @@ export function calculateIntradaySeasonality(
       profitFactor = totalLossesEur > 0 ? +(totalWinsEur / totalLossesEur).toFixed(2) : totalWinsEur > 0 ? 99.0 : 0;
     }
 
-    let status: HourlySeasonalitySlot['status'] = 'NEUTRAL';
-    if (tradesCount === 0 && !isJournalDataAvailable) {
-      if (def.benchmarkWinRate >= 68) status = 'HIGH_CONVICTION';
-      else if (def.benchmarkWinRate <= 40) status = 'CHOP_RISK';
-      else status = 'NEUTRAL';
-    } else if (tradesCount === 0) {
-      status = 'INSUFFICIENT_DATA';
-    } else if (winRate >= 65 || avgRMultiple >= 1.3) {
-      status = 'HIGH_CONVICTION';
-    } else if (winRate < 45 || netPnlEur < 0) {
+    let status: HourlySeasonalitySlot['status'] = 'INSUFFICIENT_DATA';
+    if (tradesCount >= 3) {
+      if (winRate >= 65 || avgRMultiple >= 1.3) {
+        status = 'HIGH_CONVICTION';
+      } else if (winRate < 45 || netPnlEur < 0) {
+        status = 'CHOP_RISK';
+      } else {
+        status = 'NEUTRAL';
+      }
+    } else if ((def as any).isStructuralLowLiquidity) {
       status = 'CHOP_RISK';
-    } else {
-      status = 'NEUTRAL';
+    } else if (tradesCount > 0) {
+      status = 'INSUFFICIENT_DATA';
     }
 
     return {
@@ -3753,8 +3762,7 @@ export function calculateIntradaySeasonality(
   const todayDayIndex = (() => {
     try {
       const now = new Date();
-      const cetDay = new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', weekday: 'short' }).format(now);
-      const d = now.getDay(); // 0 Sun, 1 Mon ... 5 Fri
+      const d = now.getDay();
       return d >= 1 && d <= 5 ? d : 1;
     } catch {
       return 1;
@@ -3778,12 +3786,8 @@ export function calculateIntradaySeasonality(
     const winCount = dayTrades.filter((t) => t.outcome === 'WIN').length;
     const lossCount = dayTrades.filter((t) => t.outcome === 'LOSS').length;
 
-    // Benchmark base weights per day
-    const benchWR = dayNum === 2 ? 68 : dayNum === 3 ? 65 : dayNum === 1 ? 57 : dayNum === 4 ? 61 : 52;
-    const benchR = dayNum === 2 ? 1.55 : dayNum === 3 ? 1.45 : dayNum === 1 ? 1.15 : dayNum === 4 ? 1.25 : 0.95;
-
-    let winRate = benchWR;
-    let avgRMultiple = benchR;
+    let winRate = 0;
+    let avgRMultiple = 0;
     let netPnlEur = 0;
 
     if (tradesCount > 0) {
@@ -3805,34 +3809,46 @@ export function calculateIntradaySeasonality(
     };
   });
 
-  // Find best and worst slots
-  const validSlotsForRanking = hourlySlots.filter((s) => s.status !== 'INSUFFICIENT_DATA');
+  // Best & worst windows ONLY from slots with real trade sample (tradesCount > 0)
+  const validSlotsForRanking = hourlySlots.filter((s) => s.tradesCount > 0);
   const sortedByWinRate = [...validSlotsForRanking].sort((a, b) => b.winRate - a.winRate);
   const bestWindow = sortedByWinRate.length > 0 ? sortedByWinRate[0] : null;
   const worstWindow = sortedByWinRate.length > 0 ? sortedByWinRate[sortedByWinRate.length - 1] : null;
 
   const currentActiveSlot = hourlySlots.find((s) => s.isCurrentHour) || null;
 
-  // Real-time Recommendation based on current time window
+  // Honest recommendation: never cites fabricated benchmark percentages when sample < 3
   let recommendationVerdict: SeasonalityReport['recommendationForNow']['verdict'] = 'NEUTRAL';
-  let recommendationTitle = 'Finestra Operativa Regolare';
-  let recommendationMessage = 'L\'orario attuale presenta parametri di volatilità e liquidità bilanciati. Operare rispettando trigger e stop loss prefissati.';
+  let recommendationTitle = 'Finestra Operativa di Sessione';
+  let recommendationMessage =
+    relevantEntries.length < 3
+      ? `Campione storico reale insufficiente (${relevantEntries.length}/3 trade chiusi nel diario): nessuna statistica oraria stimata.`
+      : 'Statistiche basate esclusivamente sui trade reali registrati nel diario.';
 
   if (currentActiveSlot) {
-    if (currentActiveSlot.status === 'HIGH_CONVICTION') {
+    if (currentActiveSlot.tradesCount >= 3 && currentActiveSlot.status === 'HIGH_CONVICTION') {
       recommendationVerdict = 'FAVORABLE';
-      recommendationTitle = `Finestra ad Alta Probabilità: ${currentActiveSlot.label}`;
-      recommendationMessage = `I pattern stagionali storici evidenziano un tasso di successo del ${currentActiveSlot.winRate}% ed un R-medio di ${currentActiveSlot.avgRMultiple > 0 ? '+' : ''}${currentActiveSlot.avgRMultiple}R in questa fascia. Condizioni ideali per eseguire i setup primari.`;
+      recommendationTitle = `Finestra Favorevole (Dati Reali): ${currentActiveSlot.label}`;
+      recommendationMessage = `Su ${currentActiveSlot.tradesCount} trade reali chiusi in questa fascia, il Win Rate osservato è ${currentActiveSlot.winRate}% con R-medio ${currentActiveSlot.avgRMultiple > 0 ? '+' : ''}${currentActiveSlot.avgRMultiple}R.`;
     } else if (currentActiveSlot.status === 'CHOP_RISK') {
       recommendationVerdict = 'CAUTION_CHOP';
-      recommendationTitle = `Attenzione: Finestra ad Alto Rischio / Chop (${currentActiveSlot.label})`;
-      recommendationMessage = `Questa fascia oraria soffre storicamente di contrazione dei volumi e frequenti falsi breakout (Win Rate ${currentActiveSlot.winRate}%). Il filtro consiglia di attendere o dimezzare la size.`;
+      recommendationTitle = `Attenzione Liquidità / Chop (${currentActiveSlot.label})`;
+      recommendationMessage =
+        currentActiveSlot.tradesCount >= 3
+          ? `Su ${currentActiveSlot.tradesCount} trade reali in questa fascia il Win Rate osservato è ${currentActiveSlot.winRate}% (P&L ${currentActiveSlot.netPnlEur} €). Cautela su falsi breakout.`
+          : 'Fascia oraria strutturalmente a minore liquidità sui listini europei (11:30–14:30 CET). Operare solo su conferme di volume elevate.';
+    } else if (currentActiveSlot.tradesCount > 0) {
+      recommendationTitle = `${currentActiveSlot.label} (${currentActiveSlot.tradesCount} trade reali)`;
+      recommendationMessage = `Campione parziale nella fascia attuale (${currentActiveSlot.tradesCount} trade chiusi, Win Rate ${currentActiveSlot.winRate}%).`;
+    } else {
+      recommendationTitle = `${currentActiveSlot.label}`;
+      recommendationMessage = `${currentActiveSlot.description} Nessun trade chiuso ancora registrato nel diario in questa fascia.`;
     }
   }
 
   const averageWinRate = relevantEntries.length > 0
     ? +((relevantEntries.filter((t) => t.outcome === 'WIN').length / relevantEntries.length) * 100).toFixed(1)
-    : 62.0;
+    : 0;
 
   return {
     hourlySlots,
@@ -3861,7 +3877,8 @@ export function generateFilteringAuditReport(
   futuresChange: number | { EU: number; US: number },
   parameters: SystemParameters,
   catalystCache: Record<string, GeminiCatalystAnalysis>,
-  isRsiFilterActive: boolean
+  isRsiFilterActive: boolean,
+  now?: Date
 ): FilteringAuditReport {
   const totalScanned = quotes.length;
   const qualifiedTickers = new Set<string>();
@@ -3922,6 +3939,9 @@ export function generateFilteringAuditReport(
     return true;
   };
 
+  const orbPhaseEU = getOrbPhaseInfo('EU', now);
+  const orbPhaseUS = getOrbPhaseInfo('US', now);
+
   if (isCandidateFullyQualified(dualTop.topEU, 'EU')) {
     qualifiedTickers.add(dualTop.topEU!.quote.ticker);
   }
@@ -3929,6 +3949,41 @@ export function generateFilteringAuditReport(
   if (isCandidateFullyQualified(dualTop.topUS, 'US')) {
     qualifiedTickers.add(dualTop.topUS!.quote.ticker);
   }
+
+  // Registra tutti i sottostanti che superano integralmente tutti i filtri (anche oltre il top #1)
+  // purche' non abbiano veti tecnici o warmup incompleto e la finestra di ingresso sia aperta.
+  quotes.forEach((q) => {
+    if (qualifiedTickers.has(q.ticker)) return;
+    const isEU = q.market === 'EU';
+    const orbPhase = isEU ? orbPhaseEU : orbPhaseUS;
+    if (!orbPhase.isEntryAllowed) return;
+    const change =
+      typeof futuresChange === 'number'
+        ? futuresChange
+        : q.market === 'US'
+        ? futuresChange.US
+        : futuresChange.EU;
+    const cat = catalystCache[q.ticker] ?? null;
+    const scoreObj = calculateCandidateScore(q, change, cat, {
+      volume: q.lastBarVolume ?? null,
+      barTime: q.lastBarTime ?? null,
+    });
+    if (scoreObj.veto != null || scoreObj.warmupIncomplete) return;
+    const compliance = isCandidateCompliantWithParameters(q, scoreObj.total, parameters, isRsiFilterActive);
+    if (!compliance.compliant) return;
+    if (cat && cat.decisione === 'NESSUN_TRADE') {
+      const isAbsenceOfNewsOnly =
+        cat.catalizzatore?.toLowerCase().includes('nessuna notizia') ||
+        cat.catalizzatore?.toLowerCase().includes('assenza di catalizzatore') ||
+        cat.catalizzatore?.toLowerCase().includes('assenza di notizie') ||
+        (cat.rischi?.length === 1 &&
+          (cat.rischi[0]?.toLowerCase().includes('mancanza di notizie') ||
+           cat.rischi[0]?.toLowerCase().includes('assenza di catalizzatore') ||
+           cat.rischi[0]?.toLowerCase().includes('assenza di notizie')));
+      if (!isAbsenceOfNewsOnly) return;
+    }
+    qualifiedTickers.add(q.ticker);
+  });
 
   const countsByCategory = {
     rsiExtreme: 0,
@@ -3956,7 +4011,8 @@ export function generateFilteringAuditReport(
     const isEU = q.market === 'EU';
     const minScore = isEU ? minScoreEU : minScoreUS;
     const minRvol = isEU ? minRvolEU : minRvolUS;
-    const minGap = isEU ? parameters.minGapEurope : parameters.minGapUSA;
+    const minGap = isEU ? minGapEU : minGapUS;
+    const orbPhase = isEU ? orbPhaseEU : orbPhaseUS;
 
     const cat = catalystCache[q.ticker];
     const scoreObj = calculateCandidateScore(q, change, cat, {
@@ -3967,13 +4023,13 @@ export function generateFilteringAuditReport(
     const rsi = q.rsi5m ?? q.rsi14 ?? null;
     const gap = q.gapPercent ?? 0;
     const absGap = Math.abs(gap);
-    const rvol = q.rvol != null ? q.rvol : (isEU ? 1.0 : 1.0);
+    const rvol = q.rvol ?? null;
 
     let primaryReasonCategory: ExclusionCategory = 'SCORE_BELOW_MIN';
     let primaryReasonLabel = `Punteggio complessivo sotto soglia (${isEU ? 'EU' : 'US'})`;
     let detail = `Punteggio quantitativo ${score}/100 inferiore alla soglia minima richiesta di ${minScore}/100 per ${isEU ? 'Europa' : 'USA'}.`;
 
-    // Hierarchy of exclusions:
+    // Hierarchy of exclusions (100% aligned with Gate G1..G13 & scoring vetoes, zero silent RVOL 1.0 fallback):
     if (q.currentPrice == null && q.preMarketPrice == null) {
       primaryReasonCategory = 'PRICE_UNAVAILABLE';
       primaryReasonLabel = 'Prezzo non disponibile';
@@ -3994,46 +4050,55 @@ export function generateFilteringAuditReport(
       primaryReasonLabel = `Gap % insufficiente (${gap.toFixed(2)}% vs min ±${minGap}%)`;
       detail = `Il sottostante non presenta un gap d'apertura minimo per attivare strategie Gap & Go o ORB.`;
       countsByCategory.gapInsufficient++;
+    } else if (rvol == null) {
+      primaryReasonCategory = 'RVOL_INSUFFICIENT';
+      primaryReasonLabel = `Volume Relativo non disponibile (nd vs min ${minRvol}x)`;
+      detail = 'Storico volumi ORB a 20 sessioni insufficiente o volume non confermato dal feed reale.';
+      countsByCategory.rvolInsufficient++;
     } else if (rvol < minRvol) {
       primaryReasonCategory = 'RVOL_INSUFFICIENT';
       primaryReasonLabel = `Volume Relativo basso (${rvol.toFixed(2)}x vs min ${minRvol}x)`;
-      detail = `Scambi istituzionali inferiori alla media mobile a 20 periodi; rischio falsa rottura.`;
+      detail = `Scambi istituzionali inferiori alla soglia minima di ${minRvol}x; rischio falsa rottura.`;
       countsByCategory.rvolInsufficient++;
-    } else if (cat && cat.decisione === 'NESSUN_TRADE') {
-      const isAbsenceOfNewsOnly =
-        cat.catalizzatore?.toLowerCase().includes('nessuna notizia') ||
-        cat.catalizzatore?.toLowerCase().includes('assenza di catalizzatore') ||
-        cat.catalizzatore?.toLowerCase().includes('assenza di notizie') ||
-        (cat.rischi?.length === 1 &&
-          (cat.rischi[0]?.toLowerCase().includes('mancanza di notizie') ||
-           cat.rischi[0]?.toLowerCase().includes('assenza di catalizzatore') ||
-           cat.rischi[0]?.toLowerCase().includes('assenza di notizie')));
-
-      if (!isAbsenceOfNewsOnly) {
-        primaryReasonCategory = 'CATALYST_UNVERIFIED';
-        primaryReasonLabel = 'Rischio fondamentale avverso o trimestrale';
-        detail = cat.catalizzatore || 'Rischio trimestrale o evento societario critico attivo nella giornata odierna.';
-        countsByCategory.catalystUnverified++;
-      } else if (score < minScore) {
-        primaryReasonCategory = 'SCORE_BELOW_MIN';
-        primaryReasonLabel = `Punteggio sotto soglia (${score}/100 vs min ${minScore})`;
-        detail = `Punteggio ${score}/100: confluenza tecnica debole tra gap, book e futures per ${isEU ? 'Europa' : 'USA'}.`;
-        countsByCategory.scoreBelowMin++;
-      } else {
-        primaryReasonCategory = 'CUTOFF_PASSED';
-        primaryReasonLabel = 'Orario di cutoff superato';
-        detail = `Sessione oltre l'orario di cutoff consentito (${q.market === 'EU' ? '11:30' : '17:30'} CET).`;
-        countsByCategory.cutoffPassed++;
-      }
+    } else if (cat && cat.decisione === 'NESSUN_TRADE' && !(
+      cat.catalizzatore?.toLowerCase().includes('nessuna notizia') ||
+      cat.catalizzatore?.toLowerCase().includes('assenza di catalizzatore') ||
+      cat.catalizzatore?.toLowerCase().includes('assenza di notizie') ||
+      (cat.rischi?.length === 1 &&
+        (cat.rischi[0]?.toLowerCase().includes('mancanza di notizie') ||
+         cat.rischi[0]?.toLowerCase().includes('assenza di catalizzatore') ||
+         cat.rischi[0]?.toLowerCase().includes('assenza di notizie')))
+    )) {
+      primaryReasonCategory = 'CATALYST_UNVERIFIED';
+      primaryReasonLabel = 'Rischio fondamentale avverso o trimestrale';
+      detail = cat.catalizzatore || 'Rischio trimestrale o evento societario critico attivo nella giornata odierna.';
+      countsByCategory.catalystUnverified++;
+    } else if (scoreObj.warmupIncomplete) {
+      primaryReasonCategory = 'SCORE_BELOW_MIN';
+      primaryReasonLabel = 'Warm-up indicatori 5m incompleto';
+      detail = 'Barre 5m chiuse insufficienti o serie stantia per calcolare Supertrend, ADX o StochRSI.';
+      countsByCategory.scoreBelowMin++;
+    } else if (scoreObj.veto != null) {
+      primaryReasonCategory = 'SCORE_BELOW_MIN';
+      primaryReasonLabel = `Veto tecnico attivo (${scoreObj.veto})`;
+      detail = `Setup bloccato dal filtro quantitativo: ${scoreObj.veto}.`;
+      countsByCategory.scoreBelowMin++;
     } else if (score < minScore) {
       primaryReasonCategory = 'SCORE_BELOW_MIN';
       primaryReasonLabel = `Punteggio sotto soglia (${score}/100 vs min ${minScore})`;
       detail = `Punteggio ${score}/100: confluenza tecnica debole tra gap, book e futures per ${isEU ? 'Europa' : 'USA'}.`;
       countsByCategory.scoreBelowMin++;
-    } else {
+    } else if (orbPhase.phase === 'CUTOFF_PASSED') {
       primaryReasonCategory = 'CUTOFF_PASSED';
       primaryReasonLabel = 'Orario di cutoff superato';
-      detail = `Sessione oltre l'orario di cutoff consentito (${q.market === 'EU' ? '11:30' : '17:30'} CET).`;
+      detail = `Sessione oltre l'orario di cutoff consentito (${isEU ? '11:30' : '17:30'} CET).`;
+      countsByCategory.cutoffPassed++;
+    } else {
+      primaryReasonCategory = 'CUTOFF_PASSED';
+      primaryReasonLabel = orbPhase.phase === 'PRE_MARKET_MONITORING' || orbPhase.phase === 'ORB_15M_FORMATION'
+        ? `In attesa chiusura finestra ORB (${orbPhase.label})`
+        : 'Setup fuori finestra operativa';
+      detail = orbPhase.description;
       countsByCategory.cutoffPassed++;
     }
 
