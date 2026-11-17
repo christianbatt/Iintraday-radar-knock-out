@@ -94,6 +94,8 @@ export type ShadowPanelData = {
   shadowV2?: {
     strategyName?: string;
     generatedAt?: string | null;
+    /** Ipotesi/metodo dichiarati dall'artefatto: se assenti non vengono mostrati. */
+    hypotheses?: { BOOTSTRAP_ITERATIONS?: number; BOOTSTRAP_SEED?: number } | null;
     nSessions: number;
     nSignals: number;
     nResolved: number;
@@ -290,7 +292,7 @@ export const PairedV1VsV2Section: React.FC<{ data: ShadowPanelData | null }> = (
             <tr>
               <td className="py-1 text-slate-400">Win Rate %</td>
               <td className="text-right text-slate-500">n/d</td>
-              <td className="text-right">{v2?.winRatePct != null ? `${v2.winRatePct.toFixed(1)}%` : 'n/d'}</td>
+              <td className="text-right">{v2?.winRatePct != null ? `${v2.winRatePct.toFixed(1)}% (n=${v2.nResolved})` : 'n/d'}</td>
               <td className="text-right text-slate-500">n/d</td>
             </tr>
             <tr>
@@ -301,8 +303,8 @@ export const PairedV1VsV2Section: React.FC<{ data: ShadowPanelData | null }> = (
             </tr>
             <tr>
               <td className="py-1 text-slate-400">p-value / Cluster p</td>
-              <td className="text-right">{fmt(v1PVal, 4)}</td>
-              <td className="text-right">{fmt(v2PVal, 4)}</td>
+              <td className="text-right">{fmt(v1PVal, 4)} (n={v1Setups ?? 'n/d'})</td>
+              <td className="text-right">{fmt(v2PVal, 4)} (n={v2?.nResolved ?? 'n/d'})</td>
               <td className="text-right">{pDelta != null ? `${pDelta >= 0 ? '+' : ''}${pDelta.toFixed(4)}` : 'n/d'}</td>
             </tr>
           </tbody>
@@ -344,6 +346,8 @@ async function triggerShadowV2Download(
 
 export const ShadowV2Section: React.FC<{ shadowV2?: ShadowPanelData['shadowV2'] }> = ({ shadowV2 }) => {
   const recent = shadowV2?.recentSignals ?? [];
+  const hyp = shadowV2?.hypotheses ?? null;
+  const limitations = shadowV2?.limitations ?? [];
   return (
     <div className={SECTION} data-testid="shadow-v2" data-section="shadow-v2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -368,10 +372,18 @@ export const ShadowV2Section: React.FC<{ shadowV2?: ShadowPanelData['shadowV2'] 
             Esporta JSONL
           </button>
           <span className="text-[10px] font-mono text-indigo-200">
-            SOLO SHADOW · IPOTESI
+            SOLA OSSERVAZIONE · IPOTESI
           </span>
         </div>
       </div>
+      {/* D1 — disclaimer: ricerca esplorativa, non segnale operativo */}
+      <p
+        className="text-[11px] text-slate-300 border-l-2 border-indigo-700/60 pl-2"
+        data-testid="shadow-v2-disclaimer"
+      >
+        Ricerca esplorativa in sola osservazione: <strong>non è un segnale operativo</strong> né una
+        raccomandazione. Gli esiti qui sotto sono ipotesi in osservazione; nessun edge è dimostrato.
+      </p>
       {!shadowV2 || shadowV2.nSignals === 0 ? (
         <p className="text-xs text-slate-400">
           In attesa di segnali reali su barre 5m chiuse durante le scansioni live. Nessun trade sintetico generato.
@@ -392,24 +404,27 @@ export const ShadowV2Section: React.FC<{ shadowV2?: ShadowPanelData['shadowV2'] 
               <div className="font-bold text-white">{shadowV2.winRatePct != null ? `${shadowV2.winRatePct.toFixed(1)}%` : 'n/d'}</div>
             </div>
             <div className="rounded bg-slate-900/70 p-2">
-              <div className="text-[10px] text-slate-500">Mean R Lordo / Netto</div>
+              <div className="text-[10px] text-slate-500">Mean R Lordo / Netto (n={shadowV2.nResolved})</div>
               <div className="font-bold text-white">{fmt(shadowV2.meanRGross)}R / {fmt(shadowV2.meanRNet)}R</div>
             </div>
             <div className="rounded bg-slate-900/70 p-2">
-              <div className="text-[10px] text-slate-500">Friction Med. (€1k / €2.5k)</div>
+              <div className="text-[10px] text-slate-500">Friction Med. (€1k / €2.5k) · n={shadowV2.nResolved}</div>
               <div>{fmt(shadowV2.medianFrictionR)}R / {fmt(shadowV2.medianFrictionR2500)}R</div>
             </div>
             <div className="rounded bg-slate-900/70 p-2">
-              <div className="text-[10px] text-slate-500">Profit Factor / Max DD</div>
+              <div className="text-[10px] text-slate-500">Profit Factor / Max DD · n={shadowV2.nResolved}</div>
               <div>{fmt(shadowV2.profitFactor, 2)} / {fmt(shadowV2.maxDrawdownR, 2)}R</div>
             </div>
             <div className="rounded bg-slate-900/70 p-2">
-              <div className="text-[10px] text-slate-500">DSR</div>
+              <div className="text-[10px] text-slate-500">DSR · n={shadowV2.nResolved}</div>
               <div>{fmt(shadowV2.dsr, 3)}</div>
             </div>
             <div className="rounded bg-slate-900/70 p-2">
               <div className="text-[10px] text-slate-500">Cluster Bootstrap p</div>
-              <div>{fmt(shadowV2.clusterBootstrapPValue, 4)} ({shadowV2.nDayClusters ?? 0} cl.)</div>
+              <div>
+                {fmt(shadowV2.clusterBootstrapPValue, 4)} ({shadowV2.nDayClusters ?? 'n/d'} cl. · n=
+                {shadowV2.nResolved})
+              </div>
             </div>
           </div>
 
@@ -443,6 +458,34 @@ export const ShadowV2Section: React.FC<{ shadowV2?: ShadowPanelData['shadowV2'] 
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {shadowV2 && hyp && (
+        <div className="text-[10px] text-slate-500 font-mono" data-testid="shadow-v2-method">
+          bootstrap sign-flip per cluster giornaliero
+          {typeof hyp.BOOTSTRAP_ITERATIONS === 'number' ? ` · iterazioni ${hyp.BOOTSTRAP_ITERATIONS}` : ''}
+          {typeof hyp.BOOTSTRAP_SEED === 'number' ? ` · seed ${hyp.BOOTSTRAP_SEED}` : ''}
+        </div>
+      )}
+
+      {shadowV2 && (
+        <div className="text-[10px] text-slate-500 font-mono" data-testid="shadow-v2-multiplicity">
+          p del bootstrap: nessuna correzione per test multipli applicata (valore grezzo del motore).
+        </div>
+      )}
+
+      {limitations.length > 0 && (
+        <div className="border-t border-slate-900 pt-2" data-testid="shadow-v2-limits">
+          <div className="text-[10px] text-slate-500">
+            Limiti dichiarati dai dati (Shadow V2)
+            {shadowV2 && ` · n=${shadowV2.nResolved} risolti`}
+          </div>
+          <ul className="text-[11px] text-slate-400 space-y-1 mt-1">
+            {limitations.map((l, i) => (
+              <li key={i}>· {l}</li>
+            ))}
+          </ul>
         </div>
       )}
     </div>
@@ -509,9 +552,14 @@ export const ShadowResearchPanel: React.FC<{ data: ShadowPanelData | null }> = (
           <p className="text-xs text-red-300">
             gli R di questa superficie sono da rileggere: violazioni di monotonia sul target.
           </p>
-        ) : (
+        ) : data.fillIntegrity === 'ok' ? (
           <p className="text-xs text-slate-400">
             fill coerente con la barriera, 0 violazioni su {sample?.nSetups ?? 'n/d'} righe emesse.
+          </p>
+        ) : (
+          <p className="text-xs text-amber-300" data-testid="shadow-fill-unknown">
+            integrità del fill non disponibile ({data.fillIntegrity ?? 'stato assente'}): nessuna verifica di
+            monotonia registrata, nessun esito dichiarato.
           </p>
         )}
       </div>
