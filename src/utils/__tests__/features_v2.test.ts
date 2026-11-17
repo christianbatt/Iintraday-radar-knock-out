@@ -200,7 +200,7 @@ describe('Feature 3 & 4A — Paired Shadow V1 vs V2 Comparison & CSV/JSONL Expor
     assert.equal(parsed.rNet, 1.78);
   });
 
-  it('PairedV1VsV2Section calcola delta reali se V1 e V2 presenti, e segnala onestamente se V1 assente', () => {
+  it('PairedV1VsV2Section non inventa delta se V1 non produce la metrica, e segnala onestamente se V1 assente', () => {
     const v2OnlyPanel: ShadowPanelData = {
       available: false,
       reason: 'missing_v1',
@@ -251,9 +251,16 @@ describe('Feature 3 & 4A — Paired Shadow V1 vs V2 Comparison & CSV/JSONL Expor
       ],
     };
     const htmlBoth = renderToStaticMarkup(React.createElement(PairedV1VsV2Section, { data: bothPanel }));
-    assert.ok(htmlBoth.includes('+0.900R'), 'delta Mean R Netto calcolato correttamente (0.85 - (-0.05) = +0.900R)');
+    // V1 non produce un R netto aggregato: nessun delta, nessun valore di S01 spacciato per R.
+    assert.equal(htmlBoth.includes('+0.900R'), false, 'delta Mean R Netto non deve essere calcolato');
+    assert.ok(htmlBoth.includes('data-testid="shadow-v1-meanr-delta"'));
+    assert.ok(htmlBoth.includes("V1 non produce un R netto aggregato nell"));
+    assert.ok(htmlBoth.includes('Confronto non omogeneo'), 'avviso di non omogeneità assente');
+    // Il DSR è la stessa metrica nei due artefatti: il delta resta calcolato.
     assert.ok(htmlBoth.includes('+0.320'), 'delta DSR calcolato correttamente (0.42 - 0.10 = +0.320)');
-    assert.ok(htmlBoth.includes('-0.2090'), 'delta p-value calcolato correttamente (0.041 - 0.250 = -0.2090)');
+    // p-value V1 = DSR, p-value V2 = cluster bootstrap: test diversi, delta non omogeneo.
+    assert.equal(htmlBoth.includes('-0.2090'), false, 'delta fra p-value di test diversi non deve essere calcolato');
+    assert.ok(htmlBoth.includes('test diversi, non confrontabili'));
   });
 });
 

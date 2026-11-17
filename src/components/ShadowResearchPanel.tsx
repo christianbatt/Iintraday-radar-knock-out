@@ -242,18 +242,16 @@ export const PairedV1VsV2Section: React.FC<{ data: ShadowPanelData | null }> = (
   const v1PVal = v1Available ? (data?.deflatedSharpe?.pValue ?? null) : null;
   const v1Setups = v1Available ? (data?.sample?.nSetups ?? null) : null;
   const v1Days = v1Available ? (data?.sample?.nDays ?? null) : null;
-  const v1RuleExpectancy = v1Available
-    ? (data?.rules?.find((r) => r.id === 'S01' || r.family === 'expectancy')?.value ?? null)
-    : null;
-
   const v2Dsr = v2?.dsr ?? null;
   const v2PVal = v2?.clusterBootstrapPValue ?? null;
   const dsrDelta = typeof v1Dsr === 'number' && typeof v2Dsr === 'number' ? +(v2Dsr - v1Dsr).toFixed(3) : null;
-  const pDelta = typeof v1PVal === 'number' && typeof v2PVal === 'number' ? +(v2PVal - v1PVal).toFixed(4) : null;
-  const meanRDelta =
-    typeof v1RuleExpectancy === 'number' && typeof v2?.meanRNet === 'number'
-      ? +(v2.meanRNet - v1RuleExpectancy).toFixed(3)
-      : null;
+
+  // V1 non pubblica un R netto aggregato ne' un win rate: l'artefatto contiene
+  // regole statistiche eterogenee (S01 e' la quota di etichette UPPER di
+  // tripleBarrierLabels, non un R) e nessuna metrica di esito aggregata.
+  // Nessun valore di default: dove il dato non esiste si scrive n/d.
+  const V1_NO_MEAN_R = "V1 non produce un R netto aggregato nell'artefatto";
+  const V1_NO_WIN_RATE = "V1 non produce un win rate nell'artefatto";
 
   return (
     <div className={SECTION} data-testid="shadow-v1-vs-v2" data-section="v1-vs-v2">
@@ -264,6 +262,11 @@ export const PairedV1VsV2Section: React.FC<{ data: ShadowPanelData | null }> = (
         <span className="text-[10px] font-mono text-slate-400">
           {v1Available ? 'V1 attivo · V2 parallelo' : 'Artefatto V1 assente · solo V2'}
         </span>
+      </div>
+
+      <div className="text-[11px] text-amber-300" data-testid="shadow-v1-vs-v2-warning">
+        Confronto non omogeneo: V1 e V2 hanno popolazioni e metodi di misura diversi. Differenza
+        numerica esplorativa, nessun vincitore.
       </div>
 
       <div className="overflow-x-auto">
@@ -279,19 +282,36 @@ export const PairedV1VsV2Section: React.FC<{ data: ShadowPanelData | null }> = (
           <tbody className="divide-y divide-slate-900 text-slate-300">
             <tr>
               <td className="py-1 text-slate-400">Campione (setup / giorni)</td>
-              <td className="text-right">{v1Available ? `${v1Setups ?? 'n/d'} / ${v1Days ?? 'n/d'}g` : 'Artefatto V1 assente'}</td>
+              <td className="text-right">
+                {v1Available ? `${v1Setups ?? 'n/d'} / ${v1Days ?? 'n/d'}g` : 'Artefatto V1 assente'}
+                <div className="text-[10px] text-slate-500" data-testid="shadow-v1-population-note">
+                  popolazione di replay storico (non i trade live)
+                </div>
+              </td>
               <td className="text-right">{v2 ? `${v2.nResolved} ris. (${v2.nSignals} seg.) / ${v2.nSessions}g` : 'n/d'}</td>
               <td className="text-right text-slate-500">—</td>
             </tr>
             <tr>
               <td className="py-1 text-slate-400">Mean R Netto</td>
-              <td className="text-right">{v1RuleExpectancy != null ? `${fmt(v1RuleExpectancy, 3)}R` : 'n/d'}</td>
+              <td className="text-right">
+                n/d
+                <div className="text-[10px] text-slate-500" data-testid="shadow-v1-meanr-reason">
+                  {v1Available ? V1_NO_MEAN_R : 'Artefatto V1 assente'}
+                </div>
+              </td>
               <td className="text-right">{v2?.meanRNet != null ? `${fmt(v2.meanRNet, 3)}R` : 'n/d'}</td>
-              <td className="text-right">{meanRDelta != null ? `${meanRDelta >= 0 ? '+' : ''}${meanRDelta.toFixed(3)}R` : 'n/d'}</td>
+              <td className="text-right text-slate-500" data-testid="shadow-v1-meanr-delta">
+                n/d
+              </td>
             </tr>
             <tr>
               <td className="py-1 text-slate-400">Win Rate %</td>
-              <td className="text-right text-slate-500">n/d</td>
+              <td className="text-right">
+                n/d
+                <div className="text-[10px] text-slate-500" data-testid="shadow-v1-winrate-reason">
+                  {v1Available ? V1_NO_WIN_RATE : 'Artefatto V1 assente'}
+                </div>
+              </td>
               <td className="text-right">{v2?.winRatePct != null ? `${v2.winRatePct.toFixed(1)}% (n=${v2.nResolved})` : 'n/d'}</td>
               <td className="text-right text-slate-500">n/d</td>
             </tr>
@@ -302,10 +322,13 @@ export const PairedV1VsV2Section: React.FC<{ data: ShadowPanelData | null }> = (
               <td className="text-right">{dsrDelta != null ? `${dsrDelta >= 0 ? '+' : ''}${dsrDelta.toFixed(3)}` : 'n/d'}</td>
             </tr>
             <tr>
-              <td className="py-1 text-slate-400">p-value / Cluster p</td>
-              <td className="text-right">{fmt(v1PVal, 4)} (n={v1Setups ?? 'n/d'})</td>
-              <td className="text-right">{fmt(v2PVal, 4)} (n={v2?.nResolved ?? 'n/d'})</td>
-              <td className="text-right">{pDelta != null ? `${pDelta >= 0 ? '+' : ''}${pDelta.toFixed(4)}` : 'n/d'}</td>
+              <td className="py-1 text-slate-400">p-value DSR (V1) vs p-value cluster (V2)</td>
+              <td className="text-right">{fmt(v1PVal, 4)} (DSR · n={v1Setups ?? 'n/d'})</td>
+              <td className="text-right">{fmt(v2PVal, 4)} (cluster · n={v2?.nResolved ?? 'n/d'})</td>
+              <td className="text-right text-slate-500" data-testid="shadow-pval-delta">
+                n/d
+                <div className="text-[10px] text-slate-500">test diversi, non confrontabili</div>
+              </td>
             </tr>
           </tbody>
         </table>

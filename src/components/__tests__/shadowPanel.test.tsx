@@ -133,3 +133,87 @@ describe('R7 — nessun punteggio composito', () => {
     assert.ok(out.includes('disabled'));
   });
 });
+
+/**
+ * R8 — confronto V1 vs V2: nessun valore mal etichettato (PR "onestà del confronto").
+ * V1 non pubblica un R netto aggregato né un win rate: S01 è la quota di etichette
+ * UPPER di tripleBarrierLabels, non un multiplo di rischio.
+ */
+describe('R8 — confronto V1/V2 senza valori mal etichettati', () => {
+  const s01 = {
+    id: 'S01',
+    name: 'tripleBarrierLabels',
+    family: 'STIMATORE',
+    status: 'computed',
+    value: 0.17886178861788618,
+    unit: 'share UPPER',
+    n: 123,
+    note: '',
+  };
+
+  const withS01 = (over: Partial<ShadowPanelData> = {}): ShadowPanelData =>
+    base({ rules: [s01, ...(base().rules ?? [])], ...over });
+
+  const paired = (out: string): string => {
+    const i = out.indexOf('data-testid="shadow-v1-vs-v2"');
+    return i < 0 ? '' : out.slice(i);
+  };
+
+  const cellText = (out: string, testid: string): string => {
+    const m = new RegExp(`data-testid="${testid}">([^<]*)<`).exec(out);
+    return m === null ? '' : m[1].trim();
+  };
+
+  it('T1: la cella V1 Mean R Netto non mostra S01 e non ha suffisso R', () => {
+    const out = html(withS01());
+    const v1VsV2 = paired(out);
+    assert.ok(v1VsV2.length > 0, 'sezione di confronto assente');
+    assert.equal(v1VsV2.includes('0.179R'), false, 'S01 presentato come R');
+    assert.equal(v1VsV2.includes('0.1789'), false, 'valore di S01 dentro il confronto');
+    // l'apostrofo è escapato da renderToStaticMarkup: si asserisce sul prefisso
+    assert.ok(v1VsV2.includes('V1 non produce un R netto aggregato nell'));
+    assert.ok(v1VsV2.includes('V1 non produce un win rate nell'));
+    // il valore di S01 resta visibile solo nella tabella delle regole, non qui
+    assert.ok(out.includes('0.1789'), 'il valore S01 deve restare visibile nella sezione regole');
+  });
+
+  it('T2: il delta della riga Mean R Netto è n/d', () => {
+    const out = html(withS01());
+    assert.equal(cellText(out, 'shadow-v1-meanr-delta'), 'n/d');
+    assert.equal(/[-+]?0\.\d+R/.test(cellText(out, 'shadow-v1-meanr-delta')), false);
+  });
+
+  it('T3: i due p-value sono etichettati come test diversi e il delta non è calcolato', () => {
+    const out = html(withS01());
+    assert.ok(out.includes('p-value DSR (V1) vs p-value cluster (V2)'));
+    assert.ok(out.includes('(DSR · n='));
+    assert.ok(out.includes('(cluster · n='));
+    assert.ok(out.includes('test diversi, non confrontabili'));
+    assert.equal(cellText(out, 'shadow-pval-delta'), 'n/d');
+  });
+
+  it('T4: l\'avviso di non omogeneità è presente', () => {
+    const out = html(withS01());
+    assert.ok(out.includes('data-testid="shadow-v1-vs-v2-warning"'));
+    assert.ok(
+      out.includes(
+        'Confronto non omogeneo: V1 e V2 hanno popolazioni e metodi di misura diversi. Differenza numerica esplorativa, nessun vincitore.'
+      )
+    );
+  });
+
+  it('T5: la riga Campione dichiara che V1 è popolazione di replay storico', () => {
+    const out = html(withS01());
+    assert.ok(out.includes('popolazione di replay storico (non i trade live)'));
+    assert.ok(out.includes('data-testid="shadow-v1-population-note"'));
+    assert.ok(out.includes('123 / 30g'), 'il campione V1 usa solo i campi già presenti');
+  });
+
+  it('T6: con artefatto V1 assente il comportamento resta invariato', () => {
+    const out = html(null);
+    assert.ok(out.includes('nessun artefatto'));
+    assert.ok(out.includes('Artefatto V1 assente'));
+    assert.equal(out.includes('data-section="rules"'), false);
+    assert.ok(out.includes('data-testid="shadow-v1-vs-v2-warning"'));
+  });
+});
