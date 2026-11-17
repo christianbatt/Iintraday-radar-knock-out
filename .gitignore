@@ -11,3 +11,4 @@ credentials.json
 *.pem
 *.key
 shared_radar_state.json
+artifacts/

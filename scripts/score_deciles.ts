@@ -63,6 +63,8 @@ const FILL_CONSERVATIVE = ARGS.has('fill-conservative');
 const IMMEDIATE_ENTRY  = ARGS.has('immediate-entry');
 const TERM_FIXED       = ARGS.has('term-fixed');
 const NULL_FIXED       = ARGS.has('null-fixed');
+const NULL_FILLED      = ARGS.has('null-filled');
+const HIT_LEDGER       = ARGS.has('hit-ledger');
 
 const HORIZON_RAW  = ARGS.get('horizon') ?? 'resolution';
 const HORIZON_MODE: 'resolution' | 'fixed' = HORIZON_RAW === 'resolution' ? 'resolution' : 'fixed';
@@ -1164,6 +1166,8 @@ function main() {
   const termFixedStats: Array<Record<string, unknown>> = [];
   const markFixedStats: Record<string, unknown> = {};
   const timingFixed2Stats: Record<string, unknown> = {};
+  const nullFilledStats: Record<string, unknown> = {};
+  const hitLedgerStats: Array<Record<string, unknown>> = [];
   const timingFixedStats: Record<string, unknown> = {};
   const placeboMatchedStats: Array<Record<string, unknown>> = [];
   const consStats: Record<string, unknown> = {};
@@ -1174,7 +1178,8 @@ function main() {
   }> = [];
   if (FILL_CONDITIONAL || TARGET_SWEEP || FILL_AGE || MARK_FROM_FILL || TARGET_SWEEP_FIXED
       || TERM_STRUCTURE || TIMING_NULL || FILL_AUDIT || TERM_CENSORED || TIMING_NULL_FIXED
-      || PLACEBO_MATCHED || FILL_CONSERVATIVE || IMMEDIATE_ENTRY || TERM_FIXED || NULL_FIXED) {
+      || PLACEBO_MATCHED || FILL_CONSERVATIVE || IMMEDIATE_ENTRY || TERM_FIXED || NULL_FIXED
+      || NULL_FILLED || HIT_LEDGER) {
     log(`=== FASE 8 — R condizionato al fill (shift ${PRIMARY_SHIFT}) ===`);
     // --exclude-g4: le tre fasi vetrino gli stessi setup. G4 e' l'unico motivo
     // con distR < 0 (trigger gia' dietro il mercato), quindi l'unico che il
@@ -1969,6 +1974,176 @@ function main() {
       Object.assign(timingFixed2Stats, rowsF2, { distRNullMean: mean(dR), distRNullSd: stdev(dR), nDistR: dR.length, nNoDraw });
     }
 
+    // ---- FASE 27/28: null con fill, una draw per setup per iterazione
+    if (NULL_FILLED || HIT_LEDGER) {
+      // Il null di FASE 19/26 chiama findFillBar ma poi valuta barrierR da
+      // bars[j].t, cioe' da prima che l'entry sia raggiunta, e prezza il fill
+      // all'entry anche quando il mercato e' gia' oltre. Qui: barrierR parte
+      // dalla barra di fill (entryTs = fb.bar.t) e il prezzo di fill e' quello
+      // conservativo di R4 (mai meglio del mercato). Una draw per setup per
+      // iterazione: la distribuzione delle 200 medie e' il null.
+      type NullFilled = {
+        iterMean: number[]; iterHit: number[];
+        nullMean: number; nullSd: number; lo: number; hi: number; pctMean: number;
+        meanHit: number; sdHit: number; loHit: number; hiHit: number; pctHit: number;
+        perSetup: number[]; dates: string[];
+        noFill: number; totalDraws: number; noRes: number;
+        distRMean: number; shareNeg: number; shareGt1: number; nDistR: number;
+        obsMeanR4: number; obsHitR4: number; nObs: number;
+        obsPerSetup: number[]; obsHitR0: number; nObsR0: number;
+        negN: number; negHitR0: number; negMeanR0: number;
+      };
+      const NF_ITER = 200;
+      const nfCache = new Map<number, NullFilled>();
+      const nullFilledFor = (k: number): NullFilled => {
+        const cached = nfCache.get(k);
+        if (cached) return cached;
+        const rng = mulberry32(Math.round(7000 + k * 100));
+        const sums = new Array<number>(NF_ITER).fill(0);
+        const hits = new Array<number>(NF_ITER).fill(0);
+        const cnts = new Array<number>(NF_ITER).fill(0);
+        const perSetup: number[] = [];
+        const obsPerSetup: number[] = [];
+        const dates: string[] = [];
+        let r0N = 0, r0Hit = 0, negN = 0, negSum = 0, negHit = 0;
+        let noFill = 0, totalDraws = 0, noRes = 0;
+        let distRSum = 0, nDistR = 0, nNeg = 0, nGt1 = 0;
+        let obsSum = 0, obsN = 0, obsHit = 0;
+        const obsVals = new Map<number, number>();
+        for (const f of filledSample) {
+          const risk = Math.abs(f.s.entry - f.s.stop);
+          if (!(risk > 0) || f.bars.length === 0) continue;
+          const p0 = priceAtClose(f.bars, f.decTs);
+          if (p0 === null) continue;
+          const distR = f.s.dir * (f.s.entry - p0) / risk;
+          distRSum += distR; nDistR++;
+          if (distR < 0) {
+            nNeg++;
+            if (f.fillR !== null) { negN++; negSum += f.fillR; if (f.fillR > 0) negHit++; }
+          }
+          if (distR > 1) nGt1++;
+          // osservato: R4 con il target ricalcolato allo stesso k del null
+          const fb0 = f.bars[f.fillIdx];
+          const ref = f.bars[Math.max(0, f.decIdx)].o;
+          const fp4 = f.s.dir > 0
+            ? Math.max(f.s.entry, Math.max(ref, fb0.o))
+            : Math.min(f.s.entry, Math.min(ref, fb0.o));
+          const rk = resolveR({ ...f.s, target: f.s.entry + f.s.dir * k * risk }, f.bars);
+          if (f.fillR !== null) { r0N++; if (f.fillR > 0) r0Hit++; }
+          if (rk.r !== null && rk.exit !== 'censored') {
+            const xp = f.s.entry + f.s.dir * rk.r * risk;
+            const v = f.s.dir * (xp - fp4) / risk;
+            obsSum += v; obsN++; if (v > 0) obsHit++;
+            obsVals.set(perSetup.length, v);
+          }
+          let sSum = 0, sCnt = 0;
+          const limit = Math.max(1, f.fillIdx);
+          for (let b = 0; b < NF_ITER; b++) {
+            const j = Math.floor(rng() * limit);
+            totalDraws++;
+            if (j + 1 >= f.bars.length) { noFill++; continue; }
+            const pj = f.bars[j].c;
+            const entry = pj + f.s.dir * distR * risk;
+            const stop = entry - f.s.dir * risk;
+            const target = entry + f.s.dir * k * risk;
+            const probe: Setup = { ...f.s, entry, stop, target, entryTs: f.bars[j].t };
+            const fb = findFillBar(probe, f.bars);
+            if (fb === null) { noFill++; continue; }
+            const fillPrice = f.s.dir > 0
+              ? Math.max(entry, Math.max(pj, fb.bar.o))
+              : Math.min(entry, Math.min(pj, fb.bar.o));
+            const res = barrierR({ ...probe, entryTs: fb.bar.t }, f.bars, HORIZON, BE_TRIGGER);
+            if (res.r === null || res.exit === 'censored') { noRes++; continue; }
+            const exitPrice = entry + f.s.dir * res.r * risk;
+            const v = f.s.dir * (exitPrice - fillPrice) / risk;
+            sums[b] += v; cnts[b]++; if (v > 0) hits[b]++;
+            sSum += v; sCnt++;
+          }
+          obsPerSetup.push(obsVals.get(perSetup.length) ?? NaN);
+          perSetup.push(sCnt ? sSum / sCnt : 0);
+          dates.push(f.date);
+        }
+        const iterMean = sums.map((x, i) => (cnts[i] ? x / cnts[i] : NaN)).filter(Number.isFinite);
+        const iterHit = hits.map((x, i) => (cnts[i] ? x / cnts[i] * 100 : NaN)).filter(Number.isFinite);
+        const sorted = [...iterMean].sort((x, y) => x - y);
+        const sortedH = [...iterHit].sort((x, y) => x - y);
+        const obsMeanR4 = obsN ? obsSum / obsN : NaN;
+        const obsHitR4 = obsN ? obsHit / obsN * 100 : NaN;
+        const out: NullFilled = {
+          iterMean, iterHit,
+          nullMean: mean(iterMean), nullSd: stdev(iterMean),
+          lo: quantile(sorted, 0.025), hi: quantile(sorted, 0.975),
+          pctMean: 100 * iterMean.filter(x => x <= obsMeanR4).length / (iterMean.length || NaN),
+          meanHit: mean(iterHit), sdHit: stdev(iterHit),
+          loHit: quantile(sortedH, 0.025), hiHit: quantile(sortedH, 0.975),
+          pctHit: 100 * iterHit.filter(x => x <= obsHitR4).length / (iterHit.length || NaN),
+          perSetup, dates, noFill, totalDraws, noRes,
+          distRMean: nDistR ? distRSum / nDistR : NaN,
+          shareNeg: nDistR ? nNeg / nDistR : NaN,
+          shareGt1: nDistR ? nGt1 / nDistR : NaN,
+          nDistR, obsMeanR4, obsHitR4, nObs: obsN,
+          obsPerSetup, obsHitR0: r0N ? r0Hit / r0N * 100 : NaN, nObsR0: r0N,
+          negN, negHitR0: negN ? negHit / negN * 100 : NaN, negMeanR0: negN ? negSum / negN : NaN,
+        };
+        nfCache.set(k, out);
+        return out;
+      };
+
+      if (NULL_FILLED) {
+        log(`=== FASE 27 — null con fill, una draw per setup (shift ${PRIMARY_SHIFT}${G4_TAG}) ===`);
+        log(`  ${pad('misura', 16)} ${pad('osservato', 11)} ${pad('null media', 10)} ${pad('null SD', 9)} ${pad('null 2.5%', 10)} ${pad('null 97.5%', 11)} percentile`);
+        const rows27: Record<string, unknown> = {};
+        for (const k of [1.6, 0.6]) {
+          const r = nullFilledFor(k);
+          log(`  ${pad(`meanR k=${k}`, 16)} ${pad(num(r.obsMeanR4), 11)} ${pad(num(r.nullMean), 10)} ${pad(num(r.nullSd), 9)} ${pad(num(r.lo), 10)} ${pad(num(r.hi), 11)} ${num(r.pctMean, 1)}%`);
+          log(`  ${pad(`hit% k=${k}`, 16)} ${pad(num(r.obsHitR4, 1), 11)} ${pad(num(r.meanHit, 1), 10)} ${pad(num(r.sdHit, 1), 9)} ${pad(num(r.loHit, 1), 10)} ${pad(num(r.hiHit, 1), 11)} ${num(r.pctHit, 1)}%`);
+          rows27[`k=${k}`] = {
+            observedMeanR4: r.obsMeanR4, observedHitR4: r.obsHitR4,
+            nullMean: r.nullMean, nullSd: r.nullSd, nullLo: r.lo, nullHi: r.hi, percentileMean: r.pctMean,
+            nullHit: r.meanHit, nullHitSd: r.sdHit, nullHitLo: r.loHit, nullHitHi: r.hiHit, percentileHit: r.pctHit,
+            noFill: r.noFill, totalDraws: r.totalDraws, noResolved: r.noRes,
+            distRMeanDraws: r.distRMean, shareDistRNeg: r.shareNeg, shareDistRGt1: r.shareGt1, nSetups: r.nDistR,
+          };
+        }
+        const r16 = nullFilledFor(1.6);
+        const r06 = nullFilledFor(0.6);
+        log('  --- draw ---');
+        log(`  draw senza fill: ${r16.noFill} / ${r16.totalDraws} (${num(r16.noFill / (r16.totalDraws || NaN) * 100, 2)}%)   draw non risolte: ${r16.noRes}`);
+        log(`  distR medio draw: ${num(r16.distRMean)}   quota distR<0: ${num(r16.shareNeg * 100, 1)}%   quota distR>1: ${num(r16.shareGt1 * 100, 1)}%   (n=${r16.nDistR})`);
+        log(`  osservato distR<0: n=${r16.negN}  hit% R0=${num(r16.negHitR0, 1)}  meanR R0=${num(r16.negMeanR0)}`);
+        log('  --- differenza appaiata (R4 - null) ---');
+        const paired = (r: NullFilled, k: number) => {
+          const diffs = r.perSetup
+            .map((x, i) => ({ date: r.dates[i], v: r.obsPerSetup[i] - x }))
+            .filter(d => Number.isFinite(d.v));
+          const boot = blockBootstrap(diffs, BOOT);
+          log(`  k=${k}  meanΔ=${num(mean(diffs.map(x => x.v)))}  n=${diffs.length}  CI95=[${num(boot.lo)}, ${num(boot.hi)}]`);
+          return { meanDelta: mean(diffs.map(x => x.v)), n: diffs.length, ci95: [boot.lo, boot.hi] };
+        };
+        rows27['paired k=1.6'] = paired(r16, 1.6);
+        rows27['paired k=0.6'] = paired(r06, 0.6);
+        log('');
+        Object.assign(nullFilledStats, rows27);
+      }
+
+      if (HIT_LEDGER) {
+        log(`=== FASE 28 — ledger degli hit rate (shift ${PRIMARY_SHIFT}${G4_TAG}) ===`);
+        log(`  [hit% R0 = target registrati, non dipende da k; gap e residuo usano hit% R4 al k della riga]`);
+        log(`  ${pad('k', 5)} ${pad('hit% R0', 9)} ${pad('hit% R4', 9)} ${pad('martingala', 11)} ${pad('null-fill', 10)} ${pad('gap vs mart', 12)} ${pad('hit% per 0.08R', 16)} gap residuo`);
+        for (const k of [0.6, 1.0, 1.6, 2.0]) {
+          const r = nullFilledFor(k);
+          const mart = 100 / (1 + k);
+          const need = 100 * (1 + 0.08) / (1 + k);
+          const r0 = r.obsHitR0;
+          const gap = r.obsHitR4 - mart;
+          const resid = need - r.obsHitR4;
+          log(`  ${pad(k.toFixed(1), 5)} ${pad(num(r0, 1), 9)} ${pad(num(r.obsHitR4, 1), 9)} ${pad(num(mart, 2), 11)} ${pad(num(r.meanHit, 1), 10)} ${pad(num(gap, 1), 12)} ${pad(num(need, 2), 16)} ${num(resid, 1)}`);
+          hitLedgerStats.push({ k, hitR0: r0, hitR4: r.obsHitR4, martingale: mart, nullFillHit: r.meanHit, gapVsMartingalePp: gap, hitNeededForCostPp: need, residualGapPp: resid, nObs: r.nObs });
+        }
+        log('');
+      }
+    }
+
     // ---- FASE 19: null del timing con geometria vincolata
     if (TIMING_NULL_FIXED) {
       log(`=== FASE 19 — null del timing con geometria vincolata (shift ${PRIMARY_SHIFT}${G4_TAG}) ===`);
@@ -2322,6 +2497,8 @@ function main() {
     ...(termFixedStats.length ? { termFixed: termFixedStats } : {}),
     ...(Object.keys(markFixedStats).length ? { markFromFillFixed: markFixedStats } : {}),
     ...(Object.keys(timingFixed2Stats).length ? { timingNullFixed2: timingFixed2Stats } : {}),
+    ...(Object.keys(nullFilledStats).length ? { nullFilled: nullFilledStats } : {}),
+    ...(hitLedgerStats.length ? { hitLedger: hitLedgerStats } : {}),
     ...(Object.keys(timingFixedStats).length ? { timingNullFixed: timingFixedStats } : {}),
     ...(placeboMatchedStats.length ? { placeboMatched: placeboMatchedStats } : {}),
     ...(Object.keys(consStats).length ? { fillConservative: consStats } : {}),
