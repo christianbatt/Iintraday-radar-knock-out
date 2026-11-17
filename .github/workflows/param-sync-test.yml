@@ -19,3 +19,5 @@ jobs:
         run: npm run test:shadow
       - name: Shadow V2 tests
         run: npm run test:shadowv2
+      - name: ORB regression tests
+        run: npm run test:orb
