@@ -971,6 +971,18 @@ export function evaluateShadowV2OnBars(
   return records;
 }
 
+/** PRNG deterministico (mulberry32): segni indipendenti, nessuna dipendenza, stesso output a parità di seed. */
+export function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 /** Seeded sign-flip bootstrap aggregato per cluster giornalieri (`sessionDate`). */
 export function clusterBootstrapSignFlipPValue(
   resolved: readonly ShadowV2Record[],
@@ -990,13 +1002,12 @@ export function clusterBootstrapSignFlipPValue(
     return { pValue: null, nDayClusters: nClusters };
   }
   const observedMean = clusterMeans.reduce((a, b) => a + b, 0) / nClusters;
-  let state = seed >>> 0;
+  const rng = mulberry32(seed);
   let geCount = 0;
   for (let it = 0; it < iterations; it++) {
     let sum = 0;
     for (let c = 0; c < nClusters; c++) {
-      state = (1664525 * state + 1013904223) >>> 0;
-      const sign = (state & 1) === 0 ? 1 : -1;
+      const sign = rng() < 0.5 ? 1 : -1;
       sum += sign * clusterMeans[c];
     }
     if (sum / nClusters >= observedMean) geCount++;

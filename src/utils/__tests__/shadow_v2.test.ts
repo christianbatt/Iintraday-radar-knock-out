@@ -3,11 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
+  clusterBootstrapSignFlipPValue,
   evaluateShadowV2OnBars,
   filterClosedBarsV2,
+  mulberry32,
   selectShadowV2KoLeverage,
   SHADOW_V2_BAR_MS,
+  SHADOW_V2_HYPOTHESES,
   summarizeShadowV2,
+  type ShadowV2Record,
 } from '../../knowledge/shadowV2';
 import {
   calculateImpliedVolatilityMetrics,
@@ -25,6 +29,51 @@ import type { IndicatorBarInput, RawQuoteData, ScoredCandidate } from '../../typ
 
 function makeBar(ts: number, o: number, h: number, l: number, c: number, v: number): IndicatorBarInput {
   return { t: ts, o, h, l, c, v };
+}
+
+/** Record sintetico per il bootstrap: contano solo sessionDate (cluster) e rNet (effetto). */
+function mkRecord(id: string, sessionDate: string, rNet: number): ShadowV2Record {
+  return {
+    id,
+    ticker: 'SYNTH',
+    market: 'US',
+    sessionDate,
+    direction: 'LONG',
+    triggerType: 'CUSUM_DISPLACEMENT',
+    signalBarTs: Date.UTC(2026, 10, 5, 14, 30),
+    signalTimeIso: '2026-11-05T14:30:00.000Z',
+    entryBarTs: Date.UTC(2026, 10, 5, 14, 35),
+    refSignalClose: 100,
+    entryPrice: 100,
+    structuralStop: 99,
+    target1: 102,
+    riskDist: 1,
+    leverage: 1,
+    koBarrier: 98,
+    status: 'RESOLVED',
+    outcome: 'TARGET_1',
+    blockedReason: null,
+    exitBarTs: Date.UTC(2026, 10, 5, 14, 40),
+    exitPrice: 102,
+    barsHeld: 1,
+    rGross: rNet,
+    rNet,
+    csSpreadPct: 0,
+    amihud: 0,
+    varSpreadR: 0,
+    totalFrictionR: 0,
+    totalFrictionR2500: 0,
+    diagnostics: {
+      vwapAtSignal: 100,
+      atr5mAtSignal: 1,
+      adxAtSignal: 20,
+      pullbackDistAtr: 0,
+      pullbackVolRatio: 1,
+      reclaimVolRatio: 1,
+      cusumZ: 2,
+      gapPct: 0,
+    },
+  };
 }
 
 /**
@@ -372,5 +421,76 @@ describe('Shadow V2 — Strategia Parallela & Regressioni Critiche', () => {
       clearShadowV2BarsForTest();
       fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
+  });
+
+  it('T9: bootstrap sign-flip deterministico a parità di input e seed', () => {
+    const recs = [
+      mkRecord('a', '2026-11-05', 0.9),
+      mkRecord('b', '2026-11-05', 0.1),
+      mkRecord('c', '2026-11-06', -0.4),
+      mkRecord('d', '2026-11-07', 0.7),
+      mkRecord('e', '2026-11-08', -0.2),
+      mkRecord('f', '2026-11-09', 0.3),
+    ];
+    const first = clusterBootstrapSignFlipPValue(recs);
+    const second = clusterBootstrapSignFlipPValue(recs);
+    assert.equal(first.pValue, second.pValue);
+    // 'a' e 'b' cadono lo stesso giorno: i cluster sono 5 sessioni distinte, non 6 record.
+    assert.equal(first.nDayClusters, 5);
+    assert.ok(first.pValue != null && first.pValue > 0 && first.pValue <= 1);
+
+    // Il generatore è deterministico: due istanze con lo stesso seed danno la stessa sequenza.
+    const g1 = mulberry32(SHADOW_V2_HYPOTHESES.BOOTSTRAP_SEED);
+    const g2 = mulberry32(SHADOW_V2_HYPOTHESES.BOOTSTRAP_SEED);
+    const seq1 = Array.from({ length: 50 }, () => g1());
+    const seq2 = Array.from({ length: 50 }, () => g2());
+    assert.deepEqual(seq1, seq2);
+    assert.equal(new Set(seq1).size, 50, 'Nessuna collisione su 50 estrazioni consecutive');
+  });
+
+  it('T10: i segni del bootstrap sono bilanciati (|media| < 0.1 su 2000 estrazioni)', () => {
+    const rng = mulberry32(SHADOW_V2_HYPOTHESES.BOOTSTRAP_SEED);
+    const n = 2000;
+    let sum = 0;
+    for (let i = 0; i < n; i++) sum += rng() < 0.5 ? 1 : -1;
+    const mean = sum / n;
+    assert.ok(Math.abs(mean) < 0.1, `media dei segni = ${mean}`);
+  });
+
+  it('T11: nessuna alternanza forzata — autocorrelazione lag-1 dei segni |r| < 0.1', () => {
+    const rng = mulberry32(SHADOW_V2_HYPOTHESES.BOOTSTRAP_SEED);
+    const n = 2000;
+    const signs: number[] = [];
+    for (let i = 0; i < n; i++) signs.push(rng() < 0.5 ? 1 : -1);
+    const mean = signs.reduce((a, b) => a + b, 0) / n;
+    let num = 0;
+    let den = 0;
+    for (let i = 0; i < n; i++) {
+      const d = signs[i] - mean;
+      den += d * d;
+      if (i > 0) num += d * (signs[i - 1] - mean);
+    }
+    const r = num / den;
+    assert.ok(Math.abs(r) < 0.1, `autocorrelazione lag-1 = ${r}`);
+  });
+
+  it('T12: dati nulli simmetrici attorno a 0 — il p-value non è estremo (> 0.05)', () => {
+    const recs: ShadowV2Record[] = [];
+    for (let d = 0; d < 20; d++) {
+      recs.push(mkRecord(`n${d}`, `2026-11-${String(d + 1).padStart(2, '0')}`, d % 2 === 0 ? 0.5 : -0.5));
+    }
+    const { pValue, nDayClusters } = clusterBootstrapSignFlipPValue(recs);
+    assert.equal(nDayClusters, 20);
+    assert.ok(pValue != null && pValue > 0.05, `p-value su dati nulli = ${pValue}`);
+  });
+
+  it('T13: effetto positivo netto e coerente su molti cluster — p-value < 0.05', () => {
+    const recs: ShadowV2Record[] = [];
+    for (let d = 0; d < 20; d++) {
+      recs.push(mkRecord(`p${d}`, `2026-11-${String(d + 1).padStart(2, '0')}`, 1.0));
+    }
+    const { pValue, nDayClusters } = clusterBootstrapSignFlipPValue(recs);
+    assert.equal(nDayClusters, 20);
+    assert.ok(pValue != null && pValue < 0.05, `p-value su effetto reale = ${pValue}`);
   });
 });
