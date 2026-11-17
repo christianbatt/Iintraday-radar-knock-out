@@ -17,3 +17,5 @@ jobs:
       - run: npx tsx src/utils/__tests__/param_merge.test.ts
       - name: Shadow research tests
         run: npm run test:shadow
+      - name: Shadow V2 tests
+        run: npm run test:shadowv2
