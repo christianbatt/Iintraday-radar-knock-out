@@ -22,6 +22,8 @@
     "test:sprint3": "tsx scripts/test_sprint3.ts",
     "test:firebase-sync": "tsx src/services/__tests__/firebaseSync.test.ts",
     "test:shadow": "tsx src/utils/__tests__/shadow_route.test.ts && tsx src/utils/__tests__/knowledge_rules.test.ts && tsx src/utils/__tests__/shadow_panel_honesty.test.tsx",
+    "test:shadow-panel": "tsx src/components/__tests__/shadowPanel.test.tsx && tsx src/components/__tests__/shadowModal.test.tsx",
+    "test:features-v2": "tsx src/utils/__tests__/features_v2.test.ts",
     "test:shadowv2": "tsx src/utils/__tests__/shadow_v2.test.ts",
     "test:orb": "tsx src/utils/__tests__/orb_regression.test.ts",
     "learning:nightly": "tsx scripts/nightly_learning.ts"
