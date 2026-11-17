@@ -183,4 +183,59 @@ describe('ORB regression — calculateOrbFromIntradayBars', () => {
     const resMisplaced = calculateOrbFromIntradayBars(misplaced, 'EU', summerRef, 'LONG');
     assert.deepEqual(resMisplaced, ALL_NULL);
   });
+
+  it('C11: high = +Infinity in uno slot ORB -> tutti i livelli null', () => {
+    // calculator.ts:301-311 — `!isNaN(b.high)` non ferma +Infinity: `Infinity > 0` e
+    // `Infinity >= b.low` passano, e orbHigh (calculator.ts:369) diventa Infinity.
+    const infHigh = bar('2026-11-04T08:05:00Z', Number.POSITIVE_INFINITY, 100.5, 102.5);
+    const res = calculateOrbFromIntradayBars([ORB_0900, infHigh, ORB_0910], 'EU', EU_REF, 'LONG');
+    assert.deepEqual(res, ALL_NULL, 'high non finito non deve produrre un ORB valido');
+    assertControlLevels();
+  });
+
+  it('C12: close = +Infinity in uno slot ORB -> tutti i livelli null', () => {
+    // Stesso gate: `!isNaN(b.close)` e `b.close > 0` lasciano passare +Infinity.
+    const infClose = bar('2026-11-04T08:10:00Z', 101.8, 99.5, Number.POSITIVE_INFINITY);
+    const res = calculateOrbFromIntradayBars([ORB_0900, ORB_0905, infClose], 'EU', EU_REF, 'LONG');
+    assert.deepEqual(res, ALL_NULL, 'close non finito non deve produrre un ORB valido');
+    assertControlLevels();
+  });
+
+  it('C13: low = +Infinity (con high = +Infinity) in uno slot ORB -> tutti i livelli null', () => {
+    // `high >= low` è vero anche tra due +Infinity: senza Number.isFinite la barra entra negli slot.
+    const infLow = bar('2026-11-04T08:00:00Z', Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, 101.0);
+    const res = calculateOrbFromIntradayBars([infLow, ORB_0905, ORB_0910], 'EU', EU_REF, 'LONG');
+    assert.deepEqual(res, ALL_NULL, 'low non finito non deve produrre un ORB valido');
+    assertControlLevels();
+  });
+
+  it('C14: -Infinity su high/low/close -> tutti i livelli null (guardia di dominio)', () => {
+    // Già respinti dai controlli `> 0`, qui restano asseriti come regressione.
+    const negHigh = bar('2026-11-04T08:05:00Z', Number.NEGATIVE_INFINITY, 100.5, 102.5);
+    const res = calculateOrbFromIntradayBars([ORB_0900, negHigh, ORB_0910], 'EU', EU_REF, 'LONG');
+    assert.deepEqual(res, ALL_NULL);
+
+    const negLow = bar('2026-11-04T08:00:00Z', 102.0, Number.NEGATIVE_INFINITY, 101.0);
+    const resLow = calculateOrbFromIntradayBars([negLow, ORB_0905, ORB_0910], 'EU', EU_REF, 'LONG');
+    assert.deepEqual(resLow, ALL_NULL);
+
+    const negClose = bar('2026-11-04T08:10:00Z', 101.8, 99.5, Number.NEGATIVE_INFINITY);
+    const resClose = calculateOrbFromIntradayBars([ORB_0900, ORB_0905, negClose], 'EU', EU_REF, 'LONG');
+    assert.deepEqual(resClose, ALL_NULL);
+    assertControlLevels();
+  });
+
+  it('C15: valori finiti ma estremi restano accettati (il fix non deve rigettare dati validi)', () => {
+    // 1e300 è finito: `Number.isFinite` lo accetta, quindi l'ORB deve essere calcolato.
+    const huge = [
+      bar('2026-11-04T08:00:00Z', 1e300, 1e299, 1e300),
+      bar('2026-11-04T08:05:00Z', 2e300, 2e299, 2e300),
+      bar('2026-11-04T08:10:00Z', 3e300, 3e299, 3e300),
+    ];
+    const res = calculateOrbFromIntradayBars(huge, 'EU', EU_REF, 'LONG');
+    assert.equal(Number.isFinite(res.orbHigh), true, 'orbHigh deve restare finito');
+    assert.equal(res.orbHigh, 3e300);
+    assert.equal(res.orbLow, 1e299);
+    assertControlLevels();
+  });
 });

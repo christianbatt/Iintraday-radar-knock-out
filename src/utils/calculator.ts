@@ -302,9 +302,9 @@ export function calculateOrbFromIntradayBars(
       b.high != null &&
       b.low != null &&
       b.close != null &&
-      !isNaN(b.high) &&
-      !isNaN(b.low) &&
-      !isNaN(b.close) &&
+      Number.isFinite(b.high) &&
+      Number.isFinite(b.low) &&
+      Number.isFinite(b.close) &&
       b.high > 0 &&
       b.low > 0 &&
       b.close > 0 &&
