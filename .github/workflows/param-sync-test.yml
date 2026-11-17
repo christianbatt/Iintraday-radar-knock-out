@@ -1,7 +1,9 @@
 name: param-sync-test
 on:
   push:
-    branches: [fix/param-sync, 'copilot/**']
+    branches: [main, fix/param-sync, 'copilot/**']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 jobs:
   test:
@@ -13,3 +15,5 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npx tsx src/utils/__tests__/param_merge.test.ts
+      - name: Shadow research tests
+        run: npm run test:shadow
