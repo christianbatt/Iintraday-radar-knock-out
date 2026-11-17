@@ -21,6 +21,7 @@
     "test:learning": "tsx src/utils/__tests__/learningValidator.test.ts",
     "test:sprint3": "tsx scripts/test_sprint3.ts",
     "test:firebase-sync": "tsx src/services/__tests__/firebaseSync.test.ts",
+    "test:shadow": "tsx src/utils/__tests__/shadow_route.test.ts && tsx src/utils/__tests__/knowledge_rules.test.ts",
     "learning:nightly": "tsx scripts/nightly_learning.ts"
   },
   "dependencies": {
