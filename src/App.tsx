@@ -62,6 +62,14 @@ import {
 } from './services/firebaseSync';
 import { mergeTradesWithTombstones } from './utils/tradeMerge';
 import { User, onAuthStateChanged } from 'firebase/auth';
+import {
+  buildNotificationKey,
+  dispatchBrowserNotification,
+  getNotificationPermission,
+  loadNotificationPreference,
+  requestBrowserNotificationPermission,
+  saveNotificationPreference,
+} from './utils/browserNotifications';
 
 import { RiskBanner } from './components/RiskBanner';
 import { Header } from './components/Header';
@@ -231,6 +239,10 @@ export default function App() {
   const [cachedAt, setCachedAt] = useState<string | undefined>(undefined);
   const [scanError, setScanError] = useState<string | null>(null);
   const [rsiFilterActive, setRsiFilterActive] = useState<boolean>(false);
+  const [browserAlertsEnabled, setBrowserAlertsEnabled] = useState<boolean>(() => loadNotificationPreference());
+  const [browserAlertPermission, setBrowserAlertPermission] = useState<NotificationPermission | 'unsupported'>(() =>
+    getNotificationPermission()
+  );
 
   // 4. News & Catalyst State
   const [newsCache, setNewsCache] = useState<Record<string, NewsItem[]>>({});
@@ -1138,6 +1150,82 @@ export default function App() {
     setTimeout(() => handleRunScreeningRef.current(), 30);
   }, [topCandidateEU, sessionInfo]);
 
+  const handleToggleBrowserAlerts = useCallback(async () => {
+    const currentPerm = getNotificationPermission();
+    setBrowserAlertPermission(currentPerm);
+    if (currentPerm === 'unsupported') return;
+
+    if (currentPerm === 'denied') {
+      setCacheNotification('Notifiche desktop bloccate dal browser: abilita i permessi dalle impostazioni del sito.');
+      return;
+    }
+
+    if (currentPerm === 'default') {
+      const requested = await requestBrowserNotificationPermission();
+      setBrowserAlertPermission(requested);
+      if (requested === 'granted') {
+        setBrowserAlertsEnabled(true);
+        saveNotificationPreference(true);
+      } else {
+        setBrowserAlertsEnabled(false);
+        saveNotificationPreference(false);
+      }
+      return;
+    }
+
+    setBrowserAlertsEnabled((prev) => {
+      const next = !prev;
+      saveNotificationPreference(next);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!browserAlertsEnabled || getNotificationPermission() !== 'granted') return;
+    const todayStr = new Date().toISOString().slice(0, 10);
+
+    for (const [label, s] of [['EU', setupEU], ['US', setupUS]] as const) {
+      if (s && s.decision === 'TRADE' && s.candidate?.ticker) {
+        const key = buildNotificationKey('TRADE_SETUP', s.candidate.ticker, todayStr, `${label}:${s.direction}`);
+        dispatchBrowserNotification({
+          key,
+          title: `Setup ${label} ${s.direction}: ${s.candidate.ticker}`,
+          body: `Trigger ${s.triggerLevel?.toFixed(2) ?? 'n/d'} · Stop ${s.stopLossLevel?.toFixed(2) ?? 'n/d'} · T1 ${s.target1Level?.toFixed(2) ?? 'n/d'}`,
+          tag: key,
+        });
+      }
+    }
+
+    if (!cachedAt) return;
+    let cancelled = false;
+    void fetch('/api/shadow/latest')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((payload) => {
+        if (cancelled || !payload?.shadowV2?.recentSignals) return;
+        for (const sig of payload.shadowV2.recentSignals) {
+          if (!sig?.ticker || !sig?.id || sig.sessionDate !== todayStr) continue;
+          if (sig.status !== 'OPEN' && sig.status !== 'RESOLVED') continue;
+          const key = buildNotificationKey('SHADOW_V2', sig.ticker, sig.sessionDate, `${sig.id}:${sig.outcome}`);
+          dispatchBrowserNotification({
+            key,
+            title: `Shadow V2 (${sig.triggerType}): ${sig.ticker} ${sig.direction}`,
+            body:
+              sig.status === 'RESOLVED'
+                ? `Esito ${sig.outcome} · R netto ${sig.rNet != null ? `${sig.rNet >= 0 ? '+' : ''}${sig.rNet.toFixed(2)}R` : 'n/d'}`
+                : `Attivo @ ${sig.entryPrice?.toFixed(2) ?? 'n/d'} · Leva ${sig.leverage ?? 'n/d'}x`,
+            tag: key,
+          });
+        }
+      })
+      .catch(() => {
+        // non bloccante
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [setupEU, setupUS, cachedAt, browserAlertsEnabled]);
+
   const handleToggleFreezeUS = useCallback(() => {
     setFreezeStateUS((prev) => {
       if (prev.isFrozen) {
@@ -1932,6 +2020,9 @@ export default function App() {
           onOpenAuditModal={() => setIsAuditModalOpen(true)}
           onOpenExcludedAnalyzer={() => setIsExcludedAnalyzerOpen(true)}
           excludedProfitCount={excludedAutoAnalysis.totalProfitable}
+          browserAlertsEnabled={browserAlertsEnabled}
+          browserAlertPermission={browserAlertPermission}
+          onToggleBrowserAlerts={handleToggleBrowserAlerts}
         />
 
         {/* 5. Dual Hero Execution Cards: Affiancate Top EU e Top USA */}

@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatShadowV2SignalsCsv, formatShadowV2SignalsJsonl } from '../knowledge/shadowV2';
 
 /**
  * ShadowResearchPanel — display di sola lettura (Passo L).
@@ -232,17 +233,144 @@ export const CessationSection: React.FC<{ data?: ShadowPanelData['cessation'] | 
 };
 
 
+export const PairedV1VsV2Section: React.FC<{ data: ShadowPanelData | null }> = ({ data }) => {
+  const v1Available = data?.available === true;
+  const v2 = data?.shadowV2 ?? null;
+  const v1Dsr = v1Available ? (data?.deflatedSharpe?.dsr ?? null) : null;
+  const v1PVal = v1Available ? (data?.deflatedSharpe?.pValue ?? null) : null;
+  const v1Setups = v1Available ? (data?.sample?.nSetups ?? null) : null;
+  const v1Days = v1Available ? (data?.sample?.nDays ?? null) : null;
+  const v1RuleExpectancy = v1Available
+    ? (data?.rules?.find((r) => r.id === 'S01' || r.family === 'expectancy')?.value ?? null)
+    : null;
+
+  const v2Dsr = v2?.dsr ?? null;
+  const v2PVal = v2?.clusterBootstrapPValue ?? null;
+  const dsrDelta = typeof v1Dsr === 'number' && typeof v2Dsr === 'number' ? +(v2Dsr - v1Dsr).toFixed(3) : null;
+  const pDelta = typeof v1PVal === 'number' && typeof v2PVal === 'number' ? +(v2PVal - v1PVal).toFixed(4) : null;
+  const meanRDelta =
+    typeof v1RuleExpectancy === 'number' && typeof v2?.meanRNet === 'number'
+      ? +(v2.meanRNet - v1RuleExpectancy).toFixed(3)
+      : null;
+
+  return (
+    <div className={SECTION} data-testid="shadow-v1-vs-v2" data-section="v1-vs-v2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-bold uppercase tracking-wider text-slate-200">
+          Confronto Parallelo V1 vs V2 — Sola Lettura
+        </div>
+        <span className="text-[10px] font-mono text-slate-400">
+          {v1Available ? 'V1 attivo · V2 parallelo' : 'Artefatto V1 assente · solo V2'}
+        </span>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-[11px] font-mono tabular-nums">
+          <thead className="text-slate-500 border-b border-slate-900">
+            <tr>
+              <th className="text-left py-1">Metrica</th>
+              <th className="text-right py-1">Shadow V1</th>
+              <th className="text-right py-1">Shadow V2</th>
+              <th className="text-right py-1">Delta (V2 - V1)</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-900 text-slate-300">
+            <tr>
+              <td className="py-1 text-slate-400">Campione (setup / giorni)</td>
+              <td className="text-right">{v1Available ? `${v1Setups ?? 'n/d'} / ${v1Days ?? 'n/d'}g` : 'Artefatto V1 assente'}</td>
+              <td className="text-right">{v2 ? `${v2.nResolved} ris. (${v2.nSignals} seg.) / ${v2.nSessions}g` : 'n/d'}</td>
+              <td className="text-right text-slate-500">—</td>
+            </tr>
+            <tr>
+              <td className="py-1 text-slate-400">Mean R Netto</td>
+              <td className="text-right">{v1RuleExpectancy != null ? `${fmt(v1RuleExpectancy, 3)}R` : 'n/d'}</td>
+              <td className="text-right">{v2?.meanRNet != null ? `${fmt(v2.meanRNet, 3)}R` : 'n/d'}</td>
+              <td className="text-right">{meanRDelta != null ? `${meanRDelta >= 0 ? '+' : ''}${meanRDelta.toFixed(3)}R` : 'n/d'}</td>
+            </tr>
+            <tr>
+              <td className="py-1 text-slate-400">Win Rate %</td>
+              <td className="text-right text-slate-500">n/d</td>
+              <td className="text-right">{v2?.winRatePct != null ? `${v2.winRatePct.toFixed(1)}%` : 'n/d'}</td>
+              <td className="text-right text-slate-500">n/d</td>
+            </tr>
+            <tr>
+              <td className="py-1 text-slate-400">Deflated Sharpe (DSR)</td>
+              <td className="text-right">{fmt(v1Dsr, 3)}</td>
+              <td className="text-right">{fmt(v2Dsr, 3)}</td>
+              <td className="text-right">{dsrDelta != null ? `${dsrDelta >= 0 ? '+' : ''}${dsrDelta.toFixed(3)}` : 'n/d'}</td>
+            </tr>
+            <tr>
+              <td className="py-1 text-slate-400">p-value / Cluster p</td>
+              <td className="text-right">{fmt(v1PVal, 4)}</td>
+              <td className="text-right">{fmt(v2PVal, 4)}</td>
+              <td className="text-right">{pDelta != null ? `${pDelta >= 0 ? '+' : ''}${pDelta.toFixed(4)}` : 'n/d'}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+async function triggerShadowV2Download(
+  format: 'csv' | 'jsonl',
+  fallbackSignals: NonNullable<ShadowPanelData['shadowV2']>['recentSignals']
+): Promise<void> {
+  if (typeof document === 'undefined') return;
+  let content = '';
+  try {
+    const resp = await fetch(`/api/shadow/v2/export?format=${format}`);
+    if (resp.ok) {
+      content = await resp.text();
+    }
+  } catch {
+    // fallback locale sui segnali caricati nel pannello
+  }
+  if (!content) {
+    const rows = (fallbackSignals ?? []) as any[];
+    content = format === 'jsonl' ? formatShadowV2SignalsJsonl(rows) : formatShadowV2SignalsCsv(rows);
+  }
+  const mime = format === 'jsonl' ? 'application/x-ndjson;charset=utf-8' : 'text/csv;charset=utf-8';
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `shadow_v2_signals.${format}`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 export const ShadowV2Section: React.FC<{ shadowV2?: ShadowPanelData['shadowV2'] }> = ({ shadowV2 }) => {
   const recent = shadowV2?.recentSignals ?? [];
   return (
     <div className={SECTION} data-testid="shadow-v2" data-section="shadow-v2">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs font-bold uppercase tracking-wider text-indigo-300">
           Shadow V2 — CUSUM Displacement + VWAP Pullback-Reclaim (KO Vol-Matched)
         </div>
-        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-950/70 border border-indigo-700/50 text-indigo-200">
-          SOLO SHADOW · IPOTESI
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            data-testid="shadow-v2-export-csv"
+            onClick={() => void triggerShadowV2Download('csv', recent)}
+            className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 cursor-pointer"
+          >
+            Esporta CSV
+          </button>
+          <button
+            type="button"
+            data-testid="shadow-v2-export-jsonl"
+            onClick={() => void triggerShadowV2Download('jsonl', recent)}
+            className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 cursor-pointer"
+          >
+            Esporta JSONL
+          </button>
+          <span className="text-[10px] font-mono text-indigo-200">
+            SOLO SHADOW · IPOTESI
+          </span>
+        </div>
       </div>
       {!shadowV2 || shadowV2.nSignals === 0 ? (
         <p className="text-xs text-slate-400">
@@ -334,6 +462,7 @@ export const ShadowResearchPanel: React.FC<{ data: ShadowPanelData | null }> = (
           </p>
         </div>
         <ShadowV2Section shadowV2={data?.shadowV2 ?? null} />
+        <PairedV1VsV2Section data={data} />
       </div>
     );
   }
@@ -568,6 +697,7 @@ export const ShadowResearchPanel: React.FC<{ data: ShadowPanelData | null }> = (
 
       {/* 5b. shadow v2 (sola lettura) */}
       <ShadowV2Section shadowV2={data.shadowV2 ?? null} />
+      <PairedV1VsV2Section data={data} />
 
       {/* limiti */}
       <div className={SECTION} data-testid="shadow-limits" data-section="limits">

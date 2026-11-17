@@ -60,6 +60,9 @@ export interface RawQuoteData {
   // null = il feed non espone il campo. Inerte finche' STALENESS_USE_MARKET_TS e' 'off'.
   marketTs?: number | null;
   source: string;
+  nextEarningsDate?: string | null; // YYYY-MM-DD reale (null se non disponibile)
+  daysToEarnings?: number | null;   // giorni calendario da oggi (>= 0), null se assente
+  earningsRiskLevel?: 'IMMINENT_0_2D' | 'UPCOMING_7D' | 'CLEAR' | null;
 }
 
 export type EntryMode = 'SNAPSHOT_0915' | 'UNFROZEN_LATE' | 'MANUAL_FREEZE';
@@ -403,6 +406,13 @@ export interface ExecutionSetup {
   orderFlow?: OrderFlowMetrics | null;
   calendarStatus?: CalendarStatus;
   reasonCodes?: string[];
+  earningsWarning?: {
+    level: 'IMMINENT_0_2D' | 'UPCOMING_7D';
+    nextEarningsDate: string;
+    daysToEarnings: number;
+    label: string;
+    description: string;
+  } | null;
 }
 
 export interface PnLScenario {
@@ -479,6 +489,12 @@ export interface KnockOutSafetyCheck {
   stressReport: DerivativeStressReport;
   ratio?: number;
   theoreticalCertPriceEur?: number;
+  netGainT1Eur?: number;
+  netGainT2Eur?: number;
+  netRT1?: number;
+  netRT2?: number;
+  frictionR?: number;
+  fxRateUsed?: number;
 }
 
 export interface TradeJournalEntry {

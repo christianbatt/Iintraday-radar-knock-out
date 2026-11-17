@@ -2342,9 +2342,14 @@ export function buildExecutionSetup(
       ? 'Volume sulla candela di breakout almeno 1.5x rispetto al volume medio delle prime candele a 1 minuto.'
       : 'Volume vendite in accelerazione al test del breakdown con spread bid/ask compatto.';
 
+  const earningsWarning = evaluateEarningsRisk(quote);
+
   const invalidationConditions = [
     `Rottura e chiusura oltre lo Stop Loss sul sottostante a ${stopLossLevel} ${quote.currency}`,
     `Superamento dell'orario limite di permanenza (${cutoffTime}) senza raggiungimento del Target 1`,
+    ...(earningsWarning?.level === 'IMMINENT_0_2D'
+      ? [`Rischio Trimestrale (${earningsWarning.nextEarningsDate}, tra ${earningsWarning.daysToEarnings} gg): evitare posizione KO vicino al rilascio utili`]
+      : []),
     ...(quote.orderFlow?.flowQuality === 'ABSORPTION_TRAP'
       ? ['Allerta Order Flow: Trappola di Assorbimento Delta attiva (divergenza prezzo/CVD - rischio fakeout)']
       : []),
@@ -2410,7 +2415,61 @@ export function buildExecutionSetup(
     macroBlackout,
     overnightWarning,
     orderFlow: quote.orderFlow ?? null,
+    earningsWarning,
   }, options?.macroCalendar, SETUP_SELECTOR_LIVE === 'on');
+}
+
+export function evaluateEarningsRisk(
+  quote: Pick<RawQuoteData, 'nextEarningsDate' | 'daysToEarnings' | 'earningsRiskLevel'> | null | undefined
+): ExecutionSetup['earningsWarning'] {
+  if (!quote?.nextEarningsDate || quote.daysToEarnings == null || !Number.isFinite(quote.daysToEarnings)) {
+    return null;
+  }
+  const days = Math.round(quote.daysToEarnings);
+  if (days < 0 || days > 7) return null;
+  if (days <= 2) {
+    return {
+      level: 'IMMINENT_0_2D',
+      nextEarningsDate: quote.nextEarningsDate,
+      daysToEarnings: days,
+      label: days === 0
+        ? 'TRIMESTRALE OGGI (RISCHIO ESTREMO KO)'
+        : `TRIMESTRALE TRA ${days} ${days === 1 ? 'GIORNO' : 'GIORNI'}`,
+      description: `Pubblicazione utili prevista il ${quote.nextEarningsDate}: rischio gap/spike improvviso e allargamento spread Trade Republic sul certificato KO.`,
+    };
+  }
+  return {
+    level: 'UPCOMING_7D',
+    nextEarningsDate: quote.nextEarningsDate,
+    daysToEarnings: days,
+    label: `Trimestrale tra ${days} giorni (${quote.nextEarningsDate})`,
+    description: `Rilascio utili entro 7 giorni (${quote.nextEarningsDate}): monitorare la distanza della barriera KO da eventuali pre-annunci.`,
+  };
+}
+
+export const TRADE_REPUBLIC_KO_LEVERAGE_GRID = [5, 7, 10, 15, 20, 25] as const;
+
+export function computeKoPresetFromLeverage(
+  entryPrice: number,
+  direction: 'LONG' | 'SHORT',
+  leverage: number,
+  ratio: number,
+  isUsd: boolean,
+  fxRateEurUsd: number
+): { barrierStrike: number; theoreticalCertPriceEur: number } {
+  if (!(entryPrice > 0) || !(leverage > 0)) {
+    return { barrierStrike: 0, theoreticalCertPriceEur: 0 };
+  }
+  const safeFx = fxRateEurUsd > 0 ? fxRateEurUsd : 1.08;
+  const barrier = direction === 'LONG'
+    ? entryPrice * (1 - 1 / leverage)
+    : entryPrice * (1 + 1 / leverage);
+  const barrierStrike = +barrier.toFixed(2);
+  const dist = Math.abs(entryPrice - barrierStrike);
+  const theoreticalCertPriceEur = isUsd
+    ? Math.max(+((dist * ratio) / safeFx).toFixed(2), 0.30)
+    : Math.max(+(dist * ratio).toFixed(2), 0.50);
+  return { barrierStrike, theoreticalCertPriceEur };
 }
 
 export function calculateDynamicBreakeven(
@@ -2725,6 +2784,12 @@ export function calculateKnockOutSafety(
       breakeven: emptyBreakeven,
       scenarios: [],
       stressReport: emptyStress,
+      netGainT1Eur: 0,
+      netGainT2Eur: 0,
+      netRT1: 0,
+      netRT2: 0,
+      frictionR: 0,
+      fxRateUsed: input.fxRateEurUsd ?? 1.08,
     };
   }
 
@@ -2818,6 +2883,12 @@ export function calculateKnockOutSafety(
   }
 
   const isSafe = stressReport.canExecute && isSafeBasic;
+  const netGainT1Eur = +(potentialGainT1Eur - breakeven.totalFrictionEur).toFixed(2);
+  const netGainT2Eur = +(potentialGainT2Eur - breakeven.totalFrictionEur).toFixed(2);
+  const rDenom = potentialLossEur > 0 ? potentialLossEur : maxRiskEur;
+  const netRT1 = rDenom > 0 ? +(netGainT1Eur / rDenom).toFixed(2) : 0;
+  const netRT2 = rDenom > 0 ? +(netGainT2Eur / rDenom).toFixed(2) : 0;
+  const frictionR = rDenom > 0 ? +(breakeven.totalFrictionEur / rDenom).toFixed(2) : 0;
 
   return {
     entryPrice,
@@ -2840,6 +2911,12 @@ export function calculateKnockOutSafety(
     stressReport,
     ratio,
     theoreticalCertPriceEur,
+    netGainT1Eur,
+    netGainT2Eur,
+    netRT1,
+    netRT2,
+    frictionR,
+    fxRateUsed: isUsStock ? fxRate : 1.0,
   };
 }
 

@@ -10,6 +10,8 @@ import {
   Globe,
   Filter,
   Sparkles,
+  Bell,
+  BellOff,
 } from 'lucide-react';
 import { MarketSentimentIndicator } from './MarketSentimentIndicator';
 import { RawQuoteData, ExecutionSetup, FilteringAuditReport } from '../types/radar';
@@ -34,6 +36,9 @@ interface ScreeningControlsProps {
   onOpenAuditModal?: () => void;
   onOpenExcludedAnalyzer?: () => void;
   excludedProfitCount?: number;
+  browserAlertsEnabled?: boolean;
+  browserAlertPermission?: NotificationPermission | 'unsupported';
+  onToggleBrowserAlerts?: () => void;
 }
 
 export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
@@ -56,6 +61,9 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
   onOpenAuditModal,
   onOpenExcludedAnalyzer,
   excludedProfitCount = 0,
+  browserAlertsEnabled = false,
+  browserAlertPermission = 'default',
+  onToggleBrowserAlerts,
 }) => {
   const euFutures = futures?.europe;
   const usFutures = futures?.usa;
@@ -250,6 +258,36 @@ export const ScreeningControls: React.FC<ScreeningControlsProps> = ({
               <Radio className={`w-3.5 h-3.5 ${isAutoRefresh ? 'text-emerald-400 animate-pulse' : ''}`} />
               <span>{isAutoRefresh ? `Live Auto (${autoRefreshCountdown}s)` : 'Auto-Scan OFF'}</span>
             </button>
+
+            {/* Live Browser Alerts Toggle */}
+            {onToggleBrowserAlerts && browserAlertPermission !== 'unsupported' && (
+              <button
+                type="button"
+                data-testid="browser-alerts-toggle"
+                onClick={onToggleBrowserAlerts}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                  browserAlertPermission === 'denied'
+                    ? 'bg-rose-950/50 border-rose-800 text-rose-300'
+                    : browserAlertsEnabled
+                    ? 'bg-sky-950/70 border-sky-600 text-sky-200 shadow-sm'
+                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+                title="Ricevi notifiche desktop su nuovi setup TRADE o segnali Shadow V2"
+              >
+                {browserAlertsEnabled && browserAlertPermission === 'granted' ? (
+                  <Bell className="w-3.5 h-3.5 text-sky-400" />
+                ) : (
+                  <BellOff className="w-3.5 h-3.5 text-slate-500" />
+                )}
+                <span>
+                  {browserAlertPermission === 'denied'
+                    ? 'Avvisi Bloccati'
+                    : browserAlertsEnabled && browserAlertPermission === 'granted'
+                    ? 'Avvisi ON'
+                    : 'Avvisi OFF'}
+                </span>
+              </button>
+            )}
 
             {/* Scan Button */}
             <button

@@ -1087,3 +1087,80 @@ export function summarizeShadowV2(records: readonly ShadowV2Record[], generatedA
     recentSignals: [...records].sort((a, b) => b.signalBarTs - a.signalBarTs).slice(0, 25),
   };
 }
+
+function escapeCsvCell(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  const str = String(value);
+  if (/[",\n\r]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+const SHADOW_V2_CSV_HEADERS = [
+  'id',
+  'sessionDate',
+  'ticker',
+  'market',
+  'direction',
+  'triggerType',
+  'signalTimeIso',
+  'status',
+  'outcome',
+  'blockedReason',
+  'entryPrice',
+  'structuralStop',
+  'target1',
+  'leverage',
+  'koBarrier',
+  'exitPrice',
+  'barsHeld',
+  'rGross',
+  'rNet',
+  'totalFrictionR',
+  'totalFrictionR2500',
+  'varSpreadR',
+  'csSpreadPct',
+  'cusumZ',
+  'gapPct',
+] as const;
+
+export function formatShadowV2SignalsCsv(records: readonly Partial<ShadowV2Record>[]): string {
+  const header = SHADOW_V2_CSV_HEADERS.join(',');
+  const rows = records.map((r) =>
+    [
+      r.id ?? '',
+      r.sessionDate ?? '',
+      r.ticker ?? '',
+      r.market ?? '',
+      r.direction ?? '',
+      r.triggerType ?? '',
+      r.signalTimeIso ?? '',
+      r.status ?? '',
+      r.outcome ?? '',
+      r.blockedReason ?? '',
+      r.entryPrice ?? '',
+      r.structuralStop ?? '',
+      r.target1 ?? '',
+      r.leverage ?? '',
+      r.koBarrier ?? '',
+      r.exitPrice ?? '',
+      r.barsHeld ?? '',
+      r.rGross ?? '',
+      r.rNet ?? '',
+      r.totalFrictionR ?? '',
+      r.totalFrictionR2500 ?? '',
+      r.varSpreadR ?? '',
+      r.csSpreadPct ?? '',
+      r.diagnostics?.cusumZ ?? '',
+      r.diagnostics?.gapPct ?? '',
+    ]
+      .map(escapeCsvCell)
+      .join(',')
+  );
+  return [header, ...rows].join('\n');
+}
+
+export function formatShadowV2SignalsJsonl(records: readonly Partial<ShadowV2Record>[]): string {
+  return records.map((r) => JSON.stringify(r)).join('\n');
+}

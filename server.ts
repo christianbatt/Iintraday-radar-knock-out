@@ -36,6 +36,7 @@ import { AILearnedInsight, VwapSignalState, VwapDataQuality, SetupIndicators, In
 import { runNightlyLearning } from './scripts/nightly_learning';
 import { authStartupWarning } from './src/utils/authStartupWarning';
 import { recordClosedBarsForShadowV2, observeShadowV2Scan } from './src/server/shadowV2Collector';
+import { formatShadowV2SignalsCsv, formatShadowV2SignalsJsonl, ShadowV2Record } from './src/knowledge/shadowV2';
 
 dotenv.config();
 
@@ -584,6 +585,9 @@ export interface RawQuoteData {
   // costruzione nel repo sono >8. Inerte con STALENESS_USE_MARKET_TS = 'off'.
   marketTs?: number | null;
   source: string;
+  nextEarningsDate?: string | null;
+  daysToEarnings?: number | null;
+  earningsRiskLevel?: 'IMMINENT_0_2D' | 'UPCOMING_7D' | 'CLEAR' | null;
 }
 
 export interface OrderFlowMetrics {
@@ -1241,6 +1245,137 @@ async function getIntraday5mMetrics(
   }
 }
 
+// Yahoo Finance Cookie + Crumb singleton (TTL 30 minuti, coalescing richieste parallele)
+let yahooCrumbInFlight: Promise<{ cookie: string; crumb: string } | null> | null = null;
+
+async function getYahooCrumb(forceRefresh: boolean = false): Promise<{ cookie: string; crumb: string } | null> {
+  const cacheKey = 'yahoo:crumb';
+  if (!forceRefresh) {
+    const cached = cache.get<{ cookie: string; crumb: string }>(cacheKey);
+    if (cached) return cached.data;
+  }
+  if (yahooCrumbInFlight) return yahooCrumbInFlight;
+
+  yahooCrumbInFlight = (async () => {
+    try {
+      const cRes = await fetchWithTimeout('https://fc.yahoo.com', {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      }, 3500);
+      const getSetCookie = (cRes.headers as any).getSetCookie;
+      const cookie = typeof getSetCookie === 'function'
+        ? getSetCookie.call(cRes.headers).map((c: string) => c.split(';')[0]).join('; ')
+        : (cRes.headers.get('set-cookie') || '').split(',')[0].split(';')[0];
+      if (!cookie) return null;
+
+      const crRes = await fetchWithTimeout('https://query1.finance.yahoo.com/v1/test/getcrumb', {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          Cookie: cookie,
+        },
+      }, 3500);
+      if (!crRes.ok) return null;
+      const crumb = (await crRes.text()).trim();
+      if (!crumb || crumb.startsWith('<')) return null;
+
+      const authPair = { cookie, crumb };
+      cache.set(cacheKey, authPair, 1800);
+      return authPair;
+    } catch {
+      return null;
+    } finally {
+      yahooCrumbInFlight = null;
+    }
+  })();
+
+  return yahooCrumbInFlight;
+}
+
+function classifyEarningsProximity(
+  nextDateStr: string | null | undefined,
+  todayStr: string
+): {
+  nextEarningsDate: string | null;
+  daysToEarnings: number | null;
+  earningsRiskLevel: 'IMMINENT_0_2D' | 'UPCOMING_7D' | 'CLEAR' | null;
+} {
+  if (!nextDateStr || !/^\d{4}-\d{2}-\d{2}$/.test(nextDateStr) || !/^\d{4}-\d{2}-\d{2}$/.test(todayStr)) {
+    return { nextEarningsDate: null, daysToEarnings: null, earningsRiskLevel: null };
+  }
+  const [ey, em, ed] = nextDateStr.split('-').map(Number);
+  const [ty, tm, td] = todayStr.split('-').map(Number);
+  const diffDays = Math.round((Date.UTC(ey, em - 1, ed) - Date.UTC(ty, tm - 1, td)) / 86400000);
+  if (!Number.isFinite(diffDays) || diffDays < 0) {
+    return { nextEarningsDate: null, daysToEarnings: null, earningsRiskLevel: null };
+  }
+  const level: 'IMMINENT_0_2D' | 'UPCOMING_7D' | 'CLEAR' =
+    diffDays <= 2 ? 'IMMINENT_0_2D' : diffDays <= 7 ? 'UPCOMING_7D' : 'CLEAR';
+  return {
+    nextEarningsDate: nextDateStr,
+    daysToEarnings: diffDays,
+    earningsRiskLevel: level,
+  };
+}
+
+async function fetchEarningsInfoForTicker(
+  ticker: string,
+  market: 'EU' | 'US',
+  bypassCache: boolean = false
+): Promise<{
+  nextEarningsDate: string | null;
+  daysToEarnings: number | null;
+  earningsRiskLevel: 'IMMINENT_0_2D' | 'UPCOMING_7D' | 'CLEAR' | null;
+}> {
+  const empty = { nextEarningsDate: null, daysToEarnings: null, earningsRiskLevel: null };
+  const cacheKey = `earnings:${ticker}`;
+  if (!bypassCache) {
+    const cached = cache.get<typeof empty>(cacheKey);
+    if (cached) return cached.data;
+  }
+
+  try {
+    let auth = await getYahooCrumb(false);
+    if (!auth) return empty;
+
+    const querySummary = async (pair: { cookie: string; crumb: string }) =>
+      fetchWithTimeout(
+        `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=calendarEvents&crumb=${encodeURIComponent(pair.crumb)}`,
+        {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            Cookie: pair.cookie,
+            Accept: 'application/json',
+          },
+        },
+        3500
+      );
+
+    let resp = await querySummary(auth);
+    if (resp.status === 401 || resp.status === 403) {
+      auth = await getYahooCrumb(true);
+      if (!auth) return empty;
+      resp = await querySummary(auth);
+    }
+    if (!resp.ok) return empty;
+
+    const json = await resp.json();
+    const earningsDates = json?.quoteSummary?.result?.[0]?.calendarEvents?.earnings?.earningsDate;
+    const first = Array.isArray(earningsDates) && earningsDates.length > 0 ? earningsDates[0] : null;
+    const todayStr = getExchangeDateStr(market, new Date());
+
+    let candidateDate: string | null = typeof first?.fmt === 'string' ? first.fmt : null;
+    if (!candidateDate && typeof first?.raw === 'number' && Number.isFinite(first.raw)) {
+      candidateDate = getExchangeDateStr(market, new Date(first.raw * 1000));
+    }
+
+    const classified = classifyEarningsProximity(candidateDate, todayStr);
+    // Cache 6 ore (dato trimestrale lento, null o valido)
+    cache.set(cacheKey, classified, 21600);
+    return classified;
+  } catch {
+    return empty;
+  }
+}
+
 // Fetch real market quote & historical bars from real exchange feed
 async function fetchQuoteForTicker(
   ticker: string,
@@ -1263,8 +1398,9 @@ async function fetchQuoteForTicker(
   if (upper === 'SPACEX') queryTicker = 'SPCX';
   if (upper === 'LEO.MI' || upper === 'LEO' || upper === 'LDO') queryTicker = 'LDO.MI';
 
-  // Launch 5m intraday metrics fetch (RSI 5m + RVOL 20m + ORB) in parallel for zero added latency
+  // Launch 5m intraday metrics & earnings calendar fetch in parallel
   const intraday5mPromise = getIntraday5mMetrics(queryTicker, market);
+  const earningsPromise = fetchEarningsInfoForTicker(queryTicker, market, bypassCache);
 
   let quoteData: Partial<RawQuoteData> = {};
   let source = 'Exchange Feed (Real-Time)';
@@ -1585,6 +1721,12 @@ async function fetchQuoteForTicker(
     intraday5m = {};
   }
 
+  const earningsInfo = await earningsPromise.catch(() => ({
+    nextEarningsDate: null,
+    daysToEarnings: null,
+    earningsRiskLevel: null,
+  }));
+
   const result: RawQuoteData = {
     ticker,
     name: name || ticker,
@@ -1607,6 +1749,7 @@ async function fetchQuoteForTicker(
     atr14: quoteData.atr14 ?? null,
     adr14: quoteData.adr14 ?? null,
     liqEur20d: quoteData.liqEur20d ?? null,
+    fxRate: quoteData.fxRate ?? null,
     completedBarsCount: quoteData.completedBarsCount ?? null,
     orbHigh: intraday5m.orbHigh ?? null,
     orbLow: intraday5m.orbLow ?? null,
@@ -1633,6 +1776,9 @@ async function fetchQuoteForTicker(
     timestamp: new Date().toISOString(),
     marketTs: quoteData.marketTs ?? null,
     source: quoteData.currentPrice ? source : 'Dati di mercato non disponibili',
+    nextEarningsDate: earningsInfo.nextEarningsDate,
+    daysToEarnings: earningsInfo.daysToEarnings,
+    earningsRiskLevel: earningsInfo.earningsRiskLevel,
   };
 
   // Cache for 10 seconds for real-time responsiveness
@@ -2875,9 +3021,32 @@ app.post('/api/analyze-catalyst', requireApiAuth, async (req: Request, res: Resp
       return res.status(400).json({ error: 'Candidato mancante per analisi' });
     }
 
-    // Rule: Absence of news is NOT an exclusion reason. If realNews is empty, return a valid technical setup with 0 news bonus points
+    // Rule: Absence of news is NOT an exclusion reason, EXCEPT today's real earnings release
     const realNews: NewsItem[] = Array.isArray(news) ? news : [];
+    const hasTodayEarnings = candidate.daysToEarnings === 0 && Boolean(candidate.nextEarningsDate);
+    const hasImminentEarnings =
+      typeof candidate.daysToEarnings === 'number' &&
+      candidate.daysToEarnings >= 0 &&
+      candidate.daysToEarnings <= 2 &&
+      Boolean(candidate.nextEarningsDate);
+
     if (realNews.length === 0) {
+      if (hasTodayEarnings) {
+        return res.json({
+          decisione: 'NESSUN_TRADE',
+          direzione: 'NESSUNA',
+          catalizzatore: `Giorno di pubblicazione trimestrale (${candidate.nextEarningsDate}) per ${candidate.ticker}: rischio estremo di gap, spike bid/ask e knock-out anticipato sui certificati a leva.`,
+          punti_a_favore: [],
+          rischi: [
+            `Trimestrale odierna (${candidate.nextEarningsDate}): allargamento spread emittente e volatilità non prezzabile intraday`,
+          ],
+          condizioni_invalidazione: [
+            'Attendere il giorno successivo alla pubblicazione dei conti e la normalizzazione di spread e VWAP',
+          ],
+          fonti: [],
+          newsBonusScore: 0,
+        });
+      }
       const isPositive = (candidate.gapPercent ?? 0) >= 0;
       return res.json({
         decisione: 'TRADE',
@@ -2889,7 +3058,10 @@ app.post('/api/analyze-catalyst', requireApiAuth, async (req: Request, res: Resp
           'Livelli chiave e VWAP intatti e operabili'
         ],
         rischi: [
-          'Assenza di catalizzatore fondamentale ad alto impatto: monitorare rigorosamente la persistenza dei volumi e la tenuta del VWAP'
+          'Assenza di catalizzatore fondamentale ad alto impatto: monitorare rigorosamente la persistenza dei volumi e la tenuta del VWAP',
+          ...(hasImminentEarnings
+            ? [`Attenzione: trimestrale imminente il ${candidate.nextEarningsDate} (tra ${candidate.daysToEarnings} gg) — evitare esposizione aggressiva su leva KO.`]
+            : []),
         ],
         condizioni_invalidazione: [
           'Rottura del VWAP intraday nella prima ora',
@@ -2960,6 +3132,7 @@ DATI SOTTOSTANTE:
         : 'dato non disponibile'}
 - Score breakdown: ${JSON.stringify(candidateSetupScore.scoreBreakdown)} | totale ${candidateSetupScore.total}/100
 - Veto setup: ${candidateSetupScore.veto ?? 'nessuno'}
+- Prossima Trimestrale (Calendario Reale): ${candidate.nextEarningsDate ? `${candidate.nextEarningsDate} (tra ${candidate.daysToEarnings ?? 'nd'} giorni, livello ${candidate.earningsRiskLevel ?? 'nd'})` : 'non segnalata / non disponibile'}
 - Futures Indice Riferimento: ${JSON.stringify(futures || {})}
 
 NOTIZIE REALI RACCOLTE:
@@ -3097,10 +3270,12 @@ newsBonusScore: numero intero da 0 a 15 (punti bonus aggiuntivi per forza del ca
       let direzione: 'LONG' | 'SHORT' | 'NESSUNA' = isPositive ? 'LONG' : 'SHORT';
       let newsBonusScore = 0;
 
-      if (isEarnings) {
+      if (isEarnings || hasTodayEarnings) {
         decisione = 'NESSUN_TRADE';
         direzione = 'NESSUNA';
-        catalizzatoreDesc = `Giorno di rilascio utili/trimestrale per ${candidate.ticker} (${realNews[0]?.source}: "${topTitle}"). Rischio spread e spike bid/ask su leva Knock-Out.`;
+        catalizzatoreDesc = hasTodayEarnings
+          ? `Giorno di pubblicazione trimestrale (${candidate.nextEarningsDate}) per ${candidate.ticker}. Rischio spread e spike bid/ask su leva Knock-Out.`
+          : `Giorno di rilascio utili/trimestrale per ${candidate.ticker} (${realNews[0]?.source}: "${topTitle}"). Rischio spread e spike bid/ask su leva Knock-Out.`;
         rischi.push('Giorno di rilascio utili: rischio elevato di spike opposto e knock-out anticipato.');
       } else if (realNews.length > 0) {
         decisione = 'TRADE';
@@ -3109,6 +3284,9 @@ newsBonusScore: numero intero da 0 a 15 (punti bonus aggiuntivi per forza del ca
         catalizzatoreDesc = `Notizie presenti da ${realNews[0]?.source}: "${topTitle}". Dinamica da valutare con i parametri tecnici.`;
         puntiAFavore.push('Notizie presenti ma non valutate qualitativamente: nessun bonus automatico');
         rischi.push('Flusso informativo ordinario: mantenere rigore sulla tenuta del VWAP');
+        if (hasImminentEarnings) {
+          rischi.push(`Trimestrale imminente il ${candidate.nextEarningsDate} (tra ${candidate.daysToEarnings} gg): evitare leva KO aggressiva.`);
+        }
       } else {
         decisione = 'TRADE';
         direzione = isPositive ? 'LONG' : 'SHORT';
@@ -3193,6 +3371,37 @@ if (process.env.K_SERVICE) {
   }, { timezone: 'Europe/Rome' });
   console.log('[Cron] Nightly learning schedulato: 02:00 Europe/Rome lun-ven');
 }
+
+// Sola lettura export Shadow V2 (CSV o JSONL da artifacts/shadow_v2/signals.jsonl)
+app.get('/api/shadow/v2/export', async (req: Request, res: Response) => {
+  const format = String(req.query.format || 'csv').toLowerCase() === 'jsonl' ? 'jsonl' : 'csv';
+  const signalsPath = path.join(process.cwd(), 'artifacts', 'shadow_v2', 'signals.jsonl');
+  const records: ShadowV2Record[] = [];
+  try {
+    const raw = await fs.promises.readFile(signalsPath, 'utf-8');
+    for (const line of raw.split('\n')) {
+      const t = line.trim();
+      if (!t) continue;
+      try {
+        records.push(JSON.parse(t));
+      } catch {
+        // ignora riga corrotta
+      }
+    }
+  } catch {
+    // file non ancora creato: esporta header vuoto (CSV) o payload vuoto (JSONL)
+  }
+
+  const ordered = [...records].sort((a, b) => (b.signalBarTs ?? 0) - (a.signalBarTs ?? 0));
+  if (format === 'jsonl') {
+    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="shadow_v2_signals.jsonl"');
+    return res.status(200).send(formatShadowV2SignalsJsonl(ordered));
+  }
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="shadow_v2_signals.csv"');
+  return res.status(200).send(formatShadowV2SignalsCsv(ordered));
+});
 
 // Serve public static assets (manifest, icons, favicon)
 // Passo L: pannello shadow research, sola lettura (artefatti offline).

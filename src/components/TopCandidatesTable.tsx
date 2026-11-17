@@ -338,9 +338,19 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
                               </span>
                             )}
                           </div>
-                          <div className="text-[11px] text-slate-400 truncate max-w-[150px]">
+                          <div className="text-[11px] text-slate-400 truncate max-w-[180px]">
                             {q.name}
                           </div>
+                          {q.nextEarningsDate && q.daysToEarnings != null && q.daysToEarnings >= 0 && q.daysToEarnings <= 7 && (
+                            <div
+                              data-testid={`earnings-note-${q.ticker}`}
+                              className={`text-[10px] font-mono tabular-nums ${
+                                q.daysToEarnings <= 2 ? 'text-rose-400 font-semibold' : 'text-amber-400'
+                              }`}
+                            >
+                              Trimestrale {q.daysToEarnings === 0 ? 'oggi' : `tra ${q.daysToEarnings}g`} · {q.nextEarningsDate}
+                            </div>
+                          )}
                           <div className="mt-1 max-w-[260px]">
                             <IndicatorBadges
                               indicators={q.setupIndicators}

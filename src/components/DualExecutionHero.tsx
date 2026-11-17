@@ -6,7 +6,12 @@ import {
   ScoredCandidate,
   MarketFreezeState,
 } from '../types/radar';
-import { calculateKnockOutSafety, createDefaultSafetyCheck } from '../utils/calculator';
+import {
+  calculateKnockOutSafety,
+  computeKoPresetFromLeverage,
+  createDefaultSafetyCheck,
+  TRADE_REPUBLIC_KO_LEVERAGE_GRID,
+} from '../utils/calculator';
 import { TRADING_PARAMS } from '../config/tradingParams';
 import { ImpliedVolatilityGauge } from './ImpliedVolatilityGauge';
 import { IndicatorBadges, ScoreBreakdownPanel } from './IndicatorsPanel';
@@ -39,6 +44,7 @@ import {
   Copy,
   Check,
   Compass,
+  Calendar,
 } from 'lucide-react';
 
 export function getHeroMinScore(market: 'EU' | 'US'): number {
@@ -96,7 +102,10 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
   const [leverage, setLeverage] = useState<number>(setup?.selectedLeverage ?? 10);
   const [certPrice, setCertPrice] = useState<number>(2.5);
   const [ratio, setRatio] = useState<number>(market === 'US' ? 0.1 : 1);
-  const [fxRateEurUsd, setFxRateEurUsd] = useState<number>(1.08);
+  const [fxRateEurUsd, setFxRateEurUsd] = useState<number>(
+    market === 'US' && typeof quote?.fxRate === 'number' && quote.fxRate > 0 ? +quote.fxRate.toFixed(4) : 1.08
+  );
+  const [fxManualOverride, setFxManualOverride] = useState<boolean>(false);
   const [audioEnabled, setAudioEnabled] = useState<boolean>(tradingAudio.getEnabled());
   const [copiedTicket, setCopiedTicket] = useState<boolean>(false);
   const [target1MovedToBE, setTarget1MovedToBE] = useState<boolean>(false);
@@ -116,6 +125,12 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
     setBarrierStrike(barrierFromSetup ?? 0);
     if (setup?.selectedLeverage != null) setLeverage(setup.selectedLeverage);
   }, [barrierFromSetup, setup?.selectedLeverage, setup?.direction, setup?.triggerLevel]);
+
+  React.useEffect(() => {
+    if (!fxManualOverride && market === 'US' && typeof quote?.fxRate === 'number' && quote.fxRate > 0) {
+      setFxRateEurUsd(+quote.fxRate.toFixed(4));
+    }
+  }, [quote?.fxRate, market, fxManualOverride]);
 
   const koInput: KnockOutCalculatorInput = {
     barrierStrike,
@@ -495,6 +510,34 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
           </div>
         )}
 
+        {/* Real Earnings / Corporate Event Warning */}
+        {setup?.earningsWarning && (
+          <div
+            data-testid="earnings-warning-banner"
+            className={`rounded-xl p-2.5 border flex items-center gap-2.5 text-xs font-mono ${
+              setup.earningsWarning.level === 'IMMINENT_0_2D'
+                ? 'bg-rose-950/60 border-rose-600/80 text-rose-200'
+                : 'bg-amber-950/45 border-amber-700/70 text-amber-200'
+            }`}
+          >
+            <Calendar
+              className={`w-4 h-4 shrink-0 ${
+                setup.earningsWarning.level === 'IMMINENT_0_2D' ? 'text-rose-400' : 'text-amber-400'
+              }`}
+            />
+            <div className="min-w-0">
+              <strong
+                className={`block text-[11px] uppercase tracking-wide ${
+                  setup.earningsWarning.level === 'IMMINENT_0_2D' ? 'text-rose-300' : 'text-amber-300'
+                }`}
+              >
+                {setup.earningsWarning.label}
+              </strong>
+              <span className="text-[11px] opacity-90">{setup.earningsWarning.description}</span>
+            </div>
+          </div>
+        )}
+
         {/* Ticker & Live Price Row */}
         {quote?.ticker ? (
           <div>
@@ -513,8 +556,13 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
                     </span>
                   )}
                 </div>
-                <div className="text-xs text-slate-400 truncate max-w-[220px]">
+                <div className="text-xs text-slate-400 truncate max-w-[260px]">
                   {quote.name}
+                  {quote.nextEarningsDate && quote.daysToEarnings != null && quote.daysToEarnings >= 0 && quote.daysToEarnings <= 7 && (
+                    <span className={quote.daysToEarnings <= 2 ? 'text-rose-400 ml-1.5 font-mono' : 'text-amber-400 ml-1.5 font-mono'}>
+                      · Trimestrale {quote.daysToEarnings === 0 ? 'oggi' : `tra ${quote.daysToEarnings}g`} ({quote.nextEarningsDate})
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -1095,9 +1143,54 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
               </button>
 
               {showKoCalculator && (
-                <div className="mt-3 p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3 font-mono text-xs">
+                <div className="mt-3 p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3 font-mono text-xs" data-testid="ko-simulator-panel">
+                  {/* Griglia rapida leve KO Trade Republic */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800/80">
+                    <span className="text-[10px] uppercase tracking-wider text-slate-400">
+                      Griglia Leva KO (Barriera &amp; Prezzo Teorico)
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1">
+                      {TRADE_REPUBLIC_KO_LEVERAGE_GRID.map((levPreset) => {
+                        const presetDir = setup?.direction === 'SHORT' ? 'SHORT' : 'LONG';
+                        const preset = computeKoPresetFromLeverage(
+                          trigger,
+                          presetDir,
+                          levPreset,
+                          ratio,
+                          market === 'US',
+                          fxRateEurUsd
+                        );
+                        const presetBarrierDist = trigger > 0 && preset.barrierStrike > 0 ? Math.abs(trigger - preset.barrierStrike) : 0;
+                        const presetStopDist = trigger > 0 && stop > 0 ? Math.abs(trigger - stop) : 0;
+                        const presetRatioOk = presetStopDist > 0 ? presetBarrierDist / presetStopDist >= 2.0 : true;
+                        const isActivePreset = leverage === levPreset;
+                        return (
+                          <button
+                            key={levPreset}
+                            type="button"
+                            onClick={() => {
+                              setLeverage(levPreset);
+                              if (preset.barrierStrike > 0) setBarrierStrike(preset.barrierStrike);
+                              if (preset.theoreticalCertPriceEur > 0) setCertPrice(preset.theoreticalCertPriceEur);
+                            }}
+                            title={`Imposta leva ${levPreset}x (barriera ${preset.barrierStrike || 'n/d'}, stima ${preset.theoreticalCertPriceEur.toFixed(2)} €)`}
+                            className={`px-2 py-1 rounded text-[11px] font-bold transition-colors cursor-pointer border ${
+                              isActivePreset
+                                ? 'bg-sky-600 border-sky-400 text-white'
+                                : presetRatioOk
+                                ? 'bg-slate-900 border-slate-700 text-slate-200 hover:border-sky-500'
+                                : 'bg-slate-950 border-rose-900/60 text-rose-400/80 hover:border-rose-700'
+                            }`}
+                          >
+                            {levPreset}x
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   {/* Parameter Inputs Grid */}
-                  <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5">
+                  <div className={`grid grid-cols-2 ${market === 'US' ? 'sm:grid-cols-7' : 'sm:grid-cols-6'} gap-2.5`}>
                     <div>
                       <label className="text-[10px] text-slate-400 block mb-1">
                         Strike Barriera KO
@@ -1120,6 +1213,7 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
                         className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white"
                       >
                         <option value={5}>5x (Bassa)</option>
+                        <option value={7}>7x</option>
                         <option value={8}>8x</option>
                         <option value={10}>10x (Standard)</option>
                         <option value={15}>15x (Dinamica)</option>
@@ -1141,6 +1235,27 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
                         <option value={0.01}>100:1 (0.01)</option>
                       </select>
                     </div>
+                    {market === 'US' && (
+                      <div>
+                        <label className="text-[10px] text-slate-400 block mb-1">
+                          EUR/USD {quote?.fxRate ? 'Live' : ''}
+                        </label>
+                        <input
+                          type="number"
+                          step="0.0001"
+                          min="0.5"
+                          value={fxRateEurUsd}
+                          onChange={(e) => {
+                            const nextFx = parseFloat(e.target.value);
+                            if (Number.isFinite(nextFx) && nextFx > 0) {
+                              setFxManualOverride(true);
+                              setFxRateEurUsd(nextFx);
+                            }
+                          }}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white tabular-nums"
+                        />
+                      </div>
+                    )}
                     <div>
                       <label className="text-[10px] text-slate-400 block mb-1">
                         Prezzo Cert. (€)
@@ -1182,8 +1297,11 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
                   </div>
 
                   {koSafety.theoreticalCertPriceEur != null && (
-                    <div className="flex items-center justify-between text-[11px] pt-1 text-slate-400 border-t border-slate-800">
-                      <span>Prezzo teorico certificato in EUR: <strong className="text-sky-300 font-bold">{koSafety.theoreticalCertPriceEur.toFixed(2)} €</strong></span>
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] pt-1 text-slate-400 border-t border-slate-800">
+                      <span>
+                        Prezzo teorico certificato: <strong className="text-sky-300 font-bold tabular-nums">{koSafety.theoreticalCertPriceEur.toFixed(2)} €</strong>
+                        {market === 'US' && <span className="text-slate-500 ml-2">· Cambio EUR/USD {fxRateEurUsd.toFixed(4)}</span>}
+                      </span>
                       <button
                         type="button"
                         onClick={() => setCertPrice(koSafety.theoreticalCertPriceEur || certPrice)}
@@ -1435,19 +1553,29 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
                     )}
                   </div>
 
-                  {/* Loss vs Gain overview */}
-                  <div className="grid grid-cols-3 gap-2 text-center text-[11px] pt-1 border-t border-slate-800/80">
+                  {/* Loss vs Net Gain overview (after TR roundtrip fees + spread) */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-[11px] pt-2 border-t border-slate-800/80 tabular-nums">
                     <div>
                       <span className="text-slate-400 block">Rischio Max (1%)</span>
-                      <span className="text-rose-400 font-bold">-{koSafety.maxRiskEur} €</span>
+                      <span className="text-rose-400 font-bold">-{koSafety.maxRiskEur.toFixed(2)} €</span>
                     </div>
                     <div>
-                      <span className="text-slate-400 block">Guadagno T1 Netto</span>
-                      <span className="text-emerald-400 font-bold">+{koSafety.potentialGainT1Eur} €</span>
+                      <span className="text-slate-400 block">Impatto Attrito</span>
+                      <span className="text-amber-300 font-bold">
+                        -{dynamicBreakeven.totalFrictionEur.toFixed(2)} € ({(koSafety.frictionR ?? 0).toFixed(2)}R)
+                      </span>
                     </div>
                     <div>
-                      <span className="text-slate-400 block">Guadagno T2 Netto</span>
-                      <span className="text-emerald-300 font-bold">+{koSafety.potentialGainT2Eur} €</span>
+                      <span className="text-slate-400 block">T1 Netto (Post A/R)</span>
+                      <span className="text-emerald-400 font-bold">
+                        +{(koSafety.netGainT1Eur ?? koSafety.potentialGainT1Eur).toFixed(2)} € ({(koSafety.netRT1 ?? t1R).toFixed(2)}R)
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block">T2 Netto (Post A/R)</span>
+                      <span className="text-emerald-300 font-bold">
+                        +{(koSafety.netGainT2Eur ?? koSafety.potentialGainT2Eur).toFixed(2)} € ({(koSafety.netRT2 ?? t2R).toFixed(2)}R)
+                      </span>
                     </div>
                   </div>
                 </div>
