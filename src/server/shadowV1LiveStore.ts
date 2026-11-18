@@ -22,6 +22,7 @@
  *   poter fermare il chiamante.
  */
 
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type {
@@ -321,9 +322,49 @@ export function isStale(record: PersistedShadowV1LiveRecord, nowMs: number): boo
   return nowMs > record.sessionCloseMs;
 }
 
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v);
+}
+
 /**
- * Legge il JSONL. File assente o illeggibile => elenco vuoto. Righe corrotte o con
- * `v` sconosciuta vengono saltate e contate. Non lancia mai.
+ * Record conforme allo schema v=1 scritto da `upsertObservation`.
+ *
+ * Serve a impedire che una riga troncata o modificata a mano propaghi
+ * `undefined`/`NaN` in `byOrder`, nei conteggi e nelle metriche: quei valori non
+ * fanno fallire il parsing JSON, ma rompono silenziosamente l'ordinamento e le
+ * medie. Lo schema su disco non cambia: qui si accetta esattamente cio' che lo
+ * store scrive, campi extra compresi (compatibilita' in avanti).
+ */
+export function isValidPersistedRecord(value: unknown): value is PersistedShadowV1LiveRecord {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const r = value as Record<string, unknown>;
+  if (r.v !== SHADOW_V1_LIVE_STORE_VERSION) return false;
+  if (typeof r.key !== 'string' || r.key.trim().length === 0) return false;
+  if (typeof r.ticker !== 'string' || r.ticker.trim().length === 0) return false;
+  if (r.market !== 'EU' && r.market !== 'US') return false;
+  if (r.direction !== 'LONG' && r.direction !== 'SHORT') return false;
+  for (const field of ['entry', 'stop', 'target'] as const) {
+    const n = r[field];
+    if (!isFiniteNumber(n) || n <= 0) return false;
+  }
+  for (const field of ['decidedAtMs', 'sessionCloseMs', 'firstSeenAtMs', 'updatedAtMs'] as const) {
+    if (!isFiniteNumber(r[field])) return false;
+  }
+  if (!isPersistableStatus(r.status as ShadowV1LiveStatus)) return false;
+  if (r.r !== null && !isFiniteNumber(r.r)) return false;
+  if (r.reason !== null && typeof r.reason !== 'string') return false;
+  for (const field of ['fillBarTs', 'exitBarTs', 'exitPrice'] as const) {
+    const v = r[field];
+    if (v !== null && !isFiniteNumber(v)) return false;
+  }
+  if (typeof r.moduleVersion !== 'string' || r.moduleVersion.length === 0) return false;
+  return true;
+}
+
+/**
+ * Legge il JSONL. File assente o illeggibile => elenco vuoto. Righe corrotte,
+ * versione sconosciuta o record fuori schema vengono saltati e contati. Non
+ * lancia mai.
  */
 export function loadRecords(filePath: string): LoadResult {
   const records: PersistedShadowV1LiveRecord[] = [];
@@ -346,24 +387,29 @@ export function loadRecords(filePath: string): LoadResult {
       skipped += 1;
       continue;
     }
-    if (
-      parsed === null ||
-      typeof parsed !== 'object' ||
-      (parsed as { v?: unknown }).v !== SHADOW_V1_LIVE_STORE_VERSION ||
-      typeof (parsed as { key?: unknown }).key !== 'string'
-    ) {
+    if (!isValidPersistedRecord(parsed)) {
       skipped += 1;
       continue;
     }
-    records.push(parsed as PersistedShadowV1LiveRecord);
+    records.push(parsed);
   }
   return { records, skipped };
 }
 
 /**
- * Scrittura atomica: tmp nella stessa directory + rename. Crea la directory se
- * manca. In caso di errore ritorna `{ ok: false, error }` senza lanciare: il
- * chiamante deve poter proseguire anche con la persistenza rotta.
+ * Nome del file temporaneo di una scrittura, univoco per processo e per chiamata
+ * (`pid` + UUID): due scritture concorrenti, anche di processi diversi, non
+ * possono sovrascriversi il temporaneo prima del rename.
+ */
+export function shadowV1LiveTmpPath(filePath: string): string {
+  return `${filePath}.tmp-${process.pid}-${randomUUID()}`;
+}
+
+/**
+ * Scrittura atomica: tmp univoco nella stessa directory + rename. Crea la
+ * directory se manca. In caso di errore rimuove **solo** il proprio temporaneo
+ * e ritorna `{ ok: false, error }` senza lanciare: il chiamante deve poter
+ * proseguire anche con la persistenza rotta.
  */
 export function writeRecordsAtomic(
   filePath: string,
@@ -372,7 +418,7 @@ export function writeRecordsAtomic(
   const ordered = [...records].sort(byOrder);
   const content = ordered.map((r) => JSON.stringify(r)).join('\n') + '\n';
   const dir = path.dirname(filePath);
-  const tmpPath = `${filePath}.tmp-${process.pid}`;
+  const tmpPath = shadowV1LiveTmpPath(filePath);
   try {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(tmpPath, content, 'utf8');

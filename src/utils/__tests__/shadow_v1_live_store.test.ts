@@ -18,6 +18,7 @@ import {
   SHADOW_V1_LIVE_MODULE_VERSION,
   SHADOW_V1_LIVE_SIGNALS_PATH,
   SHADOW_V1_LIVE_STORE_VERSION,
+  shadowV1LiveTmpPath,
   toCoreInput,
   upsertObservation,
   writeRecordsAtomic,
@@ -552,4 +553,106 @@ test('percorso di produzione dichiarato ma non usato dai test', () => {
   assert.equal(SHADOW_V1_LIVE_SIGNALS_PATH, 'artifacts/shadow_v1_live/signals.jsonl');
   const dir = tmpDir();
   assert.equal(fs.existsSync(path.join(dir, 'artifacts')), false);
+});
+
+// --- P9 / CON-2: temporaneo univoco -------------------------------------------
+
+test('writeRecordsAtomic: il nome del temporaneo e\u2019 univoco per processo e chiamata', () => {
+  const file = path.join(os.tmpdir(), 'v1livestore-unique', 'signals.jsonl');
+  const prefix = `${file}.tmp-${process.pid}-`;
+  const names = new Set<string>();
+  for (let i = 0; i < 200; i += 1) {
+    const candidate = shadowV1LiveTmpPath(file);
+    assert.ok(candidate.startsWith(prefix), `prefisso con pid atteso in ${candidate}`);
+    assert.ok(candidate.length > prefix.length, 'suffisso univoco non vuoto');
+    names.add(candidate);
+  }
+  assert.equal(names.size, 200, 'duecento chiamate, duecento nomi distinti');
+});
+
+test('writeRecordsAtomic: un errore rimuove solo il proprio temporaneo', () => {
+  const dir = tmpDir();
+  const target = path.join(dir, 'sono-una-directory');
+  fs.mkdirSync(target);
+  const decoy = `${target}.tmp-999999-altro-scrittore`;
+  fs.writeFileSync(decoy, 'righe di un altro scrittore');
+
+  const res = writeRecordsAtomic(target, []);
+  assert.equal(res.ok, false, 'il rename su una directory fallisce senza eccezioni');
+  assert.equal(fs.existsSync(decoy), true, 'il temporaneo di un altro scrittore resta intatto');
+  const leftovers = fs
+    .readdirSync(dir)
+    .filter((name) => name.includes('.tmp-') && name !== path.basename(decoy));
+  assert.deepEqual(leftovers, [], 'nessun temporaneo proprio residuo');
+});
+
+// --- P9 / CON-4: schema in lettura --------------------------------------------
+
+test('loadRecords: record fuori schema scartati e contati, nessun NaN a valle', () => {
+  const dir = tmpDir();
+  const file = path.join(dir, 'parziale.jsonl');
+  const good = recordFrom(observation('OPEN', { fillBarTs: D0 + BAR_MS }));
+  const goodExtra = recordFrom(
+    observation('TARGET', {
+      key: shadowV1LiveKeyOf('MSFT', 50, 47, D0),
+      ticker: 'MSFT',
+      entry: 50,
+      stop: 47,
+      target: 54,
+      r: 1.6,
+      exitBarTs: D0 + 2 * BAR_MS,
+      exitPrice: 54,
+    })
+  );
+  const invalid: unknown[] = [
+    { ...good, key: 'a', status: undefined },
+    { ...good, key: 'b', sessionCloseMs: null },
+    { ...good, key: 'c', decidedAtMs: 'ieri' },
+    { ...good, key: 'd', status: 'BOH' },
+    { ...good, key: 'e', market: 'GLOBAL' },
+    { ...good, key: 'f', entry: -1 },
+    { ...good, key: 'g', r: 'x' },
+    { ...good, key: 'h', fillBarTs: undefined },
+  ];
+  fs.writeFileSync(
+    file,
+    [
+      JSON.stringify(good),
+      ...invalid.map((v) => JSON.stringify(v)),
+      JSON.stringify({ ...goodExtra, campoFuturo: 1 }),
+    ].join('\n') + '\n'
+  );
+
+  const res = loadRecords(file);
+  assert.equal(res.records.length, 2, 'restano solo i due record conformi');
+  assert.equal(res.skipped, invalid.length, 'ogni riga fuori schema e\u2019 contata');
+  assert.deepEqual(
+    res.records.map((r) => r.ticker),
+    ['AAPL', 'MSFT'],
+    'un campo extra non invalida un record conforme'
+  );
+  for (const r of res.records) {
+    assert.equal(Number.isFinite(r.decidedAtMs), true);
+    assert.equal(Number.isFinite(r.sessionCloseMs), true);
+    assert.equal(Number.isFinite(r.entry), true);
+  }
+});
+
+test('loadRecords: un campo numerico nullo non entra nell\u2019ordinamento', () => {
+  const dir = tmpDir();
+  const file = path.join(dir, 'nullo.jsonl');
+  const good = recordFrom(observation('OPEN', { fillBarTs: D0 + BAR_MS }));
+  fs.writeFileSync(
+    file,
+    [JSON.stringify({ ...good, key: 'n1', decidedAtMs: null }), JSON.stringify(good)].join('\n') +
+      '\n'
+  );
+  const res = loadRecords(file);
+  assert.equal(res.records.length, 1);
+  assert.equal(res.skipped, 1);
+  assert.equal(
+    res.records.every((r) => !Number.isNaN(r.decidedAtMs)),
+    true,
+    'nessun NaN raggiunge il sort'
+  );
 });
