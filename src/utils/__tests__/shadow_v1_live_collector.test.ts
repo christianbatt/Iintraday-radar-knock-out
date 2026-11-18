@@ -16,6 +16,7 @@ import {
   barsForShadowV1Live,
   clearShadowV1LiveBarsForTest,
   createObserveHandler,
+  createShadowV1LiveStoreQueue,
   checkShadowV1LiveBarCoverage,
   getShadowV1LiveCoverageStats,
   isShadowV1LiveCollectEnabled,
@@ -1216,4 +1217,164 @@ test('rate limit: usa clientKey UID distinto dietro IP condiviso e normalizza ::
     assert.equal((await handler({ body: validBody(), ip: '::ffff:10.0.0.9' })).status, 200);
   }
   assert.equal((await handler({ body: validBody(), ip: '10.0.0.9' })).status, 429);
+});
+
+// --- P9 / CON-1: coda unica fra route e ciclo ---------------------------------
+
+const KEY_AAPL = shadowV1LiveKeyOf('AAPL', 100, 95, D0);
+
+type StoredState = {
+  stored: PersistedShadowV1LiveRecord[];
+  slowReads: boolean;
+  reads: number;
+  writes: number;
+};
+
+/**
+ * Store in memoria con I/O asincrono ritardato. Lo snapshot viene catturato
+ * **all'ingresso** della lettura: senza serializzazione il ciclo legge uno stato
+ * vecchio e, scrivendo dopo la POST, ne cancella l'inserimento. E' il lost
+ * update di CON-1, reso deterministico dall'iniezione della latenza.
+ */
+function sharedStore(): {
+  state: StoredState;
+  io: Pick<CollectorDeps, 'readRecords' | 'writeRecords'>;
+} {
+  const state: StoredState = { stored: [], slowReads: false, reads: 0, writes: 0 };
+  return {
+    state,
+    io: {
+      readRecords: async () => {
+        const snapshot = state.stored.map((r) => ({ ...r }));
+        state.reads += 1;
+        const delayMs = state.slowReads ? 25 : 1;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        return { records: snapshot, skipped: 0 };
+      },
+      writeRecords: async (_p: string, records: readonly PersistedShadowV1LiveRecord[]) => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        state.stored = records.map((r) => ({ ...r }));
+        state.writes += 1;
+        return { ok: true as const };
+      },
+    },
+  };
+}
+
+test('P9 coda unica: ciclo e POST concorrenti non perdono aggiornamenti', async () => {
+  const file = tmpPath();
+  const { state, io } = sharedStore();
+  const queue = createShadowV1LiveStoreQueue();
+  const nowMs = D0 + 30 * 60_000;
+  let barsOn = false;
+  const depsValue = deps(file, {
+    queue,
+    now: () => nowMs,
+    bars: () => (barsOn ? [bar(D0 + BAR_MS, 100, 101, 99, 100.5)] : []),
+    ...io,
+  });
+  const handler = createObserveHandler(depsValue);
+
+  const seed = await handler({ body: validBody(), ip: 'p9' });
+  assert.equal(seed.body.outcome, 'PENDING_FILL');
+  assert.equal(state.stored.length, 1);
+
+  barsOn = true;
+  state.slowReads = true;
+  const cycle = runShadowV1LiveRevaluationCycle(depsValue);
+  await new Promise((resolve) => setTimeout(resolve, 1)); // il ciclo ha iniziato a leggere
+  const post = handler({ body: validBody({ entry: 101 }), ip: 'p9' });
+
+  const [cycleRes, postRes] = await Promise.all([cycle, post]);
+  assert.equal(postRes.status, 200);
+  assert.equal(postRes.body.persisted, true);
+  assert.equal(state.stored.length, 2, 'nessun record perso fra ciclo e POST');
+  const updated = state.stored.find((r) => r.key === KEY_AAPL);
+  assert.ok(updated, 'il record del ciclo resta nel file');
+  assert.equal(
+    updated?.status,
+    'OPEN',
+    'lo stato avanzato dal ciclo non viene riportato indietro dalla POST con snapshot vecchio'
+  );
+  assert.ok(
+    state.stored.some((r) => r.entry === 101),
+    'il record inserito dalla POST concorrente resta nel file'
+  );
+  assert.equal(cycleRes.written, true);
+  assert.equal(handler.queuePending(), 0, 'coda vuota a operazioni concluse');
+});
+
+test('P9 coda unica: piu\u2019 cicli e POST su chiavi diverse e sulla stessa chiave', async () => {
+  const file = tmpPath();
+  const { state, io } = sharedStore();
+  const queue = createShadowV1LiveStoreQueue();
+  let barsOn = false;
+  const depsValue = deps(file, {
+    queue,
+    now: () => D0 + 30 * 60_000,
+    bars: () => (barsOn ? [bar(D0 + BAR_MS, 100, 101, 99, 100.5)] : []),
+    ...io,
+  });
+  const handler = createObserveHandler(depsValue);
+  await handler({ body: validBody(), ip: 'p9' });
+
+  barsOn = true;
+  state.slowReads = true;
+  await Promise.all([
+    runShadowV1LiveRevaluationCycle(depsValue),
+    handler({ body: validBody({ entry: 101 }), ip: 'p9' }),
+    runShadowV1LiveRevaluationCycle(depsValue),
+    handler({ body: validBody({ entry: 102 }), ip: 'p9' }),
+    runShadowV1LiveRevaluationCycle(depsValue),
+    handler({ body: validBody({ entry: 101 }), ip: 'p9' }),
+  ]);
+
+  assert.equal(state.stored.length, 3, 'tre chiavi distinte, nessun doppione e nessuna perdita');
+  assert.deepEqual(
+    state.stored.map((r) => r.entry).sort((a, b) => a - b),
+    [100, 101, 102]
+  );
+  assert.equal(handler.queuePending(), 0);
+});
+
+test('P9 coda unica: un task che fallisce non blocca i successivi', async () => {
+  const file = tmpPath();
+  const queue = createShadowV1LiveStoreQueue();
+  let writes = 0;
+  const handler = createObserveHandler(
+    deps(file, {
+      queue,
+      readRecords: () => ({ records: [], skipped: 0 }),
+      writeRecords: () => {
+        writes += 1;
+        if (writes === 1) throw new Error('disco pieno');
+        return { ok: true as const };
+      },
+    })
+  );
+
+  const first = await handler({ body: validBody(), ip: 'p9' });
+  assert.equal(first.status, 500, 'il task che esplode diventa 500, non blocca la coda');
+  const second = await handler({ body: validBody({ entry: 101 }), ip: 'p9' });
+  assert.equal(second.status, 200);
+  assert.equal(second.body.persisted, true);
+  assert.equal(writes, 2);
+  assert.equal(handler.queuePending(), 0);
+});
+
+// --- P9 / CON-3: tetto della mappa del rate limit -----------------------------
+
+test('P9 rate limit: la mappa non cresce oltre il tetto dichiarato', async () => {
+  const file = tmpPath();
+  const handler = createObserveHandler(deps(file, { rateMapMaxEntries: 4 }));
+  for (let i = 0; i < 12; i += 1) {
+    // Body invalido: il conteggio del rate limit avviene prima del parse, nessun I/O.
+    const res = await handler({ body: { ticker: 'X' }, ip: `9.9.9.${i}` });
+    assert.equal(res.status, 400);
+  }
+  assert.ok(
+    handler.rateLimitEntries() <= 4,
+    `attese al massimo 4 voci, trovate ${handler.rateLimitEntries()}`
+  );
+  assert.equal(fs.existsSync(file), false, 'nessuna scrittura per richieste invalide');
 });

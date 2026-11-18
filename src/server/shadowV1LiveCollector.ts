@@ -60,6 +60,13 @@ export const SHADOW_V1_LIVE_RATE_LIMIT_PER_MINUTE = 10;
 
 export const SHADOW_V1_LIVE_RATE_WINDOW_MS = 60_000;
 
+/**
+ * Tetto della mappa del rate limit (un elemento per IP/UID visto nella finestra).
+ * Oltre questa soglia le voci scadute vengono eliminate e, se non basta, le piu'
+ * vecchie: la mappa non cresce con il numero di client diversi.
+ */
+export const SHADOW_V1_LIVE_RATE_MAP_MAX_ENTRIES = 1000;
+
 /** Barra 5m, come `SHADOW_V2_BAR_MS`. */
 export const SHADOW_V1_LIVE_BAR_MS = 5 * 60 * 1000;
 
@@ -691,6 +698,14 @@ export interface CollectorDeps {
   ) => MaybePromise<WriteResult>;
   warn?: (message: string) => void;
   rateLimitPerMinute?: number;
+  /** Tetto della mappa del rate limit (default: `SHADOW_V1_LIVE_RATE_MAP_MAX_ENTRIES`). */
+  rateMapMaxEntries?: number;
+  /**
+   * Coda unica delle mutazioni dello store. Default: quella di processo
+   * (`SHADOW_V1_LIVE_STORE_QUEUE`), condivisa da handler e ciclo. Iniettabile
+   * nei test per isolare l'ordine delle operazioni.
+   */
+  queue?: ShadowV1LiveStoreQueue;
   /** Guardia di copertura iniettabile (default: `checkShadowV1LiveBarCoverage`). */
   coverage?: (input: BarCoverageInput) => BarCoverageResult;
   /** Backfill autonomo opzionale quando mancano barre in RAM/disco. */
@@ -783,38 +798,91 @@ function needsBackfillForRecord(
 }
 
 /**
- * Costruisce il handler della route con dipendenze iniettate. Le richieste sono
- * serializzate da una coda in memoria: lettura, valutazione e scrittura della
- * stessa finestra non si sovrappongono, cosi' richieste ravvicinate non perdono
- * aggiornamenti ne' creano doppioni.
+ * Coda FIFO di task asincroni sul file dei record.
+ *
+ * Una sola istanza di processo serializza **tutte** le mutazioni dello store:
+ * richieste POST, osservazioni server-side (scanner) e ciclo di rivalutazione.
+ * Ogni task esegue per intero lettura + valutazione + scrittura, quindi due
+ * percorsi non possono piu' sovrascriversi lo snapshot l'uno dell'altro.
+ * Un task che fallisce non blocca la coda: il successivo parte comunque.
+ * Un task non deve accodarne un altro (nessun annidamento): sarebbe un deadlock.
  */
-export function createObserveHandler(
-  deps: CollectorDeps
-): (req: ObserveRequest) => Promise<ObserveResponse> {
+export interface ShadowV1LiveStoreQueue {
+  run<T>(task: () => Promise<T>): Promise<T>;
+  /** Task accodati o in esecuzione in questo istante (diagnostica e test). */
+  pending(): number;
+}
+
+export function createShadowV1LiveStoreQueue(): ShadowV1LiveStoreQueue {
+  let tail: Promise<unknown> = Promise.resolve();
+  let pending = 0;
+  return {
+    run<T>(task: () => Promise<T>): Promise<T> {
+      pending += 1;
+      // `task` gira sia dopo un successo sia dopo un errore del precedente.
+      const result = tail.then(task, task);
+      tail = result.then(
+        () => {
+          pending -= 1;
+        },
+        () => {
+          pending -= 1;
+        }
+      );
+      return result;
+    },
+    pending: () => pending,
+  };
+}
+
+/** Coda condivisa di processo: unica per handler, scanner e ciclo. */
+export const SHADOW_V1_LIVE_STORE_QUEUE = createShadowV1LiveStoreQueue();
+
+/**
+ * Costruisce il handler della route con dipendenze iniettate. Le richieste sono
+ * serializzate dalla coda dello store: lettura, valutazione e scrittura della
+ * stessa finestra non si sovrappongono, cosi' richieste ravvicinate e ciclo di
+ * rivalutazione non perdono aggiornamenti ne' creano doppioni.
+ */
+export interface ObserveHandler {
+  (req: ObserveRequest): Promise<ObserveResponse>;
+  /** Voci correnti nella mappa del rate limit (diagnostica e test). */
+  rateLimitEntries: () => number;
+  /** Task accodati o in esecuzione nella coda condivisa (diagnostica e test). */
+  queuePending: () => number;
+}
+
+export function createObserveHandler(deps: CollectorDeps): ObserveHandler {
   const readRecords = deps.readRecords ?? loadRecords;
   const writeRecords = deps.writeRecords ?? writeRecordsAtomic;
   const warn = deps.warn ?? ((message: string) => console.warn(`${WARN_PREFIX} ${message}`));
   const limit = deps.rateLimitPerMinute ?? SHADOW_V1_LIVE_RATE_LIMIT_PER_MINUTE;
+  const queue = deps.queue ?? SHADOW_V1_LIVE_STORE_QUEUE;
+  const rateMapMaxEntries = Math.max(
+    1,
+    deps.rateMapMaxEntries ?? SHADOW_V1_LIVE_RATE_MAP_MAX_ENTRIES
+  );
   const hits = new Map<string, { windowStart: number; count: number }>();
 
-  let chain: Promise<unknown> = Promise.resolve();
-  function enqueue<T>(fn: () => Promise<T>): Promise<T> {
-    const run = chain.then(fn, fn);
-    chain = run.then(
-      () => undefined,
-      () => undefined
-    );
-    return run;
+  /** Elimina le voci scadute e, se serve spazio, le piu' vecchie. */
+  function sweepRateLimit(nowMs: number): void {
+    for (const [k, v] of hits.entries()) {
+      if (nowMs - v.windowStart >= SHADOW_V1_LIVE_RATE_WINDOW_MS) {
+        hits.delete(k);
+      }
+    }
+    if (hits.size < rateMapMaxEntries) return;
+    const excess = hits.size - rateMapMaxEntries + 1;
+    let removed = 0;
+    for (const k of hits.keys()) {
+      hits.delete(k);
+      removed += 1;
+      if (removed >= excess) break;
+    }
   }
 
   function rateLimited(key: string, nowMs: number): boolean {
-    if (hits.size > 1000) {
-      for (const [k, v] of hits.entries()) {
-        if (nowMs - v.windowStart >= SHADOW_V1_LIVE_RATE_WINDOW_MS) {
-          hits.delete(k);
-        }
-      }
-    }
+    if (hits.size >= rateMapMaxEntries) sweepRateLimit(nowMs);
     const entry = hits.get(key);
     if (!entry || nowMs - entry.windowStart >= SHADOW_V1_LIVE_RATE_WINDOW_MS) {
       hits.set(key, { windowStart: nowMs, count: 1 });
@@ -824,7 +892,7 @@ export function createObserveHandler(
     return entry.count > limit;
   }
 
-  return async function handle(req: ObserveRequest): Promise<ObserveResponse> {
+  const handle = (async (req: ObserveRequest): Promise<ObserveResponse> => {
     // Flag OFF: nessun I/O, nessun timer, nessuna scrittura di stato.
     if (!isEnabled(deps.env)) {
       return { status: 404, body: { status: 'disabled', flag: SHADOW_V1_LIVE_COLLECT_ENV } };
@@ -872,7 +940,7 @@ export function createObserveHandler(
         };
       }
 
-      return await enqueue(async (): Promise<ObserveResponse> => {
+      return await queue.run(async (): Promise<ObserveResponse> => {
         const loaded = await readRecords(deps.signalsPath);
         const records = loaded.records;
         const context: ShadowV1LiveObservationContext = {
@@ -1032,7 +1100,10 @@ export function createObserveHandler(
       warn(`richiesta non elaborata: ${message}`);
       return { status: 500, body: { status: 'internal_error' } };
     }
-  };
+  }) as ObserveHandler;
+  handle.rateLimitEntries = () => hits.size;
+  handle.queuePending = () => queue.pending();
+  return handle;
 }
 
 export interface CycleResult {
@@ -1050,6 +1121,13 @@ export interface CycleResult {
 export async function runShadowV1LiveRevaluationCycle(
   deps: CollectorDeps
 ): Promise<CycleResult> {
+  const queue = deps.queue ?? SHADOW_V1_LIVE_STORE_QUEUE;
+  // L'intero ciclo (lettura + valutazione + scrittura) e' un solo task: senza
+  // questo, un upsert arrivato nel frattempo verrebbe sovrascritto dal ciclo.
+  return queue.run(() => evaluateAndPersistCycle(deps));
+}
+
+async function evaluateAndPersistCycle(deps: CollectorDeps): Promise<CycleResult> {
   const warn = deps.warn ?? ((message: string) => console.warn(`${WARN_PREFIX} ${message}`));
   const readRecords = deps.readRecords ?? loadRecords;
   const writeRecords = deps.writeRecords ?? writeRecordsAtomic;
@@ -1148,6 +1226,8 @@ export interface RegistrationOptions {
   cycleMs?: number;
   barsPath?: string;
   fetchMissingBars?: CollectorDeps['fetchMissingBars'] | null;
+  /** Coda condivisa fra handler e ciclo (default: una nuova per registrazione). */
+  queue?: ShadowV1LiveStoreQueue;
 }
 
 export interface RegistrationResult {
@@ -1193,11 +1273,15 @@ export function registerShadowV1LiveCollector(
       ? undefined
       : options.fetchMissingBars ?? createThrottledYahooBackfill(nowFn, env);
 
+  // Una sola coda per registrazione: handler, osservazioni server-side e ciclo
+  // scrivono sullo stesso file e devono serializzarsi fra loro.
+  const storeQueue = options.queue ?? createShadowV1LiveStoreQueue();
   const deps: CollectorDeps = {
     env,
     signalsPath: `${root}/artifacts/shadow_v1_live/signals.jsonl`,
     now: nowFn,
     bars: (ticker, market) => barsForShadowV1Live(ticker, market),
+    queue: storeQueue,
     ...(fetchMissingBars ? { fetchMissingBars } : {}),
   };
   const handler = createObserveHandler(deps);
