@@ -16,11 +16,15 @@ import {
   barsForShadowV1Live,
   clearShadowV1LiveBarsForTest,
   createObserveHandler,
+  checkShadowV1LiveBarCoverage,
+  getShadowV1LiveCoverageStats,
   isShadowV1LiveCollectEnabled,
   parseObservePayload,
   recordBarsForShadowV1Live,
   registerShadowV1LiveCollector,
+  resetShadowV1LiveCoverageStatsForTest,
   runShadowV1LiveRevaluationCycle,
+  shadowV1LiveCoverageBlock,
   SHADOW_V1_LIVE_COLLECT_ENV,
   SHADOW_V1_LIVE_CYCLE_MS,
   SHADOW_V1_LIVE_MAX_BARS_PER_TICKER,
@@ -72,6 +76,7 @@ test.after(() => {
 
 test.beforeEach(() => {
   clearShadowV1LiveBarsForTest();
+  resetShadowV1LiveCoverageStatsForTest();
 });
 
 function deps(
@@ -461,6 +466,35 @@ function bar(t: number, o: number, h: number, l: number, c: number): ShadowV1Liv
   return { t, o, h, l, c };
 }
 
+/** Barre contigue a passo 300000 ms: copertura piena richiesta dalla guardia. */
+function contiguousBars(
+  fromTs: number,
+  count: number,
+  ohlc: (i: number) => { o: number; h: number; l: number; c: number }
+): ShadowV1LiveBar[] {
+  return Array.from({ length: count }, (_, i) => {
+    const p = ohlc(i);
+    return bar(fromTs + i * BAR_MS, p.o, p.h, p.l, p.c);
+  });
+}
+
+/** D0+1 barra .. D0+71 barre: termina esattamente alla chiusura di sessione. */
+const SESSION_BARS = 71;
+
+/** Serie completa che non tocca mai l'entry 100 (nessun fill). */
+function fullSessionNoFill(): ShadowV1LiveBar[] {
+  return contiguousBars(D0 + BAR_MS, SESSION_BARS, () => ({ o: 90, h: 91, l: 89, c: 90.5 }));
+}
+
+/** Serie completa con fill sulla prima barra e uscita al close dell'ultima. */
+function fullSessionOpen(): ShadowV1LiveBar[] {
+  return contiguousBars(D0 + BAR_MS, SESSION_BARS, (i) => {
+    if (i === 0) return { o: 100, h: 101, l: 99, c: 100.5 };
+    if (i === SESSION_BARS - 1) return { o: 100.5, h: 101, l: 99.5, c: 100.25 };
+    return { o: 100.5, h: 101, l: 99.5, c: 100.4 };
+  });
+}
+
 test('ciclo: PENDING_FILL -> OPEN con barra che tocca l\u2019entry', async () => {
   const file = tmpPath();
   await seedPending(file);
@@ -478,7 +512,16 @@ test('ciclo: OPEN -> TARGET', async () => {
   const file = tmpPath();
   await seedOpen(file);
   const res = await runShadowV1LiveRevaluationCycle(
-    deps(file, { bars: () => [bar(D0 + 2 * BAR_MS, 100, 108.5, 99, 108)] }, D0 + 3 * BAR_MS)
+    deps(
+      file,
+      {
+        bars: () => [
+          bar(D0 + BAR_MS, 100, 101, 99, 100.5),
+          bar(D0 + 2 * BAR_MS, 100, 108.5, 99, 108),
+        ],
+      },
+      D0 + 3 * BAR_MS
+    )
   );
   assert.equal(res.changed, 1);
   const rec = loadRecords(file).records[0];
@@ -490,7 +533,16 @@ test('ciclo: OPEN -> STOP', async () => {
   const file = tmpPath();
   await seedOpen(file);
   await runShadowV1LiveRevaluationCycle(
-    deps(file, { bars: () => [bar(D0 + 2 * BAR_MS, 100, 100.5, 94, 94.5)] }, D0 + 3 * BAR_MS)
+    deps(
+      file,
+      {
+        bars: () => [
+          bar(D0 + BAR_MS, 100, 101, 99, 100.5),
+          bar(D0 + 2 * BAR_MS, 100, 100.5, 94, 94.5),
+        ],
+      },
+      D0 + 3 * BAR_MS
+    )
   );
   const rec = loadRecords(file).records[0];
   assert.equal(rec.status, 'STOP');
@@ -503,7 +555,7 @@ test('ciclo: OPEN -> EXPIRED a sessione chiusa', async () => {
   await runShadowV1LiveRevaluationCycle(
     deps(
       file,
-      { bars: () => [bar(D0 + BAR_MS, 100, 101, 99, 100.5), bar(D0 + 2 * BAR_MS, 100.5, 101, 99.5, 100.25)] },
+      { bars: () => fullSessionOpen() },
       CLOSE + BAR_MS
     )
   );
@@ -516,7 +568,7 @@ test('ciclo: PENDING_FILL -> NOT_FILLED a sessione chiusa senza fill', async () 
   const file = tmpPath();
   await seedPending(file);
   await runShadowV1LiveRevaluationCycle(
-    deps(file, { bars: () => [bar(D0 + BAR_MS, 90, 91, 89, 90.5)] }, CLOSE + BAR_MS)
+    deps(file, { bars: () => fullSessionNoFill() }, CLOSE + BAR_MS)
   );
   const rec = loadRecords(file).records[0];
   assert.equal(rec.status, 'NOT_FILLED');
@@ -549,13 +601,18 @@ test('riavvio con archivio barre vuoto: record non terminale invariato, nessuna 
   assert.equal(fs.readFileSync(file, 'utf8'), before);
 });
 
-test('sessione chiusa con archivio barre vuoto: NOT_FILLED (comportamento documentato)', async () => {
+test('sessione chiusa con archivio barre vuoto: record invariato e insufficient_bars', async () => {
   const file = tmpPath();
   await seedPending(file);
   clearShadowV1LiveBarsForTest();
+  const before = fs.readFileSync(file, 'utf8');
   const res = await runShadowV1LiveRevaluationCycle(deps(file, { bars: () => [] }, CLOSE + 1));
-  assert.equal(res.changed, 1);
-  assert.equal(loadRecords(file).records[0].status, 'NOT_FILLED');
+  assert.equal(res.changed, 0);
+  assert.equal(res.written, false);
+  assert.equal(fs.readFileSync(file, 'utf8'), before, 'nessun NOT_FILLED su barre assenti');
+  assert.equal(loadRecords(file).records[0].status, 'PENDING_FILL');
+  assert.equal(getShadowV1LiveCoverageStats().insufficientBars, 1);
+  assert.equal(getShadowV1LiveCoverageStats().byReason.no_bars, 1);
 });
 
 test('riga corrotta nel file: ignorata, il ciclo prosegue', async () => {
@@ -569,6 +626,269 @@ test('riga corrotta nel file: ignorata, il ciclo prosegue', async () => {
   const lines = fs.readFileSync(file, 'utf8').trim().split('\n');
   assert.equal(lines.length, 1, 'la riga corrotta non viene riscritta');
   assert.equal(loadRecords(file).records[0].status, 'OPEN');
+});
+
+// --- Guardia di copertura barre (C3) -----------------------------------------
+
+test('copertura: buco in mezzo blocca il cambio di stato (TARGET non osservato)', async () => {
+  const file = tmpPath();
+  await seedOpen(file);
+  const before = fs.readFileSync(file, 'utf8');
+  const res = await runShadowV1LiveRevaluationCycle(
+    deps(
+      file,
+      {
+        bars: () => [
+          bar(D0 + BAR_MS, 100, 101, 99, 100.5),
+          bar(D0 + 2 * BAR_MS, 100, 101, 99, 100.5),
+          // manca D0 + 3 barre, poi il target
+          bar(D0 + 4 * BAR_MS, 100, 108.5, 99, 108),
+        ],
+      },
+      D0 + 5 * BAR_MS
+    )
+  );
+  assert.equal(res.changed, 0);
+  assert.equal(res.written, false);
+  assert.equal(fs.readFileSync(file, 'utf8'), before);
+  assert.equal(loadRecords(file).records[0].status, 'OPEN');
+  assert.equal(getShadowV1LiveCoverageStats().byReason.interior_hole, 1);
+});
+
+test('copertura: archivio che non copre l\\u2019inizio blocca anche STOP/TARGET contigui', async () => {
+  const file = tmpPath();
+  await seedOpen(file);
+  const res = await runShadowV1LiveRevaluationCycle(
+    deps(
+      file,
+      {
+        bars: () => [
+          bar(D0 + 2 * BAR_MS, 100, 101, 99, 100.5),
+          bar(D0 + 3 * BAR_MS, 100, 108.5, 99, 108),
+        ],
+      },
+      D0 + 4 * BAR_MS
+    )
+  );
+  assert.equal(res.changed, 0);
+  assert.equal(loadRecords(file).records[0].status, 'OPEN');
+  assert.equal(getShadowV1LiveCoverageStats().byReason.leading_hole, 1);
+});
+
+test('copertura: STOP con buco prima della barra di uscita non viene applicato', async () => {
+  const file = tmpPath();
+  await seedOpen(file);
+  const res = await runShadowV1LiveRevaluationCycle(
+    deps(
+      file,
+      {
+        bars: () => [
+          bar(D0 + BAR_MS, 100, 101, 99, 100.5),
+          bar(D0 + 2 * BAR_MS, 100, 101, 99, 100.5),
+          bar(D0 + 4 * BAR_MS, 100, 100.5, 94, 94.5),
+        ],
+      },
+      D0 + 5 * BAR_MS
+    )
+  );
+  assert.equal(res.changed, 0);
+  const rec = loadRecords(file).records[0];
+  assert.equal(rec.status, 'OPEN');
+  assert.equal(rec.r, null);
+});
+
+test('copertura: copre l\\u2019inizio ma non la fine di sessione: nessun EXPIRED', async () => {
+  const file = tmpPath();
+  await seedOpen(file);
+  const before = fs.readFileSync(file, 'utf8');
+  const partial = contiguousBars(D0 + BAR_MS, SESSION_BARS - 1, (i) =>
+    i === 0 ? { o: 100, h: 101, l: 99, c: 100.5 } : { o: 100.5, h: 101, l: 99.5, c: 100.4 }
+  );
+  const res = await runShadowV1LiveRevaluationCycle(
+    deps(file, { bars: () => partial }, CLOSE + 1)
+  );
+  assert.equal(res.changed, 0);
+  assert.equal(fs.readFileSync(file, 'utf8'), before);
+  assert.equal(loadRecords(file).records[0].status, 'OPEN');
+});
+
+test('copertura: copre l\\u2019inizio ma non la fine: nessun NOT_FILLED', async () => {
+  const file = tmpPath();
+  await seedPending(file);
+  const partial = fullSessionNoFill().slice(0, SESSION_BARS - 3);
+  const res = await runShadowV1LiveRevaluationCycle(
+    deps(file, { bars: () => partial }, CLOSE + 1)
+  );
+  assert.equal(res.changed, 0);
+  assert.equal(loadRecords(file).records[0].status, 'PENDING_FILL');
+});
+
+test('riavvio: archivio vuoto non avanza, serie completa si\\u2019', async () => {
+  const file = tmpPath();
+  await seedPending(file);
+  const empty = await runShadowV1LiveRevaluationCycle(
+    deps(file, { bars: () => [] }, CLOSE + 1)
+  );
+  assert.equal(empty.changed, 0);
+  assert.equal(loadRecords(file).records[0].status, 'PENDING_FILL');
+
+  const filled = await runShadowV1LiveRevaluationCycle(
+    deps(file, { bars: () => fullSessionNoFill() }, CLOSE + 2 * BAR_MS)
+  );
+  assert.equal(filled.changed, 1);
+  assert.equal(loadRecords(file).records[0].status, 'NOT_FILLED');
+});
+
+test('copertura: funzione pura, deterministica e senza mutare l\\u2019input', () => {
+  const base = { decidedAtMs: D0, sessionCloseMs: CLOSE, nowMs: CLOSE + BAR_MS };
+  const unordered = [
+    bar(D0 + 2 * BAR_MS, 100, 101, 99, 100.5),
+    bar(D0 + BAR_MS, 100, 101, 99, 100.5),
+    bar(D0 + 3 * BAR_MS, 100, 101, 99, 100.5),
+  ];
+  const snapshot = JSON.stringify(unordered);
+  const first = checkShadowV1LiveBarCoverage({ ...base, bars: unordered });
+  assert.equal(
+    JSON.stringify(unordered),
+    snapshot,
+    'le barre in input non vengono mutate dalla prima chiamata'
+  );
+  const second = checkShadowV1LiveBarCoverage({ ...base, bars: unordered });
+  assert.deepEqual(first, second);
+  assert.equal(first.ok, true);
+  assert.equal(first.firstBarTs, D0 + BAR_MS);
+  assert.equal(first.lastBarTs, D0 + 3 * BAR_MS);
+  assert.equal(first.expectedLastBarTs, CLOSE - BAR_MS);
+  assert.equal(first.barsUsed, 3);
+
+  assert.equal(checkShadowV1LiveBarCoverage({ ...base, bars: [] }).reason, 'no_bars');
+  assert.equal(
+    checkShadowV1LiveBarCoverage({ ...base, bars: [bar(D0 + 2 * BAR_MS, 100, 101, 99, 100.5)] }).reason,
+    'leading_hole'
+  );
+  assert.equal(
+    checkShadowV1LiveBarCoverage({
+      ...base,
+      bars: [bar(D0 + BAR_MS, 100, 101, 99, 100.5), bar(D0 + 3 * BAR_MS, 100, 101, 99, 100.5)],
+    }).reason,
+    'interior_hole'
+  );
+  assert.equal(
+    checkShadowV1LiveBarCoverage({ decidedAtMs: Number.NaN, sessionCloseMs: CLOSE, nowMs: CLOSE, bars: [] }).reason,
+    'invalid_input'
+  );
+});
+
+test('copertura: blocco dipende da esito proposto e stato corrente', () => {
+  const ok = {
+    ok: true,
+    reason: 'ok' as const,
+    firstBarTs: D0 + BAR_MS,
+    lastBarTs: CLOSE - BAR_MS,
+    expectedLastBarTs: CLOSE - BAR_MS,
+    barsUsed: 71,
+  };
+  const missing = { ...ok, ok: false, reason: 'no_bars' as const, firstBarTs: null, lastBarTs: null, barsUsed: 0 };
+  const partialOk = { ...ok, lastBarTs: CLOSE - 2 * BAR_MS };
+
+  // inserimento non terminale: sempre permesso
+  assert.equal(
+    shadowV1LiveCoverageBlock({ proposedStatus: 'PENDING_FILL', currentStatus: null, coverage: missing }),
+    null
+  );
+  // cambio di stato non terminale: richiede copertura
+  assert.equal(
+    shadowV1LiveCoverageBlock({ proposedStatus: 'OPEN', currentStatus: 'PENDING_FILL', coverage: missing }),
+    'no_bars'
+  );
+  // terminale di prezzo: copertura di contiguita' sufficiente
+  assert.equal(
+    shadowV1LiveCoverageBlock({ proposedStatus: 'TARGET', currentStatus: 'OPEN', coverage: partialOk }),
+    null
+  );
+  // terminale di sessione: serve anche la fine sessione
+  assert.equal(
+    shadowV1LiveCoverageBlock({ proposedStatus: 'EXPIRED', currentStatus: 'OPEN', coverage: partialOk }),
+    'interior_hole'
+  );
+  assert.equal(
+    shadowV1LiveCoverageBlock({ proposedStatus: 'NOT_FILLED', currentStatus: 'PENDING_FILL', coverage: ok }),
+    null
+  );
+});
+
+test('route: insufficient_bars con HTTP 200, nessuna scrittura e log limitato', async () => {
+  // Osservazione tardiva (a sessione chiusa) senza barre: il nucleo proporrebbe
+  // NOT_FILLED, la guardia lo blocca e non nasce alcun record.
+  const file = tmpPath();
+  const warnings: string[] = [];
+  const applyWarnings = (m: string) => warnings.push(m);
+  const first = await createObserveHandler(
+    deps(file, { bars: () => [], warn: applyWarnings }, CLOSE + 1)
+  )({ body: validBody(), ip: '5.5.5.5' });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.status, 'ok');
+  assert.equal(first.body.outcome, 'insufficient_bars');
+  assert.equal(first.body.persisted, false);
+  assert.equal(first.body.coverage, 'no_bars');
+  assert.equal(fs.existsSync(file), false, 'nessun file creato su copertura assente');
+  assert.equal(warnings.length, 1, 'un solo warn nel primo evento');
+  assert.match(warnings[0], /copertura barre insufficiente/);
+
+  const second = await createObserveHandler(
+    deps(file, { bars: () => [], warn: applyWarnings }, CLOSE + 1000)
+  )({ body: validBody(), ip: '5.5.5.5' });
+  assert.equal(second.body.outcome, 'insufficient_bars');
+  assert.equal(warnings.length, 1, 'warn limitato in frequenza');
+  assert.equal(getShadowV1LiveCoverageStats().insufficientBars, 2);
+  assert.equal(fs.existsSync(file), false);
+});
+
+test('route: osservazione tardiva con serie completa persiste EXPIRED', async () => {
+  const file = tmpPath();
+  const res = await createObserveHandler(
+    deps(file, { bars: () => fullSessionOpen() }, CLOSE + BAR_MS)
+  )({ body: validBody(), ip: '6.6.6.6' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.outcome, 'EXPIRED');
+  assert.equal(res.body.persisted, true);
+  assert.equal(loadRecords(file).records[0].status, 'EXPIRED');
+});
+
+test('route: la guardia e\\u2019 iniettabile (stub con copertura piena applica l\\u2019esito)', async () => {
+  const file = tmpPath();
+  await seedOpen(file);
+  const res = await runShadowV1LiveRevaluationCycle(
+    deps(
+      file,
+      {
+        bars: () => [bar(D0 + 3 * BAR_MS, 100, 108.5, 99, 108)],
+        coverage: (input) => ({
+          ok: true,
+          reason: 'ok',
+          firstBarTs: input.decidedAtMs + 1,
+          lastBarTs: input.nowMs,
+          expectedLastBarTs: input.sessionCloseMs - 1,
+          barsUsed: 1,
+        }),
+      },
+      D0 + 4 * BAR_MS
+    )
+  );
+  assert.equal(res.changed, 1);
+  assert.equal(loadRecords(file).records[0].status, 'TARGET');
+});
+
+test('rate limit: IP diversi non si limitano e oltre soglia arriva 429', async () => {
+  const file = tmpPath();
+  const handler = createObserveHandler(deps(file));
+  const a: number[] = [];
+  for (let i = 0; i < SHADOW_V1_LIVE_RATE_LIMIT_PER_MINUTE; i += 1) {
+    a.push((await handler({ body: validBody(), ip: '7.7.7.1' })).status);
+  }
+  assert.ok(a.every((s) => s === 200));
+  assert.equal((await handler({ body: validBody(), ip: '7.7.7.1' })).status, 429);
+  assert.equal((await handler({ body: validBody(), ip: '7.7.7.2' })).status, 200);
 });
 
 // --- Isolamento errori (F6) ---------------------------------------------------
