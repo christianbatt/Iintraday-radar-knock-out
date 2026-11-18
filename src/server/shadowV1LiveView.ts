@@ -33,6 +33,15 @@ export const SHADOW_V1_LIVE_VIEW_PATH = '/api/shadow/v1-live/signals';
 /** Tetto dichiarato della risposta: i piu' recenti per `decidedAtMs`. */
 export const SHADOW_V1_LIVE_VIEW_MAX_RECORDS = 500;
 
+/**
+ * Soglia di ritardo di osservazione: 10 minuti, fissata prima di guardare i
+ * dati e non modificabile a posteriori. `firstSeenAtMs` e' il primo istante in
+ * cui il server ha visto il setup, non quello in cui il mercato lo ha
+ * generato: oltre questa soglia il record resta nell'elenco ma e' escluso
+ * dalle metriche, perche' l'esito puo' essere gia' avvenuto prima.
+ */
+export const LATE_THRESHOLD_MS = 600_000;
+
 /** Attivo solo con `'1'` o `'true'` esatti, come `SHADOW_V1_LIVE_COLLECT`. */
 export function isShadowV1LiveViewEnabled(
   env: Record<string, string | undefined> | undefined
@@ -60,6 +69,10 @@ export interface ShadowV1LiveViewRecord {
   sessionCloseMs: number;
   /** Calcolato a lettura, mai persistito. */
   stale: boolean;
+  /** `firstSeenAtMs - decidedAtMs`; `null` se non calcolabile o negativo. */
+  delayMs: number | null;
+  /** `delayMs > LATE_THRESHOLD_MS`. */
+  late: boolean;
   r: number | null;
   fillBarTs: number | null;
   exitBarTs: number | null;
@@ -91,7 +104,24 @@ export interface ShadowV1LiveViewMetrics {
   sumR: number | null;
   /** Drawdown massimo cumulato di `r`, ordine `exitBarTs` poi `decidedAtMs`. */
   maxDrawdownR: number | null;
+  /** Record esclusi dalle metriche per ritardo di osservazione. */
+  nLate: number;
+  /** Denominatore prima dell'esclusione dei record in ritardo. */
+  nResolvedAll: number;
+  /** Record con esito esclusi perche' il ritardo non e' calcolabile. */
+  nDelayUnavailable: number;
   note: string;
+}
+
+function delayOf(record: PersistedShadowV1LiveRecord): number | null {
+  const delay = record.firstSeenAtMs - record.decidedAtMs;
+  if (!Number.isFinite(delay) || delay < 0) return null;
+  return delay;
+}
+
+/** `true` solo con ritardo calcolabile e strettamente oltre la soglia. */
+export function isLateObservation(delayMs: number | null): boolean {
+  return delayMs !== null && delayMs > LATE_THRESHOLD_MS;
 }
 
 export interface ShadowV1LiveViewResponse {
@@ -100,6 +130,8 @@ export interface ShadowV1LiveViewResponse {
   generatedAt: string;
   source: string;
   storeVersion: number;
+  /** Soglia usata per `late`, cosi' il client non la duplica. */
+  lateThresholdMs: number;
   limit: number;
   truncated: boolean;
   skippedLines: number;
@@ -142,8 +174,14 @@ function emptyCounts(): ShadowV1LiveViewCounts {
 function metricsOf(
   records: readonly PersistedShadowV1LiveRecord[]
 ): ShadowV1LiveViewMetrics {
-  const resolved = records
-    .filter((r) => RESOLVED.has(r.status) && typeof r.r === 'number' && Number.isFinite(r.r))
+  const eligible = records.filter(
+    (r) => RESOLVED.has(r.status) && typeof r.r === 'number' && Number.isFinite(r.r)
+  );
+  const resolved = eligible
+    .filter((r) => {
+      const delay = delayOf(r);
+      return delay !== null && !isLateObservation(delay);
+    })
     .sort((a, b) => {
       const ea = a.exitBarTs ?? a.decidedAtMs;
       const eb = b.exitBarTs ?? b.decidedAtMs;
@@ -166,15 +204,23 @@ function metricsOf(
     if (dd > maxDd) maxDd = dd;
   }
 
+  const nLate = eligible.filter((r) => isLateObservation(delayOf(r))).length;
+  const nDelayUnavailable = eligible.filter((r) => delayOf(r) === null).length;
+
   return {
     resolved: n,
     meanR: n > 0 ? round(sum / n, 4) : null,
     winRatePct: n > 0 ? round((wins / n) * 100, 2) : null,
     sumR: n > 0 ? round(sum, 4) : null,
     maxDrawdownR: n > 0 ? round(maxDd, 4) : null,
+    nLate,
+    nResolvedAll: eligible.length,
+    nDelayUnavailable,
     note:
       'Esplorativo: R di prezzo del nucleo V1-live, senza costi ne\' leva. ' +
-      'Denominatore = record con esito STOP/TARGET/EXPIRED e r finito. ' +
+      'Denominatore = record con esito STOP/TARGET/EXPIRED e r finito, esclusi ' +
+      'quelli osservati oltre ' +
+      `${LATE_THRESHOLD_MS / 60000} minuti dalla decisione o senza ritardo calcolabile. ` +
       'NOT_FILLED, PENDING_FILL e OPEN sono esclusi e non valgono zero.',
   };
 }
@@ -192,6 +238,8 @@ function toViewRecord(
     decidedAtMs: record.decidedAtMs,
     sessionCloseMs: record.sessionCloseMs,
     stale: isStale(record, nowMs),
+    delayMs: delayOf(record),
+    late: isLateObservation(delayOf(record)),
     r: typeof record.r === 'number' && Number.isFinite(record.r) ? record.r : null,
     fillBarTs: record.fillBarTs,
     exitBarTs: record.exitBarTs,
@@ -260,6 +308,7 @@ export function buildShadowV1LiveView(input: {
     generatedAt: input.generatedAt,
     source: SHADOW_V1_LIVE_SIGNALS_PATH,
     storeVersion: SHADOW_V1_LIVE_STORE_VERSION,
+    lateThresholdMs: LATE_THRESHOLD_MS,
     limit,
     truncated,
     skippedLines,
@@ -272,6 +321,7 @@ export function buildShadowV1LiveView(input: {
       'Nessuna retention: il file cresce; la vista mostra al massimo gli ultimi ' +
         `${limit} record per decidedAtMs.`,
       'Righe con stato non riconosciuto sono ignorate e contate in skippedLines.',
+      `Ritardo di osservazione oltre ${LATE_THRESHOLD_MS / 60000} minuti: record esclusi dalle metriche (nLate).`,
       'Campione esplorativo, non un risultato operativo.',
     ],
   };

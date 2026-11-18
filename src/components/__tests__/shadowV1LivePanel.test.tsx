@@ -34,6 +34,8 @@ function row(over: Partial<ShadowV1LiveViewRecord> & { key: string }): ShadowV1L
     decidedAtMs: NOW - 3 * 60 * 60 * 1000,
     sessionCloseMs: NOW + 60 * 60 * 1000,
     stale: false,
+    delayMs: 0,
+    late: false,
     r: null,
     fillBarTs: null,
     exitBarTs: null,
@@ -49,6 +51,7 @@ function view(over: Partial<ShadowV1LiveViewResponse> = {}): ShadowV1LiveViewRes
     generatedAt: new Date(NOW).toISOString(),
     source: 'artifacts/shadow_v1_live/signals.jsonl',
     storeVersion: 1,
+    lateThresholdMs: 600_000,
     limit: 500,
     truncated: false,
     skippedLines: 0,
@@ -70,12 +73,15 @@ function view(over: Partial<ShadowV1LiveViewResponse> = {}): ShadowV1LiveViewRes
       winRatePct: 50,
       sumR: 1,
       maxDrawdownR: 1,
+      nLate: 1,
+      nResolvedAll: 3,
+      nDelayUnavailable: 0,
       note: 'Esplorativo: R di prezzo del nucleo V1-live, senza costi ne\' leva.',
     },
     records: [
       row({ key: 'a', status: 'OPEN', stale: true }),
       row({ key: 'b', status: 'STOP', r: -1, exitBarTs: NOW - 2 * 60 * 60 * 1000 }),
-      row({ key: 'c', status: 'TARGET', r: 2, ticker: 'MSFT' }),
+      row({ key: 'c', status: 'TARGET', r: 2, ticker: 'MSFT', delayMs: 900_000, late: true }),
     ],
     limitations: ['Sola lettura.'],
     ...over,
@@ -264,5 +270,50 @@ describe('ShadowV1LivePanel — aggiornamento e campi', () => {
     for (const hidden of ['entryPrice', 'stopPrice', 'target1', 'moduleVersion', 'reason:']) {
       assert.equal(out.includes(hidden), false, `non deve comparire ${hidden}`);
     }
+  });
+});
+
+describe('ShadowV1LivePanel — ritardo di osservazione', () => {
+  it('mostra la colonna ritardo, il marcatore late e i due conteggi', () => {
+    const out = html(<ShadowV1LivePanel data={view()} v2={V2} flag="on" />);
+    assert.match(out, /ritardo/);
+    assert.match(out, /data-testid="v1live-late"/);
+    assert.match(out, /15m/, 'ritardo in minuti arrotondato');
+    assert.match(out, /0m/, 'ritardo nullo mostrato');
+    assert.match(out, /data-testid="v1live-late-note"/);
+    assert.match(out, /escludendo i record in ritardo di osservazione/);
+    assert.match(out, /inclusi 2, esclusi 1/);
+    assert.match(out, /su 3 con\s+esito|su 3 con esito/);
+    assert.match(out, /&gt; 10 min/);
+  });
+
+  it('senza record late il conteggio esclusi e zero', () => {
+    const out = html(
+      <ShadowV1LivePanel
+        flag="on"
+        data={view({
+          metrics: { ...view().metrics, nLate: 0, nResolvedAll: 2 },
+          records: [row({ key: 'a', status: 'STOP', r: -1 })],
+        })}
+      />
+    );
+    assert.match(out, /inclusi 2, esclusi 0/);
+    assert.doesNotMatch(out, /data-testid="v1live-late"/);
+  });
+
+  it('il pannello non ricalcola le metriche ne i ritardi', () => {
+    const out = html(
+      <ShadowV1LivePanel
+        flag="on"
+        data={view({
+          metrics: { ...view().metrics, meanR: 7.77, resolved: 99, nLate: 4, nResolvedAll: 103 },
+          records: [row({ key: 'a', status: 'STOP', r: -1, delayMs: 42_000 })],
+        })}
+      />
+    );
+    assert.match(out, /7\.770R/);
+    assert.match(out, /n=99/);
+    assert.match(out, /esclusi 4/);
+    assert.doesNotMatch(out, /0\.700R/);
   });
 });

@@ -58,6 +58,12 @@ function stamp(ms: number): string {
   return `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')}Z`;
 }
 
+function delayLabel(delayMs: number | null): string {
+  if (delayMs == null || !Number.isFinite(delayMs)) return 'n/d';
+  const minutes = delayMs / 60_000;
+  return `${minutes < 10 ? minutes.toFixed(1) : Math.round(minutes)}m`;
+}
+
 export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
   data: dataProp,
   v2: v2Prop,
@@ -226,6 +232,14 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
 
           {metrics?.note && <p className="text-[10px] text-slate-500">{metrics.note}</p>}
 
+          <p className="text-[10px] text-amber-200" data-testid="v1live-late-note">
+            metriche calcolate escludendo i record in ritardo di osservazione
+            {data.lateThresholdMs ? ` (> ${Math.round(data.lateThresholdMs / 60_000)} min)` : ''}:
+            inclusi {metrics?.resolved ?? 0}, esclusi {metrics?.nLate ?? 0}, senza ritardo
+            calcolabile {metrics?.nDelayUnavailable ?? 0}, su {metrics?.nResolvedAll ?? 0} con
+            esito.
+          </p>
+
           {records.length === 0 ? (
             <p className="text-xs text-slate-400" data-testid="v1live-empty">
               nessun record persistito
@@ -240,6 +254,7 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
                     <th className="text-left font-normal">mercato</th>
                     <th className="text-left font-normal">direzione</th>
                     <th className="text-left font-normal">stato</th>
+                    <th className="text-right font-normal">ritardo</th>
                     <th className="text-right font-normal">R</th>
                   </tr>
                 </thead>
@@ -260,6 +275,17 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
                             stale
                           </span>
                         )}
+                        {r.late && (
+                          <span
+                            className="ml-1 text-[9px] text-rose-300"
+                            data-testid="v1live-late"
+                          >
+                            late
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-1 text-right text-slate-400">
+                        {delayLabel(r.delayMs)}
                       </td>
                       <td className="py-1 text-right">{r.r != null ? num(r.r, 2, 'R') : '—'}</td>
                     </tr>
