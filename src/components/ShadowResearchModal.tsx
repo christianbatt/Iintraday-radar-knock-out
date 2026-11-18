@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import ShadowResearchPanel, { type ShadowPanelData } from './ShadowResearchPanel';
+import ShadowV1LivePanel from './ShadowV1LivePanel';
 
 /**
  * Trigger + modale per ShadowResearchPanel (Passo M).
@@ -83,6 +84,7 @@ export const ShadowResearchModal: React.FC<{
               </p>
             )}
             {!loading && !shownError && <ShadowResearchPanel data={data} />}
+            <ShadowV1LivePanel />
           </div>
         </div>
       )}

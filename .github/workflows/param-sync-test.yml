@@ -37,3 +37,5 @@ jobs:
         run: npm run test:shadowv1livebridge
       - name: Shadow V1-live view tests
         run: npm run test:shadowv1liveview
+      - name: Shadow V1-live panel tests
+        run: npm run test:shadowv1livepanel

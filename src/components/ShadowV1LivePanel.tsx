@@ -1,0 +1,309 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  SHADOW_V1_LIVE_VIEW_PANEL,
+  isShadowV1LivePanelEnabled,
+  type ShadowV1LiveViewPanelFlag,
+} from '../config/shadowV1LiveView';
+import type {
+  ShadowV1LiveViewRecord,
+  ShadowV1LiveViewResponse,
+} from '../server/shadowV1LiveView';
+
+/**
+ * Pannello SHADOW V1 LIVE (PR D2) — sola lettura.
+ *
+ * Mostra i record persistiti letti da `GET /api/shadow/v1-live/signals` e
+ * affianca i numeri V2, senza calcolare alcun confronto: le due popolazioni
+ * non sono omogenee (ingresso, barriera temporale, costi) e la metriche V1
+ * `r` e' un R di prezzo, non un `rNet`. Il confronto quantitativo e'
+ * dichiarato non disponibile, non simulato.
+ *
+ * Flag `SHADOW_V1_LIVE_VIEW_PANEL` (default `'off'`): a flag OFF il componente
+ * non renderizza nulla e non fa richieste. `data`/`v2`/`error` sono iniettabili
+ * solo per i test statici.
+ */
+export interface ShadowV1LiveV2Summary {
+  nSignals?: number;
+  nResolved?: number;
+  meanRGross?: number | null;
+  meanRNet?: number | null;
+  winRatePct?: number | null;
+}
+
+export interface ShadowV1LivePanelProps {
+  data?: ShadowV1LiveViewResponse | null;
+  v2?: ShadowV1LiveV2Summary | null;
+  error?: string | null;
+  loading?: boolean;
+  fetchImpl?: typeof fetch;
+  /** Solo per i test: in produzione vale la costante di config. */
+  flag?: ShadowV1LiveViewPanelFlag;
+}
+
+const STATUS_LABEL: Record<ShadowV1LiveViewRecord['status'], string> = {
+  PENDING_FILL: 'in attesa',
+  OPEN: 'aperto',
+  STOP: 'stop',
+  TARGET: 'target',
+  EXPIRED: 'scaduto',
+  NOT_FILLED: 'non riempito',
+};
+
+function num(value: number | null | undefined, decimals = 2, suffix = ''): string {
+  if (value == null || !Number.isFinite(value)) return 'n/d';
+  return `${value.toFixed(decimals)}${suffix}`;
+}
+
+function stamp(ms: number): string {
+  return `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')}Z`;
+}
+
+export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
+  data: dataProp,
+  v2: v2Prop,
+  error: errorProp,
+  loading: loadingProp,
+  fetchImpl,
+  flag,
+}) => {
+  const enabled = isShadowV1LivePanelEnabled(flag ?? SHADOW_V1_LIVE_VIEW_PANEL);
+  const live = dataProp === undefined;
+
+  const [fetched, setFetched] = useState<ShadowV1LiveViewResponse | null>(null);
+  const [v2Fetched, setV2Fetched] = useState<ShadowV1LiveV2Summary | null>(null);
+  const [netError, setNetError] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(live && enabled);
+  const [tick, setTick] = useState(0);
+
+  const refresh = useCallback(() => setTick((n) => n + 1), []);
+
+  useEffect(() => {
+    if (!enabled || !live) return;
+    let alive = true;
+    const doFetch = fetchImpl ?? fetch;
+    setLoading(true);
+    setNetError(null);
+
+    const readJson = (url: string): Promise<unknown> =>
+      doFetch(url).then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      });
+
+    Promise.all([
+      readJson('/api/shadow/v1-live/signals'),
+      readJson('/api/shadow/latest').catch(() => null),
+    ])
+      .then(([v1, shadow]) => {
+        if (!alive) return;
+        setFetched(v1 as ShadowV1LiveViewResponse);
+        const summary = (shadow as { shadowV2?: ShadowV1LiveV2Summary } | null)?.shadowV2;
+        setV2Fetched(summary ?? null);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setNetError('errore di rete: impossibile leggere i record V1-live');
+        setLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [enabled, live, fetchImpl, tick]);
+
+  if (!enabled) return null;
+
+  const data = live ? fetched : dataProp;
+  const v2 = live ? v2Fetched : v2Prop;
+  const shownError = errorProp ?? netError;
+  const isLoading = loadingProp ?? loading;
+
+  const records = data?.records ?? [];
+  const counts = data?.counts ?? null;
+  const metrics = data?.metrics ?? null;
+
+  return (
+    <section
+      data-testid="v1live-panel"
+      className="rounded-lg border border-slate-700 bg-slate-950/40 p-3 space-y-3"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <span className="text-xs font-bold text-white">Shadow V1-live</span>{' '}
+          <span className="text-[10px] text-slate-500">sola lettura, dati persistiti</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-slate-500">esplorativo</span>
+          {live && (
+            <button
+              type="button"
+              onClick={refresh}
+              disabled={isLoading}
+              data-testid="v1live-refresh"
+              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-bold cursor-pointer disabled:opacity-50"
+            >
+              Aggiorna
+            </button>
+          )}
+        </div>
+      </div>
+
+      {isLoading && (
+        <p className="text-xs text-slate-400" data-testid="v1live-loading">
+          caricamento…
+        </p>
+      )}
+
+      {shownError && (
+        <p className="text-xs text-rose-300" data-testid="v1live-error">
+          {shownError}
+        </p>
+      )}
+
+      {!isLoading && !shownError && data && !data.available && (
+        <p className="text-xs text-amber-300" data-testid="v1live-unavailable">
+          vista non disponibile: {data.reason ?? 'motivo non dichiarato'}
+        </p>
+      )}
+
+      {!isLoading && !shownError && data && (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="rounded bg-slate-900/60 p-2">
+              <div className="text-[10px] text-slate-500">Record</div>
+              <div className="text-sm font-bold text-white">{counts?.persisted ?? 0}</div>
+            </div>
+            <div className="rounded bg-slate-900/60 p-2">
+              <div className="text-[10px] text-slate-500">Non terminali (stale)</div>
+              <div className="text-sm font-bold text-white">
+                {counts?.nonTerminal ?? 0} ({counts?.stale ?? 0})
+              </div>
+            </div>
+            <div className="rounded bg-slate-900/60 p-2">
+              <div className="text-[10px] text-slate-500">Con esito / non riempiti</div>
+              <div className="text-sm font-bold text-white">
+                {(counts?.terminal ?? 0) - (counts?.notFilled ?? 0)} / {counts?.notFilled ?? 0}
+              </div>
+            </div>
+            <div className="rounded bg-slate-900/60 p-2">
+              <div className="text-[10px] text-slate-500">Righe ignorate</div>
+              <div className="text-sm font-bold text-white">{data.skippedLines}</div>
+            </div>
+          </div>
+
+          {data.truncated && (
+            <p className="text-[10px] text-amber-300" data-testid="v1live-truncated">
+              mostrati gli ultimi {data.limit} record per data di decisione; la vista e'
+              troncata, non completa.
+            </p>
+          )}
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="rounded bg-slate-900/60 p-2">
+              <div className="text-[10px] text-slate-500">
+                R medio (n={metrics?.resolved ?? 0})
+              </div>
+              <div className="text-sm font-bold text-white">{num(metrics?.meanR, 3, 'R')}</div>
+            </div>
+            <div className="rounded bg-slate-900/60 p-2">
+              <div className="text-[10px] text-slate-500">Quota R&gt;0</div>
+              <div className="text-sm font-bold text-white">
+                {num(metrics?.winRatePct, 1, '%')}
+              </div>
+            </div>
+            <div className="rounded bg-slate-900/60 p-2">
+              <div className="text-[10px] text-slate-500">Somma R</div>
+              <div className="text-sm font-bold text-white">{num(metrics?.sumR, 2, 'R')}</div>
+            </div>
+            <div className="rounded bg-slate-900/60 p-2">
+              <div className="text-[10px] text-slate-500">Max DD</div>
+              <div className="text-sm font-bold text-white">
+                {num(metrics?.maxDrawdownR, 2, 'R')}
+              </div>
+            </div>
+          </div>
+
+          {metrics?.note && <p className="text-[10px] text-slate-500">{metrics.note}</p>}
+
+          {records.length === 0 ? (
+            <p className="text-xs text-slate-400" data-testid="v1live-empty">
+              nessun record persistito
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-[10px] text-slate-300">
+                <thead className="text-slate-500">
+                  <tr>
+                    <th className="text-left font-normal">decisione</th>
+                    <th className="text-left font-normal">ticker</th>
+                    <th className="text-left font-normal">mercato</th>
+                    <th className="text-left font-normal">direzione</th>
+                    <th className="text-left font-normal">stato</th>
+                    <th className="text-right font-normal">R</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {records.map((r) => (
+                    <tr key={r.key} data-testid="v1live-row" className="border-t border-slate-800">
+                      <td className="py-1">{stamp(r.decidedAtMs)}</td>
+                      <td className="py-1 font-bold text-white">{r.ticker}</td>
+                      <td className="py-1">{r.market}</td>
+                      <td className="py-1">{r.direction}</td>
+                      <td className="py-1">
+                        {STATUS_LABEL[r.status]}
+                        {r.stale && (
+                          <span
+                            className="ml-1 text-[9px] text-amber-300"
+                            data-testid="v1live-stale"
+                          >
+                            stale
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-1 text-right">{r.r != null ? num(r.r, 2, 'R') : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      <div className="rounded bg-slate-900/60 p-2 space-y-1" data-testid="v1live-nocompare">
+        <p className="text-[10px] font-bold text-amber-300">
+          Confronto quantitativo V1-live / V2 non disponibile
+        </p>
+        <p className="text-[10px] text-slate-500">
+          Le due popolazioni non sono omogenee: ingresso V1 al tocco del livello e V2
+          all&apos;apertura della barra successiva; barriera temporale V1 alla chiusura di
+          sessione e V2 a fine finestra verticale; V1 senza costi ne&apos; leva, V2 con
+          frizioni e leva KO. Le etichette &quot;R&quot; non indicano la stessa metrica.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+          <div className="rounded bg-slate-950/60 p-2">
+            <div className="text-[10px] text-slate-400 font-bold">V1-live</div>
+            <div className="text-[10px] text-slate-500">
+              R di prezzo, n={metrics?.resolved ?? 0} record con esito
+            </div>
+            <div className="text-[10px] text-slate-300">
+              medio {num(metrics?.meanR, 3, 'R')} · somma {num(metrics?.sumR, 2, 'R')}
+            </div>
+          </div>
+          <div className="rounded bg-slate-950/60 p-2">
+            <div className="text-[10px] text-slate-400 font-bold">V2 (riferimento, campione diverso)</div>
+            <div className="text-[10px] text-slate-500">
+              n={v2?.nResolved ?? 0} risolti su {v2?.nSignals ?? 0} segnali
+            </div>
+            <div className="text-[10px] text-slate-300">
+              lordo {num(v2?.meanRGross, 3, 'R')} · netto {num(v2?.meanRNet, 3, 'R')}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+};
+
+export default ShadowV1LivePanel;
