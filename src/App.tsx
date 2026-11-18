@@ -20,6 +20,7 @@ import {
 } from './types/radar';
 import { TRADING_PARAMS } from './config/tradingParams';
 import { getMarketTime } from './utils/timezone';
+import { notifyShadowV1Live } from './utils/shadowV1LiveBridge';
 import { loadParameters, sanitizeScoreParameters, shouldApplyPolledParameters, shouldApplyCloudParameters, shouldPushLocalParameters } from './utils/paramSync';
 import { DEFAULT_TRADE_REPUBLIC_UNDERLYINGS } from './data/defaultUnderlyings';
 import {
@@ -1179,6 +1180,12 @@ export default function App() {
       return next;
     });
   }, []);
+
+  // Shadow V1-live: osservazione passiva, spenta di default (nessuna richiesta a flag OFF).
+  useEffect(() => {
+    notifyShadowV1Live(setupEU);
+    notifyShadowV1Live(setupUS);
+  }, [setupEU, setupUS]);
 
   useEffect(() => {
     if (!browserAlertsEnabled || getNotificationPermission() !== 'granted') return;
