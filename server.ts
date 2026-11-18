@@ -36,6 +36,7 @@ import { AILearnedInsight, VwapSignalState, VwapDataQuality, SetupIndicators, In
 import { runNightlyLearning } from './scripts/nightly_learning';
 import { authStartupWarning } from './src/utils/authStartupWarning';
 import { recordClosedBarsForShadowV2, observeShadowV2Scan } from './src/server/shadowV2Collector';
+import { recordBarsForShadowV1Live, registerShadowV1LiveCollector } from './src/server/shadowV1LiveCollector';
 import { formatShadowV2SignalsCsv, formatShadowV2SignalsJsonl, ShadowV2Record } from './src/knowledge/shadowV2';
 
 dotenv.config();
@@ -1196,6 +1197,7 @@ async function getIntraday5mMetrics(
 
       const barsForShadowV2 = warmup.bars.length > inMemoryBars.length ? warmup.bars : inMemoryBars;
       recordClosedBarsForShadowV2(ticker, market, barsForShadowV2);
+      recordBarsForShadowV1Live(ticker, market, barsForShadowV2);
     } catch {
       setupIndicators = null;
     }
@@ -3406,6 +3408,7 @@ app.get('/api/shadow/v2/export', async (req: Request, res: Response) => {
 // Serve public static assets (manifest, icons, favicon)
 // Passo L: pannello shadow research, sola lettura (artefatti offline).
 registerShadowRoutesFromDisk(app);
+registerShadowV1LiveCollector(app);
 
 app.use(express.static(path.join(__dirname, 'public')));
 

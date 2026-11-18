@@ -31,3 +31,5 @@ jobs:
         run: npm run test:sessionclose
       - name: Shadow V1-live store tests
         run: npm run test:shadowv1livestore
+      - name: Shadow V1-live collector tests
+        run: npm run test:shadowv1livecollector
