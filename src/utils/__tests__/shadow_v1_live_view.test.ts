@@ -15,6 +15,8 @@ import {
   buildShadowV1LiveView,
   createShadowV1LiveViewHandler,
   isShadowV1LiveViewEnabled,
+  isLateObservation,
+  LATE_THRESHOLD_MS,
   registerShadowV1LiveViewRoute,
   SHADOW_V1_LIVE_VIEW_ENV,
   SHADOW_V1_LIVE_VIEW_MAX_RECORDS,
@@ -132,6 +134,7 @@ test('vista: schema stabile e ordinamento decrescente per decidedAtMs', () => {
     'available',
     'counts',
     'generatedAt',
+    'lateThresholdMs',
     'limit',
     'limitations',
     'metrics',
@@ -145,11 +148,13 @@ test('vista: schema stabile e ordinamento decrescente per decidedAtMs', () => {
   assert.deepEqual(records.map((r) => r.key), ['c', 'b', 'a']);
   assert.deepEqual(Object.keys(records[0]).sort(), [
     'decidedAtMs',
+    'delayMs',
     'direction',
     'exitBarTs',
     'exitPrice',
     'fillBarTs',
     'key',
+    'late',
     'market',
     'r',
     'sessionCloseMs',
@@ -411,4 +416,102 @@ test('vista: loadRecords reale su file assente restituisce elenco vuoto senza cr
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('vista: delayMs e soglia late (600000 non late, 600001 late)', () => {
+  assert.equal(LATE_THRESHOLD_MS, 600_000);
+  assert.equal(isLateObservation(600_000), false);
+  assert.equal(isLateObservation(600_001), true);
+  assert.equal(isLateObservation(null), false);
+
+  const res = handlerWith({
+    records: [
+      rec({ key: 'a', firstSeenAtMs: D0 }),
+      rec({ key: 'b', firstSeenAtMs: D0 + 600_000 }),
+      rec({ key: 'c', firstSeenAtMs: D0 + 600_001 }),
+    ],
+  })();
+  const body = res.body as {
+    lateThresholdMs: number;
+    records: Array<{ key: string; delayMs: number | null; late: boolean }>;
+  };
+  assert.equal(body.lateThresholdMs, LATE_THRESHOLD_MS);
+  const byKey = new Map(body.records.map((r) => [r.key, r]));
+  assert.equal(byKey.get('a')?.delayMs, 0);
+  assert.equal(byKey.get('a')?.late, false);
+  assert.equal(byKey.get('b')?.delayMs, 600_000);
+  assert.equal(byKey.get('b')?.late, false);
+  assert.equal(byKey.get('c')?.delayMs, 600_001);
+  assert.equal(byKey.get('c')?.late, true);
+});
+
+test('vista: delay non calcolabile o negativo => null, contato e fuori dalle metriche', () => {
+  const res = handlerWith({
+    records: [
+      rec({ key: 'ok', status: 'TARGET', r: 2, exitBarTs: D0 + 60_000, firstSeenAtMs: D0 }),
+      rec({ key: 'neg', status: 'TARGET', r: 10, exitBarTs: D0 + 120_000, firstSeenAtMs: D0 - 1000 }),
+      rec({ key: 'nan', status: 'TARGET', r: 10, exitBarTs: D0 + 180_000, firstSeenAtMs: Number.NaN }),
+    ],
+  })();
+  const body = res.body as {
+    records: Array<{ key: string; delayMs: number | null; late: boolean }>;
+    metrics: { resolved: number; meanR: number | null; nDelayUnavailable: number; nResolvedAll: number };
+  };
+  const byKey = new Map(body.records.map((r) => [r.key, r]));
+  assert.equal(byKey.get('neg')?.delayMs, null);
+  assert.equal(byKey.get('neg')?.late, false);
+  assert.equal(byKey.get('nan')?.delayMs, null);
+  assert.equal(body.metrics.nDelayUnavailable, 2);
+  assert.equal(body.metrics.nResolvedAll, 3);
+  assert.equal(body.metrics.resolved, 1);
+  assert.equal(body.metrics.meanR, 2);
+});
+
+test('vista: metriche senza i record late, con nLate e nResolvedAll coerenti', () => {
+  const res = handlerWith({
+    records: [
+      rec({ key: 't1', status: 'TARGET', r: 2, exitBarTs: D0 + 60_000, firstSeenAtMs: D0 }),
+      rec({ key: 's1', status: 'STOP', r: -1, exitBarTs: D0 + 120_000, firstSeenAtMs: D0 + 20 * 60_000 }),
+      rec({ key: 'e1', status: 'EXPIRED', r: -0.5, exitBarTs: D0 + 180_000, firstSeenAtMs: D0 + 5 * 60_000 }),
+      rec({ key: 'b1', status: 'TARGET', r: 10, exitBarTs: D0 + 240_000, firstSeenAtMs: D0 - 1 }),
+    ],
+  })();
+  const m = (res.body as {
+    metrics: {
+      resolved: number;
+      meanR: number | null;
+      winRatePct: number | null;
+      sumR: number | null;
+      maxDrawdownR: number | null;
+      nLate: number;
+      nResolvedAll: number;
+      nDelayUnavailable: number;
+    };
+  }).metrics;
+  assert.equal(m.nResolvedAll, 4);
+  assert.equal(m.nLate, 1);
+  assert.equal(m.nDelayUnavailable, 1);
+  assert.equal(m.resolved, 2);
+  assert.equal(m.meanR, 0.75);
+  assert.equal(m.winRatePct, 50);
+  assert.equal(m.sumR, 1.5);
+  assert.equal(m.maxDrawdownR, 0.5);
+});
+
+test('vista: i record late restano nell elenco e non entrano nei conteggi di stato', () => {
+  const res = handlerWith({
+    records: [
+      rec({ key: 'late', status: 'TARGET', r: 2, firstSeenAtMs: D0 + 30 * 60_000 }),
+      rec({ key: 'ok', status: 'STOP', r: -1, firstSeenAtMs: D0 }),
+    ],
+  })();
+  const body = res.body as {
+    records: Array<{ key: string; late: boolean }>;
+    counts: { persisted: number; target: number; stop: number; stale: number };
+  };
+  assert.equal(body.records.length, 2);
+  assert.equal(body.records.find((r) => r.key === 'late')?.late, true);
+  assert.equal(body.counts.persisted, 2);
+  assert.equal(body.counts.target, 1);
+  assert.equal(body.counts.stop, 1);
 });
