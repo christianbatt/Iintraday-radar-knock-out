@@ -36,7 +36,13 @@ import { AILearnedInsight, VwapSignalState, VwapDataQuality, SetupIndicators, In
 import { runNightlyLearning } from './scripts/nightly_learning';
 import { authStartupWarning } from './src/utils/authStartupWarning';
 import { recordClosedBarsForShadowV2, observeShadowV2Scan, syncShadowV2SummaryFromDisk } from './src/server/shadowV2Collector';
-import { recordBarsForShadowV1Live, registerShadowV1LiveCollector } from './src/server/shadowV1LiveCollector';
+import {
+  recordBarsForShadowV1Live,
+  registerShadowV1LiveCollector,
+  shadowV1LiveBodyLimitErrorHandler,
+  shadowV1LiveBodyLimitParser,
+  SHADOW_V1_LIVE_OBSERVE_PATH,
+} from './src/server/shadowV1LiveCollector';
 import { registerShadowV1LiveViewRoute } from './src/server/shadowV1LiveView';
 import { observeShadowV1LiveScan } from './src/server/shadowV1LiveScanner';
 import { formatShadowV2SignalsCsv, formatShadowV2SignalsJsonl, ShadowV2Record } from './src/knowledge/shadowV2';
@@ -165,6 +171,10 @@ let aiLearnedMemory: AILearnedInsight[] = loadAIMemoryFromDisk();
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
+// SIC-2: limite dedicato alla route observe, montato prima del parser globale.
+// body-parser salta i body gia' letti, quindi gli altri endpoint restano a 10 MB.
+app.use(SHADOW_V1_LIVE_OBSERVE_PATH, shadowV1LiveBodyLimitParser(express.json));
+app.use(SHADOW_V1_LIVE_OBSERVE_PATH, shadowV1LiveBodyLimitErrorHandler());
 app.use(express.json({ limit: '10mb' }));
 app.set('trust proxy', 1);
 

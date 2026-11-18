@@ -45,6 +45,14 @@ export const SHADOW_V1_LIVE_MODULE_VERSION = 'shadowV1Live@1';
  */
 export const SHADOW_V1_LIVE_SIGNALS_PATH = 'artifacts/shadow_v1_live/signals.jsonl';
 
+/**
+ * Provenienza di un record. 'client' = route HTTP dal browser, 'server-scanner' =
+ * emissione server-side. E' un'etichetta informativa, non un controllo di
+ * sicurezza e non un'attestazione: la route HTTP non autentica l'origine del
+ * setup. I record scritti prima di questo campo non lo hanno e restano validi.
+ */
+export type ShadowV1LiveRecordSource = 'client' | 'server-scanner';
+
 /** Stati che possono stare su disco. */
 export type PersistableShadowV1LiveStatus =
   | 'PENDING_FILL'
@@ -75,6 +83,8 @@ export interface PersistedShadowV1LiveRecord {
   exitPrice: number | null;
   moduleVersion: string;
   updatedAtMs: number;
+  /** Opzionale: assente nei record scritti prima dell'introduzione del campo. */
+  source?: ShadowV1LiveRecordSource;
 }
 
 /** Contesto minimo che il chiamante conosce del setup emesso. */
@@ -87,6 +97,8 @@ export interface ShadowV1LiveObservationContext {
   target: number;
   decidedAtMs: number;
   sessionCloseMs: number;
+  /** Provenienza da persistere sui nuovi record; assente = nessuna etichetta. */
+  source?: ShadowV1LiveRecordSource;
 }
 
 export interface ShadowV1LiveObservation {
@@ -105,6 +117,7 @@ export interface ShadowV1LiveObservation {
   fillBarTs: number | null;
   exitBarTs: number | null;
   exitPrice: number | null;
+  source?: ShadowV1LiveRecordSource;
 }
 
 export type UpsertOutcome =
@@ -185,6 +198,7 @@ export function observationFromResult(
     fillBarTs: result.fillBarTs,
     exitBarTs: result.exitBarTs,
     exitPrice: result.exitPrice,
+    ...(context.source ? { source: context.source } : {}),
   };
 }
 
@@ -238,6 +252,7 @@ export function upsertObservation(
       exitPrice: observation.exitPrice,
       moduleVersion: SHADOW_V1_LIVE_MODULE_VERSION,
       updatedAtMs: nowMs,
+      ...(observation.source ? { source: observation.source } : {}),
     };
     const next = [...records, inserted].sort(byOrder);
     return { records: next, changed: true, outcome: 'INSERTED' };
@@ -358,6 +373,11 @@ export function isValidPersistedRecord(value: unknown): value is PersistedShadow
     if (v !== null && !isFiniteNumber(v)) return false;
   }
   if (typeof r.moduleVersion !== 'string' || r.moduleVersion.length === 0) return false;
+  // `source` e' opzionale (record storici); se presente deve essere una stringa
+  // non vuota. Un valore nuovo di una versione futura non invalida il record.
+  if (r.source !== undefined && (typeof r.source !== 'string' || r.source.length === 0)) {
+    return false;
+  }
   return true;
 }
 

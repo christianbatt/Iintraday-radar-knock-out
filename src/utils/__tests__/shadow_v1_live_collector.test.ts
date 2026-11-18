@@ -9,14 +9,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import express from 'express';
 import {
   barsForShadowV1Live,
   clearShadowV1LiveBarsForTest,
   createObserveHandler,
   createShadowV1LiveStoreQueue,
+  isShadowV1LiveOriginAllowed,
+  observeShadowV1LiveFromServer,
+  shadowV1LiveBodyLimitErrorHandler,
+  shadowV1LiveBodyLimitParser,
+  SHADOW_V1_LIVE_ALLOWED_ORIGINS_ENV,
+  SHADOW_V1_LIVE_SOURCE_CLIENT,
+  SHADOW_V1_LIVE_SOURCE_SERVER_SCANNER,
   checkShadowV1LiveBarCoverage,
   getShadowV1LiveCoverageStats,
   isShadowV1LiveCollectEnabled,
@@ -1021,10 +1030,11 @@ test('server.ts: una sola alimentazione barre e una sola registrazione', () => {
   assert.equal(feed.length, 1, 'una sola riga additiva di alimentazione');
   const registrations = source.match(/registerShadowV1LiveCollector\(app\);/g) ?? [];
   assert.equal(registrations.length, 1, 'una sola registrazione');
-  assert.ok(
-    source.includes(
-      "import { recordBarsForShadowV1Live, registerShadowV1LiveCollector } from './src/server/shadowV1LiveCollector';"
-    ),
+  // Import verificato per simboli e modulo, non per formattazione: la lista
+  // puo' essere su piu' righe (P10 aggiunge i middleware del limite body).
+  assert.match(
+    source,
+    /import\s*\{[^}]*\brecordBarsForShadowV1Live\b[^}]*\bregisterShadowV1LiveCollector\b[^}]*\}\s*from '\.\/src\/server\/shadowV1LiveCollector';/s,
     'import dedicato presente'
   );
   // La riga di alimentazione non crea timer ne' scritture: la funzione ritorna
@@ -1033,6 +1043,17 @@ test('server.ts: una sola alimentazione barre e una sola registrazione', () => {
   assert.ok(
     source.includes("app.post('/api/shadow/v1-live/observe', requireApiAuth);"),
     'route POST protegge /api/shadow/v1-live/observe con requireApiAuth'
+  );
+  // SIC-2: il parser dedicato deve restare limitato al solo path della route e
+  // deve precedere il parser globale (altrimenti il body e' gia' materializzato).
+  assert.ok(
+    source.includes('app.use(SHADOW_V1_LIVE_OBSERVE_PATH, shadowV1LiveBodyLimitParser(express.json));'),
+    'parser dedicato montato sul solo path observe'
+  );
+  assert.ok(
+    source.indexOf('shadowV1LiveBodyLimitParser(express.json)') <
+      source.indexOf("app.use(express.json({ limit: '10mb' }));"),
+    'il parser dedicato precede il parser globale'
   );
 });
 
@@ -1377,4 +1398,228 @@ test('P9 rate limit: la mappa non cresce oltre il tetto dichiarato', async () =>
     `attese al massimo 4 voci, trovate ${handler.rateLimitEntries()}`
   );
   assert.equal(fs.existsSync(file), false, 'nessuna scrittura per richieste invalide');
+});
+
+// --- P10 SIC-1: controllo dell'origine ---------------------------------------
+
+test('P10 origine: assente (client non browser) resta ammessa', async () => {
+  const file = tmpPath();
+  const res = await post(deps(file), validBody(), { host: 'app.example.tld' });
+  assert.equal(res.status, 200);
+});
+
+test('P10 origine: stessa origine ammessa, origine diversa 403', async () => {
+  const file = tmpPath();
+  const same = await post(deps(file), validBody(), {
+    origin: 'https://app.example.tld',
+    host: 'app.example.tld',
+  });
+  assert.equal(same.status, 200);
+  const loopback = await post(deps(file), validBody(), {
+    origin: 'http://127.0.0.1:3000',
+    host: '127.0.0.1:3000',
+  });
+  assert.equal(loopback.status, 200);
+
+  const bad = await post(deps(file), validBody({ ticker: 'MSFT' }), {
+    origin: 'https://evil.example',
+    host: 'app.example.tld',
+  });
+  assert.equal(bad.status, 403);
+  assert.deepEqual(bad.body, { status: 'forbidden_origin', origin: 'https://evil.example' });
+
+  const clean = tmpPath();
+  const opaque = await post(deps(clean), validBody(), { origin: 'null', host: 'app.example.tld' });
+  assert.equal(opaque.status, 403, 'origine opaca negata');
+  const denied = await post(deps(clean), validBody(), {
+    origin: 'https://evil.example',
+    host: 'app.example.tld',
+  });
+  assert.equal(denied.status, 403);
+  assert.equal(fs.existsSync(clean), false, 'nessuna scrittura per richieste rifiutate');
+});
+
+test('P10 origine: lista consentita da env, default vuoto', async () => {
+  const file = tmpPath();
+  const env = {
+    ...ON,
+    [SHADOW_V1_LIVE_ALLOWED_ORIGINS_ENV]: 'https://staging.example.tld, https://alt.example.tld/',
+  };
+  const listed = await post(deps(file, { env }), validBody(), {
+    origin: 'https://staging.example.tld',
+    host: 'app.example.tld',
+  });
+  assert.equal(listed.status, 200);
+  const altSlash = await post(deps(file, { env }), validBody(), {
+    origin: 'https://alt.example.tld',
+    host: 'app.example.tld',
+  });
+  assert.equal(altSlash.status, 200, 'slash finale ignorato');
+
+  const defaultEmpty = await post(deps(file, { env: ON }), validBody(), {
+    origin: 'https://staging.example.tld',
+    host: 'app.example.tld',
+  });
+  assert.equal(defaultEmpty.status, 403, 'senza env la lista e\' vuota');
+
+  assert.equal(isShadowV1LiveOriginAllowed({ origin: 'https://A.example/', host: 'a.example' }).ok, true);
+  assert.equal(
+    isShadowV1LiveOriginAllowed({ origin: 'https://a.example', host: 'a.example:443' }).ok,
+    false,
+    'porta diversa = origine diversa'
+  );
+  assert.equal(isShadowV1LiveOriginAllowed({ origin: undefined }).ok, true);
+  assert.equal(isShadowV1LiveOriginAllowed({ origin: '' }).ok, true);
+});
+
+test('P10 origine: flag OFF resta 404, nessun I/O', async () => {
+  const file = tmpPath();
+  const res = await post(deps(file, { env: OFF }), validBody(), {
+    origin: 'https://evil.example',
+    host: 'app.example.tld',
+  });
+  assert.equal(res.status, 404);
+  assert.deepEqual(res.body, { status: 'disabled', flag: SHADOW_V1_LIVE_COLLECT_ENV });
+  assert.equal(fs.existsSync(file), false);
+});
+
+// --- P10 provenienza sui record ----------------------------------------------
+
+function freshRoot(prefix: string): { root: string; signals: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tmpDirs.push(root);
+  return { root, signals: path.join(root, 'artifacts', 'shadow_v1_live', 'signals.jsonl') };
+}
+
+const fakeTimers = {
+  setInterval: () => ({ unref: () => {} }),
+  clearInterval: () => {},
+};
+
+test('P10 provenienza: la route HTTP persiste source client', async () => {
+  const { root, signals } = freshRoot('v1livep10route-');
+  const captured: { route?: (req: unknown, res: unknown) => void } = {};
+  const app = {
+    post: (p: string, h: (req: unknown, res: unknown) => void) => {
+      if (p === SHADOW_V1_LIVE_OBSERVE_PATH) captured.route = h;
+    },
+  };
+  const registration = registerShadowV1LiveCollector(app, {
+    root,
+    env: ON,
+    now: () => D0 + 30 * 60 * 1000,
+    fetchMissingBars: null,
+    timers: fakeTimers,
+  });
+  try {
+    assert.ok(captured.route, 'route registrata');
+    let out: { status?: number } = {};
+    captured.route?.(
+      {
+        body: validBody(),
+        ip: '7.7.7.7',
+        headers: { host: 'app.example.tld', origin: 'https://app.example.tld' },
+      },
+      {
+        locals: {},
+        status: (code: number) => ({
+          json: () => {
+            out = { status: code };
+          },
+        }),
+      }
+    );
+    const deadline = Date.now() + 3000;
+    while (out.status === undefined && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(out.status, 200);
+    const records = loadRecords(signals).records;
+    assert.equal(records.length, 1);
+    assert.equal(records[0].source, SHADOW_V1_LIVE_SOURCE_CLIENT);
+  } finally {
+    registration.stop?.();
+  }
+});
+
+test('P10 provenienza: lo scanner server-side persiste source server-scanner', async () => {
+  const { root, signals } = freshRoot('v1livep10scan-');
+  const registration = registerShadowV1LiveCollector(
+    { post: () => {} },
+    {
+      root,
+      env: ON,
+      now: () => D0 + 30 * 60 * 1000,
+      fetchMissingBars: null,
+      timers: fakeTimers,
+    }
+  );
+  try {
+    const out = await observeShadowV1LiveFromServer(validBody());
+    assert.equal(out?.status, 200);
+  } finally {
+    registration.stop?.();
+  }
+  const records = loadRecords(signals).records;
+  assert.equal(records.length, 1);
+  assert.equal(records[0].source, SHADOW_V1_LIVE_SOURCE_SERVER_SCANNER);
+});
+
+// --- P10 SIC-2: limite di body per-route (express reale) ----------------------
+
+function bodyOfSize(bytes: number): string {
+  const empty = JSON.stringify({ pad: '' });
+  return JSON.stringify({ pad: 'x'.repeat(bytes - Buffer.byteLength(empty)) });
+}
+
+test('P10 body: oltre 8192 B la route observe risponde 413 e non viene raggiunta', async () => {
+  const app = express();
+  // Stessa sequenza di server.ts:167-176 (parser dedicato + gestore errori
+  // prima del parser globale da 10 MB).
+  app.use(SHADOW_V1_LIVE_OBSERVE_PATH, shadowV1LiveBodyLimitParser(express.json));
+  app.use(SHADOW_V1_LIVE_OBSERVE_PATH, shadowV1LiveBodyLimitErrorHandler());
+  app.use(express.json({ limit: '10mb' }));
+  let observeCalls = 0;
+  app.post(SHADOW_V1_LIVE_OBSERVE_PATH, (_req, res) => {
+    observeCalls += 1;
+    res.status(200).json({ status: 'accepted' });
+  });
+  app.post('/api/altro', (_req, res) => res.status(200).json({ status: 'accepted' }));
+
+  const server = await new Promise<ReturnType<typeof app.listen>>((resolve) => {
+    const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+  });
+  const port = (server.address() as AddressInfo).port;
+  const base = `http://127.0.0.1:${port}`;
+  const send = (p: string, body: string) =>
+    fetch(`${base}${p}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+  try {
+    const huge = bodyOfSize(9 * 1024 * 1024);
+    assert.equal(Buffer.byteLength(huge), 9 * 1024 * 1024);
+    const big = await send(SHADOW_V1_LIVE_OBSERVE_PATH, huge);
+    assert.equal(big.status, 413);
+    assert.deepEqual(await big.json(), {
+      status: 'payload_too_large',
+      maxBytes: SHADOW_V1_LIVE_MAX_BODY_BYTES,
+    });
+    assert.equal(observeCalls, 0, 'il corpo oltre il limite non raggiunge la route');
+
+    const exact = bodyOfSize(SHADOW_V1_LIVE_MAX_BODY_BYTES);
+    assert.equal(Buffer.byteLength(exact), SHADOW_V1_LIVE_MAX_BODY_BYTES);
+    assert.equal((await send(SHADOW_V1_LIVE_OBSERVE_PATH, exact)).status, 200);
+    assert.equal(observeCalls, 1, 'il corpo al limite raggiunge la route');
+
+    const one = bodyOfSize(SHADOW_V1_LIVE_MAX_BODY_BYTES + 1);
+    assert.equal((await send(SHADOW_V1_LIVE_OBSERVE_PATH, one)).status, 413);
+    assert.equal(observeCalls, 1, 'un byte in piu\' non raggiunge la route');
+
+    assert.equal((await send('/api/altro', huge)).status, 200, 'limite globale invariato (10 MB)');
+  } finally {
+    (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });
