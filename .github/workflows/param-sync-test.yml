@@ -27,3 +27,5 @@ jobs:
         run: npm run test:features-v2
       - name: Shadow V1-live tests
         run: npm run test:shadowv1live
+      - name: Session close tests
+        run: npm run test:sessionclose
