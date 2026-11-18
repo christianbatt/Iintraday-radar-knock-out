@@ -99,8 +99,8 @@ const V2: ShadowV1LiveV2Summary = {
 const html = (el: React.ReactElement) => renderToStaticMarkup(el);
 
 describe('ShadowV1LivePanel — flag', () => {
-  it('default OFF e nessun markup a flag OFF', () => {
-    assert.equal(SHADOW_V1_LIVE_VIEW_PANEL, 'off');
+  it('default ON (P7) e nessun markup a flag OFF esplicito', () => {
+    assert.equal(SHADOW_V1_LIVE_VIEW_PANEL, 'on');
     assert.equal(isShadowV1LivePanelEnabled('off'), false);
     assert.equal(isShadowV1LivePanelEnabled('on'), true);
 

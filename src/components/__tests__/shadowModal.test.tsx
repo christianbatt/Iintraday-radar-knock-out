@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ShadowResearchModal } from '../ShadowResearchModal';
-import type { ShadowPanelData } from '../ShadowResearchPanel';
+import { ShadowV2Section, type ShadowPanelData } from '../ShadowResearchPanel';
+import ShadowV1LivePanel from '../ShadowV1LivePanel';
 
 const FULL: ShadowPanelData = {
   available: true,
@@ -37,15 +38,38 @@ describe('M1 — il pannello e’ raggiungibile dalla UI', () => {
   });
 });
 
-describe('M2 — available:true mostra le 7 sezioni', () => {
+describe('M2 — available:true mostra le sezioni (V2 inclusa)', () => {
   it('rende sample, fill, death, emissions, rules, spread, proposals', () => {
     const out = renderToStaticMarkup(
       React.createElement(ShadowResearchModal, { initialOpen: true, data: FULL })
     );
-    for (const s of ['sample', 'fill', 'death', 'emissions', 'rules', 'spread', 'proposals']) {
+    for (const s of ['sample', 'fill', 'death', 'emissions', 'rules', 'spread', 'proposals', 'shadow-v2']) {
       assert.ok(out.includes(`data-section="${s}"`), `sezione mancante: ${s}`);
     }
     assert.equal(out.includes('data-testid="shadow-error"'), false);
+  });
+});
+
+describe('M5 — V1-live e V2 nella stessa modale (P7)', () => {
+  it('con la costante di config accesa la modale rende V2 e V1-live insieme', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowResearchModal, { initialOpen: true, data: FULL })
+    );
+    assert.ok(out.includes('data-testid="shadow-v2"'));
+    assert.ok(out.includes('data-testid="v1live-panel"'));
+    assert.ok(out.includes('data-section="shadow-v2"'));
+  });
+
+  it('vista V1-live indisponibile (404): stato esplicito nel pannello, V2 intatta', () => {
+    const panel = renderToStaticMarkup(
+      React.createElement(ShadowV1LivePanel, { flag: 'on', error: 'errore di rete: HTTP 404' })
+    );
+    assert.match(panel, /data-testid="v1live-error"/);
+    assert.match(panel, /HTTP 404/);
+
+    const v2 = renderToStaticMarkup(React.createElement(ShadowV2Section, {}));
+    assert.ok(v2.includes('data-testid="shadow-v2"'));
+    assert.ok(v2.includes('data-section="shadow-v2"'));
   });
 });
 

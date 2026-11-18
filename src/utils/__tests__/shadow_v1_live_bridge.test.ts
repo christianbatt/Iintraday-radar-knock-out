@@ -59,8 +59,8 @@ test.beforeEach(() => {
 
 // --- Flag ---------------------------------------------------------------------
 
-test('flag client: default "off" nella costante di config', () => {
-  assert.equal(SHADOW_V1_LIVE_BRIDGE, 'off');
+test('flag client: costante di config "on" (acceso in P7)', () => {
+  assert.equal(SHADOW_V1_LIVE_BRIDGE, 'on');
 });
 
 test('flag OFF: nessuna richiesta di rete e nessuna deduplica allocata', async () => {
