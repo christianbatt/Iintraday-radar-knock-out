@@ -24,6 +24,17 @@
  *   (D7), senza R.
  * - Deduplica (D4): `ticker|entry|stop|giorno UTC`, giorno da `decidedAtMs`, regola
  *   "prima emissione" come `scripts/emission_guard.ts:33-41`.
+ * - Coerenza dei livelli (D11/D12): il live rifiuta i setup incoerenti con la
+ *   direzione — LONG richiede `stop < entry` e `target1Level > entry`, SHORT richiede
+ *   `stop > entry` e `target1Level < entry` — con confronto stretto, nessuna
+ *   tolleranza e nessun arrotondamento. E' una scelta deliberata del live: `walkR`
+ *   (`scripts/shadow_report.ts:111-127`) usa `abs(entry - stop)` senza controllo di
+ *   lato, quindi un setup con livelli invertiti produrrebbe un R positivo fittizio;
+ *   il metodo storico non viene modificato.
+ *   Ordine delle motivazioni, deterministico: D5 -> `risk == 0` -> D11 -> deduplica.
+ *   `stop == entry` resta sulla guardia `risk == 0` di D5 ("distanza entry-stop
+ *   nulla"), che precede D11 e non viene duplicata; `target1Level == entry` ha una
+ *   motivazione propria, distinta dal lato sbagliato.
  *
  * Barra chiusa e della sessione: `t + barMs <= nowMs` e `t + barMs <= sessionCloseMs`,
  * con `barMs = IND_BAR_MS` (`src/config/tradingParams.ts:335`); stessa validita' OHLC
@@ -191,6 +202,31 @@ export function evaluateShadowV1Live(input: ShadowV1LiveInput): ShadowV1LiveResu
 
   const risk = Math.abs(entryLevel - stopLossLevel);
   if (!(risk > 0)) return invalid('distanza entry-stop nulla: R non definito');
+
+  // D11/D12: coerenza dei livelli con la direzione, dopo D5 e prima della deduplica.
+  // `stop == entry` e' gia' coperto dalla guardia `risk == 0` qui sopra: nessuna
+  // motivazione duplicata; qui restano solo il lato sbagliato e il target == entry.
+  if (direction === 'LONG') {
+    if (!(stopLossLevel < entryLevel)) {
+      return invalid('stop dal lato sbagliato per LONG: richiesto stop < entry');
+    }
+    if (target1Level === entryLevel) {
+      return invalid('target1Level uguale a entry per LONG');
+    }
+    if (!(target1Level > entryLevel)) {
+      return invalid('target dal lato sbagliato per LONG: richiesto target1Level > entry');
+    }
+  } else {
+    if (!(stopLossLevel > entryLevel)) {
+      return invalid('stop dal lato sbagliato per SHORT: richiesto stop > entry');
+    }
+    if (target1Level === entryLevel) {
+      return invalid('target1Level uguale a entry per SHORT');
+    }
+    if (!(target1Level < entryLevel)) {
+      return invalid('target dal lato sbagliato per SHORT: richiesto target1Level < entry');
+    }
+  }
 
   const key = shadowV1LiveKeyOf(ticker, entryLevel, stopLossLevel, decidedAtMs);
 

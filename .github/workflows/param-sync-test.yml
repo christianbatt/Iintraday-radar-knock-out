@@ -25,3 +25,5 @@ jobs:
         run: npm run test:shadow-panel
       - name: Features V2 tests
         run: npm run test:features-v2
+      - name: Shadow V1-live tests
+        run: npm run test:shadowv1live
