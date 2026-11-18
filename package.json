@@ -30,6 +30,7 @@
     "test:shadowv1livestore": "tsx src/utils/__tests__/shadow_v1_live_store.test.ts",
     "test:shadowv1livecollector": "tsx src/utils/__tests__/shadow_v1_live_collector.test.ts",
     "test:shadowv1livebridge": "tsx src/utils/__tests__/shadow_v1_live_bridge.test.ts",
+    "test:shadowv1liveview": "tsx src/utils/__tests__/shadow_v1_live_view.test.ts",
     "test:orb": "tsx src/utils/__tests__/orb_regression.test.ts",
     "learning:nightly": "tsx scripts/nightly_learning.ts"
   },

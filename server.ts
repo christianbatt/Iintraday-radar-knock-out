@@ -37,6 +37,7 @@ import { runNightlyLearning } from './scripts/nightly_learning';
 import { authStartupWarning } from './src/utils/authStartupWarning';
 import { recordClosedBarsForShadowV2, observeShadowV2Scan } from './src/server/shadowV2Collector';
 import { recordBarsForShadowV1Live, registerShadowV1LiveCollector } from './src/server/shadowV1LiveCollector';
+import { registerShadowV1LiveViewRoute } from './src/server/shadowV1LiveView';
 import { formatShadowV2SignalsCsv, formatShadowV2SignalsJsonl, ShadowV2Record } from './src/knowledge/shadowV2';
 
 dotenv.config();
@@ -3409,6 +3410,7 @@ app.get('/api/shadow/v2/export', async (req: Request, res: Response) => {
 // Passo L: pannello shadow research, sola lettura (artefatti offline).
 registerShadowRoutesFromDisk(app);
 registerShadowV1LiveCollector(app);
+registerShadowV1LiveViewRoute(app);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
