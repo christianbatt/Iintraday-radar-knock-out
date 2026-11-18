@@ -25,6 +25,7 @@
     "test:shadow-panel": "tsx src/components/__tests__/shadowPanel.test.tsx && tsx src/components/__tests__/shadowModal.test.tsx",
     "test:features-v2": "tsx src/utils/__tests__/features_v2.test.ts",
     "test:shadowv2": "tsx src/utils/__tests__/shadow_v2.test.ts",
+    "test:shadowv1live": "tsx src/utils/__tests__/shadow_v1_live.test.ts",
     "test:orb": "tsx src/utils/__tests__/orb_regression.test.ts",
     "learning:nightly": "tsx scripts/nightly_learning.ts"
   },
