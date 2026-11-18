@@ -39,7 +39,10 @@ import {
   type WriteResult,
 } from './shadowV1LiveStore';
 
-/** Nome della variabile d'ambiente. Attiva solo con `'1'` o `'true'` esatti. */
+/**
+ * Variabile d'ambiente, solo interruttore di emergenza: il collector e' acceso
+ * di default come V2 (che non ha flag) e si spegne solo con `'0'` o `'false'`.
+ */
 export const SHADOW_V1_LIVE_COLLECT_ENV = 'SHADOW_V1_LIVE_COLLECT';
 
 /** Route di osservazione (POST). */
@@ -67,14 +70,17 @@ const WARN_PREFIX = '[Shadow V1 Live Collector]';
 export type Market = 'EU' | 'US';
 
 function isEnabled(env: Record<string, string | undefined> | undefined): boolean {
-  if (!env) return false;
-  const raw = env[SHADOW_V1_LIVE_COLLECT_ENV];
-  return raw === '1' || raw === 'true';
+  const raw = env?.[SHADOW_V1_LIVE_COLLECT_ENV];
+  if (raw === undefined) return true;
+  const normalized = raw.trim().toLowerCase();
+  return normalized !== '0' && normalized !== 'false';
 }
 
 /**
- * Lettura del flag, pura e testabile. Attivo **solo** con `'1'` o `'true'`
- * esatti: `'TRUE'`, `' true'`, `''`, `'0'`, `'yes'` e l'assenza valgono OFF.
+ * Lettura del flag, pura e testabile. **Acceso di default**, come V2 che non ha
+ * flag: la variabile assente, vuota o con qualunque valore diverso da `'0'` e
+ * `'false'` vale ON (la stringa vuota e' dichiarata ON). Si spegne solo con
+ * `'0'` o `'false'`, con spazi esterni ignorati e confronto case-insensitive.
  */
 export function isShadowV1LiveCollectEnabled(
   env: Record<string, string | undefined> | undefined

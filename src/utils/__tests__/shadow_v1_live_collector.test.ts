@@ -47,7 +47,8 @@ const CLOSE = D0 + 6 * 60 * 60 * 1000; // 16:00 EDT = 20:00Z
 const ISO_D0 = new Date(D0).toISOString();
 
 const ON = { [SHADOW_V1_LIVE_COLLECT_ENV]: '1' };
-const OFF = {};
+/** Spento esplicitamente: il default ora e' ON, quindi OFF va dichiarato. */
+const OFF = { [SHADOW_V1_LIVE_COLLECT_ENV]: '0' };
 
 function validBody(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -124,16 +125,25 @@ function bodyText(res: ObserveResponse): string {
 
 // --- F2: valori del flag ------------------------------------------------------
 
-test('flag: attivo solo con "1" e "true" esatti', () => {
-  for (const value of ['1', 'true']) {
-    assert.equal(isShadowV1LiveCollectEnabled({ [SHADOW_V1_LIVE_COLLECT_ENV]: value }), true, value);
+test('flag: acceso di default, spento solo con "0" e "false"', () => {
+  // ON: variabile assente, stringa vuota e qualunque valore diverso da 0/false.
+  assert.equal(isShadowV1LiveCollectEnabled(undefined), true, 'env assente = ON');
+  assert.equal(isShadowV1LiveCollectEnabled({}), true, 'variabile assente = ON');
+  for (const value of ['1', 'true', '', ' on ', 'TRUE', ' true', 'yes', '2']) {
+    assert.equal(
+      isShadowV1LiveCollectEnabled({ [SHADOW_V1_LIVE_COLLECT_ENV]: value }),
+      true,
+      `valore ${JSON.stringify(value)} deve lasciare il collector acceso`
+    );
   }
-  for (const value of ['0', 'false', '', 'TRUE', ' true', 'yes', 'on', undefined]) {
-    const env =
-      value === undefined ? {} : { [SHADOW_V1_LIVE_COLLECT_ENV]: value as string };
-    assert.equal(isShadowV1LiveCollectEnabled(env), false, String(value));
+  // OFF: solo 0/false, con trim e case-insensitive.
+  for (const value of ['0', 'false', ' FALSE ', 'False', '0 ']) {
+    assert.equal(
+      isShadowV1LiveCollectEnabled({ [SHADOW_V1_LIVE_COLLECT_ENV]: value }),
+      false,
+      `valore ${JSON.stringify(value)} deve spegnere il collector`
+    );
   }
-  assert.equal(isShadowV1LiveCollectEnabled(undefined), false);
 });
 
 // --- F3: flag OFF -> nessun I/O, nessun timer --------------------------------
