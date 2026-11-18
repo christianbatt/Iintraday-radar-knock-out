@@ -160,6 +160,188 @@ export function clearShadowV1LiveBarsForTest(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Guardia di copertura barre (PR C3)
+//
+// Il nucleo valuta su barre chiuse senza sapere se sono contigue: con un buco
+// puo' dichiarare NOT_FILLED/EXPIRED (o uno stop mai avvenuto) su dati
+// incompleti. La guardia e' pura e non tocca nucleo ne' store: decide solo se
+// l'upsert proposto puo' essere applicato.
+//
+// Regole:
+// - le barre rilevanti sono quelle usate dal nucleo (`t > decidedAtMs`,
+//   `t + 300000 <= min(sessionCloseMs, nowMs)`), deduplicate e ordinate;
+// - la prima deve essere la prima barra della griglia dopo `decidedAtMs`
+//   (`first - 300000 <= decidedAtMs < first`), altrimenti l'inizio non e'
+//   coperto (record piu' vecchio dell'archivio);
+// - ogni coppia consecutiva deve distare esattamente 300000 ms;
+// - `EXPIRED`/`NOT_FILLED` richiedono in piu' l'ultima barra della griglia che
+//   termina entro `sessionCloseMs`;
+// - un inserimento non terminale (PENDING_FILL/OPEN) resta permesso: senza
+//   barre successive alla decisione il record deve comunque nascere.
+// ---------------------------------------------------------------------------
+
+export const SHADOW_V1_LIVE_COVERAGE_WARN_MS = 60_000;
+
+export type BarCoverageReason =
+  | 'ok'
+  | 'invalid_input'
+  | 'no_bars'
+  | 'leading_hole'
+  | 'interior_hole';
+
+export interface BarCoverageInput {
+  bars: readonly ShadowV1LiveBar[];
+  decidedAtMs: number;
+  sessionCloseMs: number;
+  nowMs: number;
+}
+
+export interface BarCoverageResult {
+  ok: boolean;
+  reason: BarCoverageReason;
+  firstBarTs: number | null;
+  lastBarTs: number | null;
+  /** Ultima barra della griglia che termina entro la chiusura di sessione. */
+  expectedLastBarTs: number | null;
+  barsUsed: number;
+}
+
+/**
+ * Copertura delle barre fornite, senza guardare lo stato del record.
+ * Non muta l'input (copia e ordina una mappa locale) e non lancia mai.
+ */
+export function checkShadowV1LiveBarCoverage(input: BarCoverageInput): BarCoverageResult {
+  const empty = (reason: BarCoverageReason, expected: number | null): BarCoverageResult => ({
+    ok: false,
+    reason,
+    firstBarTs: null,
+    lastBarTs: null,
+    expectedLastBarTs: expected,
+    barsUsed: 0,
+  });
+
+  try {
+    const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+    if (!finite(input.decidedAtMs) || !finite(input.sessionCloseMs) || !finite(input.nowMs)) {
+      return empty('invalid_input', null);
+    }
+
+    const barMs = SHADOW_V1_LIVE_BAR_MS;
+    const horizon = Math.min(input.sessionCloseMs, input.nowMs);
+    const expectedLastBarTs = Math.floor((input.sessionCloseMs - barMs) / barMs) * barMs;
+    const rawBars = Array.isArray(input.bars) ? input.bars : [];
+
+    const byTs = new Map<number, ShadowV1LiveBar>();
+    for (const b of rawBars) {
+      if (!b || typeof b !== 'object') continue;
+      if (!finite(b.t) || b.t <= input.decidedAtMs) continue;
+      if (!(b.t + barMs <= horizon)) continue;
+      if (![b.o, b.h, b.l, b.c].every((v) => finite(v) && v > 0)) continue;
+      if (b.h < b.l) continue;
+      byTs.set(b.t, { t: b.t, o: b.o, h: b.h, l: b.l, c: b.c });
+    }
+
+    const ts = Array.from(byTs.keys()).sort((a, b) => a - b);
+    if (ts.length === 0) return empty('no_bars', expectedLastBarTs);
+
+    const first = ts[0];
+    if (first - barMs > input.decidedAtMs) {
+      return {
+        ok: false,
+        reason: 'leading_hole',
+        firstBarTs: first,
+        lastBarTs: ts[ts.length - 1],
+        expectedLastBarTs,
+        barsUsed: ts.length,
+      };
+    }
+
+    for (let i = 1; i < ts.length; i += 1) {
+      if (ts[i] - ts[i - 1] !== barMs) {
+        return {
+          ok: false,
+          reason: 'interior_hole',
+          firstBarTs: first,
+          lastBarTs: ts[ts.length - 1],
+          expectedLastBarTs,
+          barsUsed: ts.length,
+        };
+      }
+    }
+
+    return {
+      ok: true,
+      reason: 'ok',
+      firstBarTs: first,
+      lastBarTs: ts[ts.length - 1],
+      expectedLastBarTs,
+      barsUsed: ts.length,
+    };
+  } catch {
+    return empty('invalid_input', null);
+  }
+}
+
+/**
+ * `null` = l'upsert puo' procedere; altrimenti il motivo del blocco.
+ * Solo i cambi di stato e gli esiti terminali richiedono copertura.
+ */
+export function shadowV1LiveCoverageBlock(args: {
+  proposedStatus: PersistedShadowV1LiveRecord['status'];
+  currentStatus: PersistedShadowV1LiveRecord['status'] | null;
+  coverage: BarCoverageResult;
+}): BarCoverageReason | null {
+  const { proposedStatus, currentStatus, coverage } = args;
+  const sessionTerminal = proposedStatus === 'EXPIRED' || proposedStatus === 'NOT_FILLED';
+  const tradeTerminal = proposedStatus === 'STOP' || proposedStatus === 'TARGET';
+  const statusChange = currentStatus !== null && currentStatus !== proposedStatus;
+
+  if (!sessionTerminal && !tradeTerminal && !statusChange) return null;
+  if (!coverage.ok) return coverage.reason;
+  if (
+    sessionTerminal &&
+    coverage.expectedLastBarTs !== null &&
+    coverage.lastBarTs !== coverage.expectedLastBarTs
+  ) {
+    return 'interior_hole';
+  }
+  return null;
+}
+
+interface CoverageStats {
+  insufficientBars: number;
+  byReason: Record<string, number>;
+}
+
+const coverageStats: CoverageStats = { insufficientBars: 0, byReason: {} };
+let lastCoverageWarnMs: number | null = null;
+
+/** Contatori in memoria della guardia (nessuna persistenza). */
+export function getShadowV1LiveCoverageStats(): CoverageStats {
+  return { insufficientBars: coverageStats.insufficientBars, byReason: { ...coverageStats.byReason } };
+}
+
+export function resetShadowV1LiveCoverageStatsForTest(): void {
+  coverageStats.insufficientBars = 0;
+  coverageStats.byReason = {};
+  lastCoverageWarnMs = null;
+}
+
+/** Conteggio sempre, log limitato a uno ogni `SHADOW_V1_LIVE_COVERAGE_WARN_MS`. */
+function noteInsufficientCoverage(
+  reason: BarCoverageReason,
+  nowMs: number,
+  warn: (message: string) => void
+): void {
+  coverageStats.insufficientBars += 1;
+  coverageStats.byReason[reason] = (coverageStats.byReason[reason] ?? 0) + 1;
+  if (lastCoverageWarnMs === null || nowMs - lastCoverageWarnMs >= SHADOW_V1_LIVE_COVERAGE_WARN_MS) {
+    lastCoverageWarnMs = nowMs;
+    warn(`copertura barre insufficiente (${reason}): nessun cambio di stato`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Validazione del payload
 // ---------------------------------------------------------------------------
 
@@ -295,6 +477,8 @@ export interface CollectorDeps {
   ) => MaybePromise<WriteResult>;
   warn?: (message: string) => void;
   rateLimitPerMinute?: number;
+  /** Guardia di copertura iniettabile (default: `checkShadowV1LiveBarCoverage`). */
+  coverage?: (input: BarCoverageInput) => BarCoverageResult;
 }
 
 const NON_TERMINAL = new Set(['PENDING_FILL', 'OPEN']);
@@ -458,6 +642,32 @@ export function createObserveHandler(
           };
         }
 
+        const coverageFn = deps.coverage ?? checkShadowV1LiveBarCoverage;
+        const coverage = coverageFn({
+          bars,
+          decidedAtMs: context.decidedAtMs,
+          sessionCloseMs: context.sessionCloseMs,
+          nowMs,
+        });
+        const blocked = shadowV1LiveCoverageBlock({
+          proposedStatus: observation.status,
+          currentStatus: records.find((r) => r.key === observation.key)?.status ?? null,
+          coverage,
+        });
+        if (blocked) {
+          noteInsufficientCoverage(blocked, nowMs, warn);
+          return {
+            status: 200,
+            body: {
+              status: 'ok',
+              outcome: 'insufficient_bars',
+              persisted: false,
+              coverage: blocked,
+              key: observation.key,
+            },
+          };
+        }
+
         const upserted = upsertObservation(records, observation, nowMs);
         if (!upserted.changed) {
           return {
@@ -547,6 +757,21 @@ export async function runShadowV1LiveRevaluationCycle(
       const result = evaluateShadowV1Live(input);
       const observation = observationFromResult(contextFromRecord(record), result);
       if (!observation) continue;
+      const coverage = (deps.coverage ?? checkShadowV1LiveBarCoverage)({
+        bars,
+        decidedAtMs: record.decidedAtMs,
+        sessionCloseMs: record.sessionCloseMs,
+        nowMs,
+      });
+      const blocked = shadowV1LiveCoverageBlock({
+        proposedStatus: observation.status,
+        currentStatus: record.status,
+        coverage,
+      });
+      if (blocked) {
+        noteInsufficientCoverage(blocked, nowMs, warn);
+        continue;
+      }
       const upserted = upsertObservation(records, observation, nowMs);
       if (upserted.changed) {
         records = upserted.records;
