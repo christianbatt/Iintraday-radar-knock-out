@@ -90,24 +90,29 @@ function handlerWith(over: {
   });
 }
 
-test('vista: flag attivo solo con 1 o true', () => {
-  assert.equal(isShadowV1LiveViewEnabled({ [SHADOW_V1_LIVE_VIEW_ENV]: '1' }), true);
-  assert.equal(isShadowV1LiveViewEnabled({ [SHADOW_V1_LIVE_VIEW_ENV]: 'true' }), true);
-  for (const v of ['', '0', 'TRUE', 'on', 'yes', ' 1', '2']) {
+test('vista: accesa di default, spenta solo con 0 o false', () => {
+  assert.equal(isShadowV1LiveViewEnabled(undefined), true, 'env assente = ON');
+  assert.equal(isShadowV1LiveViewEnabled({}), true, 'variabile assente = ON');
+  for (const v of ['1', 'true', '', ' on ', 'TRUE', ' 1', '2']) {
+    assert.equal(
+      isShadowV1LiveViewEnabled({ [SHADOW_V1_LIVE_VIEW_ENV]: v }),
+      true,
+      `valore ${JSON.stringify(v)} deve lasciare la vista accesa`
+    );
+  }
+  for (const v of ['0', 'false', ' FALSE ', 'False', '0 ']) {
     assert.equal(
       isShadowV1LiveViewEnabled({ [SHADOW_V1_LIVE_VIEW_ENV]: v }),
       false,
-      `valore ${JSON.stringify(v)} non deve attivare la vista`
+      `valore ${JSON.stringify(v)} deve spegnere la vista`
     );
   }
-  assert.equal(isShadowV1LiveViewEnabled(undefined), false);
-  assert.equal(isShadowV1LiveViewEnabled({}), false);
   assert.notEqual(SHADOW_V1_LIVE_VIEW_ENV, 'SHADOW_V1_LIVE_COLLECT');
 });
 
-test('vista: flag OFF risponde 404 disabled senza alcuna lettura', () => {
+test('vista: flag OFF esplicito risponde 404 disabled senza alcuna lettura', () => {
   const seen: string[] = [];
-  const res = handlerWith({ env: {}, seen })();
+  const res = handlerWith({ env: { [SHADOW_V1_LIVE_VIEW_ENV]: '0' }, seen })();
   assert.equal(res.status, 404);
   assert.deepEqual(res.body, { status: 'disabled', flag: SHADOW_V1_LIVE_VIEW_ENV });
   assert.deepEqual(seen, []);
@@ -394,7 +399,10 @@ test('vista: nessun percorso di scrittura o rivalutazione nel modulo', () => {
 test('vista: montaggio su app minimale con dipendenze iniettate', () => {
   const routes: Array<{ path: string; handler: (req: unknown, res: unknown) => void }> = [];
   const app = { get: (p: string, h: (req: unknown, res: unknown) => void) => routes.push({ path: p, handler: h }) };
-  registerShadowV1LiveViewRoute(app, { env: {}, root: '/tmp/non-usato' });
+  registerShadowV1LiveViewRoute(app, {
+    env: { [SHADOW_V1_LIVE_VIEW_ENV]: '0' },
+    root: '/tmp/non-usato',
+  });
   assert.equal(routes.length, 1);
   assert.equal(routes[0].path, SHADOW_V1_LIVE_VIEW_PATH);
 

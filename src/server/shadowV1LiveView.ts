@@ -26,6 +26,10 @@ import {
   type PersistedShadowV1LiveRecord,
 } from './shadowV1LiveStore';
 
+/**
+ * Variabile d'ambiente, solo interruttore di emergenza: la vista e' accesa di
+ * default come V2 e si spegne solo con `'0'` o `'false'`.
+ */
 export const SHADOW_V1_LIVE_VIEW_ENV = 'SHADOW_V1_LIVE_VIEW';
 
 export const SHADOW_V1_LIVE_VIEW_PATH = '/api/shadow/v1-live/signals';
@@ -42,13 +46,18 @@ export const SHADOW_V1_LIVE_VIEW_MAX_RECORDS = 500;
  */
 export const LATE_THRESHOLD_MS = 600_000;
 
-/** Attivo solo con `'1'` o `'true'` esatti, come `SHADOW_V1_LIVE_COLLECT`. */
+/**
+ * Accesa di default con la stessa semantica di `SHADOW_V1_LIVE_COLLECT`:
+ * variabile assente, vuota o diversa da `'0'`/`'false'` vale ON; solo `'0'` e
+ * `'false'` (trim, case-insensitive) spengono la vista.
+ */
 export function isShadowV1LiveViewEnabled(
   env: Record<string, string | undefined> | undefined
 ): boolean {
-  if (!env) return false;
-  const raw = env[SHADOW_V1_LIVE_VIEW_ENV];
-  return raw === '1' || raw === 'true';
+  const raw = env?.[SHADOW_V1_LIVE_VIEW_ENV];
+  if (raw === undefined) return true;
+  const normalized = raw.trim().toLowerCase();
+  return normalized !== '0' && normalized !== 'false';
 }
 
 export type ShadowV1LiveViewStatus =
