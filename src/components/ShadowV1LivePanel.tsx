@@ -30,9 +30,31 @@ export interface ShadowV1LiveV2Summary {
   winRatePct?: number | null;
 }
 
+export interface ShadowV1LiveDiagnosticsSummary {
+  lastScanAt?: string;
+  scannedTickers?: number;
+  evaluatedTickers?: number;
+  emittedThisScan?: number;
+  persistedThisScan?: number;
+  blockedThisScan?: number;
+  topEU?: string | null;
+  topUS?: string | null;
+  gateCounts?: Array<{ gate: string; label: string; count: number }>;
+  sampleCandidates?: Array<{
+    ticker: string;
+    market: 'EU' | 'US';
+    score: number;
+    isTopPick: boolean;
+    decision: 'TRADE' | 'BLOCKED';
+    gate: string | null;
+    reason: string | null;
+  }>;
+}
+
 export interface ShadowV1LivePanelProps {
   data?: ShadowV1LiveViewResponse | null;
   v2?: ShadowV1LiveV2Summary | null;
+  diagnostics?: ShadowV1LiveDiagnosticsSummary | null;
   error?: string | null;
   loading?: boolean;
   fetchImpl?: typeof fetch;
@@ -67,6 +89,7 @@ function delayLabel(delayMs: number | null): string {
 export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
   data: dataProp,
   v2: v2Prop,
+  diagnostics: diagnosticsProp,
   error: errorProp,
   loading: loadingProp,
   fetchImpl,
@@ -175,6 +198,46 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
         <p className="text-xs text-amber-300" data-testid="v1live-unavailable">
           vista non disponibile: {data.reason ?? 'motivo non dichiarato'}
         </p>
+      )}
+
+      {diagnosticsProp && (
+        <div
+          className="rounded border border-slate-800 bg-slate-900/60 p-2.5 space-y-1.5"
+          data-testid="v1live-diagnostics"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[10px]">
+            <span className="font-bold text-slate-200">
+              Scansione automatica server (tutto il paniere: {diagnosticsProp.scannedTickers ?? 0} titoli)
+            </span>
+            <span className="font-mono text-slate-400">
+              {diagnosticsProp.lastScanAt ? stamp(Date.parse(diagnosticsProp.lastScanAt)) : 'n/d'}
+            </span>
+          </div>
+          <div className="text-[10px] text-slate-300 flex flex-wrap gap-3">
+            <span>
+              Emessi nell&apos;ultima scansione: <strong className="text-white">{diagnosticsProp.emittedThisScan ?? 0}</strong>
+            </span>
+            <span>
+              Bloccati dai filtri V1: <strong className="text-amber-300">{diagnosticsProp.blockedThisScan ?? 0}</strong>
+            </span>
+            <span>
+              Top-1 EU: <strong className="text-white">{diagnosticsProp.topEU ?? 'n/d'}</strong> · Top-1 US:{' '}
+              <strong className="text-white">{diagnosticsProp.topUS ?? 'n/d'}</strong>
+            </span>
+          </div>
+          {(diagnosticsProp.gateCounts?.length ?? 0) > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-0.5">
+              {diagnosticsProp.gateCounts!.slice(0, 5).map((g) => (
+                <span
+                  key={g.gate}
+                  className="px-1.5 py-0.5 rounded bg-slate-950/80 border border-slate-800 text-[10px] text-slate-300"
+                >
+                  <strong className="text-amber-300">{g.gate}</strong> {g.label}: {g.count}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {!isLoading && !shownError && data && (

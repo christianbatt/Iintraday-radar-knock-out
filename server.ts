@@ -38,6 +38,7 @@ import { authStartupWarning } from './src/utils/authStartupWarning';
 import { recordClosedBarsForShadowV2, observeShadowV2Scan, syncShadowV2SummaryFromDisk } from './src/server/shadowV2Collector';
 import { recordBarsForShadowV1Live, registerShadowV1LiveCollector } from './src/server/shadowV1LiveCollector';
 import { registerShadowV1LiveViewRoute } from './src/server/shadowV1LiveView';
+import { observeShadowV1LiveScan } from './src/server/shadowV1LiveScanner';
 import { formatShadowV2SignalsCsv, formatShadowV2SignalsJsonl, ShadowV2Record } from './src/knowledge/shadowV2';
 
 dotenv.config();
@@ -2292,9 +2293,10 @@ app.post('/api/market-data', async (req: Request, res: Response) => {
     // Qualita' dati VWAP per scansione: solo log/report, nessun impatto su UI o punteggi.
     console.log(formatVwapDataQualityScan('ALL', results));
 
+    let futuresScan: any = null;
     // Log di scan (IPOTESI): per candidato breakdown, veti e stati indicatori; poi distribuzione punteggi.
     try {
-      const futuresScan = await getFutures(false);
+      futuresScan = await getFutures(false);
       const changeFor = (market: 'EU' | 'US') =>
         market === 'EU'
           ? (typeof futuresScan?.europe?.dax?.changePercent === 'number' ? futuresScan.europe.dax.changePercent : null)
@@ -2421,8 +2423,9 @@ app.post('/api/market-data', async (req: Request, res: Response) => {
       console.log(`[Setup score] log non disponibile: ${err?.message || err}`);
     }
 
-    // Shadow V2 parallelo: sola osservazione su barre chiuse reali, zero impatto live.
+    // Shadow V2 & V1-live paralleli lato server: sola osservazione su tutto il paniere, zero impatto live.
     observeShadowV2Scan(results);
+    await observeShadowV1LiveScan(results, futuresScan);
 
     res.json({
       count: results.length,

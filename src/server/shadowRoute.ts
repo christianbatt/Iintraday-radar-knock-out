@@ -82,13 +82,14 @@ function registryCounts(fs: ShadowFs, path: string): { rows: number | null; hypo
  */
 export function getShadowLatest(deps: ShadowDeps): ShadowResponse {
   const shadowV2 = readJsonSafe(deps.fs, `${deps.artifactDir}/shadow_v2/summary.json`);
+  const v1LiveDiagnostics = readJsonSafe(deps.fs, `${deps.artifactDir}/shadow_v1_live/scan_diagnostics.json`);
   const path = latestShadowPath(deps.fs, deps.artifactDir);
   if (path === null) {
-    return { status: 200, body: { ...MISSING, reason: 'nessun artefatto', shadowV2, flags: deps.flags } };
+    return { status: 200, body: { ...MISSING, reason: 'nessun artefatto', shadowV2, v1LiveDiagnostics, flags: deps.flags } };
   }
   const artifact = readJsonSafe(deps.fs, path);
   if (artifact === null) {
-    return { status: 200, body: { ...MISSING, reason: 'artefatto illeggibile', shadowV2, flags: deps.flags } };
+    return { status: 200, body: { ...MISSING, reason: 'artefatto illeggibile', shadowV2, v1LiveDiagnostics, flags: deps.flags } };
   }
   const deathcheck = readJsonSafe(deps.fs, deps.deathcheckPath);
   return {
@@ -107,6 +108,7 @@ export function getShadowLatest(deps: ShadowDeps): ShadowResponse {
       proposals: artifact.proposals ?? [],
       cessation: artifact.cessation ?? null,
       shadowV2,
+      v1LiveDiagnostics,
       limitations: artifact.limitations ?? [],
       registry: registryCounts(deps.fs, deps.registryPath),
       flags: deps.flags,

@@ -109,6 +109,7 @@ interface BarsEntry {
 
 const barsByTicker = new Map<string, BarsEntry>();
 let activeBarsDiskPath: string | null = null;
+let activeObserveHandler: ((req: ObserveRequest) => Promise<ObserveResponse>) | null = null;
 
 function barsKey(ticker: string, market: Market): string {
   return `${ticker}|${market}`;
@@ -241,6 +242,7 @@ export function barsForShadowV1Live(ticker: string, market: Market): ShadowV1Liv
 export function clearShadowV1LiveBarsForTest(): void {
   barsByTicker.clear();
   activeBarsDiskPath = null;
+  activeObserveHandler = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -664,6 +666,7 @@ export interface ObserveRequest {
   contentLength?: string | number | string[] | undefined;
   ip?: string;
   clientKey?: string;
+  skipRateLimit?: boolean;
 }
 
 export interface ObserveResponse {
@@ -841,7 +844,7 @@ export function createObserveHandler(
 
     const nowMs = deps.now();
     const rateKey = normalizeRateLimitKey(req);
-    if (rateLimited(rateKey, nowMs)) {
+    if (!req.skipRateLimit && rateLimited(rateKey, nowMs)) {
       return {
         status: 429,
         body: { status: 'rate_limited', perMinute: limit },
@@ -1141,6 +1144,7 @@ export interface RegistrationOptions {
   root?: string;
   env?: Record<string, string | undefined>;
   timers?: CollectorTimers;
+  now?: () => number;
   cycleMs?: number;
   barsPath?: string;
   fetchMissingBars?: CollectorDeps['fetchMissingBars'] | null;
@@ -1183,7 +1187,7 @@ export function registerShadowV1LiveCollector(
     loadShadowV1LiveBarsFromDisk(diskPath, Date.now());
   }
 
-  const nowFn = () => Date.now();
+  const nowFn = options.now ?? (() => Date.now());
   const fetchMissingBars =
     options.fetchMissingBars === null
       ? undefined
@@ -1197,6 +1201,7 @@ export function registerShadowV1LiveCollector(
     ...(fetchMissingBars ? { fetchMissingBars } : {}),
   };
   const handler = createObserveHandler(deps);
+  activeObserveHandler = enabled ? handler : null;
 
   app.post(SHADOW_V1_LIVE_OBSERVE_PATH, (req, res) => {
     const request = req as ObserveRequest & {
@@ -1234,6 +1239,25 @@ export function registerShadowV1LiveCollector(
 
   return {
     enabled: true,
-    stop: () => timers.clearInterval(handle),
+    stop: () => {
+      activeObserveHandler = null;
+      timers.clearInterval(handle);
+    },
   };
+}
+
+/**
+ * Punto di ingresso interno lato server (senza limite HTTP 10/min): usato
+ * dallo scanner V1-live su tutto il paniere per persistere i setup `TRADE`
+ * attraverso la stessa coda serializzata del collector.
+ */
+export async function observeShadowV1LiveFromServer(
+  payload: ObserveRequest['body']
+): Promise<ObserveResponse | null> {
+  if (!activeObserveHandler) return null;
+  return activeObserveHandler({
+    body: payload,
+    clientKey: 'server-scan',
+    skipRateLimit: true,
+  });
 }

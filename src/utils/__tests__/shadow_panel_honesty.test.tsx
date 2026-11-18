@@ -175,3 +175,26 @@ describe('C6 — soglia di campione ridotto già esistente (nDays/nClusters < 30
     assert.equal(html.includes('campione insufficiente per inferenza'), false);
   });
 });
+
+describe('C7 — riepilogo in parole semplici con equivalenti in Euro', () => {
+  it('mostra gli equivalenti in Euro su shadowV2 valorizzato e li nasconde a zero segnali', () => {
+    const populated = panel();
+    assert.ok(populated.includes('data-testid="shadow-v2-plain-summary"'));
+    assert.ok(populated.includes('In parole semplici'));
+    assert.ok(populated.includes('€'));
+
+    const empty = panel({
+      shadowV2: baseV2({
+        nSignals: 0,
+        nResolved: 0,
+        winRatePct: null,
+        meanRGross: null,
+        meanRNet: null,
+        dsr: null,
+        clusterBootstrapPValue: null,
+        nDayClusters: 0,
+      }),
+    });
+    assert.equal(empty.includes('data-testid="shadow-v2-plain-summary"'), false);
+  });
+});

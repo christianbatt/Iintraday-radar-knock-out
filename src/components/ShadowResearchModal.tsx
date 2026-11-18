@@ -84,7 +84,10 @@ export const ShadowResearchModal: React.FC<{
               </p>
             )}
             {!loading && !shownError && <ShadowResearchPanel data={data} />}
-            <ShadowV1LivePanel v2={data?.shadowV2 ?? null} />
+            <ShadowV1LivePanel
+              v2={data?.shadowV2 ?? null}
+              diagnostics={data?.v1LiveDiagnostics ?? null}
+            />
           </div>
         </div>
       )}

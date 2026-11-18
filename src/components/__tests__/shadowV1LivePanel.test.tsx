@@ -316,4 +316,33 @@ describe('ShadowV1LivePanel — ritardo di osservazione', () => {
     assert.match(out, /esclusi 4/);
     assert.doesNotMatch(out, /0\.700R/);
   });
+
+  it('mostra la diagnostica server quando fornita senza violare i divieti di confronto', () => {
+    const out = html(
+      <ShadowV1LivePanel
+        flag="on"
+        data={view({ available: false, reason: 'nessun file persistito', records: [] })}
+        v2={V2}
+        diagnostics={{
+          lastScanAt: new Date(NOW).toISOString(),
+          scannedTickers: 40,
+          emittedThisScan: 0,
+          blockedThisScan: 40,
+          topEU: 'SAP.DE',
+          topUS: 'NVDA',
+          gateCounts: [
+            { gate: 'G5', label: 'Breakout scaduto oltre 60 minuti', count: 22 },
+            { gate: 'G11', label: 'Punteggio sotto soglia minima', count: 18 },
+          ],
+        }}
+      />
+    );
+    assert.match(out, /data-testid="v1live-diagnostics"/);
+    assert.match(out, /40 titoli/);
+    assert.match(out, /SAP\.DE/);
+    assert.match(out, /G5/);
+    for (const forbidden of ['Delta', 'Differenza', 'Δ', 'differenza', 'rapporto R', 'entryPrice', 'stopPrice']) {
+      assert.equal(out.includes(forbidden), false, `non deve comparire ${forbidden}`);
+    }
+  });
 });

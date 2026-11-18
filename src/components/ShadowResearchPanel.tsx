@@ -134,6 +134,26 @@ export type ShadowPanelData = {
       totalFrictionR: number | null;
     }>;
   } | null;
+  v1LiveDiagnostics?: {
+    lastScanAt?: string;
+    scannedTickers?: number;
+    evaluatedTickers?: number;
+    emittedThisScan?: number;
+    persistedThisScan?: number;
+    blockedThisScan?: number;
+    topEU?: string | null;
+    topUS?: string | null;
+    gateCounts?: Array<{ gate: string; label: string; count: number }>;
+    sampleCandidates?: Array<{
+      ticker: string;
+      market: 'EU' | 'US';
+      score: number;
+      isTopPick: boolean;
+      decision: 'TRADE' | 'BLOCKED';
+      gate: string | null;
+      reason: string | null;
+    }>;
+  } | null;
   limitations?: string[];
   flags?: { SETUP_SELECTOR_LIVE: string; STALENESS_USE_MARKET_TS: string };
 };
@@ -163,6 +183,55 @@ const NOT_INTERPRETABLE: Record<string, string> = {
 
 function fmt(x: number | null | undefined, digits = 3): string {
   return typeof x === 'number' && Number.isFinite(x) ? x.toFixed(digits) : 'n/d';
+}
+
+function fmtSigned(x: number | null | undefined, digits = 3, suffix = ''): string {
+  if (typeof x !== 'number' || !Number.isFinite(x)) return 'n/d';
+  const sign = x > 0 ? '+' : '';
+  return `${sign}${x.toFixed(digits)}${suffix}`;
+}
+
+function fmtEurFromR(r: number | null | undefined, riskEur = 10): string {
+  if (typeof r !== 'number' || !Number.isFinite(r)) return 'n/d';
+  const eur = r * riskEur;
+  const sign = eur > 0 ? '+' : eur < 0 ? '-' : '';
+  return `${sign}${Math.abs(eur).toFixed(2).replace('.', ',')} €`;
+}
+
+const V2_TRIGGER_IT: Record<string, string> = {
+  CUSUM_DISPLACEMENT: 'Impulso + VWAP',
+  FAILED_GAP_REVERSAL: 'Inversione Falso Gap',
+};
+
+const V2_OUTCOME_IT: Record<string, { label: string; tone: string }> = {
+  TARGET_1: { label: 'Target raggiunto', tone: 'bg-emerald-950/70 text-emerald-300 border-emerald-800/60' },
+  STOP: { label: 'Stop colpito', tone: 'bg-rose-950/70 text-rose-300 border-rose-800/60' },
+  KO_HIT: { label: 'Barriera KO toccata', tone: 'bg-red-950/80 text-red-300 border-red-800/60' },
+  TIME_BARRIER: { label: 'Chiuso a tempo (90m)', tone: 'bg-slate-900 text-slate-300 border-slate-700' },
+  OPEN: { label: 'In corso', tone: 'bg-sky-950/70 text-sky-300 border-sky-800/60' },
+  PENDING: { label: 'In attesa apertura', tone: 'bg-amber-950/70 text-amber-300 border-amber-800/60' },
+};
+
+const V2_BLOCKED_IT: Record<string, string> = {
+  UNDERLYING_SPREAD_TOO_HIGH: 'Scartato: spread titolo troppo alto',
+  TOTAL_FRICTION_TOO_HIGH: 'Scartato: costi superiori al tetto',
+  VAR_SPREAD_TOO_HIGH: 'Scartato: spread certificato alto',
+  NO_ELIGIBLE_LEVERAGE: 'Scartato: nessuna leva KO sicura',
+};
+
+function describeV2Outcome(outcome: string, blockedReason: string | null): { label: string; tone: string } {
+  if (blockedReason) {
+    return {
+      label: V2_BLOCKED_IT[blockedReason] ?? `Scartato: ${blockedReason}`,
+      tone: 'bg-amber-950/50 text-amber-200 border-amber-800/50',
+    };
+  }
+  return (
+    V2_OUTCOME_IT[outcome] ?? {
+      label: outcome,
+      tone: 'bg-slate-900 text-slate-300 border-slate-700',
+    }
+  );
 }
 
 function statusLabel(status: string): string {
@@ -371,11 +440,40 @@ export const ShadowV2Section: React.FC<{ shadowV2?: ShadowPanelData['shadowV2'] 
   const recent = shadowV2?.recentSignals ?? [];
   const hyp = shadowV2?.hypotheses ?? null;
   const limitations = shadowV2?.limitations ?? [];
+  const resolvedCount = shadowV2?.nResolved ?? 0;
+  const sessionsCount = shadowV2?.nSessions ?? 0;
+  const tradeProgressPct = Math.min(100, Math.round((resolvedCount / 100) * 100));
+  const dayProgressPct = Math.min(100, Math.round((sessionsCount / 30) * 100));
+
+  const meanGross = shadowV2?.meanRGross ?? null;
+  const meanNet = shadowV2?.meanRNet ?? null;
+  const friction1k = shadowV2?.medianFrictionR ?? null;
+  const friction25k = shadowV2?.medianFrictionR2500 ?? null;
+
+  let costReading = 'Nessuna operazione chiusa finora per calcolare la media netta.';
+  if (resolvedCount > 0 && meanGross != null && meanNet != null) {
+    if (meanGross > 0 && meanNet <= 0) {
+      costReading =
+        'Prima delle spese la media e\' leggermente positiva, ma su 1.000 € commissioni e spread assorbono il margine.';
+    } else if (meanNet > 0) {
+      costReading =
+        'La media resta sopra zero anche dopo commissioni e spread (risultato ancora provvisorio per campione piccolo).';
+    } else {
+      costReading =
+        'Anche prima delle spese la media e\' negativa sulle operazioni chiuse finora.';
+    }
+  }
+
   return (
     <div className={SECTION} data-testid="shadow-v2" data-section="shadow-v2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-xs font-bold uppercase tracking-wider text-indigo-300">
-          Shadow V2 — CUSUM Displacement + VWAP Pullback-Reclaim (KO Vol-Matched)
+        <div>
+          <div className="text-xs font-bold uppercase tracking-wider text-indigo-300">
+            Shadow V2 — Strategia sperimentale automatica (Tempo reale)
+          </div>
+          <div className="text-[10px] text-slate-400">
+            Modello CUSUM Displacement + VWAP Pullback-Reclaim con barriera KO calibrata sulla volatilita&apos;
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -412,8 +510,110 @@ export const ShadowV2Section: React.FC<{ shadowV2?: ShadowPanelData['shadowV2'] 
           In attesa di segnali reali su barre 5m chiuse durante le scansioni live. Nessun trade sintetico generato.
         </p>
       ) : (
-        <div className="space-y-2 text-[11px] font-mono text-slate-300">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="space-y-3 text-[11px] text-slate-300">
+          {/* Lettura guidata per utenti non tecnici */}
+          <div
+            className="rounded-lg border border-indigo-900/50 bg-slate-900/70 p-3 space-y-2.5"
+            data-testid="shadow-v2-plain-summary"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-bold text-white">
+                In parole semplici — Cosa dicono i numeri finora
+              </div>
+              <span className="text-[10px] font-mono text-slate-400">
+                1R = 10,00 € di rischio (1% su capitale 1.000 €)
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+              {/* 1. Risultato economico in Euro */}
+              <div className="rounded border border-slate-800 bg-slate-950/70 p-2.5 space-y-1">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                  1. Risultato medio per operazione
+                </div>
+                <div className="flex items-baseline justify-between text-xs">
+                  <span className="text-slate-400">Prima delle spese:</span>
+                  <span className={`font-mono font-bold ${(meanGross ?? 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                    {fmtSigned(meanGross, 3, 'R')} ({fmtEurFromR(meanGross, 10)})
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between text-xs">
+                  <span className="text-slate-400">Spese medie (fee+spread):</span>
+                  <span className="font-mono text-amber-300">
+                    {friction1k != null ? `${fmt(friction1k, 3)}R (${fmtEurFromR(-friction1k, 10)})` : 'n/d'}
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between text-xs border-t border-slate-800 pt-1">
+                  <span className="font-semibold text-white">Netto reale (su 1.000 €):</span>
+                  <span className={`font-mono font-bold ${(meanNet ?? 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                    {fmtSigned(meanNet, 3, 'R')} ({fmtEurFromR(meanNet, 10)})
+                  </span>
+                </div>
+                {friction25k != null && (
+                  <div className="text-[10px] text-slate-500">
+                    Con capitale 2.500 € (rischio 25 €/trade) le spese scendono a {fmt(friction25k, 3)}R sul rischio.
+                  </div>
+                )}
+                <p className="text-[10px] text-slate-300 pt-0.5">{costReading}</p>
+              </div>
+
+              {/* 2. Bilancio operazioni chiuse */}
+              <div className="rounded border border-slate-800 bg-slate-950/70 p-2.5 space-y-1.5">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                  2. Bilancio delle {resolvedCount} operazioni chiuse
+                </div>
+                <div className="grid grid-cols-2 gap-1 text-[11px] font-mono">
+                  <div className="text-emerald-300">Vinte: {shadowV2.wins}</div>
+                  <div className="text-rose-300">Stop colpito: {shadowV2.losses}</div>
+                  <div className="text-slate-300">A tempo (90m): {shadowV2.timeouts}</div>
+                  <div className="text-red-300">Barriera KO: {shadowV2.koHits}</div>
+                </div>
+                <div className="text-[10px] text-slate-400 border-t border-slate-800 pt-1">
+                  Scartate prima di entrare (spread/costi/leva): <strong className="text-amber-200">{shadowV2.nBlocked}</strong>
+                  {shadowV2.nOpen + shadowV2.nPendingOpen > 0 && (
+                    <> · In corso: <strong className="text-sky-200">{shadowV2.nOpen + shadowV2.nPendingOpen}</strong></>
+                  )}
+                </div>
+                <div className="text-[10px] text-slate-400">
+                  Profit Factor: <strong className="font-mono text-white">{fmt(shadowV2.profitFactor, 2)}</strong>{' '}
+                  <span className="text-slate-500">(sopra 1,00 i guadagni superano le perdite)</span>
+                </div>
+              </div>
+
+              {/* 3. Stato del campione */}
+              <div className="rounded border border-slate-800 bg-slate-950/70 p-2.5 space-y-1.5">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                  3. I dati bastano per decidere?
+                </div>
+                <div>
+                  <div className="flex justify-between text-[10px] text-slate-300 mb-0.5">
+                    <span>Operazioni chiuse</span>
+                    <span className="font-mono">{resolvedCount} / 100</span>
+                  </div>
+                  <div className="h-1.5 rounded bg-slate-800 overflow-hidden">
+                    <div className="h-full bg-indigo-400" style={{ width: `${tradeProgressPct}%` }} />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between text-[10px] text-slate-300 mb-0.5">
+                    <span>Giorni osservati</span>
+                    <span className="font-mono">{sessionsCount} / 30</span>
+                  </div>
+                  <div className="h-1.5 rounded bg-slate-800 overflow-hidden">
+                    <div className="h-full bg-indigo-400" style={{ width: `${dayProgressPct}%` }} />
+                  </div>
+                </div>
+                <p className="text-[10px] text-amber-200/90 pt-0.5">
+                  {resolvedCount < 100 || sessionsCount < 30
+                    ? 'Campione ancora troppo piccolo: servono almeno 100 operazioni chiuse su 30 giorni diversi prima di valutare se la strategia funziona.'
+                    : 'Soglia minima di raccolta raggiunta: verificare i test statistici completi nella griglia sotto.'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Metriche tecniche complete */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono">
             <div className="rounded bg-slate-900/70 p-2">
               <div className="text-[10px] text-slate-500">Sessioni / Segnali</div>
               <div className="font-bold text-white">{shadowV2.nSessions} / {shadowV2.nSignals}</div>
@@ -452,35 +652,81 @@ export const ShadowV2Section: React.FC<{ shadowV2?: ShadowPanelData['shadowV2'] 
           </div>
 
           {recent.length > 0 && (
-            <div className="max-h-48 overflow-auto border-t border-slate-900 pt-2">
+            <div className="max-h-56 overflow-auto border-t border-slate-900 pt-2">
+              <div className="text-[10px] text-slate-400 mb-1">
+                Ultime operazioni osservate (valori netti dopo commissioni 2 € e spread stimato)
+              </div>
               <table className="w-full text-[11px] font-mono">
                 <thead className="text-slate-500">
                   <tr>
-                    <th className="text-left">data</th>
-                    <th className="text-left">ticker</th>
-                    <th className="text-left">dir</th>
-                    <th className="text-left">trigger</th>
-                    <th className="text-left">esito</th>
-                    <th className="text-right">leva</th>
-                    <th className="text-right">R netto</th>
+                    <th className="text-left">Data</th>
+                    <th className="text-left">Titolo</th>
+                    <th className="text-left">Dir</th>
+                    <th className="text-left">Pattern</th>
+                    <th className="text-left">Esito / Motivo</th>
+                    <th className="text-right">Leva</th>
+                    <th className="text-right">Netto (R / €)</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {recent.slice(0, 12).map((s) => (
-                    <tr key={s.id} className="text-slate-300 border-t border-slate-900/80">
-                      <td>{s.sessionDate}</td>
-                      <td className="font-bold">{s.ticker}</td>
-                      <td>{s.direction}</td>
-                      <td className="text-slate-400">{s.triggerType}</td>
-                      <td>{s.blockedReason ? `BLOCK:${s.blockedReason}` : s.outcome}</td>
-                      <td className="text-right">{s.leverage ? `${s.leverage}x` : 'n/d'}</td>
-                      <td className="text-right">{s.rNet != null ? `${s.rNet >= 0 ? '+' : ''}${s.rNet.toFixed(2)}R` : 'n/d'}</td>
-                    </tr>
-                  ))}
+                  {recent.slice(0, 12).map((s) => {
+                    const desc = describeV2Outcome(s.outcome, s.blockedReason);
+                    const patternLabel = V2_TRIGGER_IT[s.triggerType] ?? s.triggerType;
+                    return (
+                      <tr key={s.id} className="text-slate-300 border-t border-slate-900/80">
+                        <td>{s.sessionDate}</td>
+                        <td className="font-bold text-white">{s.ticker}</td>
+                        <td className={s.direction === 'LONG' ? 'text-emerald-300' : 'text-rose-300'}>
+                          {s.direction}
+                        </td>
+                        <td className="text-slate-400 font-sans text-[10px]">{patternLabel}</td>
+                        <td className="py-1 font-sans">
+                          <span
+                            title={s.outcome ?? undefined}
+                            className={`inline-block px-1.5 py-0.5 rounded border text-[10px] ${desc.tone}`}
+                          >
+                            {desc.label}
+                          </span>
+                        </td>
+                        <td className="text-right">{s.leverage ? `${s.leverage}x` : 'n/d'}</td>
+                        <td className={`text-right ${s.rNet != null ? (s.rNet >= 0 ? 'text-emerald-300' : 'text-rose-300') : 'text-slate-500'}`}>
+                          {s.rNet != null
+                            ? `${s.rNet >= 0 ? '+' : ''}${s.rNet.toFixed(2)}R (${fmtEurFromR(s.rNet, 10)})`
+                            : 'n/d'}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           )}
+
+          <details className="rounded border border-slate-800/80 bg-slate-900/40 p-2 text-[10px] text-slate-400">
+            <summary className="cursor-pointer font-semibold text-slate-300">
+              Come leggere questi termini (mini-glossario)
+            </summary>
+            <ul className="mt-1.5 space-y-1 pl-2">
+              <li>
+                <strong className="text-slate-200">R (Unità di rischio):</strong> indica quanto hai guadagnato o perso rispetto al rischio iniziale di un&apos;operazione. Se rischi 10 € a operazione, +1R = +10 €, -1R = -10 €.
+              </li>
+              <li>
+                <strong className="text-slate-200">Mean R Lordo vs Netto:</strong> il lordo misura il movimento del prezzo prima delle spese; il netto toglie commissioni fisse (2 € andata+ritorno) e spread stimato.
+              </li>
+              <li>
+                <strong className="text-slate-200">Friction (Spese):</strong> quanto incidono commissioni e spread rispetto al tuo rischio iniziale (piu&apos; alto e&apos; il capitale rischiato, meno pesano i 2 € fissi).
+              </li>
+              <li>
+                <strong className="text-slate-200">Profit Factor:</strong> somma di tutti i guadagni divisa per la somma di tutte le perdite. Sopra 1,00 sei in profitto; sotto 1,00 prevalgono le perdite.
+              </li>
+              <li>
+                <strong className="text-slate-200">Max DD (Drawdown):</strong> la massima perdita cumulata subita dal picco precedente.
+              </li>
+              <li>
+                <strong className="text-slate-200">DSR e Cluster Bootstrap p:</strong> test statistici contro l&apos;illusione del caso (p vicino a 0 significa meno probabile che sia fortuna; vicino a 1 significa compatibile col caso).
+              </li>
+            </ul>
+          </details>
         </div>
       )}
 
@@ -519,16 +765,21 @@ export const ShadowResearchPanel: React.FC<{ data: ShadowPanelData | null }> = (
   if (data === null || data.available !== true) {
     return (
       <div className="space-y-3" data-testid="shadow-panel" data-section="empty">
-        <div className={SECTION}>
-          <div className="text-sm font-bold text-white">Shadow Research</div>
-          <p className="text-xs text-slate-400">
-            nessun artefatto{data?.reason ? ` (${data.reason})` : ''}: esegui{' '}
-            <code className="text-purple-300">bun scripts/shadow_report.ts</code> e{' '}
-            <code className="text-purple-300">bun scripts/ai_cycle.ts deathcheck</code>.
-          </p>
-        </div>
         <ShadowV2Section shadowV2={data?.shadowV2 ?? null} />
-        <PairedV1VsV2Section data={data} />
+        <details className={SECTION}>
+          <summary className="cursor-pointer text-xs font-mono text-slate-400">
+            Archivio V1 offline (legacy): nessun artefatto{data?.reason ? ` (${data.reason})` : ''}
+          </summary>
+          <div className="mt-2 space-y-2">
+            <div className="text-xs font-bold text-slate-300">Shadow Research offline</div>
+            <p className="text-xs text-slate-400">
+              nessun artefatto{data?.reason ? ` (${data.reason})` : ''}: esegui{' '}
+              <code className="text-purple-300">bun scripts/shadow_report.ts</code> e{' '}
+              <code className="text-purple-300">bun scripts/ai_cycle.ts deathcheck</code>.
+            </p>
+            <PairedV1VsV2Section data={data} />
+          </div>
+        </details>
       </div>
     );
   }

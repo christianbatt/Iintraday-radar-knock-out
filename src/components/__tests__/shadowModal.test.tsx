@@ -110,7 +110,8 @@ describe('M4 — errore di rete: messaggio, nessun crash', () => {
       path.join(process.cwd(), 'src/components/ShadowResearchPanel.tsx'),
       'utf8'
     );
-    assert.ok(modalSrc.includes('<ShadowV1LivePanel v2={data?.shadowV2 ?? null} />'));
+    assert.ok(modalSrc.includes('v2={data?.shadowV2 ?? null}'));
+    assert.ok(modalSrc.includes('diagnostics={data?.v1LiveDiagnostics ?? null}'));
     assert.equal(panelSrc.includes('2026-10-28'), false);
     assert.equal(panelSrc.includes('2026-10-29'), false);
   });
