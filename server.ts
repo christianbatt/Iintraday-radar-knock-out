@@ -35,7 +35,7 @@ import { SETUP_PROMPT_BLOCK } from './src/config/setupPrompt';
 import { AILearnedInsight, VwapSignalState, VwapDataQuality, SetupIndicators, IndicatorBarInput } from './src/types/radar';
 import { runNightlyLearning } from './scripts/nightly_learning';
 import { authStartupWarning } from './src/utils/authStartupWarning';
-import { recordClosedBarsForShadowV2, observeShadowV2Scan } from './src/server/shadowV2Collector';
+import { recordClosedBarsForShadowV2, observeShadowV2Scan, syncShadowV2SummaryFromDisk } from './src/server/shadowV2Collector';
 import { recordBarsForShadowV1Live, registerShadowV1LiveCollector } from './src/server/shadowV1LiveCollector';
 import { registerShadowV1LiveViewRoute } from './src/server/shadowV1LiveView';
 import { formatShadowV2SignalsCsv, formatShadowV2SignalsJsonl, ShadowV2Record } from './src/knowledge/shadowV2';
@@ -3409,6 +3409,7 @@ app.get('/api/shadow/v2/export', async (req: Request, res: Response) => {
 // Serve public static assets (manifest, icons, favicon)
 // Passo L: pannello shadow research, sola lettura (artefatti offline).
 registerShadowRoutesFromDisk(app);
+app.post('/api/shadow/v1-live/observe', requireApiAuth);
 registerShadowV1LiveCollector(app);
 registerShadowV1LiveViewRoute(app);
 
@@ -3429,6 +3430,7 @@ async function startServer() {
     });
   }
 
+  syncShadowV2SummaryFromDisk(__dirname);
   aiLearnedMemory = await loadPersistentAIMemory();
 
   app.listen(PORT, '0.0.0.0', () => {

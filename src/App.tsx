@@ -25,6 +25,7 @@ import { loadParameters, sanitizeScoreParameters, shouldApplyPolledParameters, s
 import { DEFAULT_TRADE_REPUBLIC_UNDERLYINGS } from './data/defaultUnderlyings';
 import {
   getDualTopCandidates,
+  scoreAllRadarCandidates,
   buildExecutionSetup,
   DEFAULT_SYSTEM_PARAMETERS,
   evaluateSystemOptimization,
@@ -855,7 +856,13 @@ export default function App() {
 
       setTopCandidateEU(activeTopEU);
       setTopCandidateUS(activeTopUS);
-      setTopCandidates(dual.allRanked);
+      setTopCandidates(
+        scoreAllRadarCandidates(rawQuotes, futuresMapping, {
+          rsiFilterActive,
+          parameters,
+          catalysts: catalystCacheRef.current,
+        })
+      );
 
       // Select default candidate
       if (currentSession === 'US') {
@@ -1004,7 +1011,13 @@ export default function App() {
 
     setTopCandidateEU(activeTopEU);
     setTopCandidateUS(activeTopUS);
-    setTopCandidates(dual.allRanked);
+    setTopCandidates(
+      scoreAllRadarCandidates(quotes, futuresMapping, {
+        rsiFilterActive,
+        parameters,
+        catalysts: catalystCacheRef.current,
+      })
+    );
 
     if (currentSession === 'US') {
       setSelectedCandidate(activeTopUS || activeTopEU);
@@ -1181,7 +1194,7 @@ export default function App() {
     });
   }, []);
 
-  // Shadow V1-live: osservazione passiva, spenta di default (nessuna richiesta a flag OFF).
+  // Shadow V1-live: osservazione passiva lato client (acceso di default; no-op a flag OFF).
   useEffect(() => {
     notifyShadowV1Live(setupEU);
     notifyShadowV1Live(setupUS);
@@ -1329,8 +1342,10 @@ export default function App() {
 
   // Select alternative candidate from Live Radar and promote to setup
   const handleSelectCandidate = async (cand: ScoredCandidate) => {
-    if (cand.score.warmupIncomplete) {
-      console.warn(`Selezione bloccata: ${cand.quote.ticker} in warm-up incompleto`);
+    if (cand.score.warmupIncomplete || cand.score.veto != null) {
+      console.warn(
+        `Selezione bloccata per ${cand.quote.ticker}: ${cand.score.veto ?? 'warm-up incompleto'}`
+      );
       return;
     }
     setSelectedCandidate(cand);
@@ -1616,7 +1631,13 @@ export default function App() {
       const dual = getDualTopCandidates(quotes, futuresMapping, { rsiFilterActive, parameters: newParams, catalystCache });
       setTopCandidateEU(dual.topEU);
       setTopCandidateUS(dual.topUS);
-      setTopCandidates(dual.allRanked);
+      setTopCandidates(
+        scoreAllRadarCandidates(quotes, futuresMapping, {
+          rsiFilterActive,
+          parameters: newParams,
+          catalystCache,
+        })
+      );
       if (dual.topEU) {
         setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', newParams, { entryMode: getActiveEntryMode('EU'), macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
       }
@@ -1752,7 +1773,13 @@ export default function App() {
       });
       setTopCandidateEU(dual.topEU);
       setTopCandidateUS(dual.topUS);
-      setTopCandidates(dual.allRanked);
+      setTopCandidates(
+        scoreAllRadarCandidates(quotes, futuresMapping, {
+          rsiFilterActive: newRsiActive,
+          parameters: updated,
+          catalystCache,
+        })
+      );
 
       if (currentSession === 'US') {
         setSelectedCandidate(dual.topUS || dual.topEU);
@@ -1841,7 +1868,13 @@ export default function App() {
       });
       setTopCandidateEU(dual.topEU);
       setTopCandidateUS(dual.topUS);
-      setTopCandidates(dual.allRanked);
+      setTopCandidates(
+        scoreAllRadarCandidates(quotes, futuresMapping, {
+          rsiFilterActive: newRsiActive,
+          parameters: updated,
+          catalystCache,
+        })
+      );
 
       if (currentSession === 'US') {
         setSelectedCandidate(dual.topUS || dual.topEU);

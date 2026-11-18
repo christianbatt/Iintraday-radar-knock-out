@@ -3,8 +3,8 @@
  *
  * Persistenza passiva dei lifecycle V1-live: idempotenza per chiave, transizioni
  * monotone, stati terminali immutabili, ricostruzione delle chiavi gia' viste.
- * NON e' importato dal radar, dal server o dal client: il percorso di produzione
- * esiste solo come costante e i test usano esclusivamente directory temporanee.
+ * Utilizzato solo dai moduli passivi lato server (`shadowV1LiveCollector` e
+ * `shadowV1LiveView`); i test usano esclusivamente directory temporanee.
  *
  * Formato: JSONL, un record per riga, ordine deterministico per `decidedAtMs` e poi
  * `key`. Scrittura atomica (tmp nella stessa directory + rename), come

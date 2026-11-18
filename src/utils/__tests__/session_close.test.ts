@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { sessionCloseMsFor, sessionDateFor } from '../sessionClose';
+import { getSessionSchedule, sessionCloseMsFor, sessionDateFor } from '../sessionClose';
 
 /** Costante UTC esplicita: `YYYY-MM-DDTHH:MM` in UTC, indipendente da Intl. */
 const utc = (y: number, mo: number, d: number, h: number, mi: number): number =>
@@ -78,6 +78,58 @@ describe('sessionClose — giorni e date non negoziabili', () => {
       assert.equal(sessionCloseMsFor('EU', bad), null, bad);
       assert.equal(sessionCloseMsFor('US', bad), null, bad);
     }
+  });
+
+  it('festività EU (Capodanno, Venerdì Santo, Lunedì dell’Angelo, 1 maggio, 24-26/12, 31/12) => null', () => {
+    for (const h of [
+      '2026-01-01',
+      '2026-04-03', // Venerdì Santo 2026
+      '2026-04-06', // Lunedì dell'Angelo 2026
+      '2026-05-01',
+      '2026-12-24',
+      '2026-12-25',
+      '2026-12-31',
+    ]) {
+      assert.equal(sessionCloseMsFor('EU', h), null, `EU holiday ${h}`);
+      assert.equal(getSessionSchedule('EU', h).closed, true, h);
+    }
+    // Giorno lavorativo regolare US su 1 maggio (US aperto, EU chiuso)
+    assert.ok(sessionCloseMsFor('US', '2026-05-01') != null);
+    // Lunedì dell'Angelo EU chiuso ma US aperto
+    assert.ok(sessionCloseMsFor('US', '2026-04-06') != null);
+  });
+
+  it('festività US NYSE/Nasdaq (MLK, Presidents, Good Friday, Memorial, Juneteenth, Jul 4, Labor, Thanksgiving, Natale) => null', () => {
+    for (const h of [
+      '2026-01-01', // Capodanno
+      '2026-01-19', // MLK Day 2026
+      '2026-02-16', // Presidents' Day 2026
+      '2026-04-03', // Good Friday 2026
+      '2026-05-25', // Memorial Day 2026
+      '2026-06-19', // Juneteenth 2026
+      '2026-07-03', // Independence Day 2026 observed (4 luglio cade sabato)
+      '2026-09-07', // Labor Day 2026
+      '2026-11-26', // Thanksgiving 2026
+      '2026-12-25', // Christmas 2026
+    ]) {
+      assert.equal(sessionCloseMsFor('US', h), null, `US holiday ${h}`);
+      assert.equal(getSessionSchedule('US', h).closed, true, h);
+    }
+  });
+
+  it('mezze giornate US (chiusura anticipata alle 13:00 America/New_York)', () => {
+    // 2026-11-27 (Black Friday, EST -300): 13:00 NY = 18:00 UTC
+    const blackFriday = sessionCloseMsFor('US', '2026-11-27');
+    assert.equal(blackFriday, utc(2026, 11, 27, 18, 0));
+    assert.equal(getSessionSchedule('US', '2026-11-27').earlyClose, true);
+
+    // 2026-12-24 (Vigilia giovedì, EST -300): US 13:00 NY = 18:00 UTC, EU chiuso
+    assert.equal(sessionCloseMsFor('US', '2026-12-24'), utc(2026, 12, 24, 18, 0));
+    assert.equal(sessionCloseMsFor('EU', '2026-12-24'), null);
+
+    // 2025-07-03 (vigilia giovedì del 4 luglio 2025 venerdì, EDT -240): 13:00 NY = 17:00 UTC
+    assert.equal(sessionCloseMsFor('US', '2025-07-03'), utc(2025, 7, 3, 17, 0));
+    assert.equal(getSessionSchedule('US', '2025-07-03').earlyClose, true);
   });
 
   it('istante non finito => sessionDateFor null', () => {

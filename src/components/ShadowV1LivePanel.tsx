@@ -18,9 +18,9 @@ import type {
  * `r` e' un R di prezzo, non un `rNet`. Il confronto quantitativo e'
  * dichiarato non disponibile, non simulato.
  *
- * Flag `SHADOW_V1_LIVE_VIEW_PANEL` (default `'off'`): a flag OFF il componente
- * non renderizza nulla e non fa richieste. `data`/`v2`/`error` sono iniettabili
- * solo per i test statici.
+ * Flag `SHADOW_V1_LIVE_VIEW_PANEL` (acceso di default; spegnibile via `'off'`):
+ * a flag OFF il componente non renderizza nulla e non fa richieste.
+ * `data`/`v2`/`error` sono iniettabili per i test statici e per evitare doppio fetch nella modale.
  */
 export interface ShadowV1LiveV2Summary {
   nSignals?: number;
@@ -83,6 +83,8 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
 
   const refresh = useCallback(() => setTick((n) => n + 1), []);
 
+  const shouldFetchV2 = v2Prop === undefined;
+
   useEffect(() => {
     if (!enabled || !live) return;
     let alive = true;
@@ -98,13 +100,15 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
 
     Promise.all([
       readJson('/api/shadow/v1-live/signals'),
-      readJson('/api/shadow/latest').catch(() => null),
+      shouldFetchV2 ? readJson('/api/shadow/latest').catch(() => null) : Promise.resolve(null),
     ])
       .then(([v1, shadow]) => {
         if (!alive) return;
         setFetched(v1 as ShadowV1LiveViewResponse);
-        const summary = (shadow as { shadowV2?: ShadowV1LiveV2Summary } | null)?.shadowV2;
-        setV2Fetched(summary ?? null);
+        if (shouldFetchV2) {
+          const summary = (shadow as { shadowV2?: ShadowV1LiveV2Summary } | null)?.shadowV2;
+          setV2Fetched(summary ?? null);
+        }
         setLoading(false);
       })
       .catch(() => {
@@ -116,12 +120,12 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
     return () => {
       alive = false;
     };
-  }, [enabled, live, fetchImpl, tick]);
+  }, [enabled, live, shouldFetchV2, fetchImpl, tick]);
 
   if (!enabled) return null;
 
   const data = live ? fetched : dataProp;
-  const v2 = live ? v2Fetched : v2Prop;
+  const v2 = v2Prop !== undefined ? v2Prop : v2Fetched;
   const shownError = errorProp ?? netError;
   const isLoading = loadingProp ?? loading;
 

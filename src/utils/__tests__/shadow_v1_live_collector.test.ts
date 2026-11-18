@@ -1029,6 +1029,10 @@ test('server.ts: una sola alimentazione barre e una sola registrazione', () => {
   // La riga di alimentazione non crea timer ne' scritture: la funzione ritorna
   // subito a flag OFF (test dedicato sopra).
   assert.ok(source.includes('recordBarsForShadowV1Live(ticker, market, barsForShadowV2);'));
+  assert.ok(
+    source.includes("app.post('/api/shadow/v1-live/observe', requireApiAuth);"),
+    'route POST protegge /api/shadow/v1-live/observe con requireApiAuth'
+  );
 });
 
 // --- Archivio barre -----------------------------------------------------------
@@ -1110,4 +1114,106 @@ test('archivio: la copia restituita non permette di mutare lo stato interno', ()
   const copy = barsForShadowV1Live('AAPL', 'US');
   copy[0].c = 999;
   assert.equal(barsForShadowV1Live('AAPL', 'US')[0].c, 100.5);
+});
+
+test('archivio su disco: ricarica le barre dopo clear/riavvio del collector', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'v1live-bars-'));
+  try {
+    const fakeApp = { post: () => {} };
+    const first = registerShadowV1LiveCollector(fakeApp, {
+      root: tmpDir,
+      env: ON,
+      fetchMissingBars: null,
+      timers: { setInterval: () => ({}), clearInterval: () => {} },
+    });
+    assert.equal(first.enabled, true);
+    recordBarsForShadowV1Live('ENI.MI', 'EU', [bar(D0, 14, 14.2, 13.9, 14.1)], D0 + 2 * BAR_MS, ON);
+    assert.ok(fs.existsSync(path.join(tmpDir, 'artifacts', 'shadow_v1_live', 'bars.json')));
+
+    // Simula riavvio del processo
+    clearShadowV1LiveBarsForTest();
+    assert.equal(barsForShadowV1Live('ENI.MI', 'EU').length, 0);
+
+    const second = registerShadowV1LiveCollector(fakeApp, {
+      root: tmpDir,
+      env: ON,
+      fetchMissingBars: null,
+      timers: { setInterval: () => ({}), clearInterval: () => {} },
+    });
+    assert.equal(second.enabled, true);
+    const reloaded = barsForShadowV1Live('ENI.MI', 'EU');
+    assert.equal(reloaded.length, 1);
+    assert.equal(reloaded[0].c, 14.1);
+  } finally {
+    clearShadowV1LiveBarsForTest();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('backfill autonomo: risolve record EU illiquido con buchi a volume 0 dopo la chiusura (nessun blocco stale)', async () => {
+  const file = tmpPath();
+  await seedOpen(file);
+  const backfilledBars: ShadowV1LiveBar[] = [
+    bar(D0 + BAR_MS, 100, 101, 99, 100.5),
+    // Buco di 15 minuti (3 candele a volume 0 omesse da Yahoo) e asta prima del close
+    bar(D0 + 5 * BAR_MS, 100.5, 108.5, 100.2, 108),
+  ];
+  const res = await runShadowV1LiveRevaluationCycle(
+    deps(
+      file,
+      {
+        bars: () => [],
+        fetchMissingBars: async () => ({ bars: backfilledBars, authoritative: true }),
+      },
+      CLOSE + 5 * BAR_MS
+    )
+  );
+  assert.equal(res.changed, 1);
+  assert.equal(loadRecords(file).records[0].status, 'TARGET');
+});
+
+test('backfill autonomo: chiude EXPIRED anche senza l’ultima candela esatta di griglia se feed autorevole', async () => {
+  const file = tmpPath();
+  await seedOpen(file);
+  const sparseBars: ShadowV1LiveBar[] = [
+    bar(D0 + BAR_MS, 100, 101, 99, 100.2),
+    bar(CLOSE - 3 * BAR_MS, 100.2, 102, 99.8, 101.5),
+  ];
+  const res = await runShadowV1LiveRevaluationCycle(
+    deps(
+      file,
+      {
+        bars: () => [],
+        fetchMissingBars: async () => ({ bars: sparseBars, authoritative: true }),
+      },
+      CLOSE + 5 * BAR_MS
+    )
+  );
+  assert.equal(res.changed, 1);
+  const rec = loadRecords(file).records[0];
+  assert.equal(rec.status, 'EXPIRED');
+  assert.equal(rec.exitPrice, 101.5);
+});
+
+test('rate limit: usa clientKey UID distinto dietro IP condiviso e normalizza ::ffff:', async () => {
+  const file = tmpPath();
+  const handler = createObserveHandler(deps(file));
+  for (let i = 0; i < SHADOW_V1_LIVE_RATE_LIMIT_PER_MINUTE; i += 1) {
+    const r = await handler({ body: validBody(), ip: '127.0.0.1', clientKey: 'uid:user-A' });
+    assert.equal(r.status, 200);
+  }
+  assert.equal(
+    (await handler({ body: validBody(), ip: '127.0.0.1', clientKey: 'uid:user-A' })).status,
+    429
+  );
+  // Altro utente sullo stesso IP ha il proprio bucket
+  assert.equal(
+    (await handler({ body: validBody(), ip: '127.0.0.1', clientKey: 'uid:user-B' })).status,
+    200
+  );
+  // ::ffff:10.0.0.9 e 10.0.0.9 condividono lo stesso bucket IP normalizzato
+  for (let i = 0; i < SHADOW_V1_LIVE_RATE_LIMIT_PER_MINUTE; i += 1) {
+    assert.equal((await handler({ body: validBody(), ip: '::ffff:10.0.0.9' })).status, 200);
+  }
+  assert.equal((await handler({ body: validBody(), ip: '10.0.0.9' })).status, 429);
 });

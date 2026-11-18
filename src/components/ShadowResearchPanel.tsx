@@ -199,14 +199,14 @@ export const CessationSection: React.FC<{ data?: ShadowPanelData['cessation'] | 
         <div className="text-xs font-bold uppercase tracking-wider text-slate-300">Cessazione — sola lettura</div>
         <div className="text-[11px] font-mono text-slate-400 space-y-1">
           <div>righe con reason: {rowsWithReason ?? 'n/d'}</div>
-          <div>causa dominante dopo il 2026-10-28: {dominantAfter}</div>
+          <div>causa dominante nel periodo recente: {dominantAfter}</div>
           <div>giorni necessari (calendario): {d(daysCal)}</div>
           <div>giorni necessari (giorni con emissione): {d(daysEmit)}</div>
           <div>assunzione: <span className="text-slate-500">{ass}</span></div>
         </div>
         {breakdown.length > 0 && (
           <div className="mt-2">
-            <div className="text-[11px] font-mono text-slate-500 mb-1">prima/dopo 2026-10-28 ( pt )</div>
+            <div className="text-[11px] font-mono text-slate-500 mb-1">prima / dopo la cesura ( pt )</div>
             <table className="w-full text-[11px] font-mono">
               <thead className="text-slate-600">
                 <tr>
@@ -605,7 +605,12 @@ export const ShadowResearchPanel: React.FC<{ data: ShadowPanelData | null }> = (
             </div>
             {dc.status === 'not_yet_evaluable' && (
               <div className="text-amber-300">
-                bloccato: le emissioni sono ferme dal 2026-10-29, non un&apos;attesa.
+                {(() => {
+                  const lastEmitDay = [...emissions].reverse().find((e) => (e.emitted ?? 0) > 0)?.day;
+                  return lastEmitDay
+                    ? `bloccato: nessuna emissione dopo il ${lastEmitDay}, non un'attesa.`
+                    : "bloccato: emissioni insufficienti nel campione osservato, non un'attesa.";
+                })()}
               </div>
             )}
             <div className="text-slate-500">{dc.reason}</div>
@@ -634,7 +639,7 @@ export const ShadowResearchPanel: React.FC<{ data: ShadowPanelData | null }> = (
                 <tr
                   key={e.day}
                   data-day={e.day}
-                  className={e.day === '2026-10-28' ? 'bg-amber-950/40 text-amber-200' : 'text-slate-400'}
+                  className={(e.emitted ?? 0) === 0 ? 'bg-amber-950/30 text-amber-200' : 'text-slate-400'}
                 >
                   <td>{e.day}</td>
                   <td className="text-right">{e.candidates ?? 'n/d'}</td>

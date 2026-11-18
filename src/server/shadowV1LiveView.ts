@@ -3,7 +3,7 @@
  *
  * Sola lettura: legge il JSONL dello store gia' approvato, non scrive nulla, non
  * rivaluta i record e non tocca il collector. Route `GET /api/shadow/v1-live/signals`
- * con flag dedicato `SHADOW_V1_LIVE_VIEW` (attivo solo con `'1'` o `'true'`),
+ * con flag dedicato `SHADOW_V1_LIVE_VIEW` (acceso di default; si spegne solo con `'0'` o `'false'`),
  * separato dal flag di raccolta: la vista si spegne senza fermare il collector.
  *
  * A flag OFF: 404 `disabled`, nessun I/O. File assente o illeggibile: 200 con
@@ -326,7 +326,7 @@ export function buildShadowV1LiveView(input: {
     records: shown.map((r) => toViewRecord(r, input.nowMs)),
     limitations: [
       'Sola lettura: la vista non rivaluta i record e non scrive nulla.',
-      'Nessun calendario festivita\' ne\' mezze giornate: la sessione e\' quella del nucleo.',
+      'Calendario sessioni con festivita\' annuali e mezze giornate US; eventuali chiusure straordinarie una tantum restano escluse.',
       'Nessuna retention: il file cresce; la vista mostra al massimo gli ultimi ' +
         `${limit} record per decidedAtMs.`,
       'Righe con stato non riconosciuto sono ignorate e contate in skippedLines.',

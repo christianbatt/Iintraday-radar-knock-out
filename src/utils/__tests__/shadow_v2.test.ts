@@ -493,4 +493,45 @@ describe('Shadow V2 — Strategia Parallela & Regressioni Critiche', () => {
     assert.equal(nDayClusters, 20);
     assert.ok(pValue != null && pValue < 0.05, `p-value su effetto reale = ${pValue}`);
   });
+
+  it('T14: riallinea summary.json desincronizzato (nSignals: 0) con signals.jsonl anche se changed=false', async () => {
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const {
+      clearShadowV2BarsForTest,
+      observeShadowV2Scan,
+      syncShadowV2SummaryFromDisk,
+    } = await import('../../server/shadowV2Collector');
+
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shadow-v2-sync-'));
+    try {
+      clearShadowV2BarsForTest();
+      const outDir = path.join(tmpRoot, 'artifacts', 'shadow_v2');
+      fs.mkdirSync(outDir, { recursive: true });
+      const rec = mkRecord('sync-1', '2026-11-12', 1.2);
+      fs.writeFileSync(path.join(outDir, 'signals.jsonl'), `${JSON.stringify(rec)}\n`, 'utf8');
+      fs.writeFileSync(
+        path.join(outDir, 'summary.json'),
+        JSON.stringify({ nSignals: 0, nResolved: 0, nOpen: 0, nPendingOpen: 0, nBlocked: 0, nSessions: 0 }),
+        'utf8'
+      );
+
+      // observeShadowV2Scan senza nuove barre (changed=false) deve comunque rigenerare summary.json
+      const afterObserve = observeShadowV2Scan([], tmpRoot, Date.UTC(2026, 10, 17, 12, 0));
+      assert.equal(afterObserve?.nSignals, 1);
+      const onDisk = JSON.parse(fs.readFileSync(path.join(outDir, 'summary.json'), 'utf8'));
+      assert.equal(onDisk.nSignals, 1);
+      assert.equal(onDisk.nResolved, 1);
+
+      // Idem syncShadowV2SummaryFromDisk
+      fs.writeFileSync(path.join(outDir, 'summary.json'), JSON.stringify({ nSignals: 0 }), 'utf8');
+      const synced = syncShadowV2SummaryFromDisk(tmpRoot, Date.UTC(2026, 10, 17, 12, 0));
+      assert.equal(synced?.nSignals, 1);
+      const onDisk2 = JSON.parse(fs.readFileSync(path.join(outDir, 'summary.json'), 'utf8'));
+      assert.equal(onDisk2.nSignals, 1);
+    } finally {
+      clearShadowV2BarsForTest();
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
 });

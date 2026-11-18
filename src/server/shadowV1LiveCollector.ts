@@ -4,24 +4,25 @@
  * Riceve un setup emesso dal client, lo valuta con il nucleo `shadowV1Live.ts`
  * (nessun ricalcolo di G1-G13: il server non ricostruisce il setup) e lo
  * persiste con `shadowV1LiveStore.ts`. Un ciclo periodico rivaluta i record non
- * terminali sulle barre 5m chiuse gia' raccolte dal server.
+ * terminali sulle barre 5m chiuse raccolte dal server o recuperate in autonomia
+ * da Yahoo Finance (EOD / riavvio / titoli usciti dalla watchlist).
  *
- * Tutto e' spento di default: flag `SHADOW_V1_LIVE_COLLECT` attivo solo con
- * `'1'` o `'true'` esatti. A flag OFF la route risponde 404 `disabled` senza
- * alcun I/O, nessun timer parte e `recordBarsForShadowV1Live` ritorna subito.
+ * Interruttore `SHADOW_V1_LIVE_COLLECT`: **acceso di default** (come V2); si
+ * spegne solo con `'0'` o `'false'`. A flag OFF la route risponde 404 `disabled`
+ * senza alcun I/O, nessun timer parte e `recordBarsForShadowV1Live` ritorna subito.
  *
  * Isolamento (F6): ogni eccezione viene catturata e registrata con
  * `console.warn('[Shadow V1 Live Collector] ...')`; non propaga mai al radar,
  * alle altre route o al ciclo V2. Un errore di scrittura non ferma nulla.
  *
- * Sorgente barre: archivio gemello privato, stessa semantica di
- * `src/server/shadowV2Collector.ts:32-72` (merge per `t`, sole barre chiuse,
- * tetto 600 per ticker), alimentato da `server.ts` con lo stesso array
- * `barsForShadowV2`. Limite dichiarato: l'archivio e' in memoria, quindi dopo un
- * riavvio e' vuoto finche' non gira una scansione; i record non terminali
- * restano invariati e il ciclo non produce errori.
+ * Sorgente barre: archivio gemello con cache in memoria (tetto 600 barre/ticker)
+ * e persistenza atomica su disco (`artifacts/shadow_v1_live/bars.json` quando il
+ * collector e' registrato sul server), piu' recupero autonomo throttled da Yahoo
+ * Finance 5m per i record non terminali rimasti scoperti o a fine giornata.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   evaluateShadowV1Live,
   type ShadowV1LiveBar,
@@ -48,6 +49,9 @@ export const SHADOW_V1_LIVE_COLLECT_ENV = 'SHADOW_V1_LIVE_COLLECT';
 /** Route di osservazione (POST). */
 export const SHADOW_V1_LIVE_OBSERVE_PATH = '/api/shadow/v1-live/observe';
 
+/** Archivio barre persistito su disco relativo alla root progetto. */
+export const SHADOW_V1_LIVE_BARS_PATH = 'artifacts/shadow_v1_live/bars.json';
+
 /** Limite esplicito del corpo per questa route (express.json globale: 10 MB). */
 export const SHADOW_V1_LIVE_MAX_BODY_BYTES = 8192;
 
@@ -64,6 +68,10 @@ export const SHADOW_V1_LIVE_MAX_BARS_PER_TICKER = 600;
 
 /** Periodo del ciclo di rivalutazione. */
 export const SHADOW_V1_LIVE_CYCLE_MS = 60_000;
+
+/** Cooldown minimo tra recuperi Yahoo per lo stesso ticker/mercato. */
+const YAHOO_BACKFILL_COOLDOWN_MS = 5 * 60_000;
+const YAHOO_BACKFILL_TIMEOUT_MS = 8_000;
 
 const WARN_PREFIX = '[Shadow V1 Live Collector]';
 
@@ -89,7 +97,7 @@ export function isShadowV1LiveCollectEnabled(
 }
 
 // ---------------------------------------------------------------------------
-// Archivio barre (gemello privato della sorgente V2)
+// Archivio barre (RAM + persistenza atomica su disco)
 // ---------------------------------------------------------------------------
 
 interface BarsEntry {
@@ -100,6 +108,7 @@ interface BarsEntry {
 }
 
 const barsByTicker = new Map<string, BarsEntry>();
+let activeBarsDiskPath: string | null = null;
 
 function barsKey(ticker: string, market: Market): string {
   return `${ticker}|${market}`;
@@ -112,6 +121,83 @@ function isClosedValidBar(b: ShadowV1LiveBar, nowMs: number): boolean {
   if (!(b.t + SHADOW_V1_LIVE_BAR_MS <= nowMs)) return false;
   if (![b.o, b.h, b.l, b.c].every((v) => finite(v) && v > 0)) return false;
   return b.h >= b.l;
+}
+
+function mergeBarsList(
+  existing: readonly ShadowV1LiveBar[],
+  incoming: readonly ShadowV1LiveBar[],
+  nowMs: number
+): ShadowV1LiveBar[] {
+  const byTs = new Map<number, ShadowV1LiveBar>();
+  for (const b of existing) {
+    if (isClosedValidBar(b, nowMs)) byTs.set(b.t, { t: b.t, o: b.o, h: b.h, l: b.l, c: b.c });
+  }
+  for (const b of incoming) {
+    if (isClosedValidBar(b, nowMs)) byTs.set(b.t, { t: b.t, o: b.o, h: b.h, l: b.l, c: b.c });
+  }
+  const merged = Array.from(byTs.values()).sort((a, b) => a.t - b.t);
+  return merged.length > SHADOW_V1_LIVE_MAX_BARS_PER_TICKER
+    ? merged.slice(-SHADOW_V1_LIVE_MAX_BARS_PER_TICKER)
+    : merged;
+}
+
+export function saveShadowV1LiveBarsToDisk(barsPath: string): void {
+  try {
+    const dir = path.dirname(barsPath);
+    fs.mkdirSync(dir, { recursive: true });
+    const tmpPath = `${barsPath}.tmp-${process.pid}`;
+    const payload = {
+      version: 1,
+      updatedAtMs: Date.now(),
+      entries: Array.from(barsByTicker.values()),
+    };
+    fs.writeFileSync(tmpPath, JSON.stringify(payload), 'utf8');
+    fs.renameSync(tmpPath, barsPath);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`${WARN_PREFIX} salvataggio bars.json: ${message}`);
+  }
+}
+
+export function loadShadowV1LiveBarsFromDisk(
+  barsPath: string,
+  nowMs: number = Date.now()
+): number {
+  if (!fs.existsSync(barsPath)) return 0;
+  try {
+    const raw = JSON.parse(fs.readFileSync(barsPath, 'utf8')) as {
+      entries?: BarsEntry[];
+    } | null;
+    if (!raw || !Array.isArray(raw.entries)) return 0;
+    let loaded = 0;
+    for (const entry of raw.entries) {
+      if (
+        !entry ||
+        typeof entry.ticker !== 'string' ||
+        (entry.market !== 'EU' && entry.market !== 'US') ||
+        !Array.isArray(entry.bars)
+      ) {
+        continue;
+      }
+      const key = barsKey(entry.ticker, entry.market);
+      const existing = barsByTicker.get(key)?.bars ?? [];
+      const merged = mergeBarsList(existing, entry.bars, nowMs);
+      if (merged.length > 0) {
+        barsByTicker.set(key, {
+          ticker: entry.ticker,
+          market: entry.market,
+          bars: merged,
+          updatedAt: typeof entry.updatedAt === 'number' ? entry.updatedAt : nowMs,
+        });
+        loaded += 1;
+      }
+    }
+    return loaded;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`${WARN_PREFIX} caricamento bars.json: ${message}`);
+    return 0;
+  }
 }
 
 /**
@@ -132,22 +218,13 @@ export function recordBarsForShadowV1Live(
 
     const key = barsKey(ticker, market);
     const existing = barsByTicker.get(key)?.bars ?? [];
-    const byTs = new Map<number, ShadowV1LiveBar>();
-
-    for (const b of existing) {
-      if (isClosedValidBar(b, nowMs)) byTs.set(b.t, { t: b.t, o: b.o, h: b.h, l: b.l, c: b.c });
-    }
-    for (const b of rawBars) {
-      if (isClosedValidBar(b, nowMs)) byTs.set(b.t, { t: b.t, o: b.o, h: b.h, l: b.l, c: b.c });
-    }
-
-    const merged = Array.from(byTs.values()).sort((a, b) => a.t - b.t);
-    const trimmed =
-      merged.length > SHADOW_V1_LIVE_MAX_BARS_PER_TICKER
-        ? merged.slice(-SHADOW_V1_LIVE_MAX_BARS_PER_TICKER)
-        : merged;
+    const trimmed = mergeBarsList(existing, rawBars, nowMs);
+    if (trimmed.length === 0) return;
 
     barsByTicker.set(key, { ticker, market, bars: trimmed, updatedAt: nowMs });
+    if (activeBarsDiskPath) {
+      saveShadowV1LiveBarsToDisk(activeBarsDiskPath);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`${WARN_PREFIX} archivio barre: ${message}`);
@@ -160,30 +237,14 @@ export function barsForShadowV1Live(ticker: string, market: Market): ShadowV1Liv
   return entry ? entry.bars.map((b) => ({ ...b })) : [];
 }
 
-/** Svuota l'archivio: usato solo dai test, come `clearShadowV2BarsForTest`. */
+/** Svuota l'archivio e resetta il percorso disco: usato solo dai test. */
 export function clearShadowV1LiveBarsForTest(): void {
   barsByTicker.clear();
+  activeBarsDiskPath = null;
 }
 
 // ---------------------------------------------------------------------------
-// Guardia di copertura barre (PR C3)
-//
-// Il nucleo valuta su barre chiuse senza sapere se sono contigue: con un buco
-// puo' dichiarare NOT_FILLED/EXPIRED (o uno stop mai avvenuto) su dati
-// incompleti. La guardia e' pura e non tocca nucleo ne' store: decide solo se
-// l'upsert proposto puo' essere applicato.
-//
-// Regole:
-// - le barre rilevanti sono quelle usate dal nucleo (`t > decidedAtMs`,
-//   `t + 300000 <= min(sessionCloseMs, nowMs)`), deduplicate e ordinate;
-// - la prima deve essere la prima barra della griglia dopo `decidedAtMs`
-//   (`first - 300000 <= decidedAtMs < first`), altrimenti l'inizio non e'
-//   coperto (record piu' vecchio dell'archivio);
-// - ogni coppia consecutiva deve distare esattamente 300000 ms;
-// - `EXPIRED`/`NOT_FILLED` richiedono in piu' l'ultima barra della griglia che
-//   termina entro `sessionCloseMs`;
-// - un inserimento non terminale (PENDING_FILL/OPEN) resta permesso: senza
-//   barre successive alla decisione il record deve comunque nascere.
+// Guardia di copertura barre (PR C3 + tolleranza feed autorevole EOD)
 // ---------------------------------------------------------------------------
 
 export const SHADOW_V1_LIVE_COVERAGE_WARN_MS = 60_000;
@@ -200,6 +261,16 @@ export interface BarCoverageInput {
   decidedAtMs: number;
   sessionCloseMs: number;
   nowMs: number;
+  /**
+   * Abilitato solo quando le barre provengono da un backfill autorevole Yahoo
+   * sull'intera finestra richiesta: permette buchi legittimi di borsa
+   * (candele 5m a volume 0 su titoli illiquidi, aste di volatilita'/chiusura).
+   */
+  allowExchangeGaps?: boolean;
+  /** True solo se nowMs > sessionCloseMs ed il backfill autorevole ha confermato la sessione. */
+  authoritativeSession?: boolean;
+  /** True se esistono barre reali della stessa sessione prima della decisione. */
+  hasSessionContextBar?: boolean;
 }
 
 export interface BarCoverageResult {
@@ -210,6 +281,7 @@ export interface BarCoverageResult {
   /** Ultima barra della griglia che termina entro la chiusura di sessione. */
   expectedLastBarTs: number | null;
   barsUsed: number;
+  allowExchangeGaps?: boolean;
 }
 
 /**
@@ -217,13 +289,18 @@ export interface BarCoverageResult {
  * Non muta l'input (copia e ordina una mappa locale) e non lancia mai.
  */
 export function checkShadowV1LiveBarCoverage(input: BarCoverageInput): BarCoverageResult {
-  const empty = (reason: BarCoverageReason, expected: number | null): BarCoverageResult => ({
+  const empty = (
+    reason: BarCoverageReason,
+    expected: number | null,
+    allowExchangeGaps?: boolean
+  ): BarCoverageResult => ({
     ok: false,
     reason,
     firstBarTs: null,
     lastBarTs: null,
     expectedLastBarTs: expected,
     barsUsed: 0,
+    ...(allowExchangeGaps ? { allowExchangeGaps: true } : {}),
   });
 
   try {
@@ -236,6 +313,7 @@ export function checkShadowV1LiveBarCoverage(input: BarCoverageInput): BarCovera
     const horizon = Math.min(input.sessionCloseMs, input.nowMs);
     const expectedLastBarTs = Math.floor((input.sessionCloseMs - barMs) / barMs) * barMs;
     const rawBars = Array.isArray(input.bars) ? input.bars : [];
+    const allowGaps = input.allowExchangeGaps === true;
 
     const byTs = new Map<number, ShadowV1LiveBar>();
     for (const b of rawBars) {
@@ -248,30 +326,50 @@ export function checkShadowV1LiveBarCoverage(input: BarCoverageInput): BarCovera
     }
 
     const ts = Array.from(byTs.keys()).sort((a, b) => a - b);
-    if (ts.length === 0) return empty('no_bars', expectedLastBarTs);
-
-    const first = ts[0];
-    if (first - barMs > input.decidedAtMs) {
-      return {
-        ok: false,
-        reason: 'leading_hole',
-        firstBarTs: first,
-        lastBarTs: ts[ts.length - 1],
-        expectedLastBarTs,
-        barsUsed: ts.length,
-      };
+    if (ts.length === 0) {
+      if (
+        allowGaps &&
+        input.authoritativeSession === true &&
+        input.hasSessionContextBar === true &&
+        horizon >= input.sessionCloseMs
+      ) {
+        return {
+          ok: true,
+          reason: 'ok',
+          firstBarTs: null,
+          lastBarTs: null,
+          expectedLastBarTs,
+          barsUsed: 0,
+          allowExchangeGaps: true,
+        };
+      }
+      return empty('no_bars', expectedLastBarTs, allowGaps);
     }
 
-    for (let i = 1; i < ts.length; i += 1) {
-      if (ts[i] - ts[i - 1] !== barMs) {
+    const first = ts[0];
+    if (!allowGaps) {
+      if (first - barMs > input.decidedAtMs) {
         return {
           ok: false,
-          reason: 'interior_hole',
+          reason: 'leading_hole',
           firstBarTs: first,
           lastBarTs: ts[ts.length - 1],
           expectedLastBarTs,
           barsUsed: ts.length,
         };
+      }
+
+      for (let i = 1; i < ts.length; i += 1) {
+        if (ts[i] - ts[i - 1] !== barMs) {
+          return {
+            ok: false,
+            reason: 'interior_hole',
+            firstBarTs: first,
+            lastBarTs: ts[ts.length - 1],
+            expectedLastBarTs,
+            barsUsed: ts.length,
+          };
+        }
       }
     }
 
@@ -282,6 +380,7 @@ export function checkShadowV1LiveBarCoverage(input: BarCoverageInput): BarCovera
       lastBarTs: ts[ts.length - 1],
       expectedLastBarTs,
       barsUsed: ts.length,
+      ...(allowGaps ? { allowExchangeGaps: true } : {}),
     };
   } catch {
     return empty('invalid_input', null);
@@ -306,6 +405,7 @@ export function shadowV1LiveCoverageBlock(args: {
   if (!coverage.ok) return coverage.reason;
   if (
     sessionTerminal &&
+    !coverage.allowExchangeGaps &&
     coverage.expectedLastBarTs !== null &&
     coverage.lastBarTs !== coverage.expectedLastBarTs
   ) {
@@ -345,6 +445,110 @@ function noteInsufficientCoverage(
     lastCoverageWarnMs = nowMs;
     warn(`copertura barre insufficiente (${reason}): nessun cambio di stato`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Backfill autonomo Yahoo Finance 5m (chiusura sessione / riavvio / watchlist)
+// ---------------------------------------------------------------------------
+
+export interface BarBackfillResult {
+  bars: ShadowV1LiveBar[];
+  authoritative: boolean;
+}
+
+export async function fetchYahooMissingBarsForShadowV1Live(
+  ticker: string,
+  _market: Market,
+  fromMs: number,
+  toMs: number,
+  nowMs: number = Date.now()
+): Promise<BarBackfillResult | null> {
+  try {
+    const p1 = Math.max(0, Math.floor((fromMs - 15 * 60_000) / 1000));
+    const p2 = Math.max(p1 + 300, Math.ceil((toMs + 15 * 60_000) / 1000));
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+      ticker
+    )}?interval=5m&period1=${p1}&period2=${p2}&includePrePost=false`;
+
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; IntradayKnockoutRadar/1.0)',
+      },
+      signal: AbortSignal.timeout(YAHOO_BACKFILL_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+
+    const json = (await res.json()) as {
+      chart?: {
+        result?: Array<{
+          timestamp?: number[];
+          indicators?: {
+            quote?: Array<{
+              open?: Array<number | null>;
+              high?: Array<number | null>;
+              low?: Array<number | null>;
+              close?: Array<number | null>;
+            }>;
+          };
+        }>;
+      };
+    };
+    const result = json?.chart?.result?.[0];
+    if (!result) return null;
+
+    const timestamps = Array.isArray(result.timestamp) ? result.timestamp : [];
+    const q = result.indicators?.quote?.[0];
+    const bars: ShadowV1LiveBar[] = [];
+    for (let i = 0; i < timestamps.length; i += 1) {
+      const tsSec = timestamps[i];
+      const o = q?.open?.[i];
+      const h = q?.high?.[i];
+      const l = q?.low?.[i];
+      const c = q?.close?.[i];
+      if (
+        typeof tsSec === 'number' &&
+        typeof o === 'number' &&
+        typeof h === 'number' &&
+        typeof l === 'number' &&
+        typeof c === 'number'
+      ) {
+        const candidate: ShadowV1LiveBar = { t: tsSec * 1000, o, h, l, c };
+        if (isClosedValidBar(candidate, nowMs)) {
+          bars.push(candidate);
+        }
+      }
+    }
+
+    return {
+      bars,
+      authoritative: bars.length > 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function createThrottledYahooBackfill(
+  nowFn: () => number,
+  env: Record<string, string | undefined> | undefined
+): NonNullable<CollectorDeps['fetchMissingBars']> {
+  const lastAttemptByKey = new Map<string, number>();
+
+  return async (ticker, market, fromMs, toMs) => {
+    const key = barsKey(ticker, market);
+    const nowMs = nowFn();
+    const last = lastAttemptByKey.get(key) ?? 0;
+    if (nowMs - last < YAHOO_BACKFILL_COOLDOWN_MS) {
+      return null;
+    }
+    lastAttemptByKey.set(key, nowMs);
+
+    const fetched = await fetchYahooMissingBarsForShadowV1Live(ticker, market, fromMs, toMs, nowMs);
+    if (fetched && fetched.bars.length > 0) {
+      recordBarsForShadowV1Live(ticker, market, fetched.bars, nowMs, env);
+    }
+    return fetched;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -459,6 +663,7 @@ export interface ObserveRequest {
   body: unknown;
   contentLength?: string | number | string[] | undefined;
   ip?: string;
+  clientKey?: string;
 }
 
 export interface ObserveResponse {
@@ -485,6 +690,13 @@ export interface CollectorDeps {
   rateLimitPerMinute?: number;
   /** Guardia di copertura iniettabile (default: `checkShadowV1LiveBarCoverage`). */
   coverage?: (input: BarCoverageInput) => BarCoverageResult;
+  /** Backfill autonomo opzionale quando mancano barre in RAM/disco. */
+  fetchMissingBars?: (
+    ticker: string,
+    market: Market,
+    fromMs: number,
+    toMs: number
+  ) => MaybePromise<BarBackfillResult | null>;
 }
 
 const NON_TERMINAL = new Set(['PENDING_FILL', 'OPEN']);
@@ -526,6 +738,47 @@ function parseContentLength(raw: ObserveRequest['contentLength']): number | null
   return null;
 }
 
+function normalizeRateLimitKey(req: ObserveRequest): string {
+  if (typeof req.clientKey === 'string' && req.clientKey.trim().length > 0) {
+    return req.clientKey.trim();
+  }
+  const rawIp = typeof req.ip === 'string' ? req.ip.trim().replace(/^::ffff:/, '') : '';
+  return rawIp.length > 0 ? rawIp : 'unknown';
+}
+
+function hasSessionBarOnDate(
+  bars: readonly ShadowV1LiveBar[],
+  market: Market,
+  decidedAtMs: number
+): boolean {
+  const targetDate = sessionDateFor(market, decidedAtMs);
+  if (!targetDate) return false;
+  for (const b of bars) {
+    if (sessionDateFor(market, b.t) === targetDate) return true;
+  }
+  return false;
+}
+
+function needsBackfillForRecord(
+  coverage: BarCoverageResult,
+  proposedStatus: PersistedShadowV1LiveRecord['status'],
+  currentStatus: PersistedShadowV1LiveRecord['status'] | null,
+  sessionCloseMs: number,
+  nowMs: number
+): boolean {
+  const blocked = shadowV1LiveCoverageBlock({ proposedStatus, currentStatus, coverage });
+  if (blocked !== null) return true;
+  if (
+    nowMs > sessionCloseMs &&
+    coverage.expectedLastBarTs !== null &&
+    coverage.lastBarTs !== coverage.expectedLastBarTs &&
+    NON_TERMINAL.has(proposedStatus)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Costruisce il handler della route con dipendenze iniettate. Le richieste sono
  * serializzate da una coda in memoria: lettura, valutazione e scrittura della
@@ -551,10 +804,17 @@ export function createObserveHandler(
     return run;
   }
 
-  function rateLimited(ip: string, nowMs: number): boolean {
-    const entry = hits.get(ip);
+  function rateLimited(key: string, nowMs: number): boolean {
+    if (hits.size > 1000) {
+      for (const [k, v] of hits.entries()) {
+        if (nowMs - v.windowStart >= SHADOW_V1_LIVE_RATE_WINDOW_MS) {
+          hits.delete(k);
+        }
+      }
+    }
+    const entry = hits.get(key);
     if (!entry || nowMs - entry.windowStart >= SHADOW_V1_LIVE_RATE_WINDOW_MS) {
-      hits.set(ip, { windowStart: nowMs, count: 1 });
+      hits.set(key, { windowStart: nowMs, count: 1 });
       return false;
     }
     entry.count += 1;
@@ -580,8 +840,8 @@ export function createObserveHandler(
     }
 
     const nowMs = deps.now();
-    const ip = req.ip && req.ip.length > 0 ? req.ip : 'unknown';
-    if (rateLimited(ip, nowMs)) {
+    const rateKey = normalizeRateLimitKey(req);
+    if (rateLimited(rateKey, nowMs)) {
       return {
         status: 429,
         body: { status: 'rate_limited', perMinute: limit },
@@ -602,7 +862,7 @@ export function createObserveHandler(
           status: 200,
           body: {
             status: 'no_session',
-            reason: 'chiusura di sessione non determinabile (weekend o data non valida)',
+            reason: 'chiusura di sessione non determinabile (weekend, festivita\' o data non valida)',
             market: setup.market,
             sessionDate,
           },
@@ -622,25 +882,28 @@ export function createObserveHandler(
           decidedAtMs: setup.decidedAtMs,
           sessionCloseMs,
         };
-        const bars = deps.bars(setup.ticker, setup.market);
-        const result = evaluateShadowV1Live({
-          setup: {
-            candidate: { ticker: setup.ticker },
-            decision: 'TRADE',
-            direction: setup.direction,
-            triggerLevel: setup.entry,
-            entryLevel: setup.entry,
-            stopLossLevel: setup.stop,
-            target1Level: setup.target,
-          },
+        const evalPayload = {
+          candidate: { ticker: setup.ticker },
+          decision: 'TRADE' as const,
+          direction: setup.direction,
+          triggerLevel: setup.entry,
+          entryLevel: setup.entry,
+          stopLossLevel: setup.stop,
+          target1Level: setup.target,
+        };
+
+        let bars = deps.bars(setup.ticker, setup.market);
+        const seenKeys = records.map((r) => r.key);
+        let result = evaluateShadowV1Live({
+          setup: evalPayload,
           decidedAtMs: context.decidedAtMs,
           sessionCloseMs: context.sessionCloseMs,
           nowMs,
           bars,
-          seenKeys: records.map((r) => r.key),
+          seenKeys,
         });
 
-        const observation = observationFromResult(context, result);
+        let observation = observationFromResult(context, result);
         if (!observation) {
           return {
             status: 200,
@@ -649,17 +912,60 @@ export function createObserveHandler(
         }
 
         const coverageFn = deps.coverage ?? checkShadowV1LiveBarCoverage;
-        const coverage = coverageFn({
+        let coverage = coverageFn({
           bars,
           decidedAtMs: context.decidedAtMs,
           sessionCloseMs: context.sessionCloseMs,
           nowMs,
         });
-        const blocked = shadowV1LiveCoverageBlock({
+        const existingStatus = records.find((r) => r.key === observation!.key)?.status ?? null;
+        let blocked = shadowV1LiveCoverageBlock({
           proposedStatus: observation.status,
-          currentStatus: records.find((r) => r.key === observation.key)?.status ?? null,
+          currentStatus: existingStatus,
           coverage,
         });
+
+        if (blocked && deps.fetchMissingBars) {
+          const backfill = await deps.fetchMissingBars(
+            setup.ticker,
+            setup.market,
+            context.decidedAtMs,
+            Math.min(nowMs, context.sessionCloseMs)
+          );
+          if (backfill?.authoritative) {
+            bars = mergeBarsList(bars, backfill.bars, nowMs);
+            result = evaluateShadowV1Live({
+              setup: evalPayload,
+              decidedAtMs: context.decidedAtMs,
+              sessionCloseMs: context.sessionCloseMs,
+              nowMs,
+              bars,
+              seenKeys,
+            });
+            observation = observationFromResult(context, result);
+            if (!observation) {
+              return {
+                status: 200,
+                body: { status: 'ok', outcome: result.status, persisted: false, key: result.key },
+              };
+            }
+            coverage = coverageFn({
+              bars,
+              decidedAtMs: context.decidedAtMs,
+              sessionCloseMs: context.sessionCloseMs,
+              nowMs,
+              allowExchangeGaps: true,
+              authoritativeSession: nowMs > context.sessionCloseMs,
+              hasSessionContextBar: hasSessionBarOnDate(bars, setup.market, context.decidedAtMs),
+            });
+            blocked = shadowV1LiveCoverageBlock({
+              proposedStatus: observation.status,
+              currentStatus: records.find((r) => r.key === observation!.key)?.status ?? null,
+              coverage,
+            });
+          }
+        }
+
         if (blocked) {
           noteInsufficientCoverage(blocked, nowMs, warn);
           return {
@@ -733,12 +1039,10 @@ export interface CycleResult {
 }
 
 /**
- * Rivaluta i record non terminali con le barre disponibili. A fine sessione il
+ * Rivaluta i record non terminali con le barre disponibili (e con eventuale
+ * backfill Yahoo autonomo se configurato nei `deps`). A fine sessione il
  * nucleo li porta a `EXPIRED` (o `NOT_FILLED`) alla prima valutazione con
  * `nowMs > sessionCloseMs`. Non lancia mai: un errore viene solo registrato.
- *
- * Con archivio barre vuoto (riavvio) i record restano invariati e il ciclo
- * scrive solo se qualcosa e' cambiato.
  */
 export async function runShadowV1LiveRevaluationCycle(
   deps: CollectorDeps
@@ -746,6 +1050,7 @@ export async function runShadowV1LiveRevaluationCycle(
   const warn = deps.warn ?? ((message: string) => console.warn(`${WARN_PREFIX} ${message}`));
   const readRecords = deps.readRecords ?? loadRecords;
   const writeRecords = deps.writeRecords ?? writeRecordsAtomic;
+  const coverageFn = deps.coverage ?? checkShadowV1LiveBarCoverage;
   const empty: CycleResult = { evaluated: 0, changed: 0, written: false };
 
   try {
@@ -758,17 +1063,52 @@ export async function runShadowV1LiveRevaluationCycle(
     for (const record of loaded.records) {
       if (!isNonTerminal(record)) continue;
       evaluated += 1;
-      const bars = deps.bars(record.ticker, record.market);
-      const input = toCoreInput(record, nowMs, bars, records);
-      const result = evaluateShadowV1Live(input);
-      const observation = observationFromResult(contextFromRecord(record), result);
+
+      let bars = deps.bars(record.ticker, record.market);
+      let result = evaluateShadowV1Live(toCoreInput(record, nowMs, bars, records));
+      let observation = observationFromResult(contextFromRecord(record), result);
       if (!observation) continue;
-      const coverage = (deps.coverage ?? checkShadowV1LiveBarCoverage)({
+
+      let coverage = coverageFn({
         bars,
         decidedAtMs: record.decidedAtMs,
         sessionCloseMs: record.sessionCloseMs,
         nowMs,
       });
+
+      if (
+        deps.fetchMissingBars &&
+        needsBackfillForRecord(
+          coverage,
+          observation.status,
+          record.status,
+          record.sessionCloseMs,
+          nowMs
+        )
+      ) {
+        const backfill = await deps.fetchMissingBars(
+          record.ticker,
+          record.market,
+          record.decidedAtMs,
+          Math.min(nowMs, record.sessionCloseMs)
+        );
+        if (backfill?.authoritative) {
+          bars = mergeBarsList(bars, backfill.bars, nowMs);
+          result = evaluateShadowV1Live(toCoreInput(record, nowMs, bars, records));
+          observation = observationFromResult(contextFromRecord(record), result);
+          if (!observation) continue;
+          coverage = coverageFn({
+            bars,
+            decidedAtMs: record.decidedAtMs,
+            sessionCloseMs: record.sessionCloseMs,
+            nowMs,
+            allowExchangeGaps: true,
+            authoritativeSession: nowMs > record.sessionCloseMs,
+            hasSessionContextBar: hasSessionBarOnDate(bars, record.market, record.decidedAtMs),
+          });
+        }
+      }
+
       const blocked = shadowV1LiveCoverageBlock({
         proposedStatus: observation.status,
         currentStatus: record.status,
@@ -802,6 +1142,8 @@ export interface RegistrationOptions {
   env?: Record<string, string | undefined>;
   timers?: CollectorTimers;
   cycleMs?: number;
+  barsPath?: string;
+  fetchMissingBars?: CollectorDeps['fetchMissingBars'] | null;
 }
 
 export interface RegistrationResult {
@@ -815,11 +1157,13 @@ type MinimalApp = {
 
 type MinimalResponse = {
   status: (code: number) => { json: (body: unknown) => void };
+  locals?: { authenticatedUid?: string };
 };
 
 /**
- * Registra la route POST e, **solo** a flag ON, avvia il ciclo. A flag OFF non
- * registra timer e il handler risponde 404 `disabled` senza I/O.
+ * Registra la route POST e, **solo** a flag ON, carica le barre salvate su
+ * disco e avvia il ciclo (con backfill autonomo Yahoo per sessioni chiuse o
+ * buchi post-riavvio). A flag OFF non registra timer ne' tocca disco.
  */
 export function registerShadowV1LiveCollector(
   app: MinimalApp,
@@ -833,11 +1177,24 @@ export function registerShadowV1LiveCollector(
   };
   const enabled = isEnabled(env);
 
+  if (enabled) {
+    const diskPath = options.barsPath ?? path.join(root, SHADOW_V1_LIVE_BARS_PATH);
+    activeBarsDiskPath = diskPath;
+    loadShadowV1LiveBarsFromDisk(diskPath, Date.now());
+  }
+
+  const nowFn = () => Date.now();
+  const fetchMissingBars =
+    options.fetchMissingBars === null
+      ? undefined
+      : options.fetchMissingBars ?? createThrottledYahooBackfill(nowFn, env);
+
   const deps: CollectorDeps = {
     env,
     signalsPath: `${root}/artifacts/shadow_v1_live/signals.jsonl`,
-    now: () => Date.now(),
+    now: nowFn,
     bars: (ticker, market) => barsForShadowV1Live(ticker, market),
+    ...(fetchMissingBars ? { fetchMissingBars } : {}),
   };
   const handler = createObserveHandler(deps);
 
@@ -847,10 +1204,15 @@ export function registerShadowV1LiveCollector(
     };
     const response = res as MinimalResponse;
     const contentLength = request.contentLength ?? request.headers?.['content-length'];
+    const uid = response.locals?.authenticatedUid;
+    const rawIp = typeof request.ip === 'string' ? request.ip.trim().replace(/^::ffff:/, '') : '';
+    const clientKey = uid && uid !== 'legacy' ? `uid:${uid}` : rawIp || undefined;
+
     void handler({
       body: request.body,
       contentLength,
       ip: request.ip,
+      clientKey,
     })
       .then((out) => response.status(out.status).json(out.body))
       .catch((err: unknown) => {
@@ -865,6 +1227,8 @@ export function registerShadowV1LiveCollector(
   const cycle = () => {
     void runShadowV1LiveRevaluationCycle(deps);
   };
+  // Primo giro immediato all'avvio per sbloccare eventuali record stale dopo riavvio.
+  cycle();
   const handle = timers.setInterval(cycle, options.cycleMs ?? SHADOW_V1_LIVE_CYCLE_MS);
   if (typeof handle?.unref === 'function') handle.unref();
 

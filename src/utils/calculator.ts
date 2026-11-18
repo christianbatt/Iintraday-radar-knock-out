@@ -1597,6 +1597,66 @@ export function rankTopCandidates(
   }));
 }
 
+/**
+ * Valuta e ordina TUTTI i titoli monitorati per il Live Radar e la Heatmap:
+ * gli idonei (senza veto) compaiono per primi in ordine di punteggio, seguiti
+ * dai titoli con veto tecnico attivo (chiaramente marcati dal campo `score.veto`),
+ * cosi' il paniere completo (es. 40 titoli) resta sempre visibile in tabella
+ * senza alterare la selezione rigorosa dei Top Pick (rankMarketCandidates/getDualTopCandidates).
+ */
+export function scoreAllRadarCandidates(
+  quotes: RawQuoteData[],
+  futuresChange: number | { EU: number; US: number },
+  options?: ScreeningFilterOptions
+): ScoredCandidate[] {
+  let targetQuotes = quotes;
+  const isRsiActive = options?.rsiFilterActive ?? options?.parameters?.rsiFilterActive ?? false;
+  if (isRsiActive) {
+    targetQuotes = targetQuotes.filter((q) => !isRsiExtreme(q.rsi5m ?? q.rsi14));
+  }
+
+  const catMap = options?.catalystCache ?? options?.catalysts;
+  const scored = targetQuotes.map((quote) => {
+    const change =
+      typeof futuresChange === 'number'
+        ? futuresChange
+        : quote.market === 'US'
+        ? futuresChange.US
+        : futuresChange.EU;
+    const catalystOrNews = catMap?.[quote.ticker] || options?.newsCache?.[quote.ticker];
+    const dir = candidateOperationalDirection(quote, catMap?.[quote.ticker]);
+    const knockOutGuard = calculateKnockOutBarrierGuard(quote, dir);
+    return {
+      quote,
+      score: calculateCandidateScore(quote, change, catalystOrNews, {
+        volume: quote.lastBarVolume ?? null,
+        barTime: quote.lastBarTime ?? null,
+      }),
+      rank: 0,
+      knockOutGuard,
+    };
+  });
+
+  const byScoreDesc = (a: ScoredCandidate, b: ScoredCandidate) => {
+    if (b.score.total !== a.score.total) return b.score.total - a.score.total;
+    const rawB = b.score.rawTotal ?? b.score.total;
+    const rawA = a.score.rawTotal ?? a.score.total;
+    if (rawB !== rawA) return rawB - rawA;
+    const rvolB = b.quote.rvol ?? 0;
+    const rvolA = a.quote.rvol ?? 0;
+    if (rvolB !== rvolA) return rvolB - rvolA;
+    return Math.abs(b.quote.gapPercent ?? 0) - Math.abs(a.quote.gapPercent ?? 0);
+  };
+
+  const eligible = scored.filter((item) => item.score.veto == null).sort(byScoreDesc);
+  const vetoed = scored.filter((item) => item.score.veto != null).sort(byScoreDesc);
+
+  return [...eligible, ...vetoed].map((item, index) => ({
+    ...item,
+    rank: index + 1,
+  }));
+}
+
 export function getDualTopCandidates(
   quotes: RawQuoteData[],
   futuresChange: number | { EU: number; US: number },

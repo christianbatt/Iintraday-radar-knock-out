@@ -8,6 +8,12 @@ import {
   AILearnedInsight,
 } from '../types/radar';
 import { auth } from './firebaseSync';
+import { setShadowV1LiveAuthTokenGetter } from '../utils/shadowV1LiveBridge';
+
+setShadowV1LiveAuthTokenGetter(async () => {
+  const user = auth?.currentUser;
+  return user ? user.getIdToken() : null;
+});
 
 // IPOTESI (nessun valore preesistente): timeout espliciti lato client.
 const API_TIMEOUT_MS = 20000;

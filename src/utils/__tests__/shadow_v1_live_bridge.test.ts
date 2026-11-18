@@ -39,10 +39,10 @@ function setup(over: Partial<ExecutionSetup> = {}): ExecutionSetup {
 }
 
 function fakeFetch(status = 200): {
-  calls: Array<{ url: string; init: { method: string; body: string; signal?: AbortSignal } }>;
+  calls: Array<{ url: string; init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal } }>;
   impl: BridgeFetch;
 } {
-  const calls: Array<{ url: string; init: { method: string; body: string; signal?: AbortSignal } }> = [];
+  const calls: Array<{ url: string; init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal } }> = [];
   const impl: BridgeFetch = async (url, init) => {
     calls.push({ url, init });
     return { status };
@@ -200,14 +200,62 @@ test('5xx: un solo tentativo di ripetizione', async () => {
   assert.equal(fetcher.calls.length, 2);
 });
 
-test('429/413/400: nessuna ripetizione', async () => {
+test('429/413/400: nessuna ripetizione immediata ma registra warn e non brucia la chiave', async () => {
   for (const status of [429, 413, 400]) {
     resetShadowV1LiveBridgeForTest();
+    const warnings: string[] = [];
     const fetcher = fakeFetch(status);
-    notifyShadowV1Live(setup(), { enabled: true, fetchImpl: fetcher.impl });
+    notifyShadowV1Live(setup(), {
+      enabled: true,
+      fetchImpl: fetcher.impl,
+      warn: (m) => warnings.push(m),
+    });
     await flush();
     assert.equal(fetcher.calls.length, 1, String(status));
+    assert.equal(warnings.length, 1, `warn atteso su ${status}`);
+
+    // Un nuovo ciclo successivo puo' riprovare la stessa chiave finche' non arriva 2xx
+    const okFetcher = fakeFetch(200);
+    const retried = notifyShadowV1Live(setup(), { enabled: true, fetchImpl: okFetcher.impl });
+    await flush();
+    assert.equal(retried, true, `chiave bruciata dopo ${status}`);
+    assert.equal(okFetcher.calls.length, 1);
+
+    // Dopo 200 la chiave e' deduplicata definitivamente
+    const extra = fakeFetch(200);
+    assert.equal(notifyShadowV1Live(setup(), { enabled: true, fetchImpl: extra.impl }), false);
   }
+});
+
+test('5xx e errore di rete: non bruciano la chiave, il giro successivo ritenta', async () => {
+  const warnings: string[] = [];
+  const errFetch: BridgeFetch = async () => {
+    throw new Error('rete assente');
+  };
+  notifyShadowV1Live(setup(), {
+    enabled: true,
+    fetchImpl: errFetch,
+    warn: (m) => warnings.push(m),
+  });
+  await flush();
+  assert.equal(warnings.length, 1);
+
+  const okFetcher = fakeFetch(200);
+  assert.equal(notifyShadowV1Live(setup(), { enabled: true, fetchImpl: okFetcher.impl }), true);
+  await flush();
+  assert.equal(okFetcher.calls.length, 1);
+});
+
+test('invia Authorization Bearer se getAuthToken fornisce un token valido', async () => {
+  const fetcher = fakeFetch(200);
+  notifyShadowV1Live(setup(), {
+    enabled: true,
+    fetchImpl: fetcher.impl,
+    getAuthToken: async () => 'fb-id-token-123',
+  });
+  await flush();
+  assert.equal(fetcher.calls.length, 1);
+  assert.equal(fetcher.calls[0].init.headers.Authorization, 'Bearer fb-id-token-123');
 });
 
 test('timeout: la richiesta viene abortita e nessuna eccezione esce', async () => {

@@ -3,8 +3,8 @@
  *
  * SOLO CALCOLO: nessun I/O, nessuna rete, nessun orologio globale, nessuno stato
  * globale. Tutti gli istanti arrivano dal chiamante (`decidedAtMs`, `nowMs`,
- * `sessionCloseMs`). Il modulo non e' importato dal radar, dal client o dal server:
- * e' la base di misura di una fase successiva.
+ * `sessionCloseMs`). Usato dal collector e dal ponte passivo Shadow V1-live
+ * senza mai modificare i punteggi o le decisioni live del radar.
  *
  * Metodo, con le fonti nel repository:
  * - Fill (D1): limit-fill. Il setup e' filled alla prima barra chiusa successiva

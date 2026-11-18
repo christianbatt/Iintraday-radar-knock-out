@@ -103,6 +103,53 @@ function writeFileAtomic(targetPath: string, content: string): void {
   fs.renameSync(tmpPath, targetPath);
 }
 
+function isSummaryOutOfSync(
+  summaryPath: string,
+  expected: ShadowV2Summary
+): boolean {
+  if (!fs.existsSync(summaryPath)) return true;
+  try {
+    const raw = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as Partial<ShadowV2Summary> | null;
+    if (!raw || typeof raw !== 'object') return true;
+    return (
+      raw.nSignals !== expected.nSignals ||
+      raw.nResolved !== expected.nResolved ||
+      raw.nOpen !== expected.nOpen ||
+      raw.nPendingOpen !== expected.nPendingOpen ||
+      raw.nBlocked !== expected.nBlocked ||
+      raw.nSessions !== expected.nSessions
+    );
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Riallinea `artifacts/shadow_v2/summary.json` con `signals.jsonl` se mancante,
+ * corrotto o desincronizzato (es. server riavviato o segnale pregresso su disco).
+ */
+export function syncShadowV2SummaryFromDisk(
+  rootDir: string = process.cwd(),
+  nowMs: number = Date.now()
+): ShadowV2Summary | null {
+  try {
+    const outDir = path.join(rootDir, 'artifacts', 'shadow_v2');
+    const signalsPath = path.join(outDir, 'signals.jsonl');
+    const summaryPath = path.join(outDir, 'summary.json');
+    if (!fs.existsSync(signalsPath)) return null;
+
+    const allRecords = loadShadowV2Records(signalsPath).sort((a, b) => a.signalBarTs - b.signalBarTs);
+    const summary = summarizeShadowV2(allRecords, new Date(nowMs).toISOString());
+    if (isSummaryOutOfSync(summaryPath, summary)) {
+      writeFileAtomic(summaryPath, JSON.stringify(summary, null, 2));
+    }
+    return summary;
+  } catch (err: any) {
+    console.warn('[Shadow V2 Collector] Errore riallineamento summary:', err?.message || err);
+    return null;
+  }
+}
+
 /**
  * Esegue valutazione Shadow V2 sulle barre reali accumulate dopo una scansione,
  * aggiorna `artifacts/shadow_v2/signals.jsonl` e `artifacts/shadow_v2/summary.json`.
@@ -160,9 +207,11 @@ export function observeShadowV2Scan(
     const allRecords = Array.from(byId.values()).sort((a, b) => a.signalBarTs - b.signalBarTs);
     const summary = summarizeShadowV2(allRecords, new Date(nowMs).toISOString());
 
-    if (changed || !fs.existsSync(summaryPath)) {
+    if (changed) {
       const jsonl = allRecords.map((r) => JSON.stringify(r)).join('\n') + (allRecords.length ? '\n' : '');
       writeFileAtomic(signalsPath, jsonl);
+      writeFileAtomic(summaryPath, JSON.stringify(summary, null, 2));
+    } else if (isSummaryOutOfSync(summaryPath, summary)) {
       writeFileAtomic(summaryPath, JSON.stringify(summary, null, 2));
     }
 

@@ -4,6 +4,7 @@ import {
   RawQuoteData,
 } from '../types/radar';
 import { IndicatorBadges } from './IndicatorsPanel';
+import { vetoLabel } from '../config/setupLabels';
 import {
   TrendingUp,
   TrendingDown,
@@ -33,7 +34,17 @@ interface TopCandidatesTableProps {
   topUS?: ScoredCandidate | null;
 }
 
-type RadarFilter = 'ALL' | 'EU' | 'US' | 'QUALIFIED' | 'HIGH_RVOL' | 'RVOL_20M' | 'HIGH_VOL' | 'RSI_HEALTHY';
+type RadarFilter =
+  | 'ALL'
+  | 'EU'
+  | 'US'
+  | 'ELIGIBLE'
+  | 'VETOED'
+  | 'QUALIFIED'
+  | 'HIGH_RVOL'
+  | 'RVOL_20M'
+  | 'HIGH_VOL'
+  | 'RSI_HEALTHY';
 
 export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
   candidates,
@@ -63,7 +74,11 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
       // Category filter
       if (activeFilter === 'EU') return q.market === 'EU';
       if (activeFilter === 'US') return q.market === 'US';
-      if (activeFilter === 'QUALIFIED') return item.score.total >= 55;
+      if (activeFilter === 'ELIGIBLE') return item.score.veto == null && !item.score.warmupIncomplete;
+      if (activeFilter === 'VETOED') return item.score.veto != null;
+      if (activeFilter === 'QUALIFIED') {
+        return item.score.veto == null && !item.score.warmupIncomplete && item.score.total >= 55;
+      }
       if (activeFilter === 'HIGH_RVOL') return (q.rvol ?? 0) >= 1.3;
       if (activeFilter === 'RVOL_20M') return (q.rvol20m ?? 0) >= 1.25;
       if (activeFilter === 'HIGH_VOL') {
@@ -173,6 +188,35 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
         </button>
 
         <button
+          onClick={() => setActiveFilter('ELIGIBLE')}
+          className={`px-3 py-1 rounded-lg text-xs font-mono font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
+            activeFilter === 'ELIGIBLE'
+              ? 'bg-emerald-700 text-white'
+              : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
+          }`}
+        >
+          <span>✅ Idonei (No Veto)</span>
+          <span className="text-[10px] opacity-75">
+            ({candidates.filter((c) => c.score.veto == null && !c.score.warmupIncomplete).length})
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveFilter('VETOED')}
+          className={`px-3 py-1 rounded-lg text-xs font-mono font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
+            activeFilter === 'VETOED'
+              ? 'bg-rose-700 text-white'
+              : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
+          }`}
+          title="Mostra i titoli monitorati attualmente bloccati da un veto tecnico (Supertrend contrario, ADX debole o VWAP contraria)"
+        >
+          <span>⛔ Con Veto</span>
+          <span className="text-[10px] opacity-75">
+            ({candidates.filter((c) => c.score.veto != null).length})
+          </span>
+        </button>
+
+        <button
           onClick={() => setActiveFilter('QUALIFIED')}
           className={`px-3 py-1 rounded-lg text-xs font-mono font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
             activeFilter === 'QUALIFIED'
@@ -182,7 +226,7 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
         >
           <span>🎯 Score Qualificato (≥55)</span>
           <span className="text-[10px] opacity-75">
-            ({candidates.filter((c) => c.score.total >= 55).length})
+            ({candidates.filter((c) => c.score.veto == null && !c.score.warmupIncomplete && c.score.total >= 55).length})
           </span>
         </button>
 
@@ -286,15 +330,25 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
               const stopBuffer075 = atrVal != null ? +(atrVal * 0.75).toFixed(2) : null;
               const stopBuffer10 = atrVal != null ? +(atrVal * 1.0).toFixed(2) : null;
 
+              const hasVeto = cand.score.veto != null;
+              const isWarmup = Boolean(cand.score.warmupIncomplete);
+              const isBlocked = hasVeto || isWarmup;
+
               return (
                 <React.Fragment key={q.ticker}>
                   <tr
-                    onClick={() => onSelectCandidate(cand)}
-                    className={`cursor-pointer transition-colors ${
+                    onClick={() => {
+                      if (!isBlocked) onSelectCandidate(cand);
+                    }}
+                    className={`transition-colors ${
+                      isBlocked ? 'opacity-80 hover:opacity-100 cursor-default' : 'cursor-pointer'
+                    } ${
                       isSelected
                         ? 'bg-emerald-950/40 hover:bg-emerald-950/50'
                         : isTopEU || isTopUS
                         ? 'bg-slate-800/50 hover:bg-slate-800/70'
+                        : hasVeto
+                        ? 'bg-slate-950/50 hover:bg-slate-900/60'
                         : 'hover:bg-slate-800/30'
                     }`}
                   >
@@ -302,7 +356,9 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
                     <td className="py-3 px-3 text-center">
                       <span
                         className={`inline-block w-6 h-6 leading-6 rounded-md font-bold text-xs ${
-                          cand.rank === 1
+                          hasVeto
+                            ? 'bg-rose-950/60 text-rose-300 border border-rose-800/60'
+                            : cand.rank === 1
                             ? 'bg-amber-500 text-slate-950'
                             : cand.rank <= 3
                             ? 'bg-slate-800 text-amber-300'
@@ -575,7 +631,22 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
 
                     {/* Stato Radar */}
                     <td className="py-3 px-3 text-center">
-                      {cand.score.total >= 55 ? (
+                      {hasVeto ? (
+                        <span
+                          className="inline-flex items-center gap-1 text-[11px] text-rose-300 font-semibold bg-rose-950/50 px-2 py-0.5 rounded border border-rose-800/60"
+                          title={vetoLabel(cand.score.veto) ?? cand.score.veto ?? undefined}
+                        >
+                          <AlertTriangle className="w-3 h-3 shrink-0" />
+                          <span>VETO ATTIVO</span>
+                        </span>
+                      ) : isWarmup ? (
+                        <span
+                          className="inline-flex items-center gap-1 text-[11px] text-amber-300 font-semibold bg-amber-950/40 px-2 py-0.5 rounded border border-amber-800/50"
+                          title="Indicatori 5m in warm-up incompleto: candidato visibile ma non raccomandabile"
+                        >
+                          <span>WARMUP</span>
+                        </span>
+                      ) : cand.score.total >= 55 ? (
                         <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-semibold bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-800/40">
                           <CheckCircle2 className="w-3 h-3" />
                           <span>QUALIFICATO</span>
@@ -604,17 +675,27 @@ export const TopCandidatesTable: React.FC<TopCandidatesTableProps> = ({
 
                         <button
                           type="button"
+                          disabled={isBlocked}
                           onClick={(e) => {
                             e.stopPropagation();
-                            onSelectCandidate(cand);
+                            if (!isBlocked) onSelectCandidate(cand);
                           }}
-                          className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
-                            isSelected
-                              ? 'bg-emerald-500 text-slate-950 font-bold'
-                              : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                          title={
+                            hasVeto
+                              ? `Bloccato: ${vetoLabel(cand.score.veto) ?? cand.score.veto}`
+                              : isWarmup
+                              ? 'Warm-up indicatori 5m incompleto'
+                              : 'Carica come Setup attivo'
+                          }
+                          className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+                            isBlocked
+                              ? 'bg-slate-900 text-slate-500 border border-slate-800 cursor-not-allowed'
+                              : isSelected
+                              ? 'bg-emerald-500 text-slate-950 font-bold cursor-pointer'
+                              : 'bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer'
                           }`}
                         >
-                          {isSelected ? 'Selezionato' : 'Carica Setup'}
+                          {hasVeto ? 'Bloccato' : isWarmup ? 'Warmup' : isSelected ? 'Selezionato' : 'Carica Setup'}
                         </button>
                       </div>
                     </td>

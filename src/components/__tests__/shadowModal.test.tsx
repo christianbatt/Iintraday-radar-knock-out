@@ -98,4 +98,20 @@ describe('M4 — errore di rete: messaggio, nessun crash', () => {
     assert.ok(out.includes('data-testid="shadow-error"'));
     assert.equal(out.includes('data-section="rules"'), false);
   });
+
+  it('evita doppio fetch di /api/shadow/latest e date hardcoded in ShadowResearchPanel', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const modalSrc = fs.readFileSync(
+      path.join(process.cwd(), 'src/components/ShadowResearchModal.tsx'),
+      'utf8'
+    );
+    const panelSrc = fs.readFileSync(
+      path.join(process.cwd(), 'src/components/ShadowResearchPanel.tsx'),
+      'utf8'
+    );
+    assert.ok(modalSrc.includes('<ShadowV1LivePanel v2={data?.shadowV2 ?? null} />'));
+    assert.equal(panelSrc.includes('2026-10-28'), false);
+    assert.equal(panelSrc.includes('2026-10-29'), false);
+  });
 });
