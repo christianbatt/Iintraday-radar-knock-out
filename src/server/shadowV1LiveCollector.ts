@@ -23,6 +23,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import type { ErrorRequestHandler, RequestHandler } from 'express';
 import {
   evaluateShadowV1Live,
   type ShadowV1LiveBar,
@@ -37,6 +38,7 @@ import {
   type LoadResult,
   type PersistedShadowV1LiveRecord,
   type ShadowV1LiveObservationContext,
+  type ShadowV1LiveRecordSource,
   type WriteResult,
 } from './shadowV1LiveStore';
 
@@ -66,6 +68,19 @@ export const SHADOW_V1_LIVE_RATE_WINDOW_MS = 60_000;
  * vecchie: la mappa non cresce con il numero di client diversi.
  */
 export const SHADOW_V1_LIVE_RATE_MAP_MAX_ENTRIES = 1000;
+
+/**
+ * Origini HTTP aggiuntive ammesse per la route observe, separate da virgola
+ * (`https://app.example.tld,https://staging.example.tld`). Vuota di default: la
+ * stessa origine della richiesta e' sempre ammessa senza configurazione.
+ */
+export const SHADOW_V1_LIVE_ALLOWED_ORIGINS_ENV = 'SHADOW_V1_LIVE_ALLOWED_ORIGINS';
+
+/** `source` persistito per i record che arrivano dalla route HTTP. */
+export const SHADOW_V1_LIVE_SOURCE_CLIENT: ShadowV1LiveRecordSource = 'client';
+
+/** `source` persistito per i record emessi dallo scanner server-side. */
+export const SHADOW_V1_LIVE_SOURCE_SERVER_SCANNER: ShadowV1LiveRecordSource = 'server-scanner';
 
 /** Barra 5m, come `SHADOW_V2_BAR_MS`. */
 export const SHADOW_V1_LIVE_BAR_MS = 5 * 60 * 1000;
@@ -674,6 +689,12 @@ export interface ObserveRequest {
   ip?: string;
   clientKey?: string;
   skipRateLimit?: boolean;
+  /** Header `Origin` della richiesta HTTP: assente per le chiamate interne. */
+  origin?: string | string[] | undefined;
+  /** Host della richiesta (o `x-forwarded-host`): usato per il controllo origine. */
+  host?: string | string[] | undefined;
+  /** Provenienza da persistere sul record; assente = nessuna etichetta. */
+  source?: ShadowV1LiveRecordSource;
 }
 
 export interface ObserveResponse {
@@ -797,6 +818,76 @@ function needsBackfillForRecord(
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// SIC-1: controllo dell'origine HTTP (NON e' autenticazione)
+//
+// Regole: `Origin` assente -> comportamento invariato (client non browser o
+// chiamata interna); `Origin` uguale all'host della richiesta oppure presente
+// nella lista `SHADOW_V1_LIVE_ALLOWED_ORIGINS` -> ammesso; qualunque altra
+// origine -> 403. Un client non browser puo' omettere o falsificare l'header:
+// questo controllo alza il costo di una richiesta cross-site verso la route,
+// non sostituisce l'autenticazione (che resta `requireApiAuth` in server.ts).
+// ---------------------------------------------------------------------------
+
+/** Forma canonica di un'origine: minuscola, senza spazi esterni ne' slash finale. */
+export function normalizeShadowV1LiveOrigin(value: string): string {
+  return value.trim().toLowerCase().replace(/\/+$/, '');
+}
+
+export type OriginDecision = { ok: true } | { ok: false; origin: string };
+
+export function isShadowV1LiveOriginAllowed(args: {
+  origin?: string | string[] | undefined;
+  host?: string | string[] | undefined;
+  allowedOrigins?: string | undefined;
+}): OriginDecision {
+  const rawOrigin = Array.isArray(args.origin) ? args.origin[0] : args.origin;
+  if (typeof rawOrigin !== 'string' || rawOrigin.trim().length === 0) return { ok: true };
+  const origin = normalizeShadowV1LiveOrigin(rawOrigin);
+
+  const rawHost = Array.isArray(args.host) ? args.host[0] : args.host;
+  const host = typeof rawHost === 'string' ? rawHost.trim().toLowerCase() : '';
+  if (host.length > 0 && (origin === `http://${host}` || origin === `https://${host}`)) {
+    return { ok: true };
+  }
+
+  const allowed = (args.allowedOrigins ?? '')
+    .split(',')
+    .map((entry) => normalizeShadowV1LiveOrigin(entry))
+    .filter((entry) => entry.length > 0);
+  if (allowed.includes(origin)) return { ok: true };
+
+  return { ok: false, origin };
+}
+
+// ---------------------------------------------------------------------------
+// SIC-2: limite di body della sola route observe
+//
+// Il parser globale di server.ts (10 MB) girava prima del controllo a 8192 B
+// del handler, che quindi avveniva su un body gia' materializzato. Questi due
+// middleware vanno montati PRIMA del parser globale: il parser dedicato legge
+// al massimo `SHADOW_V1_LIVE_MAX_BODY_BYTES` e body-parser salta i body gia'
+// letti, quindi gli altri endpoint restano a 10 MB. La risposta 413 conserva la
+// stessa forma JSON del handler.
+// ---------------------------------------------------------------------------
+
+export function shadowV1LiveBodyLimitParser(
+  json: (options: { limit: number }) => RequestHandler
+): RequestHandler {
+  return json({ limit: SHADOW_V1_LIVE_MAX_BODY_BYTES });
+}
+
+export function shadowV1LiveBodyLimitErrorHandler(): ErrorRequestHandler {
+  return (err, _req, res, next) => {
+    const status = err && typeof err === 'object' ? (err as { status?: unknown }).status : undefined;
+    if (status === 413) {
+      res.status(413).json({ status: 'payload_too_large', maxBytes: SHADOW_V1_LIVE_MAX_BODY_BYTES });
+      return;
+    }
+    next(err);
+  };
+}
+
 /**
  * Coda FIFO di task asincroni sul file dei record.
  *
@@ -898,6 +989,19 @@ export function createObserveHandler(deps: CollectorDeps): ObserveHandler {
       return { status: 404, body: { status: 'disabled', flag: SHADOW_V1_LIVE_COLLECT_ENV } };
     }
 
+    // SIC-1: origine dichiarata dal browser. Assente = comportamento invariato.
+    const originCheck = isShadowV1LiveOriginAllowed({
+      origin: req.origin,
+      host: req.host,
+      allowedOrigins: deps.env?.[SHADOW_V1_LIVE_ALLOWED_ORIGINS_ENV],
+    });
+    if (!originCheck.ok) {
+      return {
+        status: 403,
+        body: { status: 'forbidden_origin', origin: originCheck.origin },
+      };
+    }
+
     const declared = parseContentLength(req.contentLength);
     const serialized = byteLengthOfJson(req.body);
     if (serialized === null) {
@@ -952,6 +1056,7 @@ export function createObserveHandler(deps: CollectorDeps): ObserveHandler {
           target: setup.target,
           decidedAtMs: setup.decidedAtMs,
           sessionCloseMs,
+          ...(req.source ? { source: req.source } : {}),
         };
         const evalPayload = {
           candidate: { ticker: setup.ticker },
@@ -1296,12 +1401,17 @@ export function registerShadowV1LiveCollector(
     const uid = response.locals?.authenticatedUid;
     const rawIp = typeof request.ip === 'string' ? request.ip.trim().replace(/^::ffff:/, '') : '';
     const clientKey = uid && uid !== 'legacy' ? `uid:${uid}` : rawIp || undefined;
+    const origin = request.headers?.['origin'];
+    const host = request.headers?.['x-forwarded-host'] ?? request.headers?.['host'];
 
     void handler({
       body: request.body,
       contentLength,
       ip: request.ip,
       clientKey,
+      origin,
+      host,
+      source: SHADOW_V1_LIVE_SOURCE_CLIENT,
     })
       .then((out) => response.status(out.status).json(out.body))
       .catch((err: unknown) => {
@@ -1343,5 +1453,6 @@ export async function observeShadowV1LiveFromServer(
     body: payload,
     clientKey: 'server-scan',
     skipRateLimit: true,
+    source: SHADOW_V1_LIVE_SOURCE_SERVER_SCANNER,
   });
 }

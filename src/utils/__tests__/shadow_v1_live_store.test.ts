@@ -656,3 +656,59 @@ test('loadRecords: un campo numerico nullo non entra nell\u2019ordinamento', () 
     'nessun NaN raggiunge il sort'
   );
 });
+
+// --- P10: campo opzionale `source` -------------------------------------------
+
+test('P10 source: persistito sui nuovi record, non sovrascritto in update', () => {
+  const first = upsertObservation(
+    [],
+    { ...observation('PENDING_FILL'), source: 'client' },
+    D0 + BAR_MS
+  );
+  assert.equal(first.records[0].source, 'client');
+
+  const second = upsertObservation(
+    first.records,
+    { ...observation('PENDING_FILL', { source: 'server-scanner' }) },
+    D0 + 2 * BAR_MS
+  );
+  assert.equal(second.records[0].source, 'client', 'la provenienza originale resta');
+
+  const legacy = upsertObservation([], observation('PENDING_FILL'), D0 + BAR_MS);
+  assert.equal('source' in legacy.records[0], false, 'senza source il campo non compare');
+});
+
+test('P10 source: observationFromResult propaga la provenienza', () => {
+  const withSource = observationFromResult(
+    { ...CTX, source: 'server-scanner' },
+    result('PENDING_FILL')
+  );
+  assert.equal(withSource?.source, 'server-scanner');
+  const without = observationFromResult(CTX, result('PENDING_FILL'));
+  assert.equal('source' in (without ?? {}), false);
+});
+
+test('P10 source: record storici senza campo validi, valori non stringa scartati', () => {
+  const dir = tmpDir();
+  const file = path.join(dir, 'signals.jsonl');
+  const legacy = recordFrom(observation('PENDING_FILL'));
+  const tagged = { ...legacy, source: 'client' as const };
+  const wrongType = { ...legacy, source: 42 as unknown as string };
+  const empty = { ...legacy, source: '' };
+  fs.writeFileSync(
+    file,
+    [legacy, tagged, wrongType, empty].map((r) => JSON.stringify(r)).join('\n') + '\n'
+  );
+  const res = loadRecords(file);
+  assert.equal(res.records.length, 2);
+  assert.equal(res.skipped, 2);
+  assert.equal(
+    res.records.filter((r) => r.source === 'client').length,
+    1,
+    'il record con source valido e\' conservato'
+  );
+  assert.ok(
+    res.records.some((r) => r.source === undefined),
+    'il record storico senza source resta valido'
+  );
+});
