@@ -373,3 +373,101 @@ describe('V1-live — terminazione di sessione (D2/D7)', () => {
     assert.equal(r.exitPrice, 101);
   });
 });
+
+describe('V1-live — coerenza dei livelli (D11/D12)', () => {
+  it('LONG con stop sopra entry => INVALID_SETUP', () => {
+    const r = run({ ...baseSetup(), stopLossLevel: 101 }, []);
+    assert.equal(r.status, 'INVALID_SETUP');
+    assert.equal(r.reason, 'stop dal lato sbagliato per LONG: richiesto stop < entry');
+    assert.equal(r.key, null);
+    assert.equal(r.r, null);
+  });
+
+  it('LONG con stop == entry => guardia risk == 0 di D5, non mascherata da D11', () => {
+    const r = run({ ...baseSetup(), stopLossLevel: 100 }, []);
+    assert.equal(r.status, 'INVALID_SETUP');
+    assert.equal(r.reason, 'distanza entry-stop nulla: R non definito');
+  });
+
+  it('LONG con target sotto entry => INVALID_SETUP', () => {
+    const r = run({ ...baseSetup(), target1Level: 98 }, []);
+    assert.equal(r.status, 'INVALID_SETUP');
+    assert.equal(r.reason, 'target dal lato sbagliato per LONG: richiesto target1Level > entry');
+  });
+
+  it('LONG con target == entry => motivazione dedicata', () => {
+    const r = run({ ...baseSetup(), target1Level: 100 }, []);
+    assert.equal(r.status, 'INVALID_SETUP');
+    assert.equal(r.reason, 'target1Level uguale a entry per LONG');
+  });
+
+  it('SHORT con stop sotto entry => INVALID_SETUP', () => {
+    const r = run({ ...shortSetup(), stopLossLevel: 99 }, []);
+    assert.equal(r.status, 'INVALID_SETUP');
+    assert.equal(r.reason, 'stop dal lato sbagliato per SHORT: richiesto stop > entry');
+  });
+
+  it('SHORT con stop == entry => guardia risk == 0 di D5', () => {
+    const r = run({ ...shortSetup(), stopLossLevel: 100 }, []);
+    assert.equal(r.status, 'INVALID_SETUP');
+    assert.equal(r.reason, 'distanza entry-stop nulla: R non definito');
+  });
+
+  it('SHORT con target sopra entry => INVALID_SETUP', () => {
+    const r = run({ ...shortSetup(), target1Level: 102 }, []);
+    assert.equal(r.status, 'INVALID_SETUP');
+    assert.equal(r.reason, 'target dal lato sbagliato per SHORT: richiesto target1Level < entry');
+  });
+
+  it('SHORT con target == entry => motivazione dedicata', () => {
+    const r = run({ ...shortSetup(), target1Level: 100 }, []);
+    assert.equal(r.status, 'INVALID_SETUP');
+    assert.equal(r.reason, 'target1Level uguale a entry per SHORT');
+  });
+
+  it('LONG coerente resta valido e con lo stesso esito di prima', () => {
+    const bars = [bar(ts(0), 99, 101, 98, 100.5), bar(ts(1), 100.5, 103, 99, 101.5)];
+    const r = run(longSetup(), bars, { nowMs: CLOSE });
+    assert.equal(r.status, 'EXPIRED');
+    assert.equal(r.r, (101.5 - 100) / 5);
+    assert.equal(r.fillBarTs, ts(0));
+  });
+
+  it('SHORT coerente resta valido e con lo stesso esito di prima', () => {
+    const bars = [bar(ts(0), 102, 103, 100, 101), bar(ts(1), 101, 102, 91, 92)];
+    const r = run(shortSetup(), bars, { nowMs: closedAt(1) });
+    assert.equal(r.status, 'TARGET');
+    assert.equal(r.r, 1.6);
+    assert.equal(r.exitPrice, 92);
+  });
+
+  it('D5 precede D11: entry mancante vince sul resto', () => {
+    const r = run({ ...baseSetup(), entryLevel: null, triggerLevel: null, stopLossLevel: 101 }, []);
+    assert.equal(r.status, 'INVALID_SETUP');
+    assert.equal(r.reason, 'entry mancante o non finito');
+  });
+
+  it('stop incoerente ha precedenza sul target incoerente', () => {
+    const r = run({ ...baseSetup(), stopLossLevel: 101, target1Level: 98 }, []);
+    assert.equal(r.status, 'INVALID_SETUP');
+    assert.equal(r.reason, 'stop dal lato sbagliato per LONG: richiesto stop < entry');
+  });
+
+  it('setup incoerente non consuma la chiave di dedup', () => {
+    const setup = { ...baseSetup(), stopLossLevel: 101 };
+    const key = shadowV1LiveKeyOf('AAA', 100, 101, DECIDED);
+    const seenKeys = [key];
+    const r = run(setup, [], { seenKeys });
+    assert.equal(r.status, 'INVALID_SETUP');
+    assert.equal(r.key, null);
+    assert.deepEqual(seenKeys, [key]);
+  });
+
+  it('non muta il setup incoerente', () => {
+    const setup = { ...baseSetup(), stopLossLevel: 101 };
+    const snapshot = JSON.stringify(setup);
+    const r = run(setup, [bar(ts(0), 99, 130, 98, 129)]);
+    assert.equal(r.status, 'INVALID_SETUP');
+    assert.equal(JSON.stringify(setup), snapshot);
+  });
+});
