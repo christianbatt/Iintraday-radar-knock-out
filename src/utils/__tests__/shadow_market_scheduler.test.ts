@@ -164,3 +164,53 @@ test('marks live V1-live: updateShadowV1LiveMarksOnDisk scrive e legge da disco 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('marks live V1-live: il temporaneo e univoco per chiamata e non consuma un file estraneo con lo stesso pid', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v1marks-tmp-'));
+  try {
+    const sigPath = path.join(dir, SHADOW_V1_LIVE_SIGNALS_PATH);
+    writeRecordsAtomic(sigPath, [
+      {
+        v: 1,
+        key: 'TMP1',
+        ticker: 'ASML.AS',
+        market: 'EU',
+        direction: 'LONG',
+        entry: 800,
+        stop: 790,
+        target: 820,
+        decidedAtMs: Date.UTC(2026, 10, 18, 9, 0, 0),
+        sessionCloseMs: Date.UTC(2026, 10, 18, 16, 30, 0),
+        firstSeenAtMs: Date.UTC(2026, 10, 18, 9, 0, 5),
+        status: 'OPEN',
+        r: null,
+        reason: null,
+        fillBarTs: Date.UTC(2026, 10, 18, 9, 5, 0),
+        exitBarTs: null,
+        exitPrice: null,
+        moduleVersion: 'shadowV1Live@1',
+        updatedAtMs: Date.UTC(2026, 10, 18, 9, 5, 0),
+      },
+    ]);
+
+    const marksPath = path.join(dir, SHADOW_V1_LIVE_MARKS_PATH);
+    fs.mkdirSync(path.dirname(marksPath), { recursive: true });
+    const decoy = `${marksPath}.tmp-${process.pid}`;
+    fs.writeFileSync(decoy, 'DECOY', 'utf8');
+
+    const payload = updateShadowV1LiveMarksOnDisk(
+      [{ ticker: 'ASML.AS', market: 'EU', currency: 'EUR', currentPrice: 805, marketTs: 1_795_000_000 }],
+      { rootDir: dir, nowMs: Date.UTC(2026, 10, 18, 9, 10, 0) }
+    );
+    assert.ok(payload);
+
+    assert.equal(fs.readFileSync(decoy, 'utf8'), 'DECOY', 'il file estraneo non viene ne sovrascritto ne consumato');
+    const leftovers = fs
+      .readdirSync(path.dirname(marksPath))
+      .filter((name) => name.includes('.tmp-'));
+    assert.deepEqual(leftovers, [path.basename(decoy)], 'nessun temporaneo residuo della scrittura');
+    assert.equal(JSON.parse(fs.readFileSync(marksPath, 'utf8')).marks.length, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

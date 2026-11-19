@@ -30,9 +30,11 @@ import {
 import {
   isShadowV1LiveCollectEnabled,
   observeShadowV1LiveFromServer,
+  runInShadowV1LiveStoreQueue,
   type ObserveResponse,
 } from './shadowV1LiveCollector';
 import { updateShadowV1LiveMarksOnDisk } from './shadowV1LiveMarks';
+import { shadowV1LiveTmpPath } from './shadowV1LiveStore';
 
 export const SHADOW_V1_LIVE_DIAGNOSTICS_PATH = 'artifacts/shadow_v1_live/scan_diagnostics.json';
 
@@ -122,7 +124,7 @@ function extractFuturesMapping(futuresData: any): { EU: number; US: number } {
 function writeDiagnosticsAtomic(filePath: string, payload: ShadowV1LiveScanDiagnostics): void {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
-  const tmpPath = `${filePath}.tmp-${process.pid}`;
+  const tmpPath = shadowV1LiveTmpPath(filePath);
   fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), 'utf8');
   fs.renameSync(tmpPath, filePath);
 }
@@ -288,7 +290,12 @@ export async function observeShadowV1LiveScan(
 
     const diagnosticsPath = path.join(rootDir, SHADOW_V1_LIVE_DIAGNOSTICS_PATH);
     writeDiagnosticsAtomic(diagnosticsPath, diagnostics);
-    updateShadowV1LiveMarksOnDisk(validQuotes, { rootDir, nowMs });
+    // I marks vivono in un altro file della stessa famiglia: la scrittura passa
+    // dalla coda V1-live attiva (qui siamo fuori da ogni task accodato, quindi
+    // nessun annidamento) e non puo' sovrapporsi a handler o ciclo.
+    await runInShadowV1LiveStoreQueue(async () => {
+      updateShadowV1LiveMarksOnDisk(validQuotes, { rootDir, nowMs });
+    });
     return diagnostics;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

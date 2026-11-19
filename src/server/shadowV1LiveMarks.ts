@@ -15,11 +15,15 @@ import type { RawQuoteData } from '../types/radar';
 import { barsForShadowV1Live, type Market } from './shadowV1LiveCollector';
 import {
   loadRecords,
+  shadowV1LiveTmpPath,
   SHADOW_V1_LIVE_SIGNALS_PATH,
   type PersistedShadowV1LiveRecord,
 } from './shadowV1LiveStore';
 
-export const SHADOW_V1_LIVE_MARKS_PATH = 'artifacts/shadow_v1_live/live_marks.json';
+/** Percorso dell'artefatto relativo alla directory degli artefatti (`artifactDir`). */
+export const SHADOW_V1_LIVE_MARKS_RELATIVE_PATH = 'shadow_v1_live/live_marks.json';
+
+export const SHADOW_V1_LIVE_MARKS_PATH = `artifacts/${SHADOW_V1_LIVE_MARKS_RELATIVE_PATH}`;
 
 export interface ShadowV1LiveMark {
   key: string;
@@ -157,7 +161,7 @@ export function updateShadowV1LiveMarksOnDisk(
     };
     const dir = path.dirname(marksPath);
     fs.mkdirSync(dir, { recursive: true });
-    const tmpPath = `${marksPath}.tmp-${process.pid}`;
+    const tmpPath = shadowV1LiveTmpPath(marksPath);
     fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), 'utf8');
     fs.renameSync(tmpPath, marksPath);
     return payload;

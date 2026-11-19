@@ -21,6 +21,7 @@ import {
   SHADOW_V1_LIVE_SCAN_SAMPLE_SIZE,
 } from '../../server/shadowV1LiveScanner';
 import { loadRecords } from '../../server/shadowV1LiveStore';
+import { SHADOW_V1_LIVE_MARKS_PATH } from '../../server/shadowV1LiveMarks';
 import { getShadowLatest } from '../../server/shadowRoute';
 
 // --- P11: valori dichiarati delle costanti (guardia di non regressione) -------
@@ -252,6 +253,59 @@ test('scanner server V1-live: invia oltre 10 TRADE nella stessa scansione senza 
     assert.equal(diag.persistedThisScan, 14);
     const loaded = loadRecords(path.join(dir, 'artifacts/shadow_v1_live/signals.jsonl'));
     assert.equal(loaded.records.length, 14);
+  } finally {
+    reg.stop?.();
+    clearShadowV1LiveBarsForTest();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('scanner server V1-live: scansioni concorrenti serializzano segnali e marks senza collisioni sui temporanei', async () => {
+  clearShadowV1LiveBarsForTest();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v1scan-race-'));
+  const env = { SHADOW_V1_LIVE_COLLECT: '1' };
+  const reg = registerShadowV1LiveCollector({ post: () => undefined }, {
+    root: dir,
+    env,
+    timers: fakeTimers(),
+    now: () => D0,
+    fetchMissingBars: null,
+  });
+
+  try {
+    const quotes = ['RACE1', 'RACE2'].map((ticker, i) => {
+      recordBarsForShadowV1Live(ticker, 'US', makeBars(D0), D0, env);
+      return makeQuote({ ticker, gapPercent: 1.02 + i * 0.01 });
+    });
+
+    // File estraneo con lo stesso nome del vecchio tmp (`pid`): non va toccato.
+    const diagPath = path.join(dir, SHADOW_V1_LIVE_DIAGNOSTICS_PATH);
+    fs.mkdirSync(path.dirname(diagPath), { recursive: true });
+    const decoy = `${diagPath}.tmp-${process.pid}`;
+    fs.writeFileSync(decoy, 'DECOY', 'utf8');
+
+    const runs = await Promise.all(
+      [0, 1, 2].map(() =>
+        observeShadowV1LiveScan(quotes, null, { rootDir: dir, nowMs: D0, env })
+      )
+    );
+    assert.equal(runs.filter((r) => r !== null).length, 3);
+
+    const loaded = loadRecords(path.join(dir, 'artifacts/shadow_v1_live/signals.jsonl'));
+    assert.equal(loaded.records.length, quotes.length, 'chiavi idempotenti: nessun doppione concorrente');
+
+    const marks = JSON.parse(fs.readFileSync(path.join(dir, SHADOW_V1_LIVE_MARKS_PATH), 'utf8'));
+    assert.deepEqual(
+      marks.marks.map((m: { ticker: string }) => m.ticker).sort(),
+      quotes.map((q) => q.ticker).sort(),
+      'l ultima scrittura accodata vede tutti i segnali gia persistiti'
+    );
+
+    assert.equal(fs.readFileSync(decoy, 'utf8'), 'DECOY', 'il file estraneo non viene ne sovrascritto ne consumato');
+    const leftovers = fs
+      .readdirSync(path.dirname(diagPath))
+      .filter((name) => name.includes('.tmp-'));
+    assert.deepEqual(leftovers, [path.basename(decoy)], 'nessun temporaneo residuo dopo scansioni concorrenti');
   } finally {
     reg.stop?.();
     clearShadowV1LiveBarsForTest();
