@@ -431,7 +431,7 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
                                 </span>
                               ) : mark.pctFromEntry != null ? (
                                 <span className="text-slate-400 text-[9px]">
-                                  ingr. {signed(mark.pctFromEntry, 2, '%')}
+                                  dall&apos;ingresso {signed(mark.pctFromEntry, 2, '%')}
                                 </span>
                               ) : null}
                             </span>

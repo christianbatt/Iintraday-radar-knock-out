@@ -43,6 +43,13 @@ import {
   type WriteResult,
 } from './shadowV1LiveStore';
 import { archiveClosedMonths } from './shadowV1LiveRetention';
+import {
+  readYahooCrumb,
+  resetYahooCrumbCache,
+  resolveYahooCrumbOnce,
+  storeYahooCrumb,
+  type YahooCrumbPair,
+} from './yahooCrumbCache';
 
 /**
  * Variabile d'ambiente, solo interruttore di emergenza: il collector e' acceso
@@ -104,7 +111,6 @@ const YAHOO_BACKFILL_COOLDOWN_MS = 5 * 60_000;
 const YAHOO_BACKFILL_TIMEOUT_MS = 8_000;
 /** Attesa massima dopo la chiusura sessione per ricevere le ultime barre delayed Yahoo (es. EU +15m). */
 export const YAHOO_EOD_SETTLE_GRACE_MS = 20 * 60_000;
-const YAHOO_CRUMB_TTL_MS = 30 * 60_000;
 
 const WARN_PREFIX = '[Shadow V1 Live Collector]';
 
@@ -285,8 +291,7 @@ export function clearShadowV1LiveBarsForTest(): void {
   activeBarsDiskPath = null;
   activeObserveHandler = null;
   activeStoreQueue = null;
-  collectorYahooCrumbCache = null;
-  collectorCrumbInFlight = null;
+  resetYahooCrumbCache();
 }
 
 // ---------------------------------------------------------------------------
@@ -506,26 +511,18 @@ export interface BarBackfillResult {
 const YAHOO_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-interface YahooAuthPair {
-  cookie: string;
-  crumb: string;
-  expiresAtMs: number;
-}
-
-let collectorYahooCrumbCache: YahooAuthPair | null = null;
-let collectorCrumbInFlight: Promise<YahooAuthPair | null> | null = null;
-
 async function getCollectorYahooCrumb(
   forceRefresh: boolean = false,
   nowMs: number = Date.now(),
   fetchImpl: typeof fetch = fetch
-): Promise<YahooAuthPair | null> {
-  if (!forceRefresh && collectorYahooCrumbCache && nowMs < collectorYahooCrumbCache.expiresAtMs) {
-    return collectorYahooCrumbCache;
+): Promise<YahooCrumbPair | null> {
+  if (!forceRefresh) {
+    const cached = readYahooCrumb(nowMs);
+    if (cached) return cached;
   }
-  if (collectorCrumbInFlight) return collectorCrumbInFlight;
 
-  collectorCrumbInFlight = (async () => {
+  // Cache canonica unica (N6): la voce e' condivisa con `server.ts`.
+  return resolveYahooCrumbOnce(async () => {
     try {
       const cRes = await fetchImpl('https://fc.yahoo.com', {
         headers: { 'User-Agent': YAHOO_USER_AGENT },
@@ -549,17 +546,11 @@ async function getCollectorYahooCrumb(
       const crumb = (await crRes.text()).trim();
       if (!crumb || crumb.startsWith('<')) return null;
 
-      const pair: YahooAuthPair = { cookie, crumb, expiresAtMs: nowMs + YAHOO_CRUMB_TTL_MS };
-      collectorYahooCrumbCache = pair;
-      return pair;
+      return storeYahooCrumb({ cookie, crumb }, nowMs);
     } catch {
       return null;
-    } finally {
-      collectorCrumbInFlight = null;
     }
-  })();
-
-  return collectorCrumbInFlight;
+  });
 }
 
 export async function fetchYahooMissingBarsForShadowV1Live(
@@ -577,7 +568,7 @@ export async function fetchYahooMissingBarsForShadowV1Live(
       ticker
     )}?interval=5m&period1=${p1}&period2=${p2}&includePrePost=false`;
 
-    const queryChart = async (auth: YahooAuthPair | null) => {
+    const queryChart = async (auth: YahooCrumbPair | null) => {
       const url = auth ? `${baseUrl}&crumb=${encodeURIComponent(auth.crumb)}` : baseUrl;
       const headers: Record<string, string> = {
         'User-Agent': YAHOO_USER_AGENT,
@@ -590,7 +581,7 @@ export async function fetchYahooMissingBarsForShadowV1Live(
       });
     };
 
-    let res = await queryChart(collectorYahooCrumbCache && nowMs < collectorYahooCrumbCache.expiresAtMs ? collectorYahooCrumbCache : null);
+    let res = await queryChart(readYahooCrumb(nowMs));
     if (res.status === 401 || res.status === 403) {
       const auth = await getCollectorYahooCrumb(true, nowMs, fetchImpl);
       if (auth) {

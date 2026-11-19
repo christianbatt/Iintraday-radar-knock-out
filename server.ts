@@ -44,6 +44,7 @@ import {
   SHADOW_V1_LIVE_OBSERVE_PATH,
 } from './src/server/shadowV1LiveCollector';
 import { registerShadowV1LiveViewRoute } from './src/server/shadowV1LiveView';
+import { readYahooCrumb, resolveYahooCrumbOnce, storeYahooCrumb } from './src/server/yahooCrumbCache';
 import { observeShadowV1LiveScan } from './src/server/shadowV1LiveScanner';
 import {
   filterUnderlyingsForActiveMarkets,
@@ -1264,18 +1265,15 @@ async function getIntraday5mMetrics(
   }
 }
 
-// Yahoo Finance Cookie + Crumb singleton (TTL 30 minuti, coalescing richieste parallele)
-let yahooCrumbInFlight: Promise<{ cookie: string; crumb: string } | null> | null = null;
-
+// Yahoo Finance Cookie + Crumb: cache canonica unica condivisa con il collector
+// V1-live (`src/server/yahooCrumbCache.ts`: TTL 30 minuti, coalescing richieste parallele).
 async function getYahooCrumb(forceRefresh: boolean = false): Promise<{ cookie: string; crumb: string } | null> {
-  const cacheKey = 'yahoo:crumb';
   if (!forceRefresh) {
-    const cached = cache.get<{ cookie: string; crumb: string }>(cacheKey);
-    if (cached) return cached.data;
+    const cached = readYahooCrumb();
+    if (cached) return cached;
   }
-  if (yahooCrumbInFlight) return yahooCrumbInFlight;
 
-  yahooCrumbInFlight = (async () => {
+  return resolveYahooCrumbOnce(async () => {
     try {
       const cRes = await fetchWithTimeout('https://fc.yahoo.com', {
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
@@ -1296,17 +1294,11 @@ async function getYahooCrumb(forceRefresh: boolean = false): Promise<{ cookie: s
       const crumb = (await crRes.text()).trim();
       if (!crumb || crumb.startsWith('<')) return null;
 
-      const authPair = { cookie, crumb };
-      cache.set(cacheKey, authPair, 1800);
-      return authPair;
+      return storeYahooCrumb({ cookie, crumb });
     } catch {
       return null;
-    } finally {
-      yahooCrumbInFlight = null;
     }
-  })();
-
-  return yahooCrumbInFlight;
+  });
 }
 
 function classifyEarningsProximity(
