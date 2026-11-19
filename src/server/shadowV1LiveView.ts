@@ -14,6 +14,13 @@
  * esplicito e limitato agli stati con risultato reale (`STOP`, `TARGET`,
  * `EXPIRED`): `NOT_FILLED` e i record non terminali non entrano nel conteggio e
  * non valgono zero.
+ *
+ * Superficie pubblica di sola lettura (P11): `registerShadowV1LiveViewRoute` non
+ * applica `requireApiAuth`; l'unica protezione e' `apiLimiter` (60 richieste al
+ * minuto). Espone aggregati e record di ricerca, non dati operativi. L'apertura
+ * e' deliberata e documentata qui, non una svista: chiuderla con auth o ridurre
+ * il payload e' una decisione del proprietario, perche' cambia il contratto
+ * osservabile della route e del pannello.
  */
 
 import fs from 'node:fs';

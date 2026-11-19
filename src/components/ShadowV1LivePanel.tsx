@@ -62,6 +62,9 @@ export interface ShadowV1LivePanelProps {
   flag?: ShadowV1LiveViewPanelFlag;
 }
 
+/** Quante voci di `gateCounts` restano visibili: il resto e' nei conteggi. */
+export const SHADOW_V1_LIVE_PANEL_GATES_SHOWN = 5;
+
 const STATUS_LABEL: Record<ShadowV1LiveViewRecord['status'], string> = {
   PENDING_FILL: 'in attesa',
   OPEN: 'aperto',
@@ -227,7 +230,7 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
           </div>
           {(diagnosticsProp.gateCounts?.length ?? 0) > 0 && (
             <div className="flex flex-wrap gap-1.5 pt-0.5">
-              {diagnosticsProp.gateCounts!.slice(0, 5).map((g) => (
+              {diagnosticsProp.gateCounts!.slice(0, SHADOW_V1_LIVE_PANEL_GATES_SHOWN).map((g) => (
                 <span
                   key={g.gate}
                   className="px-1.5 py-0.5 rounded bg-slate-950/80 border border-slate-800 text-[10px] text-slate-300"

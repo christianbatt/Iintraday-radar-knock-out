@@ -12,6 +12,7 @@ import path from 'node:path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ShadowV1LivePanel, {
+  SHADOW_V1_LIVE_PANEL_GATES_SHOWN,
   type ShadowV1LiveV2Summary,
 } from '../ShadowV1LivePanel';
 import {
@@ -22,6 +23,12 @@ import type {
   ShadowV1LiveViewRecord,
   ShadowV1LiveViewResponse,
 } from '../../server/shadowV1LiveView';
+
+// --- P11: valori dichiarati delle costanti (guardia di non regressione) -------
+
+it('P11 costanti pannello: gate mostrati invariati', () => {
+  assert.equal(SHADOW_V1_LIVE_PANEL_GATES_SHOWN, 5);
+});
 
 const NOW = Date.UTC(2026, 2, 16, 21, 0, 0);
 
