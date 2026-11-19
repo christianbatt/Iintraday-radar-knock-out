@@ -32,6 +32,7 @@ import {
   observeShadowV1LiveFromServer,
   type ObserveResponse,
 } from './shadowV1LiveCollector';
+import { updateShadowV1LiveMarksOnDisk } from './shadowV1LiveMarks';
 
 export const SHADOW_V1_LIVE_DIAGNOSTICS_PATH = 'artifacts/shadow_v1_live/scan_diagnostics.json';
 
@@ -287,6 +288,7 @@ export async function observeShadowV1LiveScan(
 
     const diagnosticsPath = path.join(rootDir, SHADOW_V1_LIVE_DIAGNOSTICS_PATH);
     writeDiagnosticsAtomic(diagnosticsPath, diagnostics);
+    updateShadowV1LiveMarksOnDisk(validQuotes, { rootDir, nowMs });
     return diagnostics;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

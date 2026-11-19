@@ -154,6 +154,23 @@ export type ShadowPanelData = {
       reason: string | null;
     }>;
   } | null;
+  v1LiveMarks?: {
+    version?: number;
+    updatedAt?: string;
+    marks?: Array<{
+      key: string;
+      ticker: string;
+      market: 'EU' | 'US';
+      direction: 'LONG' | 'SHORT';
+      status: 'PENDING_FILL' | 'OPEN';
+      currency: string;
+      lastPrice: number;
+      lastPriceAtMs: number | null;
+      unrealizedR: number | null;
+      pctFromEntry: number | null;
+      priceSource: 'quote' | 'bar5m';
+    }>;
+  } | null;
   limitations?: string[];
   flags?: { SETUP_SELECTOR_LIVE: string; STALENESS_USE_MARKET_TS: string };
 };

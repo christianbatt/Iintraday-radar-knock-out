@@ -102,6 +102,9 @@ export const SHADOW_V1_LIVE_CYCLE_MS = 60_000;
 /** Cooldown minimo tra recuperi Yahoo per lo stesso ticker/mercato. */
 const YAHOO_BACKFILL_COOLDOWN_MS = 5 * 60_000;
 const YAHOO_BACKFILL_TIMEOUT_MS = 8_000;
+/** Attesa massima dopo la chiusura sessione per ricevere le ultime barre delayed Yahoo (es. EU +15m). */
+export const YAHOO_EOD_SETTLE_GRACE_MS = 20 * 60_000;
+const YAHOO_CRUMB_TTL_MS = 30 * 60_000;
 
 const WARN_PREFIX = '[Shadow V1 Live Collector]';
 
@@ -149,6 +152,7 @@ function isClosedValidBar(b: ShadowV1LiveBar, nowMs: number): boolean {
   if (!b || typeof b !== 'object') return false;
   const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
   if (!finite(b.t) || b.t <= 0) return false;
+  if (b.t % SHADOW_V1_LIVE_BAR_MS !== 0) return false;
   if (!(b.t + SHADOW_V1_LIVE_BAR_MS <= nowMs)) return false;
   if (![b.o, b.h, b.l, b.c].every((v) => finite(v) && v > 0)) return false;
   return b.h >= b.l;
@@ -201,6 +205,7 @@ export function loadShadowV1LiveBarsFromDisk(
     } | null;
     if (!raw || !Array.isArray(raw.entries)) return 0;
     let loaded = 0;
+    let hadUnalignedOrDirty = false;
     for (const entry of raw.entries) {
       if (
         !entry ||
@@ -213,6 +218,9 @@ export function loadShadowV1LiveBarsFromDisk(
       const key = barsKey(entry.ticker, entry.market);
       const existing = barsByTicker.get(key)?.bars ?? [];
       const merged = mergeBarsList(existing, entry.bars, nowMs);
+      if (merged.length < entry.bars.length && entry.bars.length <= SHADOW_V1_LIVE_MAX_BARS_PER_TICKER) {
+        hadUnalignedOrDirty = true;
+      }
       if (merged.length > 0) {
         barsByTicker.set(key, {
           ticker: entry.ticker,
@@ -222,6 +230,9 @@ export function loadShadowV1LiveBarsFromDisk(
         });
         loaded += 1;
       }
+    }
+    if (hadUnalignedOrDirty && activeBarsDiskPath === barsPath) {
+      saveShadowV1LiveBarsToDisk(barsPath);
     }
     return loaded;
   } catch (err) {
@@ -273,6 +284,8 @@ export function clearShadowV1LiveBarsForTest(): void {
   barsByTicker.clear();
   activeBarsDiskPath = null;
   activeObserveHandler = null;
+  collectorYahooCrumbCache = null;
+  collectorCrumbInFlight = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -351,6 +364,7 @@ export function checkShadowV1LiveBarCoverage(input: BarCoverageInput): BarCovera
     for (const b of rawBars) {
       if (!b || typeof b !== 'object') continue;
       if (!finite(b.t) || b.t <= input.decidedAtMs) continue;
+      if (b.t % barMs !== 0) continue;
       if (!(b.t + barMs <= horizon)) continue;
       if (![b.o, b.h, b.l, b.c].every((v) => finite(v) && v > 0)) continue;
       if (b.h < b.l) continue;
@@ -488,26 +502,100 @@ export interface BarBackfillResult {
   authoritative: boolean;
 }
 
+const YAHOO_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+interface YahooAuthPair {
+  cookie: string;
+  crumb: string;
+  expiresAtMs: number;
+}
+
+let collectorYahooCrumbCache: YahooAuthPair | null = null;
+let collectorCrumbInFlight: Promise<YahooAuthPair | null> | null = null;
+
+async function getCollectorYahooCrumb(
+  forceRefresh: boolean = false,
+  nowMs: number = Date.now(),
+  fetchImpl: typeof fetch = fetch
+): Promise<YahooAuthPair | null> {
+  if (!forceRefresh && collectorYahooCrumbCache && nowMs < collectorYahooCrumbCache.expiresAtMs) {
+    return collectorYahooCrumbCache;
+  }
+  if (collectorCrumbInFlight) return collectorCrumbInFlight;
+
+  collectorCrumbInFlight = (async () => {
+    try {
+      const cRes = await fetchImpl('https://fc.yahoo.com', {
+        headers: { 'User-Agent': YAHOO_USER_AGENT },
+        signal: AbortSignal.timeout(4_000),
+      });
+      const getSetCookie = (cRes.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
+      const cookie =
+        typeof getSetCookie === 'function'
+          ? getSetCookie.call(cRes.headers).map((c: string) => c.split(';')[0]).join('; ')
+          : (cRes.headers.get('set-cookie') || '').split(',')[0].split(';')[0];
+      if (!cookie) return null;
+
+      const crRes = await fetchImpl('https://query1.finance.yahoo.com/v1/test/getcrumb', {
+        headers: {
+          'User-Agent': YAHOO_USER_AGENT,
+          Cookie: cookie,
+        },
+        signal: AbortSignal.timeout(4_000),
+      });
+      if (!crRes.ok) return null;
+      const crumb = (await crRes.text()).trim();
+      if (!crumb || crumb.startsWith('<')) return null;
+
+      const pair: YahooAuthPair = { cookie, crumb, expiresAtMs: nowMs + YAHOO_CRUMB_TTL_MS };
+      collectorYahooCrumbCache = pair;
+      return pair;
+    } catch {
+      return null;
+    } finally {
+      collectorCrumbInFlight = null;
+    }
+  })();
+
+  return collectorCrumbInFlight;
+}
+
 export async function fetchYahooMissingBarsForShadowV1Live(
   ticker: string,
   _market: Market,
   fromMs: number,
   toMs: number,
-  nowMs: number = Date.now()
+  nowMs: number = Date.now(),
+  fetchImpl: typeof fetch = fetch
 ): Promise<BarBackfillResult | null> {
   try {
     const p1 = Math.max(0, Math.floor((fromMs - 15 * 60_000) / 1000));
     const p2 = Math.max(p1 + 300, Math.ceil((toMs + 15 * 60_000) / 1000));
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+    const baseUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
       ticker
     )}?interval=5m&period1=${p1}&period2=${p2}&includePrePost=false`;
 
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; IntradayKnockoutRadar/1.0)',
-      },
-      signal: AbortSignal.timeout(YAHOO_BACKFILL_TIMEOUT_MS),
-    });
+    const queryChart = async (auth: YahooAuthPair | null) => {
+      const url = auth ? `${baseUrl}&crumb=${encodeURIComponent(auth.crumb)}` : baseUrl;
+      const headers: Record<string, string> = {
+        'User-Agent': YAHOO_USER_AGENT,
+        Accept: 'application/json',
+      };
+      if (auth?.cookie) headers.Cookie = auth.cookie;
+      return fetchImpl(url, {
+        headers,
+        signal: AbortSignal.timeout(YAHOO_BACKFILL_TIMEOUT_MS),
+      });
+    };
+
+    let res = await queryChart(collectorYahooCrumbCache && nowMs < collectorYahooCrumbCache.expiresAtMs ? collectorYahooCrumbCache : null);
+    if (res.status === 401 || res.status === 403) {
+      const auth = await getCollectorYahooCrumb(true, nowMs, fetchImpl);
+      if (auth) {
+        res = await queryChart(auth);
+      }
+    }
     if (!res.ok) return null;
 
     const json = (await res.json()) as {
@@ -550,10 +638,23 @@ export async function fetchYahooMissingBarsForShadowV1Live(
         }
       }
     }
+    bars.sort((a, b) => a.t - b.t);
+
+    if (bars.length === 0) {
+      return { bars, authoritative: false };
+    }
+
+    const expectedLastBarTs =
+      Math.floor((toMs - SHADOW_V1_LIVE_BAR_MS) / SHADOW_V1_LIVE_BAR_MS) * SHADOW_V1_LIVE_BAR_MS;
+    const lastBarTs = bars[bars.length - 1].t;
+    const authoritative =
+      nowMs <= toMs ||
+      lastBarTs >= expectedLastBarTs ||
+      nowMs >= toMs + YAHOO_EOD_SETTLE_GRACE_MS;
 
     return {
       bars,
-      authoritative: bars.length > 0,
+      authoritative,
     };
   } catch {
     return null;
@@ -1304,11 +1405,25 @@ async function evaluateAndPersistCycle(deps: CollectorDeps): Promise<CycleResult
           record.decidedAtMs,
           Math.min(nowMs, record.sessionCloseMs)
         );
-        if (backfill?.authoritative) {
+        if (backfill && backfill.bars.length > 0) {
           bars = mergeBarsList(bars, backfill.bars, nowMs);
           result = evaluateShadowV1Live(toCoreInput(record, nowMs, bars, records));
           observation = observationFromResult(contextFromRecord(record), result);
           if (!observation) continue;
+          coverage = coverageFn({
+            bars,
+            decidedAtMs: record.decidedAtMs,
+            sessionCloseMs: record.sessionCloseMs,
+            nowMs,
+            ...(backfill.authoritative
+              ? {
+                  allowExchangeGaps: true,
+                  authoritativeSession: nowMs > record.sessionCloseMs,
+                  hasSessionContextBar: hasSessionBarOnDate(bars, record.market, record.decidedAtMs),
+                }
+              : {}),
+          });
+        } else if (backfill?.authoritative) {
           coverage = coverageFn({
             bars,
             decidedAtMs: record.decidedAtMs,
@@ -1392,14 +1507,14 @@ export function registerShadowV1LiveCollector(
     clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
   };
   const enabled = isEnabled(env);
+  const nowFn = options.now ?? (() => Date.now());
 
   if (enabled) {
     const diskPath = options.barsPath ?? path.join(root, SHADOW_V1_LIVE_BARS_PATH);
     activeBarsDiskPath = diskPath;
-    loadShadowV1LiveBarsFromDisk(diskPath, Date.now());
+    loadShadowV1LiveBarsFromDisk(diskPath, nowFn());
   }
 
-  const nowFn = options.now ?? (() => Date.now());
   const fetchMissingBars =
     options.fetchMissingBars === null
       ? undefined

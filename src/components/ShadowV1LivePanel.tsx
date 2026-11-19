@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   SHADOW_V1_LIVE_VIEW_PANEL,
   isShadowV1LivePanelEnabled,
@@ -51,10 +51,32 @@ export interface ShadowV1LiveDiagnosticsSummary {
   }>;
 }
 
+export interface ShadowV1LiveMark {
+  key: string;
+  ticker: string;
+  market: 'EU' | 'US';
+  direction: 'LONG' | 'SHORT';
+  status: 'PENDING_FILL' | 'OPEN';
+  currency: string;
+  lastPrice: number;
+  lastPriceAtMs: number | null;
+  unrealizedR: number | null;
+  pctFromEntry: number | null;
+  priceSource: 'quote' | 'bar5m';
+}
+
+export interface ShadowV1LiveMarksSummary {
+  version?: number;
+  updatedAt?: string;
+  marks?: ShadowV1LiveMark[];
+}
+
 export interface ShadowV1LivePanelProps {
   data?: ShadowV1LiveViewResponse | null;
   v2?: ShadowV1LiveV2Summary | null;
   diagnostics?: ShadowV1LiveDiagnosticsSummary | null;
+  liveMarks?: ShadowV1LiveMarksSummary | null;
+  refreshSignal?: string | null;
   error?: string | null;
   loading?: boolean;
   fetchImpl?: typeof fetch;
@@ -89,10 +111,24 @@ function delayLabel(delayMs: number | null): string {
   return `${minutes < 10 ? minutes.toFixed(1) : Math.round(minutes)}m`;
 }
 
+function currencySymbol(currency: string): string {
+  const c = currency.toUpperCase();
+  if (c === 'EUR') return '€';
+  if (c === 'USD') return '$';
+  return `${c} `;
+}
+
+function signed(value: number, decimals = 2, suffix = ''): string {
+  const prefix = value > 0 ? '+' : '';
+  return `${prefix}${value.toFixed(decimals)}${suffix}`;
+}
+
 export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
   data: dataProp,
   v2: v2Prop,
   diagnostics: diagnosticsProp,
+  liveMarks: liveMarksProp,
+  refreshSignal = null,
   error: errorProp,
   loading: loadingProp,
   fetchImpl,
@@ -103,13 +139,23 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
 
   const [fetched, setFetched] = useState<ShadowV1LiveViewResponse | null>(null);
   const [v2Fetched, setV2Fetched] = useState<ShadowV1LiveV2Summary | null>(null);
+  const [liveMarksFetched, setLiveMarksFetched] = useState<ShadowV1LiveMarksSummary | null>(null);
   const [netError, setNetError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(live && enabled);
   const [tick, setTick] = useState(0);
+  const prevRefreshSignalRef = useRef(refreshSignal);
 
   const refresh = useCallback(() => setTick((n) => n + 1), []);
 
-  const shouldFetchV2 = v2Prop === undefined;
+  useEffect(() => {
+    if (prevRefreshSignalRef.current === refreshSignal) return;
+    prevRefreshSignalRef.current = refreshSignal;
+    if (enabled && live && refreshSignal) {
+      refresh();
+    }
+  }, [refreshSignal, enabled, live, refresh]);
+
+  const shouldFetchLatest = v2Prop === undefined || liveMarksProp === undefined;
 
   useEffect(() => {
     if (!enabled || !live) return;
@@ -126,14 +172,18 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
 
     Promise.all([
       readJson('/api/shadow/v1-live/signals'),
-      shouldFetchV2 ? readJson('/api/shadow/latest').catch(() => null) : Promise.resolve(null),
+      shouldFetchLatest ? readJson('/api/shadow/latest').catch(() => null) : Promise.resolve(null),
     ])
       .then(([v1, shadow]) => {
         if (!alive) return;
         setFetched(v1 as ShadowV1LiveViewResponse);
-        if (shouldFetchV2) {
-          const summary = (shadow as { shadowV2?: ShadowV1LiveV2Summary } | null)?.shadowV2;
-          setV2Fetched(summary ?? null);
+        if (shouldFetchLatest) {
+          const shadowObj = shadow as {
+            shadowV2?: ShadowV1LiveV2Summary;
+            v1LiveMarks?: ShadowV1LiveMarksSummary;
+          } | null;
+          if (v2Prop === undefined) setV2Fetched(shadowObj?.shadowV2 ?? null);
+          if (liveMarksProp === undefined) setLiveMarksFetched(shadowObj?.v1LiveMarks ?? null);
         }
         setLoading(false);
       })
@@ -146,18 +196,23 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
     return () => {
       alive = false;
     };
-  }, [enabled, live, shouldFetchV2, fetchImpl, tick]);
+  }, [enabled, live, shouldFetchLatest, v2Prop, liveMarksProp, fetchImpl, tick]);
 
   if (!enabled) return null;
 
   const data = live ? fetched : dataProp;
   const v2 = v2Prop !== undefined ? v2Prop : v2Fetched;
+  const liveMarks = liveMarksProp !== undefined ? liveMarksProp : liveMarksFetched;
   const shownError = errorProp ?? netError;
   const isLoading = loadingProp ?? loading;
 
   const records = data?.records ?? [];
   const counts = data?.counts ?? null;
   const metrics = data?.metrics ?? null;
+  const markByKey = new Map<string, ShadowV1LiveMark>();
+  for (const m of liveMarks?.marks ?? []) {
+    if (m && m.key) markByKey.set(m.key, m);
+  }
 
   return (
     <section
@@ -324,42 +379,75 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
                     <th className="text-left font-normal">mercato</th>
                     <th className="text-left font-normal">direzione</th>
                     <th className="text-left font-normal">stato</th>
+                    <th className="text-right font-normal">prezzo / var.</th>
                     <th className="text-right font-normal">ritardo</th>
                     <th className="text-right font-normal">R</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {records.map((r) => (
-                    <tr key={r.key} data-testid="v1live-row" className="border-t border-slate-800">
-                      <td className="py-1">{stamp(r.decidedAtMs)}</td>
-                      <td className="py-1 font-bold text-white">{r.ticker}</td>
-                      <td className="py-1">{r.market}</td>
-                      <td className="py-1">{r.direction}</td>
-                      <td className="py-1">
-                        {STATUS_LABEL[r.status]}
-                        {r.stale && (
-                          <span
-                            className="ml-1 text-[9px] text-amber-300"
-                            data-testid="v1live-stale"
-                          >
-                            stale
-                          </span>
-                        )}
-                        {r.late && (
-                          <span
-                            className="ml-1 text-[9px] text-rose-300"
-                            data-testid="v1live-late"
-                          >
-                            late
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-1 text-right text-slate-400">
-                        {delayLabel(r.delayMs)}
-                      </td>
-                      <td className="py-1 text-right">{r.r != null ? num(r.r, 2, 'R') : '—'}</td>
-                    </tr>
-                  ))}
+                  {records.map((r) => {
+                    const mark = markByKey.get(r.key);
+                    const isActive = r.status === 'OPEN' || r.status === 'PENDING_FILL';
+                    return (
+                      <tr key={r.key} data-testid="v1live-row" className="border-t border-slate-800">
+                        <td className="py-1">{stamp(r.decidedAtMs)}</td>
+                        <td className="py-1 font-bold text-white">{r.ticker}</td>
+                        <td className="py-1">{r.market}</td>
+                        <td className="py-1">{r.direction}</td>
+                        <td className="py-1">
+                          {STATUS_LABEL[r.status]}
+                          {r.stale && (
+                            <span
+                              className="ml-1 text-[9px] text-amber-300"
+                              data-testid="v1live-stale"
+                            >
+                              stale
+                            </span>
+                          )}
+                          {r.late && (
+                            <span
+                              className="ml-1 text-[9px] text-rose-300"
+                              data-testid="v1live-late"
+                            >
+                              late
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-1 text-right font-mono" data-testid="v1live-mark">
+                          {isActive && mark ? (
+                            <span className="inline-flex flex-col items-end leading-tight">
+                              <span className="text-slate-200">
+                                {currencySymbol(mark.currency)}
+                                {mark.lastPrice.toFixed(2)}
+                              </span>
+                              {r.status === 'OPEN' && mark.unrealizedR != null ? (
+                                <span
+                                  className={
+                                    mark.unrealizedR >= 0 ? 'text-emerald-300 text-[9px]' : 'text-rose-300 text-[9px]'
+                                  }
+                                >
+                                  {signed(mark.unrealizedR, 2, 'R')}
+                                  {mark.pctFromEntry != null ? ` (${signed(mark.pctFromEntry, 2, '%')})` : ''}
+                                </span>
+                              ) : mark.pctFromEntry != null ? (
+                                <span className="text-slate-400 text-[9px]">
+                                  ingr. {signed(mark.pctFromEntry, 2, '%')}
+                                </span>
+                              ) : null}
+                            </span>
+                          ) : !isActive && r.exitPrice != null && Number.isFinite(r.exitPrice) ? (
+                            <span className="text-slate-400">uscita {r.exitPrice.toFixed(2)}</span>
+                          ) : (
+                            <span className="text-slate-500">n/d</span>
+                          )}
+                        </td>
+                        <td className="py-1 text-right text-slate-400">
+                          {delayLabel(r.delayMs)}
+                        </td>
+                        <td className="py-1 text-right">{r.r != null ? num(r.r, 2, 'R') : '—'}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

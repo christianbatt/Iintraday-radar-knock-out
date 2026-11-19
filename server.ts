@@ -45,6 +45,11 @@ import {
 } from './src/server/shadowV1LiveCollector';
 import { registerShadowV1LiveViewRoute } from './src/server/shadowV1LiveView';
 import { observeShadowV1LiveScan } from './src/server/shadowV1LiveScanner';
+import {
+  filterUnderlyingsForActiveMarkets,
+  SHADOW_MARKET_SCAN_INTERVAL_MS,
+} from './src/server/shadowMarketScheduler';
+import { DEFAULT_TRADE_REPUBLIC_UNDERLYINGS } from './src/data/defaultUnderlyings';
 import { formatShadowV2SignalsCsv, formatShadowV2SignalsJsonl, ShadowV2Record } from './src/knowledge/shadowV2';
 
 dotenv.config();
@@ -2277,6 +2282,192 @@ app.get('/api/futures', async (req: Request, res: Response) => {
   }
 });
 
+let lastMarketScanAtMs = 0;
+let schedulerScanInFlight: Promise<void> | null = null;
+
+async function executeMarketDataScan(underlyings: any[], bypass: boolean): Promise<any[]> {
+  // Esecuzione concorrente a lotti controllati (concurrency = 6) per evitare saturazione e timeout da Yahoo Finance
+  const results = await mapConcurrent(
+    underlyings,
+    6,
+    (item) =>
+      fetchQuoteForTicker(
+        item.ticker,
+        item.nome || item.name,
+        item.mercato || item.market || 'EU',
+        item.valuta || item.currency || 'EUR',
+        bypass
+      )
+  );
+
+  // Qualita' dati VWAP per scansione: solo log/report, nessun impatto su UI o punteggi.
+  console.log(formatVwapDataQualityScan('ALL', results));
+
+  let futuresScan: any = null;
+  // Log di scan (IPOTESI): per candidato breakdown, veti e stati indicatori; poi distribuzione punteggi.
+  try {
+    futuresScan = await getFutures(false);
+    const changeFor = (market: 'EU' | 'US') =>
+      market === 'EU'
+        ? (typeof futuresScan?.europe?.dax?.changePercent === 'number' ? futuresScan.europe.dax.changePercent : null)
+        : (typeof futuresScan?.usa?.sp500?.changePercent === 'number' ? futuresScan.usa.sp500.changePercent : null);
+    const scanScores = results.map((quote) => ({
+      quote,
+      score: calculateCandidateScore(quote, changeFor(quote.market), null, {
+        volume: quote.lastBarVolume ?? null,
+        barTime: quote.lastBarTime ?? null,
+      }),
+    }));
+    if (process.env.DEBUG_SCAN_LOGS === 'true') {
+      for (const { quote, score } of scanScores) {
+        const ind = quote.setupIndicators;
+        const indTxt = ind
+          ? `ST ${ind.supertrend.status}${ind.supertrend.status === 'OK' ? `(dir ${ind.supertrend.direction}, flip ${ind.supertrend.barsSinceFlip ?? 'nd'})` : ''} | ADX ${ind.adx.status}${ind.adx.status === 'OK' ? `(${ind.adx.value})` : ''} | StochRSI ${ind.stochRsi.status}${ind.stochRsi.status === 'OK' ? `(K ${ind.stochRsi.k}/D ${ind.stochRsi.d}, ${ind.stochRsi.lastCross})` : ''} | PSAR ${ind.psar.status}`
+          : 'indicatori non disponibili';
+        console.log(
+          `[Setup score] ${quote.ticker}: ${score.total}/100 | veto ${score.veto ?? 'nessuno'} | ${indTxt} | breakdown ${JSON.stringify(score.scoreBreakdown)}`
+        );
+      }
+    }
+    const summarize = (market: 'EU' | 'US') => {
+      const rows = scanScores.filter((r) => r.quote.market === market);
+      const totals = rows.map((r) => r.score.total);
+      const threshold = market === 'EU' ? TRADING_PARAMS.MIN_SCORE_EU : TRADING_PARAMS.MIN_SCORE_US;
+      const above = rows.filter((r) => r.score.veto == null && r.score.total >= threshold).length;
+      const vetoed = rows.filter((r) => r.score.veto != null).length;
+      const buckets = [0, 40, 50, 60, 70, 80, 90, 100];
+      const dist = buckets
+        .slice(0, -1)
+        .map((min, i) => {
+          const max = buckets[i + 1];
+          const n = totals.filter((t) => t >= min && t < max).length;
+          return `${min}-${max - 1}:${n}`;
+        })
+        .join(' ');
+      return `${market} n=${rows.length} sopra-soglia(>=${threshold}):${above} veti:${vetoed} dist ${dist}`;
+    };
+    console.log(`[Score distribution] scan ALL | ${summarize('EU')} | ${summarize('US')}`);
+
+    // Log warm-up (IPOTESI): per mercato candidati con WARMUP_INCOMPLETE, UNKNOWN per
+    // indicatore e per reason, sessioni precedenti effettivamente usate.
+    const warmupSummary = (market: 'EU' | 'US') => {
+      const rows = scanScores.filter((r) => r.quote.market === market);
+      const incomplete = rows.filter((r) => r.score.warmupIncomplete).length;
+      const unknown: Record<string, number> = {};
+      const reasons: Record<string, number> = {};
+      const priorSessions: Record<string, number> = {};
+      for (const { quote } of rows) {
+        const ind = quote.setupIndicators;
+        for (const key of ['supertrend', 'adx', 'stochRsi'] as const) {
+          const snap = ind?.[key];
+          if (!snap || snap.status !== 'OK') {
+            unknown[key] = (unknown[key] ?? 0) + 1;
+            const reason = snap?.reason ?? 'NO_FEED';
+            reasons[reason] = (reasons[reason] ?? 0) + 1;
+          }
+        }
+        const used = ind?.priorSessionsUsed ?? 0;
+        const key = used >= 2 ? '2+' : String(used);
+        priorSessions[key] = (priorSessions[key] ?? 0) + 1;
+      }
+      return `${market} n=${rows.length} warmupIncomplete:${incomplete} UNKNOWN ${JSON.stringify(unknown)} reason ${JSON.stringify(reasons)} sessioni-precedenti ${JSON.stringify(priorSessions)}`;
+    };
+    console.log(`[Warmup] scan ALL | ${warmupSummary('EU')} | ${warmupSummary('US')}`);
+
+    // Log per il replay del veto ADX (scripts/adx_veto_replay.ts): un record JSON per veto.
+    const vetoRecords = scanScores
+      .filter((r) => r.score.veto === 'ADX_BELOW_MARKET_THRESHOLD')
+      .map(({ quote }) => {
+        const direction: 'LONG' | 'SHORT' = (quote.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT';
+        const entry = quote.currentPrice ?? null;
+        const stop = (quote as { S?: number | null }).S ?? null;
+        const t1 =
+          entry != null && stop != null
+            ? +(entry + (direction === 'LONG' ? 1 : -1) * TRADING_PARAMS.T1_R * Math.abs(entry - stop)).toFixed(4)
+            : null;
+        const now = new Date();
+        const etTime = new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'America/New_York',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }).format(now);
+        const localTime = new Intl.DateTimeFormat('it-IT', {
+          timeZone: 'Europe/Rome',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }).format(now);
+        const adx = quote.setupIndicators?.adx;
+        return {
+          ts: now.getTime(),
+          ticker: quote.ticker,
+          market: quote.market,
+          direction,
+          etTime,
+          localTime,
+          adx: adx?.value ?? null,
+          plusDI: adx?.plusDI ?? null,
+          minusDI: adx?.minusDI ?? null,
+          threshold: adxThresholds(quote.market).min,
+          entry,
+          stop,
+          t1,
+          bars: quote.setupIndicators?.recentBars ?? [],
+        };
+      });
+    if (vetoRecords.length > 0) {
+      try {
+        const logDir = path.join(process.cwd(), 'logs');
+        fs.mkdirSync(logDir, { recursive: true });
+        fs.appendFileSync(
+          path.join(logDir, 'adx_veto_log.jsonl'),
+          vetoRecords.map((record) => JSON.stringify(record)).join('\n') + '\n',
+          'utf-8'
+        );
+      } catch {
+        // log best-effort: nessun impatto sul servizio
+      }
+    }
+  } catch (err: any) {
+    console.log(`[Setup score] log non disponibile: ${err?.message || err}`);
+  }
+
+  // Shadow V2 & V1-live paralleli lato server: sola osservazione su tutto il paniere, zero impatto live.
+  observeShadowV2Scan(results);
+  await observeShadowV1LiveScan(results, futuresScan);
+  lastMarketScanAtMs = Date.now();
+  return results;
+}
+
+async function runScheduledMarketScan(): Promise<void> {
+  if (schedulerScanInFlight) return schedulerScanInFlight;
+  const nowMs = Date.now();
+  if (nowMs - lastMarketScanAtMs < SHADOW_MARKET_SCAN_INTERVAL_MS - 30_000) {
+    return;
+  }
+  const { activeMarkets, items } = filterUnderlyingsForActiveMarkets(
+    DEFAULT_TRADE_REPUBLIC_UNDERLYINGS,
+    nowMs
+  );
+  if (items.length === 0) return;
+
+  schedulerScanInFlight = (async () => {
+    try {
+      await executeMarketDataScan(items, true);
+      console.log(
+        `[Shadow Scheduler] scansione passiva completata (${activeMarkets.join('+')} · ${items.length} titoli)`
+      );
+    } catch (err: any) {
+      console.warn(`[Shadow Scheduler] errore scansione passiva: ${err?.message || err}`);
+    } finally {
+      schedulerScanInFlight = null;
+    }
+  })();
+
+  return schedulerScanInFlight;
+}
+
 // Batch Market Data for Underlyings
 app.post('/api/market-data', async (req: Request, res: Response) => {
   try {
@@ -2286,156 +2477,7 @@ app.post('/api/market-data', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Array "underlyings" richiesto' });
     }
 
-    // Esecuzione concorrente a lotti controllati (concurrency = 6) per evitare saturazione e timeout da Yahoo Finance
-    const results = await mapConcurrent(
-      underlyings,
-      6,
-      (item) =>
-        fetchQuoteForTicker(
-          item.ticker,
-          item.nome || item.name,
-          item.mercato || item.market || 'EU',
-          item.valuta || item.currency || 'EUR',
-          bypass
-        )
-    );
-
-    // Qualita' dati VWAP per scansione: solo log/report, nessun impatto su UI o punteggi.
-    console.log(formatVwapDataQualityScan('ALL', results));
-
-    let futuresScan: any = null;
-    // Log di scan (IPOTESI): per candidato breakdown, veti e stati indicatori; poi distribuzione punteggi.
-    try {
-      futuresScan = await getFutures(false);
-      const changeFor = (market: 'EU' | 'US') =>
-        market === 'EU'
-          ? (typeof futuresScan?.europe?.dax?.changePercent === 'number' ? futuresScan.europe.dax.changePercent : null)
-          : (typeof futuresScan?.usa?.sp500?.changePercent === 'number' ? futuresScan.usa.sp500.changePercent : null);
-      const scanScores = results.map((quote) => ({
-        quote,
-        score: calculateCandidateScore(quote, changeFor(quote.market), null, {
-          volume: quote.lastBarVolume ?? null,
-          barTime: quote.lastBarTime ?? null,
-        }),
-      }));
-      if (process.env.DEBUG_SCAN_LOGS === 'true') {
-        for (const { quote, score } of scanScores) {
-          const ind = quote.setupIndicators;
-          const indTxt = ind
-            ? `ST ${ind.supertrend.status}${ind.supertrend.status === 'OK' ? `(dir ${ind.supertrend.direction}, flip ${ind.supertrend.barsSinceFlip ?? 'nd'})` : ''} | ADX ${ind.adx.status}${ind.adx.status === 'OK' ? `(${ind.adx.value})` : ''} | StochRSI ${ind.stochRsi.status}${ind.stochRsi.status === 'OK' ? `(K ${ind.stochRsi.k}/D ${ind.stochRsi.d}, ${ind.stochRsi.lastCross})` : ''} | PSAR ${ind.psar.status}`
-            : 'indicatori non disponibili';
-          console.log(
-            `[Setup score] ${quote.ticker}: ${score.total}/100 | veto ${score.veto ?? 'nessuno'} | ${indTxt} | breakdown ${JSON.stringify(score.scoreBreakdown)}`
-          );
-        }
-      }
-      const summarize = (market: 'EU' | 'US') => {
-        const rows = scanScores.filter((r) => r.quote.market === market);
-        const totals = rows.map((r) => r.score.total);
-        const threshold = market === 'EU' ? TRADING_PARAMS.MIN_SCORE_EU : TRADING_PARAMS.MIN_SCORE_US;
-        const above = rows.filter((r) => r.score.veto == null && r.score.total >= threshold).length;
-        const vetoed = rows.filter((r) => r.score.veto != null).length;
-        const buckets = [0, 40, 50, 60, 70, 80, 90, 100];
-        const dist = buckets
-          .slice(0, -1)
-          .map((min, i) => {
-            const max = buckets[i + 1];
-            const n = totals.filter((t) => t >= min && t < max).length;
-            return `${min}-${max - 1}:${n}`;
-          })
-          .join(' ');
-        return `${market} n=${rows.length} sopra-soglia(>=${threshold}):${above} veti:${vetoed} dist ${dist}`;
-      };
-      console.log(`[Score distribution] scan ALL | ${summarize('EU')} | ${summarize('US')}`);
-
-      // Log warm-up (IPOTESI): per mercato candidati con WARMUP_INCOMPLETE, UNKNOWN per
-      // indicatore e per reason, sessioni precedenti effettivamente usate.
-      const warmupSummary = (market: 'EU' | 'US') => {
-        const rows = scanScores.filter((r) => r.quote.market === market);
-        const incomplete = rows.filter((r) => r.score.warmupIncomplete).length;
-        const unknown: Record<string, number> = {};
-        const reasons: Record<string, number> = {};
-        const priorSessions: Record<string, number> = {};
-        for (const { quote } of rows) {
-          const ind = quote.setupIndicators;
-          for (const key of ['supertrend', 'adx', 'stochRsi'] as const) {
-            const snap = ind?.[key];
-            if (!snap || snap.status !== 'OK') {
-              unknown[key] = (unknown[key] ?? 0) + 1;
-              const reason = snap?.reason ?? 'NO_FEED';
-              reasons[reason] = (reasons[reason] ?? 0) + 1;
-            }
-          }
-          const used = ind?.priorSessionsUsed ?? 0;
-          const key = used >= 2 ? '2+' : String(used);
-          priorSessions[key] = (priorSessions[key] ?? 0) + 1;
-        }
-        return `${market} n=${rows.length} warmupIncomplete:${incomplete} UNKNOWN ${JSON.stringify(unknown)} reason ${JSON.stringify(reasons)} sessioni-precedenti ${JSON.stringify(priorSessions)}`;
-      };
-      console.log(`[Warmup] scan ALL | ${warmupSummary('EU')} | ${warmupSummary('US')}`);
-
-      // Log per il replay del veto ADX (scripts/adx_veto_replay.ts): un record JSON per veto.
-      const vetoRecords = scanScores
-        .filter((r) => r.score.veto === 'ADX_BELOW_MARKET_THRESHOLD')
-        .map(({ quote }) => {
-          const direction: 'LONG' | 'SHORT' = (quote.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT';
-          const entry = quote.currentPrice ?? null;
-          const stop = (quote as { S?: number | null }).S ?? null;
-          const t1 =
-            entry != null && stop != null
-              ? +(entry + (direction === 'LONG' ? 1 : -1) * TRADING_PARAMS.T1_R * Math.abs(entry - stop)).toFixed(4)
-              : null;
-          const now = new Date();
-          const etTime = new Intl.DateTimeFormat('en-GB', {
-            timeZone: 'America/New_York',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false,
-          }).format(now);
-          const localTime = new Intl.DateTimeFormat('it-IT', {
-            timeZone: 'Europe/Rome',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false,
-          }).format(now);
-          const adx = quote.setupIndicators?.adx;
-          return {
-            ts: now.getTime(),
-            ticker: quote.ticker,
-            market: quote.market,
-            direction,
-            etTime,
-            localTime,
-            adx: adx?.value ?? null,
-            plusDI: adx?.plusDI ?? null,
-            minusDI: adx?.minusDI ?? null,
-            threshold: adxThresholds(quote.market).min,
-            entry,
-            stop,
-            t1,
-            bars: quote.setupIndicators?.recentBars ?? [],
-          };
-        });
-      if (vetoRecords.length > 0) {
-        try {
-          const logDir = path.join(process.cwd(), 'logs');
-          fs.mkdirSync(logDir, { recursive: true });
-          fs.appendFileSync(
-            path.join(logDir, 'adx_veto_log.jsonl'),
-            vetoRecords.map((record) => JSON.stringify(record)).join('\n') + '\n',
-            'utf-8'
-          );
-        } catch {
-          // log best-effort: nessun impatto sul servizio
-        }
-      }
-    } catch (err: any) {
-      console.log(`[Setup score] log non disponibile: ${err?.message || err}`);
-    }
-
-    // Shadow V2 & V1-live paralleli lato server: sola osservazione su tutto il paniere, zero impatto live.
-    observeShadowV2Scan(results);
-    await observeShadowV1LiveScan(results, futuresScan);
+    const results = await executeMarketDataScan(underlyings, bypass);
 
     res.json({
       count: results.length,
@@ -3448,6 +3490,17 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Intraday Radar] Server running at http://0.0.0.0:${PORT}`);
+    if (process.env.NODE_ENV !== 'test' && process.env.DISABLE_AUTO_MARKET_SCAN !== 'true') {
+      const warmupTimer = setTimeout(() => {
+        void runScheduledMarketScan();
+      }, 15_000);
+      if (typeof warmupTimer.unref === 'function') warmupTimer.unref();
+
+      const intervalTimer = setInterval(() => {
+        void runScheduledMarketScan();
+      }, SHADOW_MARKET_SCAN_INTERVAL_MS);
+      if (typeof intervalTimer.unref === 'function') intervalTimer.unref();
+    }
   });
 }
 

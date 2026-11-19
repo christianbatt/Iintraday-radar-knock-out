@@ -19,6 +19,7 @@ import {
   clearShadowV1LiveBarsForTest,
   createObserveHandler,
   createShadowV1LiveStoreQueue,
+  fetchYahooMissingBarsForShadowV1Live,
   isShadowV1LiveOriginAllowed,
   observeShadowV1LiveFromServer,
   shadowV1LiveBodyLimitErrorHandler,
@@ -1725,4 +1726,158 @@ test('P12 retention: due osservazioni concorrenti archiviano il mese chiuso senz
     [closedRecord.key],
     'il record di febbraio e\' nell archivio, una sola volta'
   );
+});
+
+// --- P13: allineamento 5m, pulizia disco, crumb 401 e grace period EOD ------
+
+test('P13 allineamento griglia 5m: barre con offset irregolare rifiutate in RAM e in coverage', () => {
+  clearShadowV1LiveBarsForTest();
+  const base = Math.floor(D0 / BAR_MS) * BAR_MS;
+  const aligned: ShadowV1LiveBar = { t: base - BAR_MS, o: 100, h: 101, l: 99, c: 100.5 };
+  const unaligned: ShadowV1LiveBar = { t: base - BAR_MS + 37_000, o: 100, h: 101, l: 99, c: 100.5 };
+
+  recordBarsForShadowV1Live('ASML.AS', 'EU', [aligned, unaligned], base + BAR_MS, ON);
+  const stored = barsForShadowV1Live('ASML.AS', 'EU');
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].t, aligned.t);
+
+  const cov = checkShadowV1LiveBarCoverage({
+    decidedAtMs: base - 3 * BAR_MS,
+    sessionCloseMs: base + BAR_MS,
+    nowMs: base + BAR_MS,
+    bars: [unaligned, aligned],
+  });
+  assert.equal(cov.ok, false, 'la barra disallineata non entra e resta leading_hole sulla barra mancante');
+  assert.equal(cov.reason, 'leading_hole');
+  assert.equal(cov.barsUsed, 1);
+  clearShadowV1LiveBarsForTest();
+});
+
+test('P13 avvio collector: rimuove barre disallineate dal bars.json persistito e riscrive pulito', () => {
+  clearShadowV1LiveBarsForTest();
+  const { root } = freshRoot('v1livescrub-');
+  const barsPath = path.join(root, SHADOW_V1_LIVE_BARS_PATH);
+  fs.mkdirSync(path.dirname(barsPath), { recursive: true });
+  const base = Math.floor(D0 / BAR_MS) * BAR_MS;
+  const dirtyPayload = {
+    version: 1,
+    entries: [
+      {
+        ticker: 'ASML.AS',
+        market: 'EU',
+        bars: [
+          { t: base - 2 * BAR_MS, o: 100, h: 101, l: 99, c: 100.2 },
+          { t: base - 2 * BAR_MS + 42_000, o: 100, h: 101, l: 99, c: 100.3 },
+          { t: base - BAR_MS, o: 100.2, h: 101, l: 100, c: 100.5 },
+        ],
+      },
+    ],
+  };
+  fs.writeFileSync(barsPath, JSON.stringify(dirtyPayload), 'utf8');
+
+  const reg = registerShadowV1LiveCollector(
+    { post: () => {} },
+    {
+      root,
+      env: ON,
+      now: () => base + BAR_MS,
+      fetchMissingBars: null,
+      timers: fakeTimers,
+    }
+  );
+  try {
+    const cleanRam = barsForShadowV1Live('ASML.AS', 'EU');
+    assert.deepEqual(
+      cleanRam.map((b) => b.t),
+      [base - 2 * BAR_MS, base - BAR_MS]
+    );
+    const rewritten = JSON.parse(fs.readFileSync(barsPath, 'utf8')) as {
+      entries: Array<{ ticker: string; bars: ShadowV1LiveBar[] }>;
+    };
+    assert.equal(rewritten.entries[0].bars.length, 2, 'bars.json su disco ripulito subito');
+  } finally {
+    reg.stop?.();
+    clearShadowV1LiveBarsForTest();
+  }
+});
+
+test('P13 backfill Yahoo: retry 401 con crumb, scarta tick non allineati e attende grace EOD 20m', async () => {
+  clearShadowV1LiveBarsForTest();
+  const sessionClose = Math.floor(D0 / BAR_MS) * BAR_MS;
+  const fromMs = sessionClose - 3 * BAR_MS;
+  const secondLastSec = Math.floor((sessionClose - 2 * BAR_MS) / 1000);
+  const lastSec = Math.floor((sessionClose - BAR_MS) / 1000);
+  const unalignedSec = secondLastSec + 19;
+
+  let chartCalls = 0;
+  const mockFetch = (async (url: string, init?: RequestInit) => {
+    if (url.includes('fc.yahoo.com')) {
+      return new Response('', {
+        status: 200,
+        headers: { 'set-cookie': 'A3=testcookie; Path=/; Secure' },
+      });
+    }
+    if (url.includes('/v1/test/getcrumb')) {
+      return new Response('CRUMB123', { status: 200 });
+    }
+    chartCalls += 1;
+    if (chartCalls === 1) {
+      return new Response('Unauthorized', { status: 401 });
+    }
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    assert.ok(url.includes('crumb=CRUMB123'));
+    assert.ok(String(headers.Cookie || '').includes('A3=testcookie'));
+
+    const includeFinalBar = url.includes('AAPL') ? false : true;
+    const ts = includeFinalBar ? [secondLastSec, unalignedSec, lastSec] : [secondLastSec, unalignedSec];
+    const open = ts.map(() => 100);
+    const high = ts.map(() => 101);
+    const low = ts.map(() => 99);
+    const close = ts.map(() => 100.5);
+    return new Response(
+      JSON.stringify({
+        chart: { result: [{ timestamp: ts, indicators: { quote: [{ open, high, low, close }] } }] },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  }) as unknown as typeof fetch;
+
+  // Caso 1: 401 -> crumb retry -> ultima barra mancante a +2m -> non ancora autorevole
+  const partialEarly = await fetchYahooMissingBarsForShadowV1Live(
+    'AAPL',
+    'US',
+    fromMs,
+    sessionClose,
+    sessionClose + 2 * 60_000,
+    mockFetch
+  );
+  assert.ok(partialEarly);
+  assert.equal(partialEarly.bars.length, 1, 'tick non allineato scartato');
+  assert.equal(partialEarly.authoritative, false, 'a +2m senza ultima barra attende il settle');
+
+  // Caso 2: +21m -> grace scaduta -> autorevole anche se ultima barra assente (titolo fermo)
+  const partialSettled = await fetchYahooMissingBarsForShadowV1Live(
+    'AAPL',
+    'US',
+    fromMs,
+    sessionClose,
+    sessionClose + 21 * 60_000,
+    mockFetch
+  );
+  assert.ok(partialSettled);
+  assert.equal(partialSettled.authoritative, true, 'dopo grace 20m la sessione diventa autorevole');
+
+  // Caso 3: con final bar presente -> autorevole gia a +2m
+  const completeEarly = await fetchYahooMissingBarsForShadowV1Live(
+    'MSFT',
+    'US',
+    fromMs,
+    sessionClose,
+    sessionClose + 2 * 60_000,
+    mockFetch
+  );
+  assert.ok(completeEarly);
+  assert.equal(completeEarly.bars.length, 2);
+  assert.equal(completeEarly.authoritative, true, 'con ultima barra presente non serve aspettare 20m');
+  clearShadowV1LiveBarsForTest();
 });

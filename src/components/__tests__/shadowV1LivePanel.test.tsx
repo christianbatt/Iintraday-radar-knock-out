@@ -352,4 +352,39 @@ describe('ShadowV1LivePanel — ritardo di osservazione', () => {
       assert.equal(out.includes(forbidden), false, `non deve comparire ${forbidden}`);
     }
   });
+
+  it('mostra prezzo corrente e variazione non realizzata per record aperti senza violare i divieti', () => {
+    const out = html(
+      <ShadowV1LivePanel
+        flag="on"
+        data={view()}
+        v2={V2}
+        liveMarks={{
+          updatedAt: new Date(NOW).toISOString(),
+          marks: [
+            {
+              key: 'a',
+              ticker: 'AAPL',
+              market: 'US',
+              direction: 'LONG',
+              status: 'OPEN',
+              currency: 'USD',
+              lastPrice: 412.5,
+              lastPriceAtMs: NOW,
+              unrealizedR: 0.75,
+              pctFromEntry: 1.4,
+              priceSource: 'quote',
+            },
+          ],
+        }}
+      />
+    );
+    assert.match(out, /\$412\.50/);
+    assert.match(out, /\+0\.75R/);
+    assert.match(out, /\+1\.40%/);
+    assert.equal((out.match(/—/g) ?? []).length, 1, 'solo R mancante mantiene il trattino');
+    for (const forbidden of ['Delta', 'Differenza', 'Δ', 'differenza', 'rapporto R', 'entryPrice', 'stopPrice']) {
+      assert.equal(out.includes(forbidden), false, `non deve comparire ${forbidden}`);
+    }
+  });
 });

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import ShadowResearchPanel, { type ShadowPanelData } from './ShadowResearchPanel';
 import ShadowV1LivePanel from './ShadowV1LivePanel';
 
@@ -18,21 +18,24 @@ export const ShadowResearchModal: React.FC<{
   initialOpen?: boolean;
   data?: ShadowPanelData | null;
   error?: string | null;
-}> = ({ initialOpen = false, data: dataProp, error: errorProp }) => {
+  lastScanAt?: string | null;
+}> = ({ initialOpen = false, data: dataProp, error: errorProp, lastScanAt = null }) => {
   const [open, setOpen] = useState(initialOpen);
   const [fetched, setFetched] = useState<ShadowPanelData | null>(null);
   const [netError, setNetError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const hasFetchedRef = useRef(false);
 
   useEffect(() => {
     if (!open || dataProp !== undefined) return;
     let alive = true;
-    setLoading(true);
+    if (!hasFetchedRef.current) setLoading(true);
     setNetError(null);
     fetch('/api/shadow/latest')
       .then(r => r.json())
       .then((d: ShadowPanelData) => {
         if (!alive) return;
+        hasFetchedRef.current = true;
         setFetched(d);
         setLoading(false);
       })
@@ -44,7 +47,7 @@ export const ShadowResearchModal: React.FC<{
     return () => {
       alive = false;
     };
-  }, [open, dataProp]);
+  }, [open, dataProp, lastScanAt]);
 
   const data = dataProp !== undefined ? dataProp : fetched;
   const shownError = errorProp ?? netError;
@@ -87,6 +90,8 @@ export const ShadowResearchModal: React.FC<{
             <ShadowV1LivePanel
               v2={data?.shadowV2 ?? null}
               diagnostics={data?.v1LiveDiagnostics ?? null}
+              liveMarks={data?.v1LiveMarks ?? null}
+              refreshSignal={lastScanAt}
             />
           </div>
         </div>

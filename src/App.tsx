@@ -1959,7 +1959,7 @@ export default function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6">
         {/* Passo M: pannello shadow research, raggiungibile e in sola lettura */}
         <div className="mb-4 flex justify-end">
-          <ShadowResearchModal />
+          <ShadowResearchModal lastScanAt={cachedAt} />
         </div>
         {/* Error Notification if any */}
         {scanError && (
