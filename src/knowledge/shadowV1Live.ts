@@ -7,8 +7,12 @@
  * senza mai modificare i punteggi o le decisioni live del radar.
  *
  * Metodo, con le fonti nel repository:
- * - Fill (D1): limit-fill. Il setup e' filled alla prima barra chiusa successiva
- *   alla decisione che tocca l'entry: long se `h >= entry`, short se `l <= entry`.
+ * - Fill (D1): limit-fill. Il setup e' filled alla prima barra chiusa che tocca
+ *   l'entry: long se `h >= entry`, short se `l <= entry`. Dal metodo v2 la barra
+ *   con `t == decidedAtMs` e' utilizzabile (la decisione cade sull'apertura o
+ *   dentro la barra); restano escluse le barre con `t < decidedAtMs`, comprese
+ *   quelle che contengono l'istante di decisione, perche' l'OHLC non dice se il
+ *   tocco e' avvenuto prima o dopo l'emissione.
  *   L'ingresso e' registrato al livello `entry` del setup, come nel metodo storico
  *   (`scripts/shadow_report.ts:118`): un'apertura oltre il livello non migliora il
  *   prezzo di ingresso registrato.
@@ -18,7 +22,13 @@
  *   due misure coincidono, ma con un `target1Multiplier` diverso da 1.6 questo
  *   risultato NON e' omogeneo con l'artefatto storico V1 che usa k = 1.6.
  * - Stop prima del target sulla stessa barra (D6), come `walkR`
- *   (`scripts/shadow_report.ts:120-123`). Stop raggiunto in gap: −1 R, come `walkR`.
+ *   (`scripts/shadow_report.ts:120-123`). Stop raggiunto in gap: dal metodo v2
+ *   l'uscita e' all'apertura della barra quando questa e' gia' oltre il livello
+ *   (`bar.o <= stop` per LONG, `bar.o >= stop` per SHORT), e `r` e' calcolato dal
+ *   prezzo, non fissato a −1 come `walkR`. Fuori dal gap resta `r = −1` esatto.
+ *   Limite noto (non corretto qui): se e' la barra di fill ad aprire oltre lo
+ *   stop, l'ingresso e' comunque registrato a `entry` e l'uscita all'apertura
+ *   risulta anteriore all'ingresso.
  * - Terminazione (D2/D9): a sessione finita, uscita al close dell'ultima barra
  *   chiusa disponibile (EXPIRED). Nessuna barra utile e sessione finita: NOT_FILLED
  *   (D7), senza R.
@@ -39,7 +49,7 @@
  * Barra chiusa e della sessione: `t + barMs <= nowMs` e `t + barMs <= sessionCloseMs`,
  * con `barMs = IND_BAR_MS` (`src/config/tradingParams.ts:335`); stessa validita' OHLC
  * di `filterClosedBarsV2` (`src/knowledge/shadowV2.ts:168-182`). Le barre con
- * `t <= decidedAtMs` sono escluse: il cammino parte dalla prima barra successiva.
+ * `t < decidedAtMs` sono escluse: il cammino parte dalla barra della decisione.
  * Barre duplicate sullo stesso `t`: vince l'ultima in ordine di input, convenzione di
  * `recordClosedBarsForShadowV2` (`src/server/shadowV2Collector.ts:41-57`); l'input non
  * viene mai mutato.
@@ -139,7 +149,7 @@ function isValidBar(b: ShadowV1LiveBar): boolean {
   );
 }
 
-/** Barre utilizzabili: chiuse, della sessione, successive alla decisione, ordinate e deduplicate. */
+/** Barre utilizzabili: chiuse, della sessione, dalla decisione in poi, ordinate e deduplicate. */
 function usableBars(
   bars: readonly ShadowV1LiveBar[],
   decidedAtMs: number,
@@ -149,7 +159,7 @@ function usableBars(
   const byTs = new Map<number, ShadowV1LiveBar>();
   for (const b of bars) {
     if (!isValidBar(b)) continue;
-    if (!(b.t > decidedAtMs)) continue;
+    if (b.t < decidedAtMs) continue;
     if (b.t + IND_BAR_MS > sessionCloseMs) continue;
     if (b.t + IND_BAR_MS > nowMs) continue;
     byTs.set(b.t, { t: b.t, o: b.o, h: b.h, l: b.l, c: b.c });
@@ -272,8 +282,10 @@ export function evaluateShadowV1Live(input: ShadowV1LiveInput): ShadowV1LiveResu
     if (hitStop) {
       status = 'STOP';
       exitBarTs = bar.t;
-      exitPrice = stopLossLevel;
-      r = -1;
+      // M3 (metodo v2): apertura gia' oltre lo stop => uscita all'apertura.
+      const gappedOpen = dir === 1 ? bar.o <= stopLossLevel : bar.o >= stopLossLevel;
+      exitPrice = gappedOpen ? bar.o : stopLossLevel;
+      r = (dir * (exitPrice - entryLevel)) / risk;
       break;
     }
 
@@ -292,7 +304,7 @@ export function evaluateShadowV1Live(input: ShadowV1LiveInput): ShadowV1LiveResu
       status: sessionOver ? 'NOT_FILLED' : 'PENDING_FILL',
       key,
       reason: sessionOver
-        ? 'sessione finita: l\'entry non e\' stato toccato da nessuna barra chiusa successiva alla decisione'
+        ? 'sessione finita: l\'entry non e\' stato toccato da nessuna barra chiusa dalla decisione in poi'
         : 'nessun fill: l\'entry non e\' ancora stato toccato',
       r: null,
       entryPrice: entryLevel,

@@ -36,8 +36,16 @@ import type {
 /** Versione del formato su disco. Record con `v` diversa vengono ignorati a lettura. */
 export const SHADOW_V1_LIVE_STORE_VERSION = 1;
 
-/** Versione dichiarata del nucleo con cui il record e' stato prodotto. */
-export const SHADOW_V1_LIVE_MODULE_VERSION = 'shadowV1Live@1';
+/**
+ * Versione dichiarata del nucleo con cui il record e' stato prodotto.
+ *
+ * `shadowV1Live@1`: barre con `t > decidedAtMs`, stop in gap a −1 R fisso.
+ * `shadowV1Live@2` (P18): barra della decisione utilizzabile (`t >= decidedAtMs`)
+ * e stop in gap all'apertura con R di prezzo. I record gia' scritti conservano
+ * la versione con cui sono nati: `@1` o assente = metodo precedente, mai
+ * ricalcolati.
+ */
+export const SHADOW_V1_LIVE_MODULE_VERSION = 'shadowV1Live@2';
 
 /**
  * Percorso di produzione (E3). Non usato dalle funzioni: il chiamante lo passa
@@ -81,7 +89,12 @@ export interface PersistedShadowV1LiveRecord {
   fillBarTs: number | null;
   exitBarTs: number | null;
   exitPrice: number | null;
-  moduleVersion: string;
+  /**
+   * Versione del nucleo che ha prodotto il record. Assente nei record scritti
+   * prima dell'introduzione del campo: quelli sono metodo v1 e non vengono
+   * riscritti ne' ricalcolati (P18).
+   */
+  moduleVersion?: string;
   updatedAtMs: number;
   /** Opzionale: assente nei record scritti prima dell'introduzione del campo. */
   source?: ShadowV1LiveRecordSource;
@@ -372,7 +385,11 @@ export function isValidPersistedRecord(value: unknown): value is PersistedShadow
     const v = r[field];
     if (v !== null && !isFiniteNumber(v)) return false;
   }
-  if (typeof r.moduleVersion !== 'string' || r.moduleVersion.length === 0) return false;
+  // `moduleVersion` e' opzionale: un record senza campo e' legacy (metodo v1),
+  // non fuori schema. Se presente deve essere una stringa non vuota.
+  if (r.moduleVersion !== undefined && (typeof r.moduleVersion !== 'string' || r.moduleVersion.length === 0)) {
+    return false;
+  }
   // `source` e' opzionale (record storici); se presente deve essere una stringa
   // non vuota. Un valore nuovo di una versione futura non invalida il record.
   if (r.source !== undefined && (typeof r.source !== 'string' || r.source.length === 0)) {

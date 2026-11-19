@@ -87,6 +87,22 @@ export interface ShadowV1LivePanelProps {
 /** Quante voci di `gateCounts` restano visibili: il resto e' nei conteggi. */
 export const SHADOW_V1_LIVE_PANEL_GATES_SHOWN = 5;
 
+/**
+ * Metodo dichiarato dal nucleo per i record nuovi. Il valore duplica
+ * `SHADOW_V1_LIVE_MODULE_VERSION` di `src/server/shadowV1LiveStore.ts` per non
+ * portare `node:fs` nel bundle client; il test del pannello ne verifica il valore.
+ */
+export const SHADOW_V1_LIVE_METHOD_CURRENT = 'shadowV1Live@2';
+
+/**
+ * Etichetta del metodo per singolo record (solo testo): `shadowV1Live@2` =
+ * barra della decisione + stop in gap; qualunque altro valore o campo assente =
+ * record prodotto dal metodo precedente, mai ricalcolato.
+ */
+export function shadowV1LiveMethodLabel(moduleVersion: string | null | undefined): string {
+  return moduleVersion === SHADOW_V1_LIVE_METHOD_CURRENT ? 'metodo v2' : 'metodo precedente';
+}
+
 const STATUS_LABEL: Record<ShadowV1LiveViewRecord['status'], string> = {
   PENDING_FILL: 'in attesa',
   OPEN: 'aperto',
@@ -396,6 +412,12 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
                         <td className="py-1">{r.direction}</td>
                         <td className="py-1">
                           {STATUS_LABEL[r.status]}
+                          <span
+                            className="ml-1 text-[9px] text-slate-500"
+                            data-testid="v1live-method"
+                          >
+                            {shadowV1LiveMethodLabel(r.moduleVersion)}
+                          </span>
                           {r.stale && (
                             <span
                               className="ml-1 text-[9px] text-amber-300"

@@ -178,13 +178,24 @@ describe('V1-live — chiave di deduplica (D4)', () => {
 });
 
 describe('V1-live — selezione e normalizzazione delle barre', () => {
-  it('barre con t <= decidedAtMs escluse: nessun fill', () => {
+  it('barra con t == decidedAtMs usata per il fill (metodo v2, M2)', () => {
+    const r = run(longSetup(), [bar(DECIDED, 99, 101, 98, 100)], { nowMs: closedAt(0) });
+    assert.equal(r.status, 'OPEN');
+    assert.equal(r.fillBarTs, DECIDED, 'il fill arriva dalla barra della decisione');
+  });
+
+  it('barra che contiene decidedAtMs (t < decidedAtMs < t + barMs) resta esclusa', () => {
     const bars = [
-      bar(DECIDED - BAR, 99, 130, 98, 129), // prima della decisione
-      bar(DECIDED, 99, 130, 98, 129), // esattamente alla decisione
-      bar(ts(0), 99, 100.5, 98, 100), // successiva, non tocca 100? la tocca (h=100.5)
+      bar(DECIDED - 60_000, 99, 130, 98, 129), // contiene le 10:00 ma apre prima
+      bar(ts(0), 99, 100.5, 98, 100),
     ];
-    const r = run(longSetup(), [bars[0], bars[1]], { nowMs: closedAt(0) });
+    const r = run(longSetup(), bars, { nowMs: closedAt(0) });
+    assert.equal(r.status, 'OPEN');
+    assert.equal(r.fillBarTs, ts(0), 'OHLC non dice se il tocco e\' prima o dopo la decisione');
+  });
+
+  it('barra precedente alla decisione (t < decidedAtMs) esclusa: nessun fill', () => {
+    const r = run(longSetup(), [bar(DECIDED - BAR, 99, 130, 98, 129)], { nowMs: closedAt(0) });
     assert.equal(r.status, 'PENDING_FILL');
     assert.equal(r.fillBarTs, null);
   });
@@ -291,12 +302,33 @@ describe('V1-live — limit-fill ed esiti', () => {
     assert.equal(r.exitBarTs, ts(1));
   });
 
-  it('long: stop in gap sotto il livello => comunque -1 R', () => {
+  it('long: stop in gap sotto il livello => uscita all\'apertura e R di prezzo (metodo v2, M3)', () => {
     const bars = [bar(ts(0), 99, 101, 98, 100), bar(ts(1), 90, 91, 88, 89)];
     const r = run(longSetup(), bars, { nowMs: closedAt(1) });
     assert.equal(r.status, 'STOP');
-    assert.equal(r.r, -1);
-    assert.equal(r.exitPrice, 95);
+    assert.equal(r.exitPrice, 90, 'apertura oltre lo stop: non il livello 95');
+    assert.equal(r.r, -2, '(90 - 100) / 5, non -1 fisso');
+    assert.equal(r.exitBarTs, ts(1));
+  });
+
+  it('short: stop in gap sopra il livello => uscita all\'apertura e R di prezzo (metodo v2, M3)', () => {
+    const bars = [bar(ts(0), 101, 103, 99, 101), bar(ts(1), 110, 112, 108, 111)];
+    const r = run(shortSetup(), bars, { nowMs: closedAt(1) });
+    assert.equal(r.status, 'STOP');
+    assert.equal(r.exitPrice, 110, 'apertura oltre lo stop: non il livello 105');
+    assert.equal(r.r, -2, '-1 * (110 - 100) / 5');
+  });
+
+  it('barra di fill che apre gia\' oltre lo stop: limite noto, non corretto in P18', () => {
+    // L'apertura precede l'ingresso: il metodo v2 esce comunque all'apertura.
+    // Il caso e' dichiarato nel report P18 e resta fuori da questa modifica.
+    const bars = [bar(ts(0), 90, 101, 88, 99)];
+    const r = run(longSetup(), bars, { nowMs: closedAt(0) });
+    assert.equal(r.status, 'STOP');
+    assert.equal(r.fillBarTs, ts(0));
+    assert.equal(r.entryPrice, 100, 'ingresso registrato al livello, non all\'apertura');
+    assert.equal(r.exitPrice, 90);
+    assert.equal(r.r, -2);
   });
 
   it('long: target prima dello stop => +1.6 R', () => {
