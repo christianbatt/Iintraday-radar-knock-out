@@ -1,10 +1,16 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
+import express from 'express';
 import {
   getShadowLatest,
   registerShadowRoutes,
+  registerShadowRoutesFromDisk,
   SHADOW_ROUTES,
   type ShadowFs,
   type ShadowDeps,
@@ -156,5 +162,97 @@ describe('T5 — nessuna route POST per /api/shadow', () => {
     registerShadowRoutes(app as unknown as { get: (p: string, h: (a: unknown, b: unknown) => void) => void }, deps(VALID));
     assert.equal(registered.filter(r => r.method === 'POST').length, 0);
     assert.deepEqual(registered.map(r => r.path), ['/api/shadow/latest']);
+  });
+});
+
+describe('P17 — cold start: summary.json mancante', () => {
+  it('readJsonSafe non legge un file assente e propaga null a shadowV2', () => {
+    // `readJsonSafe` non è esportata: si verifica il suo effetto osservabile
+    // (shadowRoute.ts:38-46: `if (!fs.existsSync(path)) return null;`) dal punto
+    // in cui è raggiunta, cioè `getShadowLatest` (shadowRoute.ts:84-87).
+    let reads = 0;
+    let readdirs = 0;
+    const missingFs: ShadowFs = {
+      existsSync: () => false,
+      readFileSync: () => {
+        reads += 1;
+        throw new Error('readFileSync non deve essere chiamata su un file assente');
+      },
+      readdirSync: () => {
+        readdirs += 1;
+        throw new Error('readdirSync non deve essere chiamata su una directory assente');
+      },
+    };
+    const out = getShadowLatest({
+      fs: missingFs,
+      artifactDir: 'artifacts',
+      registryPath: 'registry/ai_registry.jsonl',
+      deathcheckPath: 'artifacts/ai_deathcheck.json',
+      flags: { SETUP_SELECTOR_LIVE: 'off', STALENESS_USE_MARKET_TS: 'off' },
+    });
+
+    assert.equal(reads, 0, 'nessun tentativo di lettura sul file assente');
+    assert.equal(readdirs, 0, 'nessun tentativo di elenco sulla directory assente');
+    assert.equal(out.status, 200);
+    assert.equal(out.body.available, false);
+    assert.equal(out.body.reason, 'nessun artefatto');
+    assert.equal(out.body.shadowV2, null);
+    assert.equal(out.body.v1LiveDiagnostics, null);
+    assert.equal(out.body.v1LiveMarks, null);
+  });
+});
+
+describe('P17 — cold start: GET /api/shadow/latest su directory vuota', () => {
+  it('risponde HTTP 200 con available:false e shadowV2:null da server http reale', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'p17-coldstart-'));
+    const app = express();
+    registerShadowRoutesFromDisk(app, root);
+    assert.equal(fs.existsSync(path.join(root, 'artifacts')), false, 'precondizione: nessun artefatto');
+
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const port = (server.address() as AddressInfo).port;
+
+    const get = (): Promise<{ status: number; body: Record<string, unknown> }> =>
+      new Promise((resolve, reject) => {
+        const req = http.request(
+          { host: '127.0.0.1', port, path: '/api/shadow/latest', method: 'GET' },
+          (res) => {
+            let raw = '';
+            res.setEncoding('utf8');
+            res.on('data', (chunk: string) => {
+              raw += chunk;
+            });
+            res.on('end', () => {
+              try {
+                resolve({ status: res.statusCode ?? 0, body: JSON.parse(raw) as Record<string, unknown> });
+              } catch (err) {
+                reject(err);
+              }
+            });
+          }
+        );
+        req.on('error', reject);
+        req.end();
+      });
+
+    try {
+      const out = await get();
+      assert.equal(out.status, 200);
+      assert.equal(out.body.available, false);
+      assert.equal(out.body.reason, 'nessun artefatto');
+      assert.equal(out.body.shadowV2, null);
+      assert.equal(out.body.v1LiveDiagnostics, null);
+      assert.equal(out.body.v1LiveMarks, null);
+      assert.equal(
+        fs.existsSync(path.join(root, 'artifacts', 'shadow_v2', 'summary.json')),
+        false,
+        'la GET non crea artefatti'
+      );
+    } finally {
+      (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
