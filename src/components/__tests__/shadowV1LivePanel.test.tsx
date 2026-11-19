@@ -12,7 +12,9 @@ import path from 'node:path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ShadowV1LivePanel, {
+  SHADOW_V1_LIVE_METHOD_CURRENT,
   SHADOW_V1_LIVE_PANEL_GATES_SHOWN,
+  shadowV1LiveMethodLabel,
   type ShadowV1LiveV2Summary,
 } from '../ShadowV1LivePanel';
 import {
@@ -47,6 +49,7 @@ function row(over: Partial<ShadowV1LiveViewRecord> & { key: string }): ShadowV1L
     fillBarTs: null,
     exitBarTs: null,
     exitPrice: null,
+    moduleVersion: SHADOW_V1_LIVE_METHOD_CURRENT,
     updatedAtMs: NOW - 3 * 60 * 60 * 1000,
     ...over,
   };
@@ -387,4 +390,32 @@ describe('ShadowV1LivePanel — ritardo di osservazione', () => {
       assert.equal(out.includes(forbidden), false, `non deve comparire ${forbidden}`);
     }
   });
+});
+
+// --- P18: metodo per record ---------------------------------------------------
+
+it('P18 metodo: ogni record dichiara il metodo che lo ha prodotto', () => {
+  assert.equal(SHADOW_V1_LIVE_METHOD_CURRENT, 'shadowV1Live@2');
+  assert.equal(shadowV1LiveMethodLabel('shadowV1Live@2'), 'metodo v2');
+  assert.equal(shadowV1LiveMethodLabel('shadowV1Live@1'), 'metodo precedente');
+  assert.equal(shadowV1LiveMethodLabel(null), 'metodo precedente');
+  assert.equal(shadowV1LiveMethodLabel(undefined), 'metodo precedente');
+
+  const out = html(
+    <ShadowV1LivePanel
+      flag="on"
+      data={view({
+        records: [
+          row({ key: 'nuovo', moduleVersion: 'shadowV1Live@2' }),
+          row({ key: 'legacy-1', moduleVersion: 'shadowV1Live@1' }),
+          row({ key: 'legacy-assente', moduleVersion: null }),
+        ],
+      })}
+      v2={V2}
+    />
+  );
+
+  assert.equal((out.match(/metodo v2/g) ?? []).length, 1, 'solo il record @2 e\' metodo v2');
+  assert.equal((out.match(/metodo precedente/g) ?? []).length, 2, '@1 e campo assente sono metodo precedente');
+  assert.match(out, /data-testid="v1live-method"/);
 });

@@ -94,6 +94,12 @@ export interface ShadowV1LiveViewRecord {
   fillBarTs: number | null;
   exitBarTs: number | null;
   exitPrice: number | null;
+  /**
+   * Metodo che ha prodotto il record (`shadowV1Live@2` = M2+M3); `null` per i
+   * record scritti prima dell'introduzione del campo, cioe' metodo v1.
+   * Sola lettura: la vista non ricalcola ne' riscrive nulla.
+   */
+  moduleVersion: string | null;
   updatedAtMs: number;
 }
 
@@ -261,6 +267,7 @@ function toViewRecord(
     fillBarTs: record.fillBarTs,
     exitBarTs: record.exitBarTs,
     exitPrice: record.exitPrice,
+    moduleVersion: record.moduleVersion ?? null,
     updatedAtMs: record.updatedAtMs,
   };
 }

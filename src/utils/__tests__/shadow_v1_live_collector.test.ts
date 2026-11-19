@@ -1708,7 +1708,8 @@ test('P11 costanti: valori dichiarati invariati', () => {
   assert.equal(SHADOW_V1_LIVE_SOURCE_CLIENT, 'client');
   assert.equal(SHADOW_V1_LIVE_SOURCE_SERVER_SCANNER, 'server-scanner');
   assert.equal(SHADOW_V1_LIVE_STORE_VERSION, 1);
-  assert.equal(SHADOW_V1_LIVE_MODULE_VERSION, 'shadowV1Live@1');
+  // P18: la versione dichiara il metodo (M2 barra della decisione, M3 stop in gap).
+  assert.equal(SHADOW_V1_LIVE_MODULE_VERSION, 'shadowV1Live@2');
 });
 
 test('P11 costanti: la registrazione scrive sul path dello store, non su una copia locale', async () => {

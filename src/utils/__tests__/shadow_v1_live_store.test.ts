@@ -481,6 +481,24 @@ test('loadRecords: righe corrotte o versione sconosciuta vengono saltate e conta
   assert.equal(res.skipped, 4);
 });
 
+test('P18 loadRecords: record senza moduleVersion e\' legacy, non fuori schema', () => {
+  const dir = tmpDir();
+  const file = path.join(dir, 'legacy.jsonl');
+  const legacy = recordFrom(observation('OPEN', { fillBarTs: D0 + BAR_MS })) as unknown as Record<string, unknown>;
+  delete legacy.moduleVersion;
+  fs.writeFileSync(file, `${JSON.stringify(legacy)}\n`);
+
+  const res = loadRecords(file);
+  assert.equal(res.skipped, 0, 'il record legacy non viene scartato');
+  assert.equal(res.records.length, 1);
+  assert.equal(res.records[0].moduleVersion, undefined, 'nessuna versione inventata');
+
+  // Un aggiornamento non riscrive la versione: resta assente (metodo v1).
+  const next = upsertObservation(res.records, observation('OPEN', { fillBarTs: D0 + 2 * BAR_MS }), D0 + 3 * BAR_MS);
+  assert.equal(next.records[0].moduleVersion, undefined, 'l\'upsert non inventa la versione');
+  assert.equal(fs.readFileSync(file, 'utf8').includes('moduleVersion'), false, 'il file non viene riscritto');
+});
+
 test('loadRecords: file illeggibile (directory al posto del file) non lancia', () => {
   const dir = tmpDir();
   const res = loadRecords(dir);

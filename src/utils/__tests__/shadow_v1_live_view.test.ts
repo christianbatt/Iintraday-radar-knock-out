@@ -165,6 +165,7 @@ test('vista: schema stabile e ordinamento decrescente per decidedAtMs', () => {
     'key',
     'late',
     'market',
+    'moduleVersion',
     'r',
     'sessionCloseMs',
     'stale',
@@ -188,11 +189,14 @@ test('vista: campi del setup non necessari non esposti', () => {
   })();
   const json = JSON.stringify(res.body);
   const records = (res.body as { records: Array<Record<string, unknown>> }).records;
-  for (const hidden of ['entry', 'stop', 'target', 'reason', 'moduleVersion', 'firstSeenAtMs', 'v']) {
+  // P18: `moduleVersion` e' l'unico campo aggiunto alla vista, per etichettare il
+  // metodo per record. Livelli, motivo e campi interni restano non esposti.
+  for (const hidden of ['entry', 'stop', 'target', 'reason', 'firstSeenAtMs', 'v']) {
     assert.equal(hidden in records[0], false, `campo ${hidden} non deve essere esposto`);
   }
   assert.equal(json.includes('"reason"'), false);
-  assert.equal(json.includes('"moduleVersion"'), false);
+  assert.equal(json.includes('"moduleVersion"'), true, 'la vista espone solo la versione del metodo');
+  assert.equal(records[0].moduleVersion, SHADOW_V1_LIVE_MODULE_VERSION);
 });
 
 test('vista: file assente => available false, nessuna scrittura', () => {
@@ -347,6 +351,19 @@ test('vista: NOT_FILLED e non terminali non contano come zero', () => {
   assert.equal(b.resolved, 0);
   assert.equal(b.meanR, null);
   assert.equal(b.winRatePct, null);
+});
+
+test('P18 vista: moduleVersion del record propagato, null se il record e\' legacy', () => {
+  const res = handlerWith({
+    records: [
+      rec({ key: 'nuovo', moduleVersion: 'shadowV1Live@2' }),
+      rec({ key: 'legacy', moduleVersion: undefined }),
+    ],
+  })();
+  const body = res.body as { records: Array<{ key: string; moduleVersion: string | null }> };
+  const byKey = new Map(body.records.map((r) => [r.key, r.moduleVersion]));
+  assert.equal(byKey.get('nuovo'), 'shadowV1Live@2');
+  assert.equal(byKey.get('legacy'), null, 'campo assente = metodo precedente, nessuna versione inventata');
 });
 
 test('vista: stale calcolato a lettura, mai persistito, solo sui non terminali', () => {
