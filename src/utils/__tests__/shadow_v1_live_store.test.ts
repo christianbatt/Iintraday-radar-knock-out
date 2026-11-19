@@ -27,6 +27,18 @@ import {
   type ShadowV1LiveObservationContext,
 } from '../../server/shadowV1LiveStore';
 import {
+  archiveClosedMonths,
+  archivePathFor,
+  countLines,
+  isTerminalLiveStatus,
+  listArchivePaths,
+  mergeByKey,
+  monthKeyUtc,
+  serializeRecords,
+  sha256Of,
+  sidecarPathFor,
+} from '../../server/shadowV1LiveRetention';
+import {
   evaluateShadowV1Live,
   shadowV1LiveKeyOf,
   type ShadowV1LiveBar,
@@ -655,6 +667,130 @@ test('loadRecords: un campo numerico nullo non entra nell\u2019ordinamento', () 
     true,
     'nessun NaN raggiunge il sort'
   );
+});
+
+// --- P12: retention mensile verificata ----------------------------------------
+
+const MAR = Date.UTC(2026, 2, 16, 14, 0, 0);
+const APR = Date.UTC(2026, 3, 2, 14, 0, 0);
+
+function liveRecord(
+  key: string,
+  status: ShadowV1LiveObservation['status'],
+  decidedAtMs: number,
+  updatedAtMs = decidedAtMs + 60_000
+): PersistedShadowV1LiveRecord {
+  return recordFrom(observation(status, { key, decidedAtMs }), updatedAtMs);
+}
+
+function retentionDir(): string {
+  const dir = tmpDir();
+  return path.join(dir, 'shadow_v1_live', 'signals.jsonl');
+}
+
+function readJsonl(file: string): PersistedShadowV1LiveRecord[] {
+  return fs
+    .readFileSync(file, 'utf8')
+    .split('\n')
+    .filter((l) => l.trim())
+    .map((l) => JSON.parse(l) as PersistedShadowV1LiveRecord);
+}
+
+test('P12 retention: mese UTC e stati terminali', () => {
+  assert.equal(monthKeyUtc(MAR), '2026-03');
+  assert.equal(monthKeyUtc(APR), '2026-04');
+  assert.equal(monthKeyUtc(Date.UTC(2026, 2, 31, 23, 59, 59)), '2026-03');
+  assert.equal(monthKeyUtc(Date.UTC(2026, 3, 1, 0, 0, 0)), '2026-04');
+  assert.equal(isTerminalLiveStatus('STOP'), true);
+  assert.equal(isTerminalLiveStatus('NOT_FILLED'), true);
+  assert.equal(isTerminalLiveStatus('OPEN'), false);
+  assert.equal(isTerminalLiveStatus('PENDING_FILL'), false);
+});
+
+test('P12 retention: archivia solo i terminali di mesi chiusi e verifica il sidecar', () => {
+  const file = retentionDir();
+  const old = liveRecord('k-stop', 'STOP', MAR);
+  const stillOpen = liveRecord('k-open-old', 'OPEN', MAR);
+  const current = liveRecord('k-open-new', 'OPEN', APR);
+  const res = archiveClosedMonths({ signalsPath: file, records: [old, stillOpen, current], nowMs: APR });
+
+  assert.equal(res.archived, 1);
+  assert.deepEqual(res.months, ['2026-03']);
+  assert.deepEqual(res.notes, []);
+  assert.deepEqual(
+    res.records.map((r) => r.key),
+    ['k-open-old', 'k-open-new'],
+    'i non terminali restano attivi, anche se del mese scorso'
+  );
+
+  const archive = archivePathFor(file, '2026-03');
+  assert.equal(fs.existsSync(archive), true);
+  const archived = readJsonl(archive);
+  assert.deepEqual(archived.map((r) => r.key), ['k-stop']);
+
+  const content = fs.readFileSync(archive, 'utf8');
+  const sidecar = fs.readFileSync(sidecarPathFor(archive), 'utf8').split('\n');
+  assert.equal(sidecar[0], `${sha256Of(content)}  signals-2026-03.jsonl`);
+  assert.equal(sidecar[1], `records=${countLines(content)}`);
+  assert.equal(countLines(content), archived.length);
+});
+
+test('P12 retention: nessun I/O quando non ci sono mesi chiusi', () => {
+  const file = retentionDir();
+  const res = archiveClosedMonths({
+    signalsPath: file,
+    records: [liveRecord('a', 'STOP', APR), liveRecord('b', 'OPEN', APR)],
+    nowMs: APR,
+  });
+  assert.equal(res.archived, 0);
+  assert.equal(res.records.length, 2);
+  assert.equal(fs.existsSync(path.dirname(file)), false, 'nessuna directory creata');
+});
+
+test('P12 retention: archivio non scrivibile => nessuna perdita, solo nota', () => {
+  const file = retentionDir();
+  const archive = archivePathFor(file, '2026-03');
+  // Una directory al posto del file di archivio fa fallire il rename.
+  fs.mkdirSync(archive, { recursive: true });
+  const records = [liveRecord('k1', 'STOP', MAR), liveRecord('k2', 'OPEN', APR)];
+  const res = archiveClosedMonths({ signalsPath: file, records, nowMs: APR });
+  assert.equal(res.archived, 0, 'nessun record tolto dal file attivo');
+  assert.deepEqual(res.records.map((r) => r.key), ['k1', 'k2']);
+  assert.ok(res.notes.some((n) => n.includes('2026-03')), 'il fallimento e\' loggato');
+});
+
+test('P12 retention: un mese fallisce, l altro viene archiviato', () => {
+  const file = retentionDir();
+  fs.mkdirSync(archivePathFor(file, '2026-02'), { recursive: true });
+  const feb = liveRecord('feb', 'TARGET', Date.UTC(2026, 1, 10, 14, 0, 0));
+  const mar = liveRecord('mar', 'STOP', MAR);
+  const res = archiveClosedMonths({ signalsPath: file, records: [feb, mar], nowMs: APR });
+  assert.deepEqual(res.records.map((r) => r.key), ['feb'], 'febbraio resta attivo');
+  assert.deepEqual(res.months, ['2026-03']);
+  assert.equal(res.archived, 1);
+  assert.deepEqual(readJsonl(archivePathFor(file, '2026-03')).map((r) => r.key), ['mar']);
+});
+
+test('P12 retention: unione per chiave, vince updatedAtMs piu alto', () => {
+  const older = { ...liveRecord('k', 'STOP', MAR, MAR + 1000), r: 1 };
+  const newer = { ...liveRecord('k', 'STOP', MAR, MAR + 5000), r: 2 };
+  const merged = mergeByKey([older], [newer]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].r, 2);
+});
+
+test('P12 retention: elenco archivi deterministico e filtrato', () => {
+  const file = retentionDir();
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true });
+  for (const name of ['signals-2026-03.jsonl', 'signals-2026-02.jsonl', 'signals.jsonl', 'altro.jsonl']) {
+    fs.writeFileSync(path.join(dir, name), '');
+  }
+  assert.deepEqual(
+    listArchivePaths(file).map((p) => path.basename(p)),
+    ['signals-2026-02.jsonl', 'signals-2026-03.jsonl']
+  );
+  assert.equal(serializeRecords([]), '\n');
 });
 
 // --- P10: campo opzionale `source` -------------------------------------------

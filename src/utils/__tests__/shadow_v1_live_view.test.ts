@@ -12,6 +12,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  archiveClosedMonths,
+  listArchivePaths,
+} from '../../server/shadowV1LiveRetention';
+import {
   buildShadowV1LiveView,
   createShadowV1LiveViewHandler,
   isShadowV1LiveViewEnabled,
@@ -522,4 +526,67 @@ test('vista: i record late restano nell elenco e non entrano nei conteggi di sta
   assert.equal(body.counts.persisted, 2);
   assert.equal(body.counts.target, 1);
   assert.equal(body.counts.stop, 1);
+});
+
+// --- P12: la vista legge il file attivo + gli archivi mensili ------------------
+
+const APRIL = Date.UTC(2026, 3, 2, 14, 0, 0);
+
+function seededHandler(file: string, limit?: number) {
+  return createShadowV1LiveViewHandler({
+    env: { [SHADOW_V1_LIVE_VIEW_ENV]: '1' },
+    signalsPath: file,
+    now: () => APRIL + 60_000,
+    ...(limit === undefined ? {} : { limit }),
+  });
+}
+
+test('P12 vista: dopo l archivio records, ordine, conteggi, metriche e truncated sono identici', () => {
+  const dir = tmpDir();
+  try {
+    const file = path.join(dir, 'signals.jsonl');
+    fs.mkdirSync(dir, { recursive: true });
+    const records = [
+      rec({ key: 'mar-stop', status: 'STOP', r: -1 }),
+      rec({ key: 'mar-open', status: 'OPEN' }),
+      rec({ key: 'apr-target', status: 'TARGET', r: 1.5, decidedAtMs: APRIL }),
+    ];
+    fs.writeFileSync(file, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+
+    const before = seededHandler(file, 2)().body as Record<string, unknown>;
+    const archived = archiveClosedMonths({ signalsPath: file, records, nowMs: APRIL });
+    assert.equal(archived.archived, 1, 'solo il terminale di marzo viene archiviato');
+    fs.writeFileSync(file, archived.records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    assert.equal(listArchivePaths(file).length, 1, 'archivio creato accanto al file attivo');
+
+    const after = seededHandler(file, 2)().body as Record<string, unknown>;
+    for (const field of ['records', 'counts', 'metrics', 'truncated', 'skippedLines', 'limit']) {
+      assert.deepEqual(after[field], before[field], `campo ${field} invariato dopo l archivio`);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('P12 vista: archivio corrotto degrada in skippedLines, nessun 500', () => {
+  const dir = tmpDir();
+  try {
+    const file = path.join(dir, 'signals.jsonl');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(rec({ key: 'attivo', status: 'OPEN' })) + '\n');
+    fs.writeFileSync(path.join(dir, 'signals-2026-03.jsonl'), '{corrotto\nnon-json\n');
+
+    const res = seededHandler(file)();
+    assert.equal(res.status, 200);
+    const body = res.body as {
+      available: boolean;
+      skippedLines: number;
+      records: Array<{ key: string }>;
+    };
+    assert.equal(body.available, true);
+    assert.ok(body.skippedLines >= 2, `righe corrotte contate: ${body.skippedLines}`);
+    assert.deepEqual(body.records.map((r) => r.key), ['attivo']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
