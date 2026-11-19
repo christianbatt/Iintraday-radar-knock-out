@@ -13,6 +13,7 @@
 import nodeFs from 'node:fs';
 import { SETUP_SELECTOR_LIVE } from '../config/liveSelector';
 import { STALENESS_USE_MARKET_TS } from '../config/stalenessFlag';
+import { SHADOW_V1_LIVE_MARKS_RELATIVE_PATH } from './shadowV1LiveMarks';
 
 export type ShadowFs = {
   existsSync: (path: string) => boolean;
@@ -83,7 +84,7 @@ function registryCounts(fs: ShadowFs, path: string): { rows: number | null; hypo
 export function getShadowLatest(deps: ShadowDeps): ShadowResponse {
   const shadowV2 = readJsonSafe(deps.fs, `${deps.artifactDir}/shadow_v2/summary.json`);
   const v1LiveDiagnostics = readJsonSafe(deps.fs, `${deps.artifactDir}/shadow_v1_live/scan_diagnostics.json`);
-  const v1LiveMarks = readJsonSafe(deps.fs, `${deps.artifactDir}/shadow_v1_live/live_marks.json`);
+  const v1LiveMarks = readJsonSafe(deps.fs, `${deps.artifactDir}/${SHADOW_V1_LIVE_MARKS_RELATIVE_PATH}`);
   const path = latestShadowPath(deps.fs, deps.artifactDir);
   if (path === null) {
     return { status: 200, body: { ...MISSING, reason: 'nessun artefatto', shadowV2, v1LiveDiagnostics, v1LiveMarks, flags: deps.flags } };

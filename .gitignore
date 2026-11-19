@@ -11,3 +11,5 @@ credentials.json
 *.pem
 *.key
 shared_radar_state.json
+# Artefatto runtime V1-live riscritto dal collector a ogni barra chiusa: non va versionato.
+artifacts/shadow_v1_live/bars.json

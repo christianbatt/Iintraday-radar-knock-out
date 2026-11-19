@@ -284,6 +284,7 @@ export function clearShadowV1LiveBarsForTest(): void {
   barsByTicker.clear();
   activeBarsDiskPath = null;
   activeObserveHandler = null;
+  activeStoreQueue = null;
   collectorYahooCrumbCache = null;
   collectorCrumbInFlight = null;
 }
@@ -1039,6 +1040,21 @@ export function createShadowV1LiveStoreQueue(): ShadowV1LiveStoreQueue {
 export const SHADOW_V1_LIVE_STORE_QUEUE = createShadowV1LiveStoreQueue();
 
 /**
+ * Coda della registrazione attiva (handler + ciclo + marks). `null` se il
+ * collector non e' registrato, o nei test che non lo registrano: in quel caso
+ * il task gira subito, senza serializzazione.
+ */
+let activeStoreQueue: ShadowV1LiveStoreQueue | null = null;
+
+/**
+ * Esegue `task` nella coda V1-live attiva. Va chiamata **fuori** da un task gia'
+ * accodato: la coda non ammette annidamento (sarebbe un deadlock).
+ */
+export function runInShadowV1LiveStoreQueue<T>(task: () => Promise<T>): Promise<T> {
+  return activeStoreQueue ? activeStoreQueue.run(task) : task();
+}
+
+/**
  * Costruisce il handler della route con dipendenze iniettate. Le richieste sono
  * serializzate dalla coda dello store: lettura, valutazione e scrittura della
  * stessa finestra non si sovrappongono, cosi' richieste ravvicinate e ciclo di
@@ -1523,6 +1539,7 @@ export function registerShadowV1LiveCollector(
   // Una sola coda per registrazione: handler, osservazioni server-side e ciclo
   // scrivono sullo stesso file e devono serializzarsi fra loro.
   const storeQueue = options.queue ?? createShadowV1LiveStoreQueue();
+  activeStoreQueue = storeQueue;
   const deps: CollectorDeps = {
     env,
     signalsPath: path.join(root, SHADOW_V1_LIVE_SIGNALS_PATH),
@@ -1577,6 +1594,7 @@ export function registerShadowV1LiveCollector(
     enabled: true,
     stop: () => {
       activeObserveHandler = null;
+      if (activeStoreQueue === storeQueue) activeStoreQueue = null;
       timers.clearInterval(handle);
     },
   };

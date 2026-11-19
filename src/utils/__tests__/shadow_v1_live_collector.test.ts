@@ -1226,6 +1226,55 @@ test('backfill autonomo: chiude EXPIRED anche senza l’ultima candela esatta di
   assert.equal(rec.exitPrice, 101.5);
 });
 
+test('backfill non autorevole: barre parziali non cambiano stato e restano conteggiate come copertura insufficiente', async () => {
+  const file = tmpPath();
+  await seedOpen(file);
+  const before = fs.readFileSync(file, 'utf8');
+  // Feed non autorevole con un buco interno: nessuna tolleranza `allowExchangeGaps`.
+  const sparseBars: ShadowV1LiveBar[] = [
+    bar(D0 + BAR_MS, 100, 101, 99, 100.2),
+    bar(D0 + 5 * BAR_MS, 100.2, 108, 99.8, 107.5),
+  ];
+  const res = await runShadowV1LiveRevaluationCycle(
+    deps(
+      file,
+      {
+        bars: () => [],
+        fetchMissingBars: async () => ({ bars: sparseBars, authoritative: false }),
+      },
+      CLOSE + 5 * BAR_MS
+    )
+  );
+  assert.equal(res.evaluated, 1);
+  assert.equal(res.changed, 0, 'senza ultima barra di griglia il backfill non autorevole non chiude il record');
+  assert.equal(res.written, false, 'nessuna scrittura quando nessun record cambia');
+  assert.equal(loadRecords(file).records[0].status, 'OPEN', 'lo stato resta invariato');
+  assert.equal(fs.readFileSync(file, 'utf8'), before, 'il file attivo non viene riscritto');
+  const stats = getShadowV1LiveCoverageStats();
+  assert.equal(stats.byReason.interior_hole, 1, 'il buco resta contato come copertura insufficiente');
+});
+
+test('backfill non autorevole: barre contigue complete vengono accettate (comportamento attuale)', async () => {
+  const file = tmpPath();
+  await seedOpen(file);
+  // Stesse barre di una sessione completa, ma dichiarate non autorevoli: la guardia
+  // accetta la contiguita' piena e il record chiude comunque.
+  const res = await runShadowV1LiveRevaluationCycle(
+    deps(
+      file,
+      {
+        bars: () => [],
+        fetchMissingBars: async () => ({ bars: fullSessionOpen(), authoritative: false }),
+      },
+      CLOSE + 5 * BAR_MS
+    )
+  );
+  assert.equal(res.changed, 1);
+  assert.equal(res.written, true);
+  const rec = loadRecords(file).records[0];
+  assert.equal(rec.status, 'EXPIRED');
+});
+
 test('rate limit: usa clientKey UID distinto dietro IP condiviso e normalizza ::ffff:', async () => {
   const file = tmpPath();
   const handler = createObserveHandler(deps(file));
@@ -1728,9 +1777,9 @@ test('P12 retention: due osservazioni concorrenti archiviano il mese chiuso senz
   );
 });
 
-// --- P13: allineamento 5m, pulizia disco, crumb 401 e grace period EOD ------
+// --- P14: allineamento 5m, pulizia disco, crumb 401 e grace period EOD ------
 
-test('P13 allineamento griglia 5m: barre con offset irregolare rifiutate in RAM e in coverage', () => {
+test('P14 allineamento griglia 5m: barre con offset irregolare rifiutate in RAM e in coverage', () => {
   clearShadowV1LiveBarsForTest();
   const base = Math.floor(D0 / BAR_MS) * BAR_MS;
   const aligned: ShadowV1LiveBar = { t: base - BAR_MS, o: 100, h: 101, l: 99, c: 100.5 };
@@ -1753,7 +1802,7 @@ test('P13 allineamento griglia 5m: barre con offset irregolare rifiutate in RAM 
   clearShadowV1LiveBarsForTest();
 });
 
-test('P13 avvio collector: rimuove barre disallineate dal bars.json persistito e riscrive pulito', () => {
+test('P14 avvio collector: rimuove barre disallineate dal bars.json persistito e riscrive pulito', () => {
   clearShadowV1LiveBarsForTest();
   const { root } = freshRoot('v1livescrub-');
   const barsPath = path.join(root, SHADOW_V1_LIVE_BARS_PATH);
@@ -1801,7 +1850,7 @@ test('P13 avvio collector: rimuove barre disallineate dal bars.json persistito e
   }
 });
 
-test('P13 backfill Yahoo: retry 401 con crumb, scarta tick non allineati e attende grace EOD 20m', async () => {
+test('P14 backfill Yahoo: retry 401 con crumb, scarta tick non allineati e attende grace EOD 20m', async () => {
   clearShadowV1LiveBarsForTest();
   const sessionClose = Math.floor(D0 / BAR_MS) * BAR_MS;
   const fromMs = sessionClose - 3 * BAR_MS;
