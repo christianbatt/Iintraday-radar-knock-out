@@ -104,8 +104,8 @@ Per garantire la massima sicurezza nella pubblicazione su repository pubbliche G
 ## 🚀 Guida all'Installazione & Avvio Locale
 
 ### Prerequisiti
-- **Node.js** versione 18.0.0 o superiore
-- **npm** o **bun**
+- **Node.js** versione 22.12.0 o superiore (vincolo `engines.node` in `package.json`)
+- **npm** (incluso con Node.js): percorso standard per installazione, sviluppo e build
 
 ### 1. Clonare la Repository
 ```bash
@@ -131,14 +131,19 @@ TWELVEDATA_API_KEY=""
 
 ### 3. Installare le Dipendenze
 ```bash
-npm install
+npm ci
 ```
+`npm ci` installa esattamente le versioni registrate in `package-lock.json`, senza modificarlo. Usa `npm install` solo quando devi aggiornare intenzionalmente le dipendenze (riscrive il lockfile).
+
+Il file `bun.lock` resta nel repository solo come riferimento temporaneo: non va rigenerato né rimosso in questa fase. Chi preferisce Bun in locale può usare i comandi equivalenti già verificati `bun install --frozen-lockfile`, `bun run dev` e `bun run build`.
 
 ### 4. Avviare l'Applicazione in Locale
 ```bash
 npm run dev
 ```
 L'applicazione sarà accessibile all'indirizzo: **`http://localhost:3000`**.
+
+Lo scan di mercato in background parte da solo all'avvio del server: un primo giro dopo 15 secondi e poi a intervalli regolari (`server.ts:3493-3502`). Per disattivarlo imposta `DISABLE_AUTO_MARKET_SCAN=true` nell'ambiente; con `NODE_ENV=test` è già spento. Il default, senza variabili, è scan attivo.
 
 ### 5. Compilazione per la Produzione
 ```bash
