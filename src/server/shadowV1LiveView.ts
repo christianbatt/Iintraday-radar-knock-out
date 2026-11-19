@@ -32,6 +32,7 @@ import {
   type LoadResult,
   type PersistedShadowV1LiveRecord,
 } from './shadowV1LiveStore';
+import { listArchivePaths, mergeRecordFiles } from './shadowV1LiveRetention';
 
 /**
  * Variabile d'ambiente, solo interruttore di emergenza: la vista e' accesa di
@@ -334,7 +335,9 @@ export function buildShadowV1LiveView(input: {
     limitations: [
       'Sola lettura: la vista non rivaluta i record e non scrive nulla.',
       'Calendario sessioni con festivita\' annuali e mezze giornate US; eventuali chiusure straordinarie una tantum restano escluse.',
-      'Nessuna retention: il file cresce; la vista mostra al massimo gli ultimi ' +
+      'Retention mensile: i record terminali di mesi precedenti sono archiviati in ' +
+        '`signals-YYYY-MM.jsonl` accanto al file attivo (con sidecar di verifica) e la ' +
+        'vista li legge insieme al file attivo; mostra al massimo gli ultimi ' +
         `${limit} record per decidedAtMs.`,
       'Righe con stato non riconosciuto sono ignorate e contate in skippedLines.',
       `Ritardo di osservazione oltre ${LATE_THRESHOLD_MS / 60000} minuti: record esclusi dalle metriche (nLate).`,
@@ -349,6 +352,8 @@ export interface ViewDeps {
   now: () => number;
   readRecords?: (path: string) => LoadResult;
   fileExists?: (path: string) => boolean;
+  /** Elenco degli archivi mensili accanto al file attivo (default: `listArchivePaths`). */
+  listArchives?: (signalsPath: string) => string[];
   limit?: number;
 }
 
@@ -366,6 +371,7 @@ export function createShadowV1LiveViewHandler(
 ): () => ViewResponse {
   const readRecords = deps.readRecords ?? loadRecords;
   const fileExists = deps.fileExists ?? ((p: string) => fs.existsSync(p));
+  const listArchives = deps.listArchives ?? listArchivePaths;
   const limit = deps.limit ?? SHADOW_V1_LIVE_VIEW_MAX_RECORDS;
 
   return function handle(): ViewResponse {
@@ -380,7 +386,11 @@ export function createShadowV1LiveViewHandler(
     const generatedAt = new Date(nowMs).toISOString();
 
     try {
-      if (!fileExists(deps.signalsPath)) {
+      // File attivo + archivi mensili: la vista deve mostrare lo stesso insieme
+      // di prima dell'archiviazione (dedup per chiave, ordine invariato).
+      const archives = listArchives(deps.signalsPath);
+      const files = [...(fileExists(deps.signalsPath) ? [deps.signalsPath] : []), ...archives];
+      if (files.length === 0) {
         return {
           status: 200,
           body: {
@@ -397,7 +407,7 @@ export function createShadowV1LiveViewHandler(
         };
       }
 
-      const loaded = readRecords(deps.signalsPath);
+      const loaded = mergeRecordFiles(files, readRecords);
       return {
         status: 200,
         body: {

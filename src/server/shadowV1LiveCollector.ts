@@ -42,6 +42,7 @@ import {
   type ShadowV1LiveRecordSource,
   type WriteResult,
 } from './shadowV1LiveStore';
+import { archiveClosedMonths } from './shadowV1LiveRetention';
 
 /**
  * Variabile d'ambiente, solo interruttore di emergenza: il collector e' acceso
@@ -1178,7 +1179,8 @@ export function createObserveHandler(deps: CollectorDeps): ObserveHandler {
           };
         }
 
-        const written = await writeRecords(deps.signalsPath, upserted.records);
+        const retained = withMonthlyRetention(deps.signalsPath, upserted.records, nowMs, warn);
+        const written = await writeRecords(deps.signalsPath, retained);
         if (!written.ok) {
           warn(`persistenza fallita (${observation.key}): ${written.error}`);
           return {
@@ -1237,6 +1239,23 @@ export async function runShadowV1LiveRevaluationCycle(
   // L'intero ciclo (lettura + valutazione + scrittura) e' un solo task: senza
   // questo, un upsert arrivato nel frattempo verrebbe sovrascritto dal ciclo.
   return queue.run(() => evaluateAndPersistCycle(deps));
+}
+
+/**
+ * Retention mensile applicata prima di ogni scrittura del file attivo (P12).
+ * Senza record terminali di mesi precedenti non fa alcun I/O e ritorna gli
+ * stessi record, quindi il comportamento corrente non cambia. Un errore di
+ * archiviazione lascia i record attivi e produce solo un avviso.
+ */
+function withMonthlyRetention(
+  signalsPath: string,
+  records: readonly PersistedShadowV1LiveRecord[],
+  nowMs: number,
+  warn: (message: string) => void
+): readonly PersistedShadowV1LiveRecord[] {
+  const out = archiveClosedMonths({ signalsPath, records, nowMs });
+  for (const note of out.notes) warn(note);
+  return out.records;
 }
 
 async function evaluateAndPersistCycle(deps: CollectorDeps): Promise<CycleResult> {
@@ -1320,7 +1339,8 @@ async function evaluateAndPersistCycle(deps: CollectorDeps): Promise<CycleResult
 
     if (changed === 0) return { evaluated, changed, written: false };
 
-    const written = await writeRecords(deps.signalsPath, records);
+    const retained = withMonthlyRetention(deps.signalsPath, records, nowMs, warn);
+    const written = await writeRecords(deps.signalsPath, retained);
     if (!written.ok) warn(`ciclo: persistenza fallita (${written.error})`);
     return { evaluated, changed, written: written.ok };
   } catch (err) {

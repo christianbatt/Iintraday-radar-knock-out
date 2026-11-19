@@ -1673,3 +1673,56 @@ test('P11 costanti: la registrazione scrive sul path dello store, non su una cop
   assert.equal(signals, path.join(root, SHADOW_V1_LIVE_SIGNALS_PATH));
   assert.equal(loadRecords(signals).records.length, 1, 'il record finisce nel file dello store');
 });
+
+// --- P12: retention dentro la coda del collector ------------------------------
+
+test('P12 retention: due osservazioni concorrenti archiviano il mese chiuso senza perdere record', async () => {
+  const file = tmpPath();
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true });
+  const february = Date.UTC(2026, 1, 10, 14, 0, 0);
+  const closedRecord = {
+    v: 1,
+    key: 'OLD|100|95|1770000000000',
+    ticker: 'OLD',
+    market: 'US',
+    direction: 'LONG',
+    entry: 100,
+    stop: 95,
+    target: 108,
+    decidedAtMs: february,
+    sessionCloseMs: february + 6 * 60 * 60 * 1000,
+    firstSeenAtMs: february + 5 * 60 * 1000,
+    status: 'STOP',
+    r: -1,
+    reason: 'stop',
+    fillBarTs: null,
+    exitBarTs: null,
+    exitPrice: null,
+    moduleVersion: 'shadowV1Live@1',
+    updatedAtMs: february + 60 * 60 * 1000,
+  };
+  fs.writeFileSync(file, JSON.stringify(closedRecord) + '\n');
+
+  const handler = createObserveHandler(deps(file));
+  const [first, second] = await Promise.all([
+    handler({ body: validBody({ ticker: 'MSFT' }), ip: '1.1.1.1' }),
+    handler({ body: validBody({ ticker: 'NVDA' }), ip: '1.1.1.2' }),
+  ]);
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+
+  const active = loadRecords(file).records;
+  assert.equal(
+    active.some((r) => r.key === closedRecord.key),
+    false,
+    'il terminale di febbraio non resta nel file attivo'
+  );
+  assert.equal(active.length, 2, 'i due record nuovi sono entrambi attivi');
+  const archived = loadRecords(path.join(dir, 'signals-2026-02.jsonl')).records;
+  assert.deepEqual(
+    archived.map((r) => r.key),
+    [closedRecord.key],
+    'il record di febbraio e\' nell archivio, una sola volta'
+  );
+});
