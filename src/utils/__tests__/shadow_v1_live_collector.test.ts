@@ -35,6 +35,7 @@ import {
   checkShadowV1LiveBarCoverage,
   getShadowV1LiveCoverageStats,
   isShadowV1LiveCollectEnabled,
+  loadShadowV1LiveBarsFromDisk,
   parseObservePayload,
   recordBarsForShadowV1Live,
   registerShadowV1LiveCollector,
@@ -51,6 +52,14 @@ import {
   type ObserveRequest,
   type ObserveResponse,
 } from '../../server/shadowV1LiveCollector';
+import {
+  readYahooCrumb,
+  resetYahooCrumbCache,
+  resolveYahooCrumbOnce,
+  storeYahooCrumb,
+  YAHOO_CRUMB_TTL_MS,
+  type YahooCrumbPair,
+} from '../../server/yahooCrumbCache';
 import {
   loadRecords,
   SHADOW_V1_LIVE_MODULE_VERSION,
@@ -1929,4 +1938,89 @@ test('P14 backfill Yahoo: retry 401 con crumb, scarta tick non allineati e atten
   assert.equal(completeEarly.bars.length, 2);
   assert.equal(completeEarly.authoritative, true, 'con ultima barra presente non serve aspettare 20m');
   clearShadowV1LiveBarsForTest();
+});
+
+// --- P17: cache crumb canonica condivisa (N6) ---------------------------------
+
+/** Istante fisso: i test della cache non dipendono dall'orologio di sistema. */
+const CRUMB_T0 = 1_767_225_600_000;
+
+function crumbPair(tag: string): Pick<YahooCrumbPair, 'cookie' | 'crumb'> {
+  return { cookie: `cookie-${tag}`, crumb: `crumb-${tag}` };
+}
+
+test('P17 crumb: due chiamanti concorrenti su resolveYahooCrumbOnce fanno un solo fetch', async () => {
+  resetYahooCrumbCache();
+  try {
+    let loads = 0;
+    let release!: (pair: YahooCrumbPair | null) => void;
+    const gate = new Promise<YahooCrumbPair | null>((resolve) => {
+      release = resolve;
+    });
+    const loader = () => {
+      loads += 1;
+      return gate;
+    };
+
+    const first = resolveYahooCrumbOnce(loader);
+    const second = resolveYahooCrumbOnce(loader);
+    assert.equal(loads, 1, 'il loader parte una sola volta con due chiamanti concorrenti');
+
+    const stored = storeYahooCrumb(crumbPair('shared'), CRUMB_T0);
+    release(stored);
+    const [a, b] = await Promise.all([first, second]);
+
+    assert.equal(loads, 1, 'nessun secondo fetch dopo il primo');
+    assert.equal(a, b, 'le due chiamate ricevono la stessa voce');
+    assert.deepEqual(a, stored);
+    assert.equal(readYahooCrumb(CRUMB_T0)?.crumb, 'crumb-shared', 'la voce e\' finita nella cache canonica');
+
+    await resolveYahooCrumbOnce(async () => {
+      loads += 1;
+      return null;
+    });
+    assert.equal(loads, 2, 'nessun volo residuo dopo la risoluzione');
+  } finally {
+    resetYahooCrumbCache();
+  }
+});
+
+test('P17 crumb: la voce scade esattamente dopo 1800 s (TTL invariato)', () => {
+  resetYahooCrumbCache();
+  try {
+    assert.equal(YAHOO_CRUMB_TTL_MS, 30 * 60_000);
+    const stored = storeYahooCrumb(crumbPair('ttl'), CRUMB_T0);
+    assert.equal(stored.expiresAtMs, CRUMB_T0 + 1_800_000);
+
+    assert.equal(readYahooCrumb(CRUMB_T0 + 1_800_000 - 1)?.crumb, 'crumb-ttl', 'valida a TTL-1 ms');
+    assert.equal(readYahooCrumb(CRUMB_T0 + 1_800_000), null, 'null al TTL esatto');
+    assert.equal(readYahooCrumb(CRUMB_T0 + 24 * 60 * 60_000), null, 'null molto dopo il TTL');
+  } finally {
+    resetYahooCrumbCache();
+  }
+});
+
+test('P17 crumb: resetYahooCrumbCache svuota la cache', () => {
+  resetYahooCrumbCache();
+  storeYahooCrumb(crumbPair('reset'), CRUMB_T0);
+  assert.notEqual(readYahooCrumb(CRUMB_T0), null, 'voce presente prima del reset');
+
+  resetYahooCrumbCache();
+  assert.equal(readYahooCrumb(CRUMB_T0), null, 'voce assente dopo il reset');
+});
+
+// --- P17: cold start senza bars.json ------------------------------------------
+
+test('P17 cold start: bars.json mancante carica 0 barre senza eccezioni', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'v1live-coldstart-'));
+  tmpDirs.push(root);
+  const barsPath = path.join(root, 'artifacts', 'shadow_v1_live', 'bars.json');
+  assert.equal(fs.existsSync(barsPath), false, 'precondizione: file assente');
+
+  let loaded: number | undefined;
+  assert.doesNotThrow(() => {
+    loaded = loadShadowV1LiveBarsFromDisk(barsPath, D0);
+  });
+  assert.equal(loaded, 0, 'nessuna barra caricata');
+  assert.equal(fs.existsSync(barsPath), false, 'la lettura non crea il file');
 });
