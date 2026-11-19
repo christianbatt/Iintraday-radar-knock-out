@@ -35,6 +35,7 @@ import {
   toCoreInput,
   upsertObservation,
   writeRecordsAtomic,
+  SHADOW_V1_LIVE_SIGNALS_PATH,
   type LoadResult,
   type PersistedShadowV1LiveRecord,
   type ShadowV1LiveObservationContext,
@@ -81,6 +82,12 @@ export const SHADOW_V1_LIVE_SOURCE_CLIENT: ShadowV1LiveRecordSource = 'client';
 
 /** `source` persistito per i record emessi dallo scanner server-side. */
 export const SHADOW_V1_LIVE_SOURCE_SERVER_SCANNER: ShadowV1LiveRecordSource = 'server-scanner';
+
+/**
+ * Chiave di rate limit delle osservazioni server-side: non e' un IP ne' un UID,
+ * quindi non collide con nessun client HTTP reale.
+ */
+export const SHADOW_V1_LIVE_SERVER_CLIENT_KEY = 'server-scan';
 
 /** Barra 5m, come `SHADOW_V2_BAR_MS`. */
 export const SHADOW_V1_LIVE_BAR_MS = 5 * 60 * 1000;
@@ -1383,7 +1390,7 @@ export function registerShadowV1LiveCollector(
   const storeQueue = options.queue ?? createShadowV1LiveStoreQueue();
   const deps: CollectorDeps = {
     env,
-    signalsPath: `${root}/artifacts/shadow_v1_live/signals.jsonl`,
+    signalsPath: path.join(root, SHADOW_V1_LIVE_SIGNALS_PATH),
     now: nowFn,
     bars: (ticker, market) => barsForShadowV1Live(ticker, market),
     queue: storeQueue,
@@ -1451,7 +1458,7 @@ export async function observeShadowV1LiveFromServer(
   if (!activeObserveHandler) return null;
   return activeObserveHandler({
     body: payload,
-    clientKey: 'server-scan',
+    clientKey: SHADOW_V1_LIVE_SERVER_CLIENT_KEY,
     skipRateLimit: true,
     source: SHADOW_V1_LIVE_SOURCE_SERVER_SCANNER,
   });

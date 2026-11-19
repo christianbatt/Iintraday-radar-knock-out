@@ -24,6 +24,11 @@ import {
   shadowV1LiveBodyLimitErrorHandler,
   shadowV1LiveBodyLimitParser,
   SHADOW_V1_LIVE_ALLOWED_ORIGINS_ENV,
+  SHADOW_V1_LIVE_BAR_MS,
+  SHADOW_V1_LIVE_BARS_PATH,
+  SHADOW_V1_LIVE_RATE_MAP_MAX_ENTRIES,
+  SHADOW_V1_LIVE_RATE_WINDOW_MS,
+  SHADOW_V1_LIVE_SERVER_CLIENT_KEY,
   SHADOW_V1_LIVE_SOURCE_CLIENT,
   SHADOW_V1_LIVE_SOURCE_SERVER_SCANNER,
   checkShadowV1LiveBarCoverage,
@@ -47,6 +52,9 @@ import {
 } from '../../server/shadowV1LiveCollector';
 import {
   loadRecords,
+  SHADOW_V1_LIVE_MODULE_VERSION,
+  SHADOW_V1_LIVE_SIGNALS_PATH,
+  SHADOW_V1_LIVE_STORE_VERSION,
   type PersistedShadowV1LiveRecord,
 } from '../../server/shadowV1LiveStore';
 import { shadowV1LiveKeyOf, type ShadowV1LiveBar } from '../../knowledge/shadowV1Live';
@@ -1622,4 +1630,46 @@ test('P10 body: oltre 8192 B la route observe risponde 413 e non viene raggiunta
     (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+// --- P11: valori dichiarati delle costanti (guardia di non regressione) -------
+
+test('P11 costanti: valori dichiarati invariati', () => {
+  assert.equal(SHADOW_V1_LIVE_OBSERVE_PATH, '/api/shadow/v1-live/observe');
+  assert.equal(SHADOW_V1_LIVE_MAX_BODY_BYTES, 8192);
+  assert.equal(SHADOW_V1_LIVE_RATE_LIMIT_PER_MINUTE, 10);
+  assert.equal(SHADOW_V1_LIVE_RATE_WINDOW_MS, 60_000);
+  assert.equal(SHADOW_V1_LIVE_RATE_MAP_MAX_ENTRIES, 1000);
+  assert.equal(SHADOW_V1_LIVE_BARS_PATH, 'artifacts/shadow_v1_live/bars.json');
+  assert.equal(SHADOW_V1_LIVE_SIGNALS_PATH, 'artifacts/shadow_v1_live/signals.jsonl');
+  assert.equal(SHADOW_V1_LIVE_BAR_MS, 5 * 60 * 1000);
+  assert.equal(SHADOW_V1_LIVE_MAX_BARS_PER_TICKER, 600);
+  assert.equal(SHADOW_V1_LIVE_CYCLE_MS, 60_000);
+  assert.equal(SHADOW_V1_LIVE_SERVER_CLIENT_KEY, 'server-scan');
+  assert.equal(SHADOW_V1_LIVE_SOURCE_CLIENT, 'client');
+  assert.equal(SHADOW_V1_LIVE_SOURCE_SERVER_SCANNER, 'server-scanner');
+  assert.equal(SHADOW_V1_LIVE_STORE_VERSION, 1);
+  assert.equal(SHADOW_V1_LIVE_MODULE_VERSION, 'shadowV1Live@1');
+});
+
+test('P11 costanti: la registrazione scrive sul path dello store, non su una copia locale', async () => {
+  const { root, signals } = freshRoot('v1livep11path-');
+  const registration = registerShadowV1LiveCollector(
+    { post: () => {} },
+    {
+      root,
+      env: ON,
+      now: () => D0 + 30 * 60 * 1000,
+      fetchMissingBars: null,
+      timers: fakeTimers,
+    }
+  );
+  try {
+    const out = await observeShadowV1LiveFromServer(validBody());
+    assert.equal(out?.status, 200);
+  } finally {
+    registration.stop?.();
+  }
+  assert.equal(signals, path.join(root, SHADOW_V1_LIVE_SIGNALS_PATH));
+  assert.equal(loadRecords(signals).records.length, 1, 'il record finisce nel file dello store');
 });

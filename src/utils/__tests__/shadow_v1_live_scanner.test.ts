@@ -18,9 +18,17 @@ import {
 import {
   observeShadowV1LiveScan,
   SHADOW_V1_LIVE_DIAGNOSTICS_PATH,
+  SHADOW_V1_LIVE_SCAN_SAMPLE_SIZE,
 } from '../../server/shadowV1LiveScanner';
 import { loadRecords } from '../../server/shadowV1LiveStore';
 import { getShadowLatest } from '../../server/shadowRoute';
+
+// --- P11: valori dichiarati delle costanti (guardia di non regressione) -------
+
+test('P11 costanti scanner: campione e path diagnostica invariati', () => {
+  assert.equal(SHADOW_V1_LIVE_SCAN_SAMPLE_SIZE, 12);
+  assert.equal(SHADOW_V1_LIVE_DIAGNOSTICS_PATH, 'artifacts/shadow_v1_live/scan_diagnostics.json');
+});
 
 const D0 = Date.UTC(2026, 2, 16, 15, 0, 0); // 10:00 ET (US attiva dopo ORB 09:45)
 const BAR_MS = 5 * 60_000;

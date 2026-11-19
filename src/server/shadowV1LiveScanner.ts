@@ -35,6 +35,12 @@ import {
 
 export const SHADOW_V1_LIVE_DIAGNOSTICS_PATH = 'artifacts/shadow_v1_live/scan_diagnostics.json';
 
+/**
+ * Quanti candidati campione restano nella diagnostica: prima i `TRADE`, poi i
+ * top pick bloccati, poi i migliori per score. Il resto resta nei conteggi.
+ */
+export const SHADOW_V1_LIVE_SCAN_SAMPLE_SIZE = 12;
+
 export interface ShadowV1LiveGateCount {
   gate: string;
   label: string;
@@ -263,7 +269,7 @@ export async function observeShadowV1LiveScan(
       ...candidateDiags
         .filter((c) => c.decision !== 'TRADE' && !c.isTopPick)
         .sort((a, b) => b.score - a.score),
-    ].slice(0, 12);
+    ].slice(0, SHADOW_V1_LIVE_SCAN_SAMPLE_SIZE);
 
     const diagnostics: ShadowV1LiveScanDiagnostics = {
       version: 1,
