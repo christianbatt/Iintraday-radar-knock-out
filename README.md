@@ -104,13 +104,13 @@ Per garantire la massima sicurezza nella pubblicazione su repository pubbliche G
 ## 🚀 Guida all'Installazione & Avvio Locale
 
 ### Prerequisiti
-- **Node.js** versione 22.12.0 o superiore (vincolo `engines.node` in `package.json`)
+- **Node.js** versione 24.12.0 o superiore (vincolo `engines.node` in `package.json`, richiesto dalle dipendenze Firebase 13)
 - **npm** (incluso con Node.js): percorso standard per installazione, sviluppo e build
 
 ### 1. Clonare la Repository
 ```bash
-git clone https://github.com/christianbattistoni/intraday-radar.git
-cd intraday-radar
+git clone https://github.com/christianbatt/Iintraday-radar-knock-out.git
+cd Iintraday-radar-knock-out
 ```
 
 ### 2. Configurare le Variabili d'Ambiente
@@ -134,8 +134,6 @@ TWELVEDATA_API_KEY=""
 npm ci
 ```
 `npm ci` installa esattamente le versioni registrate in `package-lock.json`, senza modificarlo. Usa `npm install` solo quando devi aggiornare intenzionalmente le dipendenze (riscrive il lockfile).
-
-Il file `bun.lock` resta nel repository solo come riferimento temporaneo: non va rigenerato né rimosso in questa fase. Chi preferisce Bun in locale può usare i comandi equivalenti già verificati `bun install --frozen-lockfile`, `bun run dev` e `bun run build`.
 
 ### 4. Avviare l'Applicazione in Locale
 ```bash
