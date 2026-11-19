@@ -13,7 +13,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+      - run: npm ci
       - run: npx tsx src/utils/__tests__/param_merge.test.ts
       - name: Shadow research tests
         run: npm run test:shadow
@@ -39,3 +39,7 @@ jobs:
         run: npm run test:shadowv1liveview
       - name: Shadow V1-live panel tests
         run: npm run test:shadowv1livepanel
+      - name: Shadow V1-live scanner tests
+        run: npx tsx src/utils/__tests__/shadow_v1_live_scanner.test.ts
+      - name: Shadow market scheduler tests
+        run: npx tsx src/utils/__tests__/shadow_market_scheduler.test.ts
