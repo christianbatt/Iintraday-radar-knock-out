@@ -28,15 +28,21 @@ import {
   type ShadowV1LiveBridgePayload,
 } from '../utils/shadowV1LiveBridge';
 import {
+  getShadowV1ActiveBarsEntries,
   isShadowV1LiveCollectEnabled,
   observeShadowV1LiveFromServer,
   runInShadowV1LiveStoreQueue,
   type ObserveResponse,
 } from './shadowV1LiveCollector';
 import { getActiveMarketsAt } from './shadowMarketScheduler';
-import { updateShadowV1NearMiss } from './shadowV1LiveNearMiss';
+import { hasOpenNearMissRecords, updateShadowV1NearMiss } from './shadowV1LiveNearMiss';
 import { updateShadowV1LiveMarksOnDisk } from './shadowV1LiveMarks';
-import { shadowV1LiveTmpPath } from './shadowV1LiveStore';
+import { loadRecords, SHADOW_V1_LIVE_SIGNALS_PATH, shadowV1LiveTmpPath } from './shadowV1LiveStore';
+import {
+  syncShadowV1ActiveBarsToFirestore,
+  syncShadowV1DiagnosticsToFirestore,
+  syncShadowV1LiveMarksToFirestore,
+} from './shadowFirestoreSync';
 
 export const SHADOW_V1_LIVE_DIAGNOSTICS_PATH = 'artifacts/shadow_v1_live/scan_diagnostics.json';
 
@@ -297,9 +303,9 @@ export async function observeShadowV1LiveScan(
     }
 
     const activeMarkets = getActiveMarketsAt(nowMs);
-    if (activeMarkets.length > 0 && nearMissPairs.length > 0) {
+    if ((activeMarkets.length > 0 && nearMissPairs.length > 0) || hasOpenNearMissRecords(rootDir)) {
       updateShadowV1NearMiss({
-        candidates: nearMissPairs,
+        candidates: activeMarkets.length > 0 ? nearMissPairs : [],
         parameters,
         quotes: validQuotes,
         rootDir,
@@ -343,10 +349,26 @@ export async function observeShadowV1LiveScan(
 
     if (!shouldPreserveLastSessionDiag) {
       writeDiagnosticsAtomic(diagnosticsPath, diagnostics);
+      void syncShadowV1DiagnosticsToFirestore(diagnostics);
     }
 
     await runInShadowV1LiveStoreQueue(async () => {
-      updateShadowV1LiveMarksOnDisk(validQuotes, { rootDir, nowMs });
+      const marksPayload = updateShadowV1LiveMarksOnDisk(validQuotes, { rootDir, nowMs });
+      if (marksPayload) {
+        void syncShadowV1LiveMarksToFirestore(marksPayload);
+      }
+      const signalsPath = path.join(rootDir, SHADOW_V1_LIVE_SIGNALS_PATH);
+      if (fs.existsSync(signalsPath)) {
+        const currentRecords = loadRecords(signalsPath).records;
+        const openTickers = new Set(
+          currentRecords
+            .filter((r) => r.status === 'PENDING_FILL' || r.status === 'OPEN')
+            .map((r) => r.ticker)
+        );
+        if (openTickers.size > 0) {
+          void syncShadowV1ActiveBarsToFirestore(getShadowV1ActiveBarsEntries(openTickers));
+        }
+      }
     });
     return diagnostics;
   } catch (err) {

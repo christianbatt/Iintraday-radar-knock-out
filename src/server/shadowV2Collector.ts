@@ -17,6 +17,7 @@ import {
   type ShadowV2Record,
   type ShadowV2Summary,
 } from '../knowledge/shadowV2';
+import { syncShadowV2ToFirestore } from './shadowFirestoreSync';
 
 interface StoredBarsEntry {
   ticker: string;
@@ -216,6 +217,9 @@ export function syncShadowV2SummaryFromDisk(
     if (isSummaryOutOfSync(summaryPath, summary)) {
       writeFileAtomic(summaryPath, JSON.stringify(summary, null, 2));
     }
+    if (allRecords.length > 0) {
+      void syncShadowV2ToFirestore(allRecords, summary);
+    }
     return summary;
   } catch (err: any) {
     console.warn('[Shadow V2 Collector] Errore riallineamento summary:', err?.message || err);
@@ -289,8 +293,10 @@ export function observeShadowV2Scan(
       const jsonl = allRecords.map((r) => JSON.stringify(r)).join('\n') + (allRecords.length ? '\n' : '');
       writeFileAtomic(signalsPath, jsonl);
       writeFileAtomic(summaryPath, JSON.stringify(summary, null, 2));
+      void syncShadowV2ToFirestore(allRecords, summary);
     } else if (isSummaryOutOfSync(summaryPath, summary)) {
       writeFileAtomic(summaryPath, JSON.stringify(summary, null, 2));
+      void syncShadowV2ToFirestore(allRecords, summary);
     }
 
     return summary;

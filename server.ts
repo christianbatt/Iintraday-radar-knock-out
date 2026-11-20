@@ -35,7 +35,7 @@ import { SETUP_PROMPT_BLOCK } from './src/config/setupPrompt';
 import { AILearnedInsight, VwapSignalState, VwapDataQuality, SetupIndicators, IndicatorBarInput } from './src/types/radar';
 import { runNightlyLearning } from './scripts/nightly_learning';
 import { authStartupWarning } from './src/utils/authStartupWarning';
-import { recordClosedBarsForShadowV2, observeShadowV2Scan, syncShadowV2SummaryFromDisk } from './src/server/shadowV2Collector';
+import { recordClosedBarsForShadowV2, observeShadowV2Scan, saveShadowV2BarsToDisk, syncShadowV2SummaryFromDisk } from './src/server/shadowV2Collector';
 import {
   flushShadowV1LiveBarsToDisk,
   recordBarsForShadowV1Live,
@@ -44,6 +44,12 @@ import {
   shadowV1LiveBodyLimitParser,
   SHADOW_V1_LIVE_OBSERVE_PATH,
 } from './src/server/shadowV1LiveCollector';
+import {
+  createAdminFirestoreAdapter,
+  flushPendingShadowFirestoreSync,
+  hydrateAllShadowStateFromFirestore,
+  setShadowFirestoreAdapter,
+} from './src/server/shadowFirestoreSync';
 import { registerShadowV1LiveViewRoute } from './src/server/shadowV1LiveView';
 import {
   DEFAULT_YAHOO_USER_AGENT,
@@ -3435,17 +3441,25 @@ app.get('/api/shadow/v2/export', async (req: Request, res: Response) => {
   return res.status(200).send(formatShadowV2SignalsCsv(ordered));
 });
 
-// Serve public static assets (manifest, icons, favicon)
-// Passo L: pannello shadow research, sola lettura (artefatti offline).
-registerShadowRoutesFromDisk(app);
-app.post('/api/shadow/v1-live/observe', requireApiAuth);
-registerShadowV1LiveCollector(app);
-registerShadowV1LiveViewRoute(app);
-
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Set up Vite or Static Serving
 async function startServer() {
+  // Idrata Shadow V1-live, Near-Miss e Shadow V2 da Firebase Firestore prima
+  // di avviare il collector o servire route HTTP/Vite.
+  if (firebaseAdminFirestore) {
+    setShadowFirestoreAdapter(createAdminFirestoreAdapter(firebaseAdminFirestore));
+    await hydrateAllShadowStateFromFirestore(__dirname);
+  }
+
+  // Registra le route Shadow e avvia il collector SOLO dopo l'idratazione da Firestore,
+  // e PRIMA del middleware Vite/SPA (altrimenti app.get('*') cattura /api/shadow/*).
+  registerShadowRoutesFromDisk(app);
+  app.post('/api/shadow/v1-live/observe', requireApiAuth);
+  registerShadowV1LiveCollector(app);
+  registerShadowV1LiveViewRoute(app);
+  flushShadowV1LiveBarsToDisk();
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -3462,7 +3476,7 @@ async function startServer() {
   syncShadowV2SummaryFromDisk(__dirname);
   aiLearnedMemory = await loadPersistentAIMemory();
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Intraday Radar] Server running at http://0.0.0.0:${PORT}`);
     if (process.env.NODE_ENV !== 'test' && process.env.DISABLE_AUTO_MARKET_SCAN !== 'true') {
       const warmupTimer = setTimeout(() => {
@@ -3476,6 +3490,25 @@ async function startServer() {
       if (typeof intervalTimer.unref === 'function') intervalTimer.unref();
     }
   });
+
+  let shuttingDown = false;
+  const gracefulShutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[Shutdown] Ricevuto ${signal}: salvo barre e sincronizzo Shadow su Firestore...`);
+    flushShadowV1LiveBarsToDisk();
+    saveShadowV2BarsToDisk(__dirname);
+    void flushPendingShadowFirestoreSync().finally(() => {
+      httpServer.close(() => {
+        process.exit(0);
+      });
+      const forceTimer = setTimeout(() => process.exit(0), 2_000);
+      if (typeof forceTimer.unref === 'function') forceTimer.unref();
+    });
+  };
+
+  process.once('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.once('SIGINT', () => gracefulShutdown('SIGINT'));
 }
 
 startServer().catch((err) => {

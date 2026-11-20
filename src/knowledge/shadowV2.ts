@@ -1320,7 +1320,14 @@ export function summarizeShadowV2(records: readonly ShadowV2Record[], generatedA
     experiments,
     hypotheses: SHADOW_V2_HYPOTHESES,
     limitations,
-    recentSignals: [...records].sort((a, b) => b.signalBarTs - a.signalBarTs).slice(0, 25),
+    recentSignals: [...records]
+      .sort((a, b) => {
+        const aActive = a.status === 'OPEN' || a.status === 'PENDING_OPEN' ? 0 : 1;
+        const bActive = b.status === 'OPEN' || b.status === 'PENDING_OPEN' ? 0 : 1;
+        if (aActive !== bActive) return aActive - bActive;
+        return b.signalBarTs - a.signalBarTs;
+      })
+      .slice(0, 25),
   };
 }
 

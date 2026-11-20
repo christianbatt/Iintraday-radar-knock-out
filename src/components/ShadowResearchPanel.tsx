@@ -793,7 +793,7 @@ export const ShadowV2Section: React.FC<{ shadowV2?: ShadowPanelData['shadowV2'] 
                   </tr>
                 </thead>
                 <tbody>
-                  {recent.slice(0, 12).map((s) => {
+                  {recent.slice(0, 25).map((s) => {
                     const desc = describeV2Outcome(s.outcome, s.blockedReason);
                     const patternLabel = V2_TRIGGER_IT[s.triggerType] ?? s.triggerType;
                     return (

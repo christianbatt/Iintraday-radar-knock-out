@@ -52,6 +52,11 @@ import {
   resetYahooCrumbCache,
   type YahooCrumbPair,
 } from './yahooCrumbCache';
+import {
+  syncShadowV1ActiveBarsToFirestore,
+  syncShadowV1LiveRecordsToFirestore,
+  type ActiveBarsCacheEntry,
+} from './shadowFirestoreSync';
 
 /**
  * Variabile d'ambiente, solo interruttore di emergenza: il collector e' acceso
@@ -291,6 +296,23 @@ export function recordBarsForShadowV1Live(
 export function barsForShadowV1Live(ticker: string, market: Market): ShadowV1LiveBar[] {
   const entry = barsByTicker.get(barsKey(ticker, market));
   return entry ? entry.bars.map((b) => ({ ...b })) : [];
+}
+
+/** Barre chiuse disponibili in RAM per i ticker con posizioni attive. */
+export function getShadowV1ActiveBarsEntries(tickers: ReadonlySet<string>): ActiveBarsCacheEntry[] {
+  if (tickers.size === 0) return [];
+  const out: ActiveBarsCacheEntry[] = [];
+  for (const entry of barsByTicker.values()) {
+    if (tickers.has(entry.ticker) && entry.bars.length > 0) {
+      out.push({
+        ticker: entry.ticker,
+        market: entry.market,
+        updatedAt: entry.updatedAt,
+        bars: entry.bars.map((b) => ({ ...b })),
+      });
+    }
+  }
+  return out;
 }
 
 /** Svuota l'archivio e resetta il percorso disco: usato solo dai test. */
@@ -1285,6 +1307,8 @@ export function createObserveHandler(deps: CollectorDeps): ObserveHandler {
           };
         }
 
+        void syncShadowV1LiveRecordsToFirestore(upserted.records);
+
         return {
           status: 200,
           body: {
@@ -1439,11 +1463,29 @@ async function evaluateAndPersistCycle(deps: CollectorDeps): Promise<CycleResult
       }
     }
 
-    if (changed === 0) return { evaluated, changed, written: false };
+    const syncOpenBarsIfNeeded = () => {
+      if (evaluated === 0 && changed === 0) return;
+      const openTickers = new Set(records.filter(isNonTerminal).map((r) => r.ticker));
+      if (openTickers.size > 0) {
+        void syncShadowV1ActiveBarsToFirestore(getShadowV1ActiveBarsEntries(openTickers));
+      } else if (changed > 0) {
+        void syncShadowV1ActiveBarsToFirestore([]);
+      }
+    };
+
+    if (changed === 0) {
+      syncOpenBarsIfNeeded();
+      return { evaluated, changed, written: false };
+    }
 
     const retained = withMonthlyRetention(deps.signalsPath, records, nowMs, warn);
     const written = await writeRecords(deps.signalsPath, retained);
-    if (!written.ok) warn(`ciclo: persistenza fallita (${written.error})`);
+    if (!written.ok) {
+      warn(`ciclo: persistenza fallita (${written.error})`);
+    } else {
+      void syncShadowV1LiveRecordsToFirestore(records);
+    }
+    syncOpenBarsIfNeeded();
     return { evaluated, changed, written: written.ok };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

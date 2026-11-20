@@ -27,6 +27,7 @@ import type {
 } from '../types/radar';
 import { sessionCloseMsFor, sessionDateFor } from '../utils/sessionClose';
 import { barsForShadowV1Live } from './shadowV1LiveCollector';
+import { syncShadowV1NearMissToFirestore } from './shadowFirestoreSync';
 
 export const SHADOW_V1_NEAR_MISS_PATH = 'artifacts/shadow_v1_live/near_miss.jsonl';
 export const SHADOW_V1_NEAR_MISS_SUMMARY_PATH = 'artifacts/shadow_v1_live/near_miss_summary.json';
@@ -126,6 +127,11 @@ export function loadNearMissRecords(filePath: string): ShadowV1NearMissRecord[] 
   } catch {
     return [];
   }
+}
+
+export function hasOpenNearMissRecords(rootDir: string = process.cwd()): boolean {
+  const existing = loadNearMissRecords(path.join(rootDir, SHADOW_V1_NEAR_MISS_PATH));
+  return existing.some((r) => r.status === 'PENDING_FILL' || r.status === 'OPEN');
 }
 
 function areSetupLevelsValid(setup: ExecutionSetup): boolean {
@@ -256,7 +262,12 @@ export function summarizeNearMissRecords(
   });
 
   const recent = [...records]
-    .sort((a, b) => b.decidedAtMs - a.decidedAtMs)
+    .sort((a, b) => {
+      const aOpen = a.status === 'PENDING_FILL' || a.status === 'OPEN' ? 0 : 1;
+      const bOpen = b.status === 'PENDING_FILL' || b.status === 'OPEN' ? 0 : 1;
+      if (aOpen !== bOpen) return aOpen - bOpen;
+      return b.decidedAtMs - a.decidedAtMs;
+    })
     .slice(0, 12);
 
   return {
@@ -387,6 +398,7 @@ export function updateShadowV1NearMiss(input: {
       const jsonl = ordered.map((r) => JSON.stringify(r)).join('\n') + (ordered.length ? '\n' : '');
       writeAtomic(filePath, jsonl);
       writeAtomic(summaryPath, JSON.stringify(summary, null, 2));
+      void syncShadowV1NearMissToFirestore(ordered, summary);
     }
 
     return summary;
