@@ -27,6 +27,7 @@ import fs from 'node:fs';
 import {
   isStale,
   loadRecords,
+  SHADOW_V1_LIVE_MODULE_VERSION,
   SHADOW_V1_LIVE_STORE_VERSION,
   SHADOW_V1_LIVE_SIGNALS_PATH,
   type LoadResult,
@@ -159,7 +160,10 @@ export interface ShadowV1LiveViewResponse {
   truncated: boolean;
   skippedLines: number;
   counts: ShadowV1LiveViewCounts;
+  /** Solo record prodotti dal metodo corrente; il resto sta in `metricsLegacy`. */
   metrics: ShadowV1LiveViewMetrics;
+  /** Record del metodo precedente (`@2`, `@1` o senza campo): non confrontabile. */
+  metricsLegacy: ShadowV1LiveViewMetrics;
   records: ShadowV1LiveViewRecord[];
   limitations: string[];
 }
@@ -195,7 +199,8 @@ function emptyCounts(): ShadowV1LiveViewCounts {
 }
 
 function metricsOf(
-  records: readonly PersistedShadowV1LiveRecord[]
+  records: readonly PersistedShadowV1LiveRecord[],
+  note: string
 ): ShadowV1LiveViewMetrics {
   const eligible = records.filter(
     (r) => RESOLVED.has(r.status) && typeof r.r === 'number' && Number.isFinite(r.r)
@@ -239,14 +244,30 @@ function metricsOf(
     nLate,
     nResolvedAll: eligible.length,
     nDelayUnavailable,
-    note:
-      'Esplorativo: R di prezzo del nucleo V1-live, senza costi ne\' leva. ' +
-      'Denominatore = record con esito STOP/TARGET/EXPIRED e r finito, esclusi ' +
-      'quelli osservati oltre ' +
-      `${LATE_THRESHOLD_MS / 60000} minuti dalla decisione o senza ritardo calcolabile. ` +
-      'NOT_FILLED, PENDING_FILL e OPEN sono esclusi e non valgono zero.',
+    note,
   };
 }
+
+/**
+ * Note delle due metriche (P18b). Il denominatore e la regola di ritardo sono
+ * gli stessi: cambia solo il campione, separato per metodo del record.
+ */
+const METRICS_NOTE_COMMON =
+  'Esplorativo: R di prezzo del nucleo V1-live, senza costi ne\' leva. ' +
+  'Denominatore = record con esito STOP/TARGET/EXPIRED e r finito, esclusi ' +
+  'quelli osservati oltre ' +
+  `${LATE_THRESHOLD_MS / 60000} minuti dalla decisione o senza ritardo calcolabile. ` +
+  'NOT_FILLED, PENDING_FILL e OPEN sono esclusi e non valgono zero.';
+
+const METRICS_NOTE_CURRENT =
+  'Campione del metodo v3 (`shadowV1Live@3`): i record del metodo precedente ' +
+  'stanno in `metricsLegacy` e non entrano qui. ' +
+  METRICS_NOTE_COMMON;
+
+const METRICS_NOTE_LEGACY =
+  'Campione del metodo precedente (`@2`, `@1` o senza campo): esiti prodotti da ' +
+  'un metodo diverso da quello corrente, non confrontabile con metodo v3. ' +
+  METRICS_NOTE_COMMON;
 
 function toViewRecord(
   record: PersistedShadowV1LiveRecord,
@@ -326,6 +347,12 @@ export function buildShadowV1LiveView(input: {
     if (isStale(record, input.nowMs)) counts.stale += 1;
   }
 
+  // P18b: separazione dei campioni. `counts` resta su tutti i record, mentre
+  // `metrics` parla solo del metodo corrente e `metricsLegacy` raccoglie il resto:
+  // mescolare metodi diversi in un solo aggregato non sarebbe confrontabile.
+  const current = usable.filter((r) => r.moduleVersion === SHADOW_V1_LIVE_MODULE_VERSION);
+  const legacy = usable.filter((r) => r.moduleVersion !== SHADOW_V1_LIVE_MODULE_VERSION);
+
   return {
     available: input.available ?? true,
     ...(input.reason ? { reason: input.reason } : {}),
@@ -337,7 +364,8 @@ export function buildShadowV1LiveView(input: {
     truncated,
     skippedLines,
     counts,
-    metrics: metricsOf(usable),
+    metrics: metricsOf(current, METRICS_NOTE_CURRENT),
+    metricsLegacy: metricsOf(legacy, METRICS_NOTE_LEGACY),
     records: shown.map((r) => toViewRecord(r, input.nowMs)),
     limitations: [
       'Sola lettura: la vista non rivaluta i record e non scrive nulla.',
@@ -348,6 +376,7 @@ export function buildShadowV1LiveView(input: {
         `${limit} record per decidedAtMs.`,
       'Righe con stato non riconosciuto sono ignorate e contate in skippedLines.',
       `Ritardo di osservazione oltre ${LATE_THRESHOLD_MS / 60000} minuti: record esclusi dalle metriche (nLate).`,
+      '`metrics` conta solo i record del metodo v3 (`shadowV1Live@3`); i record `@2`, `@1` e quelli senza campo sono in `metricsLegacy`, non confrontabile con il metodo v3.',
       'Campione esplorativo, non un risultato operativo.',
     ],
   };

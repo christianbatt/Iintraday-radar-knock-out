@@ -88,6 +88,17 @@ function view(over: Partial<ShadowV1LiveViewResponse> = {}): ShadowV1LiveViewRes
       nDelayUnavailable: 0,
       note: 'Esplorativo: R di prezzo del nucleo V1-live, senza costi ne\' leva.',
     },
+    metricsLegacy: {
+      resolved: 0,
+      meanR: null,
+      winRatePct: null,
+      sumR: null,
+      maxDrawdownR: null,
+      nLate: 0,
+      nResolvedAll: 0,
+      nDelayUnavailable: 0,
+      note: 'Campione del metodo precedente: non confrontabile con metodo v3.',
+    },
     records: [
       row({ key: 'a', status: 'OPEN', stale: true }),
       row({ key: 'b', status: 'STOP', r: -1, exitBarTs: NOW - 2 * 60 * 60 * 1000 }),
@@ -395,8 +406,9 @@ describe('ShadowV1LivePanel — ritardo di osservazione', () => {
 // --- P18: metodo per record ---------------------------------------------------
 
 it('P18 metodo: ogni record dichiara il metodo che lo ha prodotto', () => {
-  assert.equal(SHADOW_V1_LIVE_METHOD_CURRENT, 'shadowV1Live@2');
-  assert.equal(shadowV1LiveMethodLabel('shadowV1Live@2'), 'metodo v2');
+  assert.equal(SHADOW_V1_LIVE_METHOD_CURRENT, 'shadowV1Live@3');
+  assert.equal(shadowV1LiveMethodLabel('shadowV1Live@3'), 'metodo v3');
+  assert.equal(shadowV1LiveMethodLabel('shadowV1Live@2'), 'metodo precedente');
   assert.equal(shadowV1LiveMethodLabel('shadowV1Live@1'), 'metodo precedente');
   assert.equal(shadowV1LiveMethodLabel(null), 'metodo precedente');
   assert.equal(shadowV1LiveMethodLabel(undefined), 'metodo precedente');
@@ -406,7 +418,8 @@ it('P18 metodo: ogni record dichiara il metodo che lo ha prodotto', () => {
       flag="on"
       data={view({
         records: [
-          row({ key: 'nuovo', moduleVersion: 'shadowV1Live@2' }),
+          row({ key: 'nuovo', moduleVersion: 'shadowV1Live@3' }),
+          row({ key: 'legacy-2', moduleVersion: 'shadowV1Live@2' }),
           row({ key: 'legacy-1', moduleVersion: 'shadowV1Live@1' }),
           row({ key: 'legacy-assente', moduleVersion: null }),
         ],
@@ -415,7 +428,43 @@ it('P18 metodo: ogni record dichiara il metodo che lo ha prodotto', () => {
     />
   );
 
-  assert.equal((out.match(/metodo v2/g) ?? []).length, 1, 'solo il record @2 e\' metodo v2');
-  assert.equal((out.match(/metodo precedente/g) ?? []).length, 2, '@1 e campo assente sono metodo precedente');
+  assert.equal((out.match(/metodo v3/g) ?? []).length, 1, 'solo il record @3 e\' metodo v3');
+  assert.equal((out.match(/metodo precedente/g) ?? []).length, 3, '@2, @1 e campo assente sono metodo precedente');
   assert.match(out, /data-testid="v1live-method"/);
+});
+
+it('P18b metriche: il metodo precedente ha una sezione separata', () => {
+  const conLegacy = html(
+    <ShadowV1LivePanel
+      flag="on"
+      data={view({
+        metricsLegacy: {
+          resolved: 1,
+          meanR: -2,
+          winRatePct: 0,
+          sumR: -2,
+          maxDrawdownR: 2,
+          nLate: 0,
+          nResolvedAll: 1,
+          nDelayUnavailable: 0,
+          note: 'Campione del metodo precedente: non confrontabile con metodo v3.',
+        },
+      })}
+      v2={V2}
+    />
+  );
+
+  assert.match(conLegacy, /data-testid="v1live-metrics-legacy"/);
+  assert.match(conLegacy, /data-testid="v1live-metrics-legacy-note"/);
+  assert.match(conLegacy, /non confrontabile con metodo v3/);
+  // Headline intatta: i valori legacy non finiscono nel blocco principale.
+  assert.match(conLegacy, /R medio \(n=2\)/);
+  assert.match(conLegacy, /R medio \(n=1\)/);
+
+  const senzaLegacy = html(<ShadowV1LivePanel flag="on" data={view()} v2={V2} />);
+  assert.equal(
+    senzaLegacy.includes('v1live-metrics-legacy'),
+    false,
+    'senza record del metodo precedente la sezione non compare'
+  );
 });

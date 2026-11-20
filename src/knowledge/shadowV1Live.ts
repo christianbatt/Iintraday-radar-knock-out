@@ -26,9 +26,12 @@
  *   l'uscita e' all'apertura della barra quando questa e' gia' oltre il livello
  *   (`bar.o <= stop` per LONG, `bar.o >= stop` per SHORT), e `r` e' calcolato dal
  *   prezzo, non fissato a −1 come `walkR`. Fuori dal gap resta `r = −1` esatto.
- *   Limite noto (non corretto qui): se e' la barra di fill ad aprire oltre lo
- *   stop, l'ingresso e' comunque registrato a `entry` e l'uscita all'apertura
- *   risulta anteriore all'ingresso.
+ *   Solo sopra la barra di fill (metodo v3, P18b): una barra di fill che apre
+ *   gia' oltre lo stop esce comunque a `stopLossLevel` con `r = −1` esatto.
+ *   Scelta conservativa sotto la convenzione di ingresso al livello: se il fill
+ *   e' all'apertura, l'uscita precede l'ingresso e `r = −1` resta il valore
+ *   prudente; il valore realistico (ingresso al fill d'apertura) cambia la
+ *   convenzione di ingresso ed e' fuori da questa modifica.
  * - Terminazione (D2/D9): a sessione finita, uscita al close dell'ultima barra
  *   chiusa disponibile (EXPIRED). Nessuna barra utile e sessione finita: NOT_FILLED
  *   (D7), senza R.
@@ -282,8 +285,11 @@ export function evaluateShadowV1Live(input: ShadowV1LiveInput): ShadowV1LiveResu
     if (hitStop) {
       status = 'STOP';
       exitBarTs = bar.t;
-      // M3 (metodo v2): apertura gia' oltre lo stop => uscita all'apertura.
-      const gappedOpen = dir === 1 ? bar.o <= stopLossLevel : bar.o >= stopLossLevel;
+      // M3 (metodo v2/v3): apertura gia' oltre lo stop => uscita all'apertura.
+      // P18b: solo sopra la barra di fill. Sulla barra di fill l'apertura precede
+      // l'ingresso, quindi l'uscita resta a `stopLossLevel` con `r = −1` esatto.
+      const gappedOpen =
+        bar.t !== fillBarTs && (dir === 1 ? bar.o <= stopLossLevel : bar.o >= stopLossLevel);
       exitPrice = gappedOpen ? bar.o : stopLossLevel;
       r = (dir * (exitPrice - entryLevel)) / risk;
       break;

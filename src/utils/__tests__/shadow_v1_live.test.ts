@@ -319,16 +319,103 @@ describe('V1-live — limit-fill ed esiti', () => {
     assert.equal(r.r, -2, '-1 * (110 - 100) / 5');
   });
 
-  it('barra di fill che apre gia\' oltre lo stop: limite noto, non corretto in P18', () => {
-    // L'apertura precede l'ingresso: il metodo v2 esce comunque all'apertura.
-    // Il caso e' dichiarato nel report P18 e resta fuori da questa modifica.
+  it('long: barra di fill che apre oltre lo stop => esce a stop, r = -1 (metodo v3)', () => {
+    // P18b: il gap vale solo sopra la barra di fill. Qui l'apertura (90) precede
+    // l'ingresso al livello (100): l'uscita resta il livello di stop, -1 R esatto.
     const bars = [bar(ts(0), 90, 101, 88, 99)];
     const r = run(longSetup(), bars, { nowMs: closedAt(0) });
     assert.equal(r.status, 'STOP');
     assert.equal(r.fillBarTs, ts(0));
+    assert.equal(r.exitBarTs, ts(0));
     assert.equal(r.entryPrice, 100, 'ingresso registrato al livello, non all\'apertura');
-    assert.equal(r.exitPrice, 90);
-    assert.equal(r.r, -2);
+    assert.equal(r.exitPrice, 95, 'barra di fill: uscita al livello, non all\'apertura 90');
+    assert.equal(r.r, -1);
+  });
+
+  it('short: barra di fill che apre oltre lo stop => esce a stop, r = -1 (metodo v3)', () => {
+    const bars = [bar(ts(0), 110, 111, 99, 101)];
+    const r = run(shortSetup(), bars, { nowMs: closedAt(0) });
+    assert.equal(r.status, 'STOP');
+    assert.equal(r.fillBarTs, ts(0));
+    assert.equal(r.exitBarTs, ts(0));
+    assert.equal(r.exitPrice, 105, 'barra di fill: uscita al livello, non all\'apertura 110');
+    assert.equal(r.r, -1);
+  });
+
+  it('invariante: ogni STOP ha exitBarTs >= fillBarTs, e se coincidono esce a stop con -1 R', () => {
+    const scenarios: Array<{
+      label: string;
+      setup: ShadowV1LiveSetup;
+      bars: ShadowV1LiveBar[];
+      stop: number;
+    }> = [
+      // LONG, fill normale e stop in gap sulla barra successiva.
+      {
+        label: 'long gap dopo il fill',
+        setup: longSetup(),
+        bars: [bar(ts(0), 99, 101, 98, 100), bar(ts(1), 90, 96, 88, 92)],
+        stop: 95,
+      },
+      // LONG, fill che apre gia' sotto lo stop.
+      { label: 'long fill in gap', setup: longSetup(), bars: [bar(ts(0), 90, 101, 88, 99)], stop: 95 },
+      // LONG, fill toccato e stop nella stessa barra, senza gap.
+      {
+        label: 'long fill e stop stessa barra',
+        setup: longSetup(),
+        bars: [bar(ts(0), 101, 102, 94, 95)],
+        stop: 95,
+      },
+      // LONG, apertura sotto lo stop e entry toccata nella stessa barra.
+      {
+        label: 'long fill in gap con entry toccata',
+        setup: longSetup(),
+        bars: [bar(ts(0), 88, 102, 87, 101)],
+        stop: 95,
+      },
+      // SHORT, fill normale e stop in gap sulla barra successiva.
+      {
+        label: 'short gap dopo il fill',
+        setup: shortSetup(),
+        bars: [bar(ts(0), 101, 102, 100, 101), bar(ts(1), 110, 112, 108, 111)],
+        stop: 105,
+      },
+      // SHORT, fill che apre gia' sopra lo stop.
+      {
+        label: 'short fill in gap',
+        setup: shortSetup(),
+        bars: [bar(ts(0), 110, 111, 99, 101)],
+        stop: 105,
+      },
+      // SHORT, fill e stop nella stessa barra, senza gap.
+      {
+        label: 'short fill e stop stessa barra',
+        setup: shortSetup(),
+        bars: [bar(ts(0), 101, 106, 99, 105)],
+        stop: 105,
+      },
+    ];
+
+    let sameBar = 0;
+    let laterBar = 0;
+    for (const s of scenarios) {
+      const r = run(s.setup, s.bars);
+      assert.equal(r.status, 'STOP', s.label);
+      assert.ok(r.fillBarTs !== null, `${s.label}: fill registrato`);
+      assert.ok(r.exitBarTs !== null, `${s.label}: uscita registrata`);
+      assert.ok(
+        (r.exitBarTs as number) >= (r.fillBarTs as number),
+        `${s.label}: l'uscita non puo' precedere il fill`
+      );
+      if (r.exitBarTs === r.fillBarTs) {
+        sameBar += 1;
+        assert.equal(r.exitPrice, s.stop, `${s.label}: barra di fill => uscita al livello`);
+        assert.equal(r.r, -1, `${s.label}: barra di fill => -1 R esatto`);
+      } else {
+        laterBar += 1;
+      }
+    }
+    assert.equal(sameBar, 5, 'cinque casi con uscita sulla barra di fill');
+    assert.equal(laterBar, 2, 'due casi con uscita su una barra successiva');
   });
 
   it('long: target prima dello stop => +1.6 R', () => {

@@ -92,15 +92,16 @@ export const SHADOW_V1_LIVE_PANEL_GATES_SHOWN = 5;
  * `SHADOW_V1_LIVE_MODULE_VERSION` di `src/server/shadowV1LiveStore.ts` per non
  * portare `node:fs` nel bundle client; il test del pannello ne verifica il valore.
  */
-export const SHADOW_V1_LIVE_METHOD_CURRENT = 'shadowV1Live@2';
+export const SHADOW_V1_LIVE_METHOD_CURRENT = 'shadowV1Live@3';
 
 /**
- * Etichetta del metodo per singolo record (solo testo): `shadowV1Live@2` =
- * barra della decisione + stop in gap; qualunque altro valore o campo assente =
- * record prodotto dal metodo precedente, mai ricalcolato.
+ * Etichetta del metodo per singolo record (solo testo): `shadowV1Live@3` =
+ * barra della decisione + stop in gap solo sopra il fill; qualunque altro valore
+ * (`@2`, `@1`) o campo assente = record prodotto dal metodo precedente, mai
+ * ricalcolato.
  */
 export function shadowV1LiveMethodLabel(moduleVersion: string | null | undefined): string {
-  return moduleVersion === SHADOW_V1_LIVE_METHOD_CURRENT ? 'metodo v2' : 'metodo precedente';
+  return moduleVersion === SHADOW_V1_LIVE_METHOD_CURRENT ? 'metodo v3' : 'metodo precedente';
 }
 
 const STATUS_LABEL: Record<ShadowV1LiveViewRecord['status'], string> = {
@@ -225,6 +226,7 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
   const records = data?.records ?? [];
   const counts = data?.counts ?? null;
   const metrics = data?.metrics ?? null;
+  const metricsLegacy = data?.metricsLegacy ?? null;
   const markByKey = new Map<string, ShadowV1LiveMark>();
   for (const m of liveMarks?.marks ?? []) {
     if (m && m.key) markByKey.set(m.key, m);
@@ -380,6 +382,49 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
             calcolabile {metrics?.nDelayUnavailable ?? 0}, su {metrics?.nResolvedAll ?? 0} con
             esito.
           </p>
+
+          {metricsLegacy && metricsLegacy.nResolvedAll > 0 && (
+            <section
+              className="rounded border border-slate-800 bg-slate-900/40 p-2 space-y-1"
+              data-testid="v1live-metrics-legacy"
+            >
+              <div className="text-[10px] font-bold text-amber-300">metodo precedente</div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div>
+                  <div className="text-[10px] text-slate-500">
+                    R medio (n={metricsLegacy.resolved})
+                  </div>
+                  <div className="text-sm font-bold text-white">
+                    {num(metricsLegacy.meanR, 3, 'R')}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-slate-500">Quota R&gt;0</div>
+                  <div className="text-sm font-bold text-white">
+                    {num(metricsLegacy.winRatePct, 1, '%')}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-slate-500">Somma R</div>
+                  <div className="text-sm font-bold text-white">
+                    {num(metricsLegacy.sumR, 2, 'R')}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-slate-500">Max DD</div>
+                  <div className="text-sm font-bold text-white">
+                    {num(metricsLegacy.maxDrawdownR, 2, 'R')}
+                  </div>
+                </div>
+              </div>
+              <p className="text-[10px] text-amber-200" data-testid="v1live-metrics-legacy-note">
+                metodo precedente, con esito {metricsLegacy.nResolvedAll}: inclusi{' '}
+                {metricsLegacy.resolved}, esclusi per ritardo {metricsLegacy.nLate}, senza ritardo
+                calcolabile {metricsLegacy.nDelayUnavailable}.
+              </p>
+              <p className="text-[10px] text-slate-500">{metricsLegacy.note}</p>
+            </section>
+          )}
 
           {records.length === 0 ? (
             <p className="text-xs text-slate-400" data-testid="v1live-empty">
