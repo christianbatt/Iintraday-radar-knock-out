@@ -147,6 +147,7 @@ test('vista: schema stabile e ordinamento decrescente per decidedAtMs', () => {
     'limit',
     'limitations',
     'metrics',
+    'metricsLegacy',
     'records',
     'skippedLines',
     'source',
@@ -356,14 +357,67 @@ test('vista: NOT_FILLED e non terminali non contano come zero', () => {
 test('P18 vista: moduleVersion del record propagato, null se il record e\' legacy', () => {
   const res = handlerWith({
     records: [
-      rec({ key: 'nuovo', moduleVersion: 'shadowV1Live@2' }),
+      rec({ key: 'nuovo', moduleVersion: 'shadowV1Live@3' }),
+      rec({ key: 'v2', moduleVersion: 'shadowV1Live@2' }),
       rec({ key: 'legacy', moduleVersion: undefined }),
     ],
   })();
   const body = res.body as { records: Array<{ key: string; moduleVersion: string | null }> };
   const byKey = new Map(body.records.map((r) => [r.key, r.moduleVersion]));
-  assert.equal(byKey.get('nuovo'), 'shadowV1Live@2');
+  assert.equal(byKey.get('nuovo'), 'shadowV1Live@3');
+  assert.equal(byKey.get('v2'), 'shadowV1Live@2');
   assert.equal(byKey.get('legacy'), null, 'campo assente = metodo precedente, nessuna versione inventata');
+});
+
+test('P18b vista: metriche separate per metodo, i risolti non in ritardo si sommano', () => {
+  const exit = D0 + 60_000;
+  const records = [
+    rec({ key: 'v3-stop', status: 'STOP', r: -1, fillBarTs: D0, exitBarTs: exit }),
+    rec({ key: 'v3-target', status: 'TARGET', r: 1.6, fillBarTs: D0, exitBarTs: exit }),
+    rec({
+      key: 'v2-stop',
+      status: 'STOP',
+      r: -2,
+      fillBarTs: D0,
+      exitBarTs: exit,
+      moduleVersion: 'shadowV1Live@2',
+    }),
+    rec({
+      key: 'v1-target',
+      status: 'TARGET',
+      r: 1.6,
+      fillBarTs: D0,
+      exitBarTs: exit,
+      moduleVersion: undefined,
+    }),
+  ];
+  const body = handlerWith({ records })().body as {
+    counts: { persisted: number };
+    metrics: { resolved: number; sumR: number | null; note: string; nResolvedAll: number };
+    metricsLegacy: { resolved: number; sumR: number | null; note: string; nResolvedAll: number };
+  };
+
+  // Headline: solo il metodo corrente.
+  assert.equal(body.metrics.resolved, 2, 'solo i due record @3');
+  assert.equal(body.metrics.sumR, 0.6, '-1 + 1.6');
+  assert.equal(body.metrics.nResolvedAll, 2);
+  assert.match(body.metrics.note, /metodo v3/);
+
+  // Legacy: tutto il resto (@2 e campo assente).
+  assert.equal(body.metricsLegacy.resolved, 2, '@2 e legacy senza campo');
+  assert.equal(body.metricsLegacy.sumR, -0.4, '-2 + 1.6');
+  assert.match(body.metricsLegacy.note, /non confrontabile con metodo v3/);
+
+  // `counts` continua a contare tutti i record.
+  assert.equal(body.counts.persisted, 4);
+
+  // I due campioni non si sovrappongono e coprono i risolti non in ritardo.
+  assert.equal(
+    body.metrics.resolved + body.metricsLegacy.resolved,
+    body.metrics.nResolvedAll + body.metricsLegacy.nResolvedAll,
+    'nessun record contato due volte ne\' perso'
+  );
+  assert.equal(body.metrics.resolved + body.metricsLegacy.resolved, 4);
 });
 
 test('vista: stale calcolato a lettura, mai persistito, solo sui non terminali', () => {

@@ -481,22 +481,87 @@ test('loadRecords: righe corrotte o versione sconosciuta vengono saltate e conta
   assert.equal(res.skipped, 4);
 });
 
-test('P18 loadRecords: record senza moduleVersion e\' legacy, non fuori schema', () => {
+test('P18b loadRecords: record senza moduleVersion e\' legacy, non fuori schema', () => {
   const dir = tmpDir();
   const file = path.join(dir, 'legacy.jsonl');
   const legacy = recordFrom(observation('OPEN', { fillBarTs: D0 + BAR_MS })) as unknown as Record<string, unknown>;
   delete legacy.moduleVersion;
-  fs.writeFileSync(file, `${JSON.stringify(legacy)}\n`);
+  const raw = `${JSON.stringify(legacy)}\n`;
+  fs.writeFileSync(file, raw);
 
   const res = loadRecords(file);
   assert.equal(res.skipped, 0, 'il record legacy non viene scartato');
   assert.equal(res.records.length, 1);
-  assert.equal(res.records[0].moduleVersion, undefined, 'nessuna versione inventata');
+  assert.equal(res.records[0].moduleVersion, undefined, 'in lettura nessuna versione inventata');
 
-  // Un aggiornamento non riscrive la versione: resta assente (metodo v1).
-  const next = upsertObservation(res.records, observation('OPEN', { fillBarTs: D0 + 2 * BAR_MS }), D0 + 3 * BAR_MS);
-  assert.equal(next.records[0].moduleVersion, undefined, 'l\'upsert non inventa la versione');
-  assert.equal(fs.readFileSync(file, 'utf8').includes('moduleVersion'), false, 'il file non viene riscritto');
+  // P18b: un record non terminale aggiornato prende la versione corrente, anche se
+  // era legacy: l'esito che registra e' prodotto dal metodo nuovo.
+  const next = upsertObservation(
+    res.records,
+    observation('OPEN', { fillBarTs: D0 + 2 * BAR_MS }),
+    D0 + 3 * BAR_MS
+  );
+  assert.equal(next.outcome, 'UPDATED');
+  assert.equal(next.records[0].moduleVersion, SHADOW_V1_LIVE_MODULE_VERSION);
+  assert.equal(SHADOW_V1_LIVE_MODULE_VERSION, 'shadowV1Live@3');
+
+  // Lo store e' puro: il file su disco non viene riscritto da `upsertObservation`.
+  assert.equal(fs.readFileSync(file, 'utf8'), raw, 'il file non viene riscritto');
+});
+
+test('P18b upsert: non terminale legacy -> terminale prende la versione corrente', () => {
+  const open = recordFrom(observation('OPEN', { fillBarTs: D0 + BAR_MS })) as unknown as Record<string, unknown>;
+  delete open.moduleVersion;
+  const seeded = [open as unknown as PersistedShadowV1LiveRecord];
+
+  const next = upsertObservation(
+    seeded,
+    observation('STOP', {
+      r: -1,
+      fillBarTs: D0 + BAR_MS,
+      exitBarTs: D0 + 2 * BAR_MS,
+      exitPrice: CTX.stop,
+    }),
+    D0 + 3 * BAR_MS
+  );
+  assert.equal(next.outcome, 'UPDATED');
+  assert.equal(next.records[0].status, 'STOP');
+  assert.equal(next.records[0].moduleVersion, 'shadowV1Live@3', 'l\'esito e\' del metodo nuovo');
+  assert.equal(seeded[0].moduleVersion, undefined, 'input non mutato');
+});
+
+test('P18b upsert: terminale legacy non viene ne\' aggiornato ne\' etichettato', () => {
+  const closed = recordFrom(
+    observation('STOP', { r: -1, exitBarTs: D0 + BAR_MS, exitPrice: CTX.stop })
+  ) as unknown as Record<string, unknown>;
+  delete closed.moduleVersion;
+  const seeded = [closed as unknown as PersistedShadowV1LiveRecord];
+
+  const next = upsertObservation(
+    seeded,
+    observation('STOP', { r: -1.5, exitBarTs: D0 + 2 * BAR_MS, exitPrice: 92.5 }),
+    D0 + 3 * BAR_MS
+  );
+  assert.equal(next.outcome, 'REJECTED_TERMINAL');
+  assert.equal(next.changed, false);
+  assert.equal(next.records[0].moduleVersion, undefined, 'terminale legacy intatto');
+  assert.equal(next.records[0].exitPrice, CTX.stop, 'nessuna riscrittura');
+});
+
+test('P18b upsert: UNCHANGED non tocca la versione del record legacy', () => {
+  const open = recordFrom(observation('OPEN', { fillBarTs: D0 + BAR_MS })) as unknown as Record<string, unknown>;
+  delete open.moduleVersion;
+  const seeded = [open as unknown as PersistedShadowV1LiveRecord];
+
+  const next = upsertObservation(
+    seeded,
+    observation('OPEN', { fillBarTs: D0 + BAR_MS }),
+    D0 + 9 * BAR_MS
+  );
+  assert.equal(next.outcome, 'UNCHANGED');
+  assert.equal(next.changed, false);
+  assert.equal(next.records[0].moduleVersion, undefined, 'payload identico: nessuna versione aggiunta');
+  assert.equal(next.records[0].updatedAtMs, seeded[0].updatedAtMs);
 });
 
 test('loadRecords: file illeggibile (directory al posto del file) non lancia', () => {

@@ -41,11 +41,19 @@ export const SHADOW_V1_LIVE_STORE_VERSION = 1;
  *
  * `shadowV1Live@1`: barre con `t > decidedAtMs`, stop in gap a −1 R fisso.
  * `shadowV1Live@2` (P18): barra della decisione utilizzabile (`t >= decidedAtMs`)
- * e stop in gap all'apertura con R di prezzo. I record gia' scritti conservano
- * la versione con cui sono nati: `@1` o assente = metodo precedente, mai
- * ricalcolati.
+ * e stop in gap all'apertura con R di prezzo, anche sulla barra di fill.
+ * `shadowV1Live@3` (P18b): come `@2`, ma il gap all'apertura vale solo sulle
+ * barre successive a quella di fill: una barra di fill che apre oltre lo stop
+ * esce a `stopLossLevel` con `r = −1` esatto (`@2` poteva registrare un R
+ * peggiore di −1).
+ *
+ * I record gia' scritti (`@2`, `@1` o senza campo) conservano la versione con cui
+ * sono nati: sono metodo precedente, non vengono ricalcolati ne' riscritti e le
+ * metriche li contano separatamente (`metricsLegacy`). Un record non terminale
+ * aggiornato dal collector prende invece la versione corrente, perche' l'esito
+ * che registra e' prodotto dal metodo nuovo.
  */
-export const SHADOW_V1_LIVE_MODULE_VERSION = 'shadowV1Live@2';
+export const SHADOW_V1_LIVE_MODULE_VERSION = 'shadowV1Live@3';
 
 /**
  * Percorso di produzione (E3). Non usato dalle funzioni: il chiamante lo passa
@@ -287,7 +295,11 @@ export function upsertObservation(
   }
 
   // Non terminale -> non terminale (OPEN dopo PENDING_FILL) oppure -> terminale.
-  // `decidedAtMs`, `firstSeenAtMs` e `moduleVersion` restano quelli della prima volta.
+  // `decidedAtMs` e `firstSeenAtMs` restano quelli della prima volta; la
+  // `moduleVersion` passa invece a quella corrente (P18b): l'esito appena
+  // registrato e' prodotto dal metodo nuovo, anche se il record era nato legacy.
+  // I terminali non si toccano (uscita anticipata sopra) e i record invariati non
+  // cambiano nulla (UNCHANGED).
   const updated: PersistedShadowV1LiveRecord = {
     ...existing,
     status: observation.status,
@@ -296,6 +308,7 @@ export function upsertObservation(
     fillBarTs: observation.fillBarTs,
     exitBarTs: observation.exitBarTs,
     exitPrice: observation.exitPrice,
+    moduleVersion: SHADOW_V1_LIVE_MODULE_VERSION,
     updatedAtMs: nowMs,
   };
   const next = [...records];
