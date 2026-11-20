@@ -71,11 +71,46 @@ export interface ShadowV1LiveMarksSummary {
   marks?: ShadowV1LiveMark[];
 }
 
+export interface ShadowV1NearMissBucketSummary {
+  gate: string;
+  label: string;
+  total: number;
+  resolved: number;
+  wins: number;
+  stops: number;
+  expired: number;
+  notFilled: number;
+  open: number;
+  winRatePct: number | null;
+  meanR: number | null;
+  sumR: number | null;
+}
+
+export interface ShadowV1NearMissSummary {
+  version?: number;
+  generatedAt?: string;
+  totalRecords: number;
+  byGate: ShadowV1NearMissBucketSummary[];
+  recent?: Array<{
+    id: string;
+    ticker: string;
+    market: 'EU' | 'US';
+    direction: 'LONG' | 'SHORT';
+    nearMissGate: string;
+    gateDetail: string;
+    score: number;
+    status: string;
+    r: number | null;
+  }>;
+  note?: string;
+}
+
 export interface ShadowV1LivePanelProps {
   data?: ShadowV1LiveViewResponse | null;
   v2?: ShadowV1LiveV2Summary | null;
   diagnostics?: ShadowV1LiveDiagnosticsSummary | null;
   liveMarks?: ShadowV1LiveMarksSummary | null;
+  v1NearMiss?: ShadowV1NearMissSummary | null;
   refreshSignal?: string | null;
   error?: string | null;
   loading?: boolean;
@@ -145,6 +180,7 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
   v2: v2Prop,
   diagnostics: diagnosticsProp,
   liveMarks: liveMarksProp,
+  v1NearMiss: v1NearMissProp,
   refreshSignal = null,
   error: errorProp,
   loading: loadingProp,
@@ -157,6 +193,7 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
   const [fetched, setFetched] = useState<ShadowV1LiveViewResponse | null>(null);
   const [v2Fetched, setV2Fetched] = useState<ShadowV1LiveV2Summary | null>(null);
   const [liveMarksFetched, setLiveMarksFetched] = useState<ShadowV1LiveMarksSummary | null>(null);
+  const [nearMissFetched, setNearMissFetched] = useState<ShadowV1NearMissSummary | null>(null);
   const [netError, setNetError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(live && enabled);
   const [tick, setTick] = useState(0);
@@ -172,7 +209,8 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
     }
   }, [refreshSignal, enabled, live, refresh]);
 
-  const shouldFetchLatest = v2Prop === undefined || liveMarksProp === undefined;
+  const shouldFetchLatest =
+    v2Prop === undefined || liveMarksProp === undefined || v1NearMissProp === undefined;
 
   useEffect(() => {
     if (!enabled || !live) return;
@@ -198,9 +236,11 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
           const shadowObj = shadow as {
             shadowV2?: ShadowV1LiveV2Summary;
             v1LiveMarks?: ShadowV1LiveMarksSummary;
+            v1NearMiss?: ShadowV1NearMissSummary;
           } | null;
           if (v2Prop === undefined) setV2Fetched(shadowObj?.shadowV2 ?? null);
           if (liveMarksProp === undefined) setLiveMarksFetched(shadowObj?.v1LiveMarks ?? null);
+          if (v1NearMissProp === undefined) setNearMissFetched(shadowObj?.v1NearMiss ?? null);
         }
         setLoading(false);
       })
@@ -213,13 +253,14 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
     return () => {
       alive = false;
     };
-  }, [enabled, live, shouldFetchLatest, v2Prop, liveMarksProp, fetchImpl, tick]);
+  }, [enabled, live, shouldFetchLatest, v2Prop, liveMarksProp, v1NearMissProp, fetchImpl, tick]);
 
   if (!enabled) return null;
 
   const data = live ? fetched : dataProp;
   const v2 = v2Prop !== undefined ? v2Prop : v2Fetched;
   const liveMarks = liveMarksProp !== undefined ? liveMarksProp : liveMarksFetched;
+  const v1NearMiss = v1NearMissProp !== undefined ? v1NearMissProp : nearMissFetched;
   const shownError = errorProp ?? netError;
   const isLoading = loadingProp ?? loading;
 
@@ -271,9 +312,16 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
       )}
 
       {!isLoading && !shownError && data && !data.available && (
-        <p className="text-xs text-amber-300" data-testid="v1live-unavailable">
-          vista non disponibile: {data.reason ?? 'motivo non dichiarato'}
-        </p>
+        <div className="space-y-1">
+          <p className="text-xs text-amber-300" data-testid="v1live-unavailable">
+            vista non disponibile: {data.reason ?? 'motivo non dichiarato'}
+          </p>
+          {data.reason === 'nessun file persistito' && (
+            <p className="text-[10px] text-slate-400">
+              Nessun TRADE V1 ancora emesso: i filtri G1-G13 e il veto ADX sono selettivi e registrano solo quando tutti i vincoli sono soddisfatti a mercato aperto. Controlla diagnostica e Near-Miss qui sotto.
+            </p>
+          )}
+        </div>
       )}
 
       {diagnosticsProp && (
@@ -309,6 +357,74 @@ export const ShadowV1LivePanel: React.FC<ShadowV1LivePanelProps> = ({
                   className="px-1.5 py-0.5 rounded bg-slate-950/80 border border-slate-800 text-[10px] text-slate-300"
                 >
                   <strong className="text-amber-300">{g.gate}</strong> {g.label}: {g.count}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {v1NearMiss && v1NearMiss.totalRecords > 0 && (
+        <div
+          className="rounded border border-indigo-900/50 bg-slate-900/60 p-2.5 space-y-2"
+          data-testid="v1live-nearmiss"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[10px] font-bold text-indigo-300">
+              Near-Miss V1 (setup bloccati da un solo filtro · {v1NearMiss.totalRecords} osservati)
+            </span>
+            <span className="text-[9px] text-slate-500">solo studio, nessun impatto operativo</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[10px] text-slate-300 font-mono">
+              <thead className="text-slate-500">
+                <tr>
+                  <th className="text-left font-normal">Filtro bloccante</th>
+                  <th className="text-right font-normal">Tot</th>
+                  <th className="text-right font-normal">Chiusi</th>
+                  <th className="text-right font-normal">V/S/Exp</th>
+                  <th className="text-right font-normal">Win%</th>
+                  <th className="text-right font-normal">R medio</th>
+                </tr>
+              </thead>
+              <tbody>
+                {v1NearMiss.byGate
+                  .filter((b) => b.total > 0)
+                  .map((b) => (
+                    <tr key={b.gate} className="border-t border-slate-800/80">
+                      <td className="py-1 font-sans text-slate-200">{b.label}</td>
+                      <td className="py-1 text-right">{b.total}</td>
+                      <td className="py-1 text-right">{b.resolved}</td>
+                      <td className="py-1 text-right text-slate-400">
+                        {b.wins}/{b.stops}/{b.expired}
+                      </td>
+                      <td className="py-1 text-right">{num(b.winRatePct, 1, '%')}</td>
+                      <td
+                        className={`py-1 text-right ${
+                          b.meanR != null
+                            ? b.meanR >= 0
+                              ? 'text-emerald-300'
+                              : 'text-rose-300'
+                            : 'text-slate-500'
+                        }`}
+                      >
+                        {b.meanR != null ? signed(b.meanR, 3, 'R') : 'n/d'}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+          {(v1NearMiss.recent?.length ?? 0) > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-0.5 text-[9px] font-mono text-slate-400">
+              {v1NearMiss.recent!.slice(0, 6).map((rm) => (
+                <span
+                  key={rm.id}
+                  className="px-1.5 py-0.5 rounded bg-slate-950/70 border border-slate-800"
+                >
+                  <strong className="text-slate-200">{rm.ticker}</strong> {rm.direction} ({rm.nearMissGate}) →{' '}
+                  {rm.status}
+                  {rm.r != null ? ` ${signed(rm.r, 2, 'R')}` : ''}
                 </span>
               ))}
             </div>

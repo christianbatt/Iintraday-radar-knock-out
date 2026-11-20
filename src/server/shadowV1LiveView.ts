@@ -96,8 +96,9 @@ export interface ShadowV1LiveViewRecord {
   exitBarTs: number | null;
   exitPrice: number | null;
   /**
-   * Metodo che ha prodotto il record (`shadowV1Live@2` = M2+M3); `null` per i
-   * record scritti prima dell'introduzione del campo, cioe' metodo v1.
+   * Metodo che ha prodotto il record (`shadowV1Live@3` = barra della decisione
+   * + stop in gap solo sopra il fill); qualunque valore precedente (`@2`, `@1`)
+   * o assente = record prodotto dal metodo precedente.
    * Sola lettura: la vista non ricalcola ne' riscrive nulla.
    */
   moduleVersion: string | null;

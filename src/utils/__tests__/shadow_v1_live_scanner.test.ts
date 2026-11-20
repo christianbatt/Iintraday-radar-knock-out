@@ -312,3 +312,101 @@ test('scanner server V1-live: scansioni concorrenti serializzano segnali e marks
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('scanner server V1-live: distingue MARKET_CLOSED_OR_STALE, rispetta veto ADX, preserva diagnostica off-hours e registra Near-Miss', async () => {
+  clearShadowV1LiveBarsForTest();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v1scan-upgrades-'));
+  const env = { SHADOW_V1_LIVE_COLLECT: '1' };
+  const reg = registerShadowV1LiveCollector({ post: () => undefined }, {
+    root: dir,
+    env,
+    timers: fakeTimers(),
+    now: () => D0,
+    fetchMissingBars: null,
+  });
+
+  try {
+    // 1. Titolo con reason STALE -> deve essere classificato MARKET_CLOSED_OR_STALE, non WARMUP_INCOMPLETE
+    const staleQuote = makeQuote({
+      ticker: 'ENI.MI',
+      market: 'EU',
+      currency: 'EUR',
+      setupIndicators: {
+        barsUsed: 0,
+        priorSessionsUsed: 0,
+        recentBars: [],
+        atr: { value: null, status: 'UNKNOWN', reason: 'STALE' },
+        supertrend: { status: 'UNKNOWN', reason: 'STALE', direction: 0, barsSinceFlip: null, value: null },
+        adx: { status: 'UNKNOWN', reason: 'STALE', value: null, plusDI: null, minusDI: null },
+        stochRsi: { status: 'UNKNOWN', reason: 'STALE', k: null, d: null, lastCross: 'NONE', barsSinceCross: null },
+        psar: { status: 'UNKNOWN', reason: 'STALE', value: null, direction: 0, barsSinceFlip: null },
+      },
+    });
+
+    // 2. Titolo con ADX borderline (16 < soglia US 20): veto score attivo -> bloccato e catturato in Near-Miss!
+    const borderlineAdxQuote = makeQuote({
+      ticker: 'MSFT',
+      gapPercent: 1.05,
+      currentPrice: 100.2,
+      setupIndicators: {
+        barsUsed: 60,
+        priorSessionsUsed: 3,
+        recentBars: [],
+        atr: { value: 0.4, status: 'OK', reason: null },
+        supertrend: { status: 'OK', reason: null, direction: 1, barsSinceFlip: 2, value: 99.2 },
+        adx: { status: 'OK', reason: null, value: 16.5, plusDI: 24, minusDI: 18 },
+        stochRsi: { status: 'OK', reason: null, k: 45, d: 35, lastCross: 'LONG', barsSinceCross: 1 },
+        psar: { status: 'OK', reason: null, direction: 1, barsSinceFlip: 2, value: 99.3 },
+      },
+    });
+
+    recordBarsForShadowV1Live('MSFT', 'US', makeBars(D0), D0, env);
+
+    const diag = await observeShadowV1LiveScan(
+      [staleQuote, borderlineAdxQuote],
+      { usa: { sp500: { changePercent: 0.5 } } },
+      { rootDir: dir, nowMs: D0, env }
+    );
+    assert.ok(diag);
+    assert.equal(diag.emittedThisScan, 0, 'veto ADX e dati stale non devono emettere TRADE');
+    assert.ok(
+      diag.gateCounts.some((g) => g.gate === 'MARKET_CLOSED_OR_STALE'),
+      'STALE deve essere classificato MARKET_CLOSED_OR_STALE'
+    );
+    assert.equal(
+      diag.gateCounts.some((g) => g.gate === 'WARMUP_INCOMPLETE'),
+      false,
+      'STALE non deve falsare WARMUP_INCOMPLETE'
+    );
+    assert.ok(
+      diag.gateCounts.some((g) => g.gate === 'ADX_BELOW_MARKET_THRESHOLD'),
+      'veto ADX deve comparire esplicitamente in gateCounts'
+    );
+
+    const latestAfterOpen = getShadowLatest({
+      fs: {
+        existsSync: (p) => fs.existsSync(path.join(dir, p)),
+        readFileSync: (p, enc) => fs.readFileSync(path.join(dir, p), enc),
+        readdirSync: (p) => fs.readdirSync(path.join(dir, p)),
+      },
+      artifactDir: 'artifacts',
+      registryPath: 'registry/ai_registry.jsonl',
+      deathcheckPath: 'artifacts/ai_deathcheck.json',
+      flags: { SETUP_SELECTOR_LIVE: 'off', STALENESS_USE_MARKET_TS: 'off' },
+    });
+    const nm = latestAfterOpen.body.v1NearMiss as { totalRecords: number; recent: Array<{ ticker: string; nearMissGate: string }> };
+    assert.ok(nm && nm.totalRecords >= 1, 'MSFT ADX 16.5 deve essere registrato in v1NearMiss');
+    assert.equal(nm.recent[0].ticker, 'MSFT');
+    assert.equal(nm.recent[0].nearMissGate, 'ADX_BORDERLINE');
+
+    // 3. Scansione notturna off-hours (03:00 UTC di lunedi'): non deve sovrascrivere scan_diagnostics.json dell ultima sessione aperta!
+    const offHoursMs = Date.UTC(2026, 2, 16, 3, 0, 0);
+    await observeShadowV1LiveScan([staleQuote], null, { rootDir: dir, nowMs: offHoursMs, env });
+    const persistedDiag = JSON.parse(fs.readFileSync(path.join(dir, SHADOW_V1_LIVE_DIAGNOSTICS_PATH), 'utf8'));
+    assert.equal(persistedDiag.lastScanAt, new Date(D0).toISOString(), 'off-hours non deve sovrascrivere la diagnostica della sessione aperta');
+  } finally {
+    reg.stop?.();
+    clearShadowV1LiveBarsForTest();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

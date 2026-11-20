@@ -117,6 +117,18 @@ export type ShadowPanelData = {
     dsrNote?: string;
     clusterBootstrapPValue: number | null;
     nDayClusters?: number;
+    experiments?: Array<{
+      id: string;
+      label: string;
+      description: string;
+      n: number;
+      wins: number;
+      winRatePct: number | null;
+      meanRGross: number | null;
+      meanRNet: number | null;
+      sumRNet: number | null;
+      profitFactor: number | null;
+    }>;
     limitations?: string[];
     recentSignals?: Array<{
       id: string;
@@ -133,6 +145,37 @@ export type ShadowPanelData = {
       rNet: number | null;
       totalFrictionR: number | null;
     }>;
+  } | null;
+  v1NearMiss?: {
+    version?: number;
+    generatedAt?: string;
+    totalRecords: number;
+    byGate: Array<{
+      gate: string;
+      label: string;
+      total: number;
+      resolved: number;
+      wins: number;
+      stops: number;
+      expired: number;
+      notFilled: number;
+      open: number;
+      winRatePct: number | null;
+      meanR: number | null;
+      sumR: number | null;
+    }>;
+    recent?: Array<{
+      id: string;
+      ticker: string;
+      market: 'EU' | 'US';
+      direction: 'LONG' | 'SHORT';
+      nearMissGate: string;
+      gateDetail: string;
+      score: number;
+      status: string;
+      r: number | null;
+    }>;
+    note?: string;
   } | null;
   v1LiveDiagnostics?: {
     lastScanAt?: string;
@@ -232,8 +275,13 @@ const V2_OUTCOME_IT: Record<string, { label: string; tone: string }> = {
 const V2_BLOCKED_IT: Record<string, string> = {
   UNDERLYING_SPREAD_TOO_HIGH: 'Scartato: spread titolo troppo alto',
   TOTAL_FRICTION_TOO_HIGH: 'Scartato: costi superiori al tetto',
+  FRICTION_TOO_HIGH_FOR_CAPITAL: 'Scartato: spese oltre il tetto capitale',
   VAR_SPREAD_TOO_HIGH: 'Scartato: spread certificato alto',
   NO_ELIGIBLE_LEVERAGE: 'Scartato: nessuna leva KO sicura',
+  KO_BARRIER_TOO_CLOSE: 'Scartato: barriera KO troppo vicina',
+  OPEN_GAP_BEYOND_STOP: 'Scartato: gap apertura oltre lo stop',
+  OPEN_GAP_TOO_WIDE: 'Scartato: gap apertura eccessivo',
+  INVALID_PRICE_OR_ATR: 'Scartato: prezzo o ATR non validi',
 };
 
 function describeV2Outcome(outcome: string, blockedReason: string | null): { label: string; tone: string } {
@@ -668,6 +716,65 @@ export const ShadowV2Section: React.FC<{ shadowV2?: ShadowPanelData['shadowV2'] 
             </div>
           </div>
 
+          {shadowV2.nResolved > 0 && (shadowV2.experiments?.length ?? 0) > 0 && (
+            <div
+              className="rounded-lg border border-slate-800 bg-slate-900/50 p-2.5 space-y-2"
+              data-testid="shadow-v2-experiments"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-[11px] font-bold text-indigo-200">
+                  Confronto varianti A/B sulle operazioni chiuse (IPOTESI — solo confronto esplorativo)
+                </div>
+                <span className="text-[10px] text-slate-500">simulazione deterministica a barre chiuse</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[10px] font-mono">
+                  <thead className="text-slate-500">
+                    <tr>
+                      <th className="text-left font-normal">Variante</th>
+                      <th className="text-right font-normal">n</th>
+                      <th className="text-right font-normal">Win%</th>
+                      <th className="text-right font-normal">Mean R Netto</th>
+                      <th className="text-right font-normal">Somma R Netta</th>
+                      <th className="text-right font-normal">PF</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shadowV2.experiments!.map((exp) => (
+                      <tr key={exp.id} className="border-t border-slate-800/80 text-slate-300">
+                        <td className="py-1 pr-2 font-sans">
+                          <div className="font-semibold text-white">{exp.label}</div>
+                          <div className="text-[9px] text-slate-500">{exp.description}</div>
+                        </td>
+                        <td className="py-1 text-right">{exp.n}</td>
+                        <td className="py-1 text-right">
+                          {exp.winRatePct != null ? `${exp.winRatePct.toFixed(1)}%` : 'n/d'}
+                        </td>
+                        <td
+                          className={`py-1 text-right font-bold ${
+                            exp.meanRNet != null
+                              ? exp.meanRNet >= 0
+                                ? 'text-emerald-300'
+                                : 'text-rose-300'
+                              : 'text-slate-500'
+                          }`}
+                        >
+                          {exp.meanRNet != null ? `${fmtSigned(exp.meanRNet, 3, 'R')}` : 'n/d'}
+                        </td>
+                        <td className="py-1 text-right">
+                          {exp.sumRNet != null ? `${fmtSigned(exp.sumRNet, 2, 'R')}` : 'n/d'}
+                        </td>
+                        <td className="py-1 text-right">
+                          {exp.profitFactor != null ? exp.profitFactor.toFixed(2) : 'n/d'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {recent.length > 0 && (
             <div className="max-h-56 overflow-auto border-t border-slate-900 pt-2">
               <div className="text-[10px] text-slate-400 mb-1">
@@ -790,9 +897,7 @@ export const ShadowResearchPanel: React.FC<{ data: ShadowPanelData | null }> = (
           <div className="mt-2 space-y-2">
             <div className="text-xs font-bold text-slate-300">Shadow Research offline</div>
             <p className="text-xs text-slate-400">
-              nessun artefatto{data?.reason ? ` (${data.reason})` : ''}: esegui{' '}
-              <code className="text-purple-300">bun scripts/shadow_report.ts</code> e{' '}
-              <code className="text-purple-300">bun scripts/ai_cycle.ts deathcheck</code>.
+              nessun artefatto offline presente{data?.reason ? ` (${data.reason})` : ''}: la raccolta automatica in tempo reale utilizza Shadow V2 e Shadow V1-live.
             </p>
             <PairedV1VsV2Section data={data} />
           </div>

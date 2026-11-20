@@ -27,7 +27,7 @@ import {
   VwapBar,
 } from './src/utils/calculator';
 import { computeVwapDataQuality, formatVwapDataQualityScan, calculateCandidateScore, adxThresholds } from './src/utils/calculator';
-import { computeSetupIndicators, loadWarmupBars, selectWarmupBars, WarmupSeriesResult } from './src/utils/indicators';
+import { computeSetupIndicators, filterRegularSessionBars, loadWarmupBars, selectWarmupBars, WarmupSeriesResult } from './src/utils/indicators';
 import { getExchangeDateStr, getMarketTime } from './src/utils/timezone';
 import { TRADING_PARAMS } from './src/config/tradingParams';
 import { VWAP_PROMPT_BLOCK } from './src/config/vwapPrompt';
@@ -37,6 +37,7 @@ import { runNightlyLearning } from './scripts/nightly_learning';
 import { authStartupWarning } from './src/utils/authStartupWarning';
 import { recordClosedBarsForShadowV2, observeShadowV2Scan, syncShadowV2SummaryFromDisk } from './src/server/shadowV2Collector';
 import {
+  flushShadowV1LiveBarsToDisk,
   recordBarsForShadowV1Live,
   registerShadowV1LiveCollector,
   shadowV1LiveBodyLimitErrorHandler,
@@ -44,7 +45,11 @@ import {
   SHADOW_V1_LIVE_OBSERVE_PATH,
 } from './src/server/shadowV1LiveCollector';
 import { registerShadowV1LiveViewRoute } from './src/server/shadowV1LiveView';
-import { readYahooCrumb, resolveYahooCrumbOnce, storeYahooCrumb } from './src/server/yahooCrumbCache';
+import {
+  DEFAULT_YAHOO_USER_AGENT,
+  fetchAndCacheYahooCrumb,
+  invalidateYahooCrumb,
+} from './src/server/yahooCrumbCache';
 import { observeShadowV1LiveScan } from './src/server/shadowV1LiveScanner';
 import {
   filterUnderlyingsForActiveMarkets,
@@ -1213,9 +1218,10 @@ async function getIntraday5mMetrics(
         droppedFutureBars: warmup.droppedFutureBars,
       });
 
-      const barsForShadowV2 = warmup.bars.length > inMemoryBars.length ? warmup.bars : inMemoryBars;
-      recordClosedBarsForShadowV2(ticker, market, barsForShadowV2);
-      recordBarsForShadowV1Live(ticker, market, barsForShadowV2);
+      const regularInMemoryBars = filterRegularSessionBars(inMemoryBars, market);
+      const barsForShadow = warmup.bars.length > regularInMemoryBars.length ? warmup.bars : regularInMemoryBars;
+      recordClosedBarsForShadowV2(ticker, market, barsForShadow);
+      recordBarsForShadowV1Live(ticker, market, barsForShadow, Date.now(), process.env, { deferDiskSave: true });
     } catch {
       setupIndicators = null;
     }
@@ -1268,36 +1274,10 @@ async function getIntraday5mMetrics(
 // Yahoo Finance Cookie + Crumb: cache canonica unica condivisa con il collector
 // V1-live (`src/server/yahooCrumbCache.ts`: TTL 30 minuti, coalescing richieste parallele).
 async function getYahooCrumb(forceRefresh: boolean = false): Promise<{ cookie: string; crumb: string } | null> {
-  if (!forceRefresh) {
-    const cached = readYahooCrumb();
-    if (cached) return cached;
-  }
-
-  return resolveYahooCrumbOnce(async () => {
-    try {
-      const cRes = await fetchWithTimeout('https://fc.yahoo.com', {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-      }, 3500);
-      const getSetCookie = (cRes.headers as any).getSetCookie;
-      const cookie = typeof getSetCookie === 'function'
-        ? getSetCookie.call(cRes.headers).map((c: string) => c.split(';')[0]).join('; ')
-        : (cRes.headers.get('set-cookie') || '').split(',')[0].split(';')[0];
-      if (!cookie) return null;
-
-      const crRes = await fetchWithTimeout('https://query1.finance.yahoo.com/v1/test/getcrumb', {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          Cookie: cookie,
-        },
-      }, 3500);
-      if (!crRes.ok) return null;
-      const crumb = (await crRes.text()).trim();
-      if (!crumb || crumb.startsWith('<')) return null;
-
-      return storeYahooCrumb({ cookie, crumb });
-    } catch {
-      return null;
-    }
+  return fetchAndCacheYahooCrumb({
+    forceRefresh,
+    userAgent: DEFAULT_YAHOO_USER_AGENT,
+    timeoutMs: 3500,
   });
 }
 
@@ -1362,6 +1342,7 @@ async function fetchEarningsInfoForTicker(
 
     let resp = await querySummary(auth);
     if (resp.status === 401 || resp.status === 403) {
+      invalidateYahooCrumb();
       auth = await getYahooCrumb(true);
       if (!auth) return empty;
       resp = await querySummary(auth);
@@ -2425,7 +2406,8 @@ async function executeMarketDataScan(underlyings: any[], bypass: boolean): Promi
     console.log(`[Setup score] log non disponibile: ${err?.message || err}`);
   }
 
-  // Shadow V2 & V1-live paralleli lato server: sola osservazione su tutto il paniere, zero impatto live.
+  // Flush singolo di bars.json a fine batch + Shadow V2 & V1-live paralleli lato server (zero impatto live).
+  flushShadowV1LiveBarsToDisk();
   observeShadowV2Scan(results);
   await observeShadowV1LiveScan(results, futuresScan);
   lastMarketScanAtMs = Date.now();

@@ -32,6 +32,7 @@ import { sessionCloseMsFor, sessionDateFor } from '../utils/sessionClose';
 import {
   loadRecords,
   observationFromResult,
+  shadowV1LiveTmpPath,
   toCoreInput,
   upsertObservation,
   writeRecordsAtomic,
@@ -44,10 +45,11 @@ import {
 } from './shadowV1LiveStore';
 import { archiveClosedMonths } from './shadowV1LiveRetention';
 import {
+  DEFAULT_YAHOO_USER_AGENT,
+  fetchAndCacheYahooCrumb,
+  invalidateYahooCrumb,
   readYahooCrumb,
   resetYahooCrumbCache,
-  resolveYahooCrumbOnce,
-  storeYahooCrumb,
   type YahooCrumbPair,
 } from './yahooCrumbCache';
 
@@ -186,7 +188,7 @@ export function saveShadowV1LiveBarsToDisk(barsPath: string): void {
   try {
     const dir = path.dirname(barsPath);
     fs.mkdirSync(dir, { recursive: true });
-    const tmpPath = `${barsPath}.tmp-${process.pid}`;
+    const tmpPath = shadowV1LiveTmpPath(barsPath);
     const payload = {
       version: 1,
       updatedAtMs: Date.now(),
@@ -198,6 +200,11 @@ export function saveShadowV1LiveBarsToDisk(barsPath: string): void {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`${WARN_PREFIX} salvataggio bars.json: ${message}`);
   }
+}
+
+export function flushShadowV1LiveBarsToDisk(): void {
+  if (!activeBarsDiskPath || barsByTicker.size === 0) return;
+  saveShadowV1LiveBarsToDisk(activeBarsDiskPath);
 }
 
 export function loadShadowV1LiveBarsFromDisk(
@@ -257,7 +264,8 @@ export function recordBarsForShadowV1Live(
   market: Market,
   rawBars: readonly ShadowV1LiveBar[],
   nowMs: number = Date.now(),
-  env: Record<string, string | undefined> | undefined = process.env
+  env: Record<string, string | undefined> | undefined = process.env,
+  options: { deferDiskSave?: boolean } = {}
 ): void {
   if (!isEnabled(env)) return;
   try {
@@ -270,7 +278,7 @@ export function recordBarsForShadowV1Live(
     if (trimmed.length === 0) return;
 
     barsByTicker.set(key, { ticker, market, bars: trimmed, updatedAt: nowMs });
-    if (activeBarsDiskPath) {
+    if (activeBarsDiskPath && !options.deferDiskSave) {
       saveShadowV1LiveBarsToDisk(activeBarsDiskPath);
     }
   } catch (err) {
@@ -508,48 +516,19 @@ export interface BarBackfillResult {
   authoritative: boolean;
 }
 
-const YAHOO_USER_AGENT =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const YAHOO_USER_AGENT = DEFAULT_YAHOO_USER_AGENT;
 
 async function getCollectorYahooCrumb(
   forceRefresh: boolean = false,
   nowMs: number = Date.now(),
   fetchImpl: typeof fetch = fetch
 ): Promise<YahooCrumbPair | null> {
-  if (!forceRefresh) {
-    const cached = readYahooCrumb(nowMs);
-    if (cached) return cached;
-  }
-
-  // Cache canonica unica (N6): la voce e' condivisa con `server.ts`.
-  return resolveYahooCrumbOnce(async () => {
-    try {
-      const cRes = await fetchImpl('https://fc.yahoo.com', {
-        headers: { 'User-Agent': YAHOO_USER_AGENT },
-        signal: AbortSignal.timeout(4_000),
-      });
-      const getSetCookie = (cRes.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
-      const cookie =
-        typeof getSetCookie === 'function'
-          ? getSetCookie.call(cRes.headers).map((c: string) => c.split(';')[0]).join('; ')
-          : (cRes.headers.get('set-cookie') || '').split(',')[0].split(';')[0];
-      if (!cookie) return null;
-
-      const crRes = await fetchImpl('https://query1.finance.yahoo.com/v1/test/getcrumb', {
-        headers: {
-          'User-Agent': YAHOO_USER_AGENT,
-          Cookie: cookie,
-        },
-        signal: AbortSignal.timeout(4_000),
-      });
-      if (!crRes.ok) return null;
-      const crumb = (await crRes.text()).trim();
-      if (!crumb || crumb.startsWith('<')) return null;
-
-      return storeYahooCrumb({ cookie, crumb }, nowMs);
-    } catch {
-      return null;
-    }
+  return fetchAndCacheYahooCrumb({
+    forceRefresh,
+    nowMs,
+    userAgent: YAHOO_USER_AGENT,
+    timeoutMs: 4_000,
+    fetchImpl,
   });
 }
 
@@ -583,6 +562,7 @@ export async function fetchYahooMissingBarsForShadowV1Live(
 
     let res = await queryChart(readYahooCrumb(nowMs));
     if (res.status === 401 || res.status === 403) {
+      invalidateYahooCrumb();
       const auth = await getCollectorYahooCrumb(true, nowMs, fetchImpl);
       if (auth) {
         res = await queryChart(auth);

@@ -7,6 +7,7 @@ import {
   MarketFreezeState,
 } from '../types/radar';
 import {
+  assessCostEfficiency,
   calculateKnockOutSafety,
   computeKoPresetFromLeverage,
   createDefaultSafetyCheck,
@@ -147,6 +148,13 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
   const koSafety: KnockOutSafetyCheck = setup
     ? calculateKnockOutSafety(setup, koInput)
     : createDefaultSafetyCheck(accountCapital, maxRiskPercent);
+
+  const currentRiskEur = Math.max(1, accountCapital * (maxRiskPercent / 100));
+  const liveCostEfficiency = assessCostEfficiency({
+    riskEur: currentRiskEur,
+    target1Multiplier: t1R,
+    brokerFeeEur: brokerFeeEur * 2,
+  });
 
   const dynamicBreakeven = koSafety.breakeven || setup?.dynamicBreakeven;
   const stressReport = koSafety.stressReport;
@@ -1124,6 +1132,28 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
               <span className="text-rose-300 truncate max-w-[280px]">
                 {setup.invalidationConditions[0]}
               </span>
+            </div>
+
+            {/* Trade Republic Cost Efficiency & Sizing Guard */}
+            <div
+              className={`rounded-xl p-2.5 text-[11px] font-mono border space-y-1 ${
+                liveCostEfficiency.status === 'EROSIVE'
+                  ? 'bg-rose-950/30 border-rose-800/60 text-rose-200'
+                  : liveCostEfficiency.status === 'HEAVY'
+                  ? 'bg-amber-950/30 border-amber-800/60 text-amber-200'
+                  : 'bg-emerald-950/20 border-emerald-800/40 text-emerald-200'
+              }`}
+              data-testid="hero-cost-efficiency"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold">{liveCostEfficiency.label}</span>
+                <span className="text-[10px] opacity-85 shrink-0">
+                  Rischio 1R: €{liveCostEfficiency.riskEur.toFixed(0)} · T1 netto ~{liveCostEfficiency.netTarget1R.toFixed(2)}R
+                </span>
+              </div>
+              {liveCostEfficiency.status !== 'OPTIMAL' && (
+                <div className="text-[10px] font-sans opacity-90">{liveCostEfficiency.tip}</div>
+              )}
             </div>
 
             {/* Trade Republic Knock-Out Risk Calculator Toggle */}

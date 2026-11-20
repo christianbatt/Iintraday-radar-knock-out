@@ -20,6 +20,7 @@ import {
   createObserveHandler,
   createShadowV1LiveStoreQueue,
   fetchYahooMissingBarsForShadowV1Live,
+  flushShadowV1LiveBarsToDisk,
   isShadowV1LiveOriginAllowed,
   observeShadowV1LiveFromServer,
   shadowV1LiveBodyLimitErrorHandler,
@@ -53,6 +54,8 @@ import {
   type ObserveResponse,
 } from '../../server/shadowV1LiveCollector';
 import {
+  fetchAndCacheYahooCrumb,
+  invalidateYahooCrumb,
   readYahooCrumb,
   resetYahooCrumbCache,
   resolveYahooCrumbOnce,
@@ -1044,7 +1047,7 @@ test('server.ts: una sola alimentazione barre e una sola registrazione', () => {
     fileURLToPath(new URL('../../../server.ts', import.meta.url)),
     'utf8'
   );
-  const feed = source.match(/recordBarsForShadowV1Live\(ticker, market, barsForShadowV2\);/g) ?? [];
+  const feed = source.match(/recordBarsForShadowV1Live\(/g) ?? [];
   assert.equal(feed.length, 1, 'una sola riga additiva di alimentazione');
   const registrations = source.match(/registerShadowV1LiveCollector\(app\);/g) ?? [];
   assert.equal(registrations.length, 1, 'una sola registrazione');
@@ -1057,7 +1060,8 @@ test('server.ts: una sola alimentazione barre e una sola registrazione', () => {
   );
   // La riga di alimentazione non crea timer ne' scritture: la funzione ritorna
   // subito a flag OFF (test dedicato sopra).
-  assert.ok(source.includes('recordBarsForShadowV1Live(ticker, market, barsForShadowV2);'));
+  assert.ok(source.includes('recordBarsForShadowV1Live(ticker, market, barsForShadow'));
+  assert.ok(source.includes('flushShadowV1LiveBarsToDisk();'));
   assert.ok(
     source.includes("app.post('/api/shadow/v1-live/observe', requireApiAuth);"),
     'route POST protegge /api/shadow/v1-live/observe con requireApiAuth'
@@ -2024,4 +2028,64 @@ test('P17 cold start: bars.json mancante carica 0 barre senza eccezioni', () => 
   });
   assert.equal(loaded, 0, 'nessuna barra caricata');
   assert.equal(fs.existsSync(barsPath), false, 'la lettura non crea il file');
+});
+
+test('fetchAndCacheYahooCrumb(forceRefresh) invalida il crumb revocato anche se il refresh fallisce', async () => {
+  resetYahooCrumbCache();
+  try {
+    storeYahooCrumb(crumbPair('revoked'), CRUMB_T0);
+    assert.equal(readYahooCrumb(CRUMB_T0)?.crumb, 'crumb-revoked');
+
+    const failFetch = (async () => ({ ok: false, status: 429, headers: { getSetCookie: () => [] }, text: async () => '' })) as unknown as typeof fetch;
+    const res = await fetchAndCacheYahooCrumb({ forceRefresh: true, fetchImpl: failFetch, nowMs: CRUMB_T0 + 1000 });
+    assert.equal(res, null);
+    assert.equal(readYahooCrumb(CRUMB_T0 + 1000), null, 'il crumb revocato non deve restare in cache dopo forceRefresh fallito');
+
+    storeYahooCrumb(crumbPair('manual'), CRUMB_T0);
+    invalidateYahooCrumb();
+    assert.equal(readYahooCrumb(CRUMB_T0), null);
+  } finally {
+    resetYahooCrumbCache();
+  }
+});
+
+test('recordBarsForShadowV1Live con deferDiskSave + flushShadowV1LiveBarsToDisk persiste una sola volta senza tmp residui', () => {
+  clearShadowV1LiveBarsForTest();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'v1live-defer-'));
+  tmpDirs.push(root);
+  const reg = registerShadowV1LiveCollector(
+    { post: () => undefined },
+    {
+      root,
+      env: ON,
+      timers: { setInterval: () => ({ unref: () => undefined }), clearInterval: () => undefined },
+      now: () => D0,
+      fetchMissingBars: null,
+    }
+  );
+  try {
+    const barsPath = path.join(root, SHADOW_V1_LIVE_BARS_PATH);
+    recordBarsForShadowV1Live(
+      'NVDA',
+      'US',
+      [{ t: D0 - BAR_MS, o: 100, h: 101, l: 99, c: 100.5 }],
+      D0,
+      ON,
+      { deferDiskSave: true }
+    );
+    assert.equal(fs.existsSync(barsPath), false, 'deferDiskSave non deve scrivere sincrono su disco prima del flush');
+
+    flushShadowV1LiveBarsToDisk();
+    assert.equal(fs.existsSync(barsPath), true, 'flushShadowV1LiveBarsToDisk deve scrivere bars.json');
+
+    const leftovers = fs.readdirSync(path.dirname(barsPath)).filter((f) => f.includes('.tmp-'));
+    assert.deepEqual(leftovers, []);
+
+    clearShadowV1LiveBarsForTest();
+    const loaded = loadShadowV1LiveBarsFromDisk(barsPath, D0);
+    assert.equal(loaded, 1);
+  } finally {
+    reg.stop?.();
+    clearShadowV1LiveBarsForTest();
+  }
 });

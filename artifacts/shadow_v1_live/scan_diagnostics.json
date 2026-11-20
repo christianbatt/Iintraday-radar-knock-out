@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "lastScanAt": "2026-11-20T01:23:23.297Z",
+  "scannedTickers": 40,
+  "evaluatedTickers": 40,
+  "emittedThisScan": 0,
+  "persistedThisScan": 0,
+  "blockedThisScan": 40,
+  "topEU": null,
+  "topUS": null,
+  "gateCounts": [
+    {
+      "gate": "WARMUP_INCOMPLETE",
+      "label": "Indicatori 5m ancora in warmup",
+      "count": 40
+    }
+  ],
+  "sampleCandidates": [
+    {
+      "ticker": "RACE.MI",
+      "market": "EU",
+      "score": 22,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "AAPL",
+      "market": "US",
+      "score": 18,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "MSFT",
+      "market": "US",
+      "score": 18,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "NVDA",
+      "market": "US",
+      "score": 18,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "ASML.AS",
+      "market": "EU",
+      "score": 17,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "SAP.DE",
+      "market": "EU",
+      "score": 12,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "QCOM",
+      "market": "US",
+      "score": 12,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "HOOD",
+      "market": "US",
+      "score": 12,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "ISP.MI",
+      "market": "EU",
+      "score": 12,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "MU",
+      "market": "US",
+      "score": 12,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "MSTR",
+      "market": "US",
+      "score": 12,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "GOOGL",
+      "market": "US",
+      "score": 12,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    }
+  ]
+}

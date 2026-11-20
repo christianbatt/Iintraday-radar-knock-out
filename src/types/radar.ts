@@ -413,6 +413,18 @@ export interface ExecutionSetup {
     label: string;
     description: string;
   } | null;
+  costEfficiency?: CostEfficiencyReport | null;
+}
+
+export interface CostEfficiencyReport {
+  riskEur: number;
+  brokerFeeEur: number;
+  feeImpactR: number;
+  netTarget1R: number;
+  minRecommendedRiskEur: number;
+  status: 'OPTIMAL' | 'HEAVY' | 'EROSIVE';
+  label: string;
+  tip: string;
 }
 
 export interface PnLScenario {

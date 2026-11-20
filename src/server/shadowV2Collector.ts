@@ -8,6 +8,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import type { IndicatorBarInput, RawQuoteData } from '../types/radar';
 import {
   evaluateShadowV2OnBars,
@@ -28,6 +29,34 @@ const recentBarsStore = new Map<string, StoredBarsEntry>();
 
 const MAX_BARS_PER_TICKER = 600;
 
+function barsStoreKey(ticker: string, market: 'EU' | 'US'): string {
+  return `${market}|${ticker}`;
+}
+
+function mergeClosedBarsV2(
+  existing: readonly IndicatorBarInput[],
+  incoming: readonly IndicatorBarInput[],
+  nowMs: number
+): IndicatorBarInput[] {
+  const byTs = new Map<number, IndicatorBarInput>();
+  const accept = (b: IndicatorBarInput) => {
+    if (
+      b &&
+      Number.isFinite(b.t) &&
+      b.t > 0 &&
+      b.t + SHADOW_V2_BAR_MS <= nowMs &&
+      [b.o, b.h, b.l, b.c].every((v) => typeof v === 'number' && Number.isFinite(v) && v > 0) &&
+      b.h >= b.l
+    ) {
+      byTs.set(b.t, { t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v });
+    }
+  };
+  for (const b of existing) accept(b);
+  for (const b of incoming) accept(b);
+  const merged = Array.from(byTs.values()).sort((a, b) => a.t - b.t);
+  return merged.length > MAX_BARS_PER_TICKER ? merged.slice(-MAX_BARS_PER_TICKER) : merged;
+}
+
 /** Memorizza barre 5m reali gia' chiuse per un ticker (zero look-ahead). */
 export function recordClosedBarsForShadowV2(
   ticker: string,
@@ -37,31 +66,12 @@ export function recordClosedBarsForShadowV2(
 ): void {
   try {
     if (!ticker || !Array.isArray(rawBars) || rawBars.length === 0) return;
+    const key = barsStoreKey(ticker, market);
+    const existing = recentBarsStore.get(key)?.bars ?? [];
+    const trimmed = mergeClosedBarsV2(existing, rawBars, nowMs);
+    if (trimmed.length === 0) return;
 
-    const existing = recentBarsStore.get(ticker)?.bars ?? [];
-    const byTs = new Map<number, IndicatorBarInput>();
-
-    for (const b of existing) {
-      if (Number.isFinite(b.t) && b.t > 0 && b.t + SHADOW_V2_BAR_MS <= nowMs) {
-        byTs.set(b.t, b);
-      }
-    }
-    for (const b of rawBars) {
-      if (
-        Number.isFinite(b.t) &&
-        b.t > 0 &&
-        b.t + SHADOW_V2_BAR_MS <= nowMs &&
-        [b.o, b.h, b.l, b.c].every((v) => typeof v === 'number' && Number.isFinite(v) && v > 0)
-      ) {
-        byTs.set(b.t, { t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v });
-      }
-    }
-
-    const merged = Array.from(byTs.values()).sort((a, b) => a.t - b.t);
-    const trimmed =
-      merged.length > MAX_BARS_PER_TICKER ? merged.slice(-MAX_BARS_PER_TICKER) : merged;
-
-    recentBarsStore.set(ticker, {
+    recentBarsStore.set(key, {
       ticker,
       market,
       bars: trimmed,
@@ -69,6 +79,64 @@ export function recordClosedBarsForShadowV2(
     });
   } catch {
     // Non interferisce mai con il flusso principale di scansione
+  }
+}
+
+export function loadShadowV2BarsFromDisk(
+  rootDir: string = process.cwd(),
+  nowMs: number = Date.now()
+): number {
+  const barsPath = path.join(rootDir, 'artifacts', 'shadow_v2', 'bars.json');
+  if (!fs.existsSync(barsPath)) return 0;
+  try {
+    const raw = JSON.parse(fs.readFileSync(barsPath, 'utf8')) as {
+      entries?: StoredBarsEntry[];
+    } | null;
+    if (!raw || !Array.isArray(raw.entries)) return 0;
+    let loaded = 0;
+    for (const entry of raw.entries) {
+      if (
+        !entry ||
+        typeof entry.ticker !== 'string' ||
+        (entry.market !== 'EU' && entry.market !== 'US') ||
+        !Array.isArray(entry.bars)
+      ) {
+        continue;
+      }
+      const key = barsStoreKey(entry.ticker, entry.market);
+      const existing = recentBarsStore.get(key)?.bars ?? [];
+      const merged = mergeClosedBarsV2(existing, entry.bars, nowMs);
+      if (merged.length > 0) {
+        recentBarsStore.set(key, {
+          ticker: entry.ticker,
+          market: entry.market,
+          bars: merged,
+          updatedAt: typeof entry.updatedAt === 'number' ? entry.updatedAt : nowMs,
+        });
+        loaded += 1;
+      }
+    }
+    return loaded;
+  } catch {
+    return 0;
+  }
+}
+
+export function saveShadowV2BarsToDisk(
+  rootDir: string = process.cwd(),
+  nowMs: number = Date.now()
+): void {
+  if (recentBarsStore.size === 0) return;
+  try {
+    const barsPath = path.join(rootDir, 'artifacts', 'shadow_v2', 'bars.json');
+    const payload = {
+      version: 1,
+      updatedAt: new Date(nowMs).toISOString(),
+      entries: Array.from(recentBarsStore.values()),
+    };
+    writeFileAtomic(barsPath, JSON.stringify(payload));
+  } catch {
+    // non bloccante
   }
 }
 
@@ -98,7 +166,7 @@ export function loadShadowV2Records(signalsPath: string): ShadowV2Record[] {
 function writeFileAtomic(targetPath: string, content: string): void {
   const dir = path.dirname(targetPath);
   fs.mkdirSync(dir, { recursive: true });
-  const tmpPath = `${targetPath}.tmp-${process.pid}`;
+  const tmpPath = `${targetPath}.tmp-${process.pid}-${randomUUID()}`;
   fs.writeFileSync(tmpPath, content, 'utf8');
   fs.renameSync(tmpPath, targetPath);
 }
@@ -111,13 +179,16 @@ function isSummaryOutOfSync(
   try {
     const raw = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as Partial<ShadowV2Summary> | null;
     if (!raw || typeof raw !== 'object') return true;
+    const rawExpCount = Array.isArray(raw.experiments) ? raw.experiments.length : 0;
+    const expCount = Array.isArray(expected.experiments) ? expected.experiments.length : 0;
     return (
       raw.nSignals !== expected.nSignals ||
       raw.nResolved !== expected.nResolved ||
       raw.nOpen !== expected.nOpen ||
       raw.nPendingOpen !== expected.nPendingOpen ||
       raw.nBlocked !== expected.nBlocked ||
-      raw.nSessions !== expected.nSessions
+      raw.nSessions !== expected.nSessions ||
+      rawExpCount !== expCount
     );
   } catch {
     return true;
@@ -126,13 +197,15 @@ function isSummaryOutOfSync(
 
 /**
  * Riallinea `artifacts/shadow_v2/summary.json` con `signals.jsonl` se mancante,
- * corrotto o desincronizzato (es. server riavviato o segnale pregresso su disco).
+ * corrotto o desincronizzato (es. server riavviato o segnale pregresso su disco)
+ * e idrata `recentBarsStore` da `artifacts/shadow_v2/bars.json`.
  */
 export function syncShadowV2SummaryFromDisk(
   rootDir: string = process.cwd(),
   nowMs: number = Date.now()
 ): ShadowV2Summary | null {
   try {
+    loadShadowV2BarsFromDisk(rootDir, nowMs);
     const outDir = path.join(rootDir, 'artifacts', 'shadow_v2');
     const signalsPath = path.join(outDir, 'signals.jsonl');
     const summaryPath = path.join(outDir, 'summary.json');
@@ -152,7 +225,7 @@ export function syncShadowV2SummaryFromDisk(
 
 /**
  * Esegue valutazione Shadow V2 sulle barre reali accumulate dopo una scansione,
- * aggiorna `artifacts/shadow_v2/signals.jsonl` e `artifacts/shadow_v2/summary.json`.
+ * aggiorna `artifacts/shadow_v2/signals.jsonl`, `summary.json` e `bars.json`.
  */
 export function observeShadowV2Scan(
   quotes: readonly Pick<RawQuoteData, 'ticker' | 'market'>[],
@@ -180,11 +253,11 @@ export function observeShadowV2Scan(
 
     let changed = false;
 
-    for (const [ticker, entry] of recentBarsStore.entries()) {
-      if (scanTickers.size > 0 && !scanTickers.has(ticker) && !openTickers.has(ticker)) {
+    for (const entry of recentBarsStore.values()) {
+      if (scanTickers.size > 0 && !scanTickers.has(entry.ticker) && !openTickers.has(entry.ticker)) {
         continue;
       }
-      const computed = evaluateShadowV2OnBars(ticker, entry.market, entry.bars, { nowMs });
+      const computed = evaluateShadowV2OnBars(entry.ticker, entry.market, entry.bars, { nowMs });
       for (const rec of computed) {
         const prev = byId.get(rec.id);
         if (!prev) {
@@ -200,12 +273,17 @@ export function observeShadowV2Scan(
             byId.set(rec.id, rec);
             changed = true;
           }
+        } else if (prev.status === 'RESOLVED' && !prev.altOutcomes && rec.altOutcomes) {
+          byId.set(rec.id, { ...prev, altOutcomes: rec.altOutcomes });
+          changed = true;
         }
       }
     }
 
     const allRecords = Array.from(byId.values()).sort((a, b) => a.signalBarTs - b.signalBarTs);
     const summary = summarizeShadowV2(allRecords, new Date(nowMs).toISOString());
+
+    saveShadowV2BarsToDisk(rootDir, nowMs);
 
     if (changed) {
       const jsonl = allRecords.map((r) => JSON.stringify(r)).join('\n') + (allRecords.length ? '\n' : '');

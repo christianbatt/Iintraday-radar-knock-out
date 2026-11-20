@@ -2030,6 +2030,7 @@ export function buildExecutionSetup(
     customLeve?: readonly number[];
     macroEvents?: MacroEvent[];
     macroCalendar?: MacroCalendarState;
+    riskEur?: number;
     // I2b: override per-esecuzione del flag STALENESS_USE_MARKET_TS. Assente =
     // si legge la costante di config (default 'off').
     stalenessFlag?: 'on' | 'off';
@@ -2476,7 +2477,66 @@ export function buildExecutionSetup(
     overnightWarning,
     orderFlow: quote.orderFlow ?? null,
     earningsWarning,
+    costEfficiency: assessCostEfficiency({
+      riskEur: options?.riskEur ?? 10,
+      target1Multiplier: t1Multiplier,
+    }),
   }, options?.macroCalendar, SETUP_SELECTOR_LIVE === 'on');
+}
+
+export function assessCostEfficiency(input: {
+  riskEur: number;
+  target1Multiplier: number;
+  brokerFeeEur?: number;
+}): NonNullable<ExecutionSetup['costEfficiency']> {
+  const safeRiskEur = Number.isFinite(input.riskEur) && input.riskEur > 0 ? input.riskEur : 10;
+  const brokerFeeEur =
+    Number.isFinite(input.brokerFeeEur) && (input.brokerFeeEur ?? 0) >= 0
+      ? (input.brokerFeeEur as number)
+      : 2.0;
+  const t1R =
+    Number.isFinite(input.target1Multiplier) && input.target1Multiplier > 0
+      ? input.target1Multiplier
+      : TRADING_PARAMS.T1_R;
+
+  const feeImpactR = +(brokerFeeEur / safeRiskEur).toFixed(3);
+  const netTarget1R = +(t1R - feeImpactR).toFixed(2);
+  const minRecommendedRiskEur = Math.max(20, Math.ceil(brokerFeeEur / 0.1));
+
+  if (feeImpactR >= 0.25) {
+    return {
+      riskEur: +safeRiskEur.toFixed(2),
+      brokerFeeEur,
+      feeImpactR,
+      netTarget1R,
+      minRecommendedRiskEur,
+      status: 'EROSIVE',
+      label: `Fee €${brokerFeeEur.toFixed(2)} = ${(feeImpactR * 100).toFixed(0)}% di 1R (erosione critica)`,
+      tip: `Con rischio €${safeRiskEur.toFixed(0)} la commissione fissa assorbe ${(feeImpactR * 100).toFixed(0)}% del rischio (T1 netto ${netTarget1R.toFixed(2)}R). Porta il rischio a ≥ €${minRecommendedRiskEur}/trade (fee ≤ 10%).`,
+    };
+  }
+  if (feeImpactR >= 0.12) {
+    return {
+      riskEur: +safeRiskEur.toFixed(2),
+      brokerFeeEur,
+      feeImpactR,
+      netTarget1R,
+      minRecommendedRiskEur,
+      status: 'HEAVY',
+      label: `Fee €${brokerFeeEur.toFixed(2)} = ${(feeImpactR * 100).toFixed(0)}% di 1R (incidenza elevata)`,
+      tip: `T1 lordo ${t1R.toFixed(2)}R → netto ~${netTarget1R.toFixed(2)}R dopo commissioni TR. Con rischio ≥ €${minRecommendedRiskEur}/trade la fee scende sotto il 10%.`,
+    };
+  }
+  return {
+    riskEur: +safeRiskEur.toFixed(2),
+    brokerFeeEur,
+    feeImpactR,
+    netTarget1R,
+    minRecommendedRiskEur,
+    status: 'OPTIMAL',
+    label: `Fee €${brokerFeeEur.toFixed(2)} = ${(feeImpactR * 100).toFixed(0)}% di 1R (efficiente)`,
+    tip: `Impatto commissioni contenuto (T1 netto ~${netTarget1R.toFixed(2)}R prima dello spread bid/ask).`,
+  };
 }
 
 export function evaluateEarningsRisk(

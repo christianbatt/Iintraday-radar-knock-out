@@ -90,6 +90,26 @@ export type ShadowV2TriggerType = 'CUSUM_DISPLACEMENT' | 'FAILED_GAP_REVERSAL';
 export type ShadowV2Status = 'PENDING_OPEN' | 'OPEN' | 'RESOLVED' | 'BLOCKED';
 export type ShadowV2Outcome = 'TARGET_1' | 'STOP' | 'KO_HIT' | 'TIME_BARRIER' | 'OPEN' | 'PENDING' | 'BLOCKED';
 
+export interface ShadowV2AltOutcome {
+  outcome: ShadowV2Outcome;
+  rGross: number;
+  rNet: number;
+  barsHeld: number;
+}
+
+export interface ShadowV2ExperimentSummary {
+  id: 'BASE_1K' | 'CAPITAL_2500' | 'COST_AWARE_FILTER' | 'TRAIL_BE_120M';
+  label: string;
+  description: string;
+  n: number;
+  wins: number;
+  winRatePct: number | null;
+  meanRGross: number | null;
+  meanRNet: number | null;
+  sumRNet: number | null;
+  profitFactor: number | null;
+}
+
 export interface ShadowV2Record {
   id: string;
   ticker: string;
@@ -120,6 +140,9 @@ export interface ShadowV2Record {
   varSpreadR: number | null;
   totalFrictionR: number | null;
   totalFrictionR2500: number | null;
+  altOutcomes?: {
+    trailBe120m?: ShadowV2AltOutcome;
+  };
   diagnostics: {
     vwapAtSignal: number | null;
     atr5mAtSignal: number | null;
@@ -156,6 +179,7 @@ export interface ShadowV2Summary {
   dsrNote: string;
   clusterBootstrapPValue: number | null;
   nDayClusters: number;
+  experiments?: ShadowV2ExperimentSummary[];
   hypotheses: typeof SHADOW_V2_HYPOTHESES;
   limitations: string[];
   recentSignals: ShadowV2Record[];
@@ -931,6 +955,122 @@ export function evaluateShadowV2OnBars(
       isResolved && exitPrice != null ? +(((dir * (exitPrice - entryPrice)) / riskDist).toFixed(4)) : null;
     const rNet = rGross != null && totalFrictionR != null ? +((rGross - totalFrictionR).toFixed(4)) : null;
 
+    // Simulazione controfattuale A/B (IPOTESI): breakeven +0.05R dopo +0.80R,
+    // trailing +0.55R dopo +1.10R e estensione finestra a 120m solo se > +0.25R a 90m.
+    let trailBe120m: ShadowV2AltOutcome | undefined;
+    if (isResolved && totalFrictionR != null) {
+      let altStop = structuralStop;
+      let altOutcome: ShadowV2Outcome = 'OPEN';
+      let altExitPrice: number | null = null;
+      let altBarsHeld = 0;
+      const altMaxVertical = 24; // 120 minuti
+      const altMaxIdx = Math.min(closed.length - 1, entryIdx + altMaxVertical - 1);
+
+      for (let k = entryIdx; k <= altMaxIdx; k++) {
+        const barK = closed[k];
+        if (getExchangeDateStr(market, new Date(barK.t)) !== sess) {
+          const prevBar = closed[k - 1];
+          altOutcome = 'TIME_BARRIER';
+          altExitPrice = prevBar.c;
+          break;
+        }
+        altBarsHeld++;
+
+        if (dir === 1) {
+          if (barK.o <= barrier) {
+            altOutcome = 'KO_HIT';
+            altExitPrice = barK.o;
+            break;
+          }
+          if (barK.o <= altStop) {
+            altOutcome = 'STOP';
+            altExitPrice = barK.o;
+            break;
+          }
+          if (barK.l <= barrier) {
+            altOutcome = 'KO_HIT';
+            altExitPrice = barrier;
+            break;
+          }
+          if (barK.l <= altStop) {
+            altOutcome = 'STOP';
+            altExitPrice = altStop;
+            break;
+          }
+          if (barK.h >= target1) {
+            altOutcome = 'TARGET_1';
+            altExitPrice = target1;
+            break;
+          }
+        } else {
+          if (barK.o >= barrier) {
+            altOutcome = 'KO_HIT';
+            altExitPrice = barK.o;
+            break;
+          }
+          if (barK.o >= altStop) {
+            altOutcome = 'STOP';
+            altExitPrice = barK.o;
+            break;
+          }
+          if (barK.h >= barrier) {
+            altOutcome = 'KO_HIT';
+            altExitPrice = barrier;
+            break;
+          }
+          if (barK.h >= altStop) {
+            altOutcome = 'STOP';
+            altExitPrice = altStop;
+            break;
+          }
+          if (barK.l <= target1) {
+            altOutcome = 'TARGET_1';
+            altExitPrice = target1;
+            break;
+          }
+        }
+
+        const closeR = (dir * (barK.c - entryPrice)) / riskDist;
+        const barMin = exchangeMinutes(barK.t, market);
+        if (barMin >= closeLimitMin) {
+          altOutcome = 'TIME_BARRIER';
+          altExitPrice = barK.c;
+          break;
+        }
+        // A 90 minuti (barra 18): estende fino a 120m solo se in trend positivo > +0.25R
+        if (altBarsHeld === SHADOW_V2_HYPOTHESES.VERTICAL_BARS && closeR <= 0.25) {
+          altOutcome = 'TIME_BARRIER';
+          altExitPrice = barK.c;
+          break;
+        }
+        if (altBarsHeld === altMaxVertical) {
+          altOutcome = 'TIME_BARRIER';
+          altExitPrice = barK.c;
+          break;
+        }
+
+        // Aggiornamento trailing solo a chiusura barra per evitare look-ahead intrabarra
+        if (closeR >= 1.10) {
+          const lockStop = entryPrice + dir * 0.55 * riskDist;
+          altStop = dir === 1 ? Math.max(altStop, lockStop) : Math.min(altStop, lockStop);
+        } else if (closeR >= 0.80) {
+          const beStop = entryPrice + dir * 0.05 * riskDist;
+          altStop = dir === 1 ? Math.max(altStop, beStop) : Math.min(altStop, beStop);
+        }
+      }
+
+      if (altOutcome !== 'OPEN' && altExitPrice != null) {
+        const altRGross = +(((dir * (altExitPrice - entryPrice)) / riskDist).toFixed(4));
+        const altRNet = +((altRGross - totalFrictionR).toFixed(4));
+        trailBe120m = {
+          outcome: altOutcome,
+          rGross: altRGross,
+          rNet: altRNet,
+          barsHeld: altBarsHeld,
+        };
+      }
+    }
+
     records.push({
       id: recordId,
       ticker,
@@ -961,6 +1101,7 @@ export function evaluateShadowV2OnBars(
       varSpreadR,
       totalFrictionR,
       totalFrictionR2500,
+      ...(trailBe120m ? { altOutcomes: { trailBe120m } } : {}),
       diagnostics: baseDiagnostics,
     });
 
@@ -1069,6 +1210,89 @@ export function summarizeShadowV2(records: readonly ShadowV2Record[], generatedA
     limitations.push(`Campione ridotto (n=${resolved.length} trade risolti): le metriche statistiche non sono ancora inferenziali.`);
   }
 
+  const buildExperiment = (
+    id: ShadowV2ExperimentSummary['id'],
+    label: string,
+    description: string,
+    items: ReadonlyArray<{ rGross: number; rNet: number }>
+  ): ShadowV2ExperimentSummary => {
+    const n = items.length;
+    if (n === 0) {
+      return {
+        id,
+        label,
+        description,
+        n: 0,
+        wins: 0,
+        winRatePct: null,
+        meanRGross: null,
+        meanRNet: null,
+        sumRNet: null,
+        profitFactor: null,
+      };
+    }
+    const w = items.filter((x) => x.rNet > 0).length;
+    const sumG = items.reduce((a, x) => a + x.rGross, 0);
+    const sumN = items.reduce((a, x) => a + x.rNet, 0);
+    const gp = items.filter((x) => x.rNet > 0).reduce((a, x) => a + x.rNet, 0);
+    const gl = Math.abs(items.filter((x) => x.rNet < 0).reduce((a, x) => a + x.rNet, 0));
+    return {
+      id,
+      label,
+      description,
+      n,
+      wins: w,
+      winRatePct: +((w / n) * 100).toFixed(1),
+      meanRGross: +(sumG / n).toFixed(4),
+      meanRNet: +(sumN / n).toFixed(4),
+      sumRNet: +sumN.toFixed(4),
+      profitFactor: gl > 0 ? +(gp / gl).toFixed(3) : null,
+    };
+  };
+
+  const expBase = buildExperiment(
+    'BASE_1K',
+    'Base attuale (€1.000 · 90m)',
+    'Rischio €10/trade, fee €2 (0,20R) + spread, uscita fissa a Target 1.35R / Stop / 90m.',
+    resolved.map((r) => ({ rGross: r.rGross!, rNet: r.rNet! }))
+  );
+
+  const expCap2500 = buildExperiment(
+    'CAPITAL_2500',
+    'Sizing €2.500 (rischio €25)',
+    'Identici ingressi e uscite ma rischio €25/trade: la fee €2 scende da 0,20R a 0,08R.',
+    resolved.map((r) => {
+      const f2500 = r.totalFrictionR2500 ?? r.totalFrictionR ?? 0;
+      return { rGross: r.rGross!, rNet: +(r.rGross! - f2500).toFixed(4) };
+    })
+  );
+
+  const expCostFilter = buildExperiment(
+    'COST_AWARE_FILTER',
+    'Filtro Costi <= 0,22R',
+    'Esclude gli ingressi in cui commissioni + spread erodono oltre il 22% del rischio iniziale.',
+    resolved
+      .filter((r) => (r.totalFrictionR ?? 1) <= 0.22)
+      .map((r) => ({ rGross: r.rGross!, rNet: r.rNet! }))
+  );
+
+  const expTrail120 = buildExperiment(
+    'TRAIL_BE_120M',
+    'Trailing BE + Finestra 120m',
+    'Stop a +0,05R dopo +0,80R (lock +0,55R dopo +1,10R) e estensione a 120m solo se > +0,25R a 90m.',
+    resolved
+      .map((r) => r.altOutcomes?.trailBe120m)
+      .filter((a): a is ShadowV2AltOutcome => a != null)
+      .map((a) => ({ rGross: a.rGross, rNet: a.rNet }))
+  );
+
+  const experiments: ShadowV2ExperimentSummary[] = [
+    expBase,
+    expCap2500,
+    expCostFilter,
+    expTrail120,
+  ];
+
   return {
     strategyName: 'Shadow V2 — CUSUM Displacement + VWAP Pullback-Reclaim (KO Vol-Matched)',
     generatedAt,
@@ -1093,6 +1317,7 @@ export function summarizeShadowV2(records: readonly ShadowV2Record[], generatedA
     dsrNote: dsrRes.note,
     clusterBootstrapPValue: boot.pValue,
     nDayClusters: boot.nDayClusters,
+    experiments,
     hypotheses: SHADOW_V2_HYPOTHESES,
     limitations,
     recentSignals: [...records].sort((a, b) => b.signalBarTs - a.signalBarTs).slice(0, 25),

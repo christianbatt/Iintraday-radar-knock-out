@@ -85,13 +85,14 @@ export function getShadowLatest(deps: ShadowDeps): ShadowResponse {
   const shadowV2 = readJsonSafe(deps.fs, `${deps.artifactDir}/shadow_v2/summary.json`);
   const v1LiveDiagnostics = readJsonSafe(deps.fs, `${deps.artifactDir}/shadow_v1_live/scan_diagnostics.json`);
   const v1LiveMarks = readJsonSafe(deps.fs, `${deps.artifactDir}/${SHADOW_V1_LIVE_MARKS_RELATIVE_PATH}`);
+  const v1NearMiss = readJsonSafe(deps.fs, `${deps.artifactDir}/shadow_v1_live/near_miss_summary.json`);
   const path = latestShadowPath(deps.fs, deps.artifactDir);
   if (path === null) {
-    return { status: 200, body: { ...MISSING, reason: 'nessun artefatto', shadowV2, v1LiveDiagnostics, v1LiveMarks, flags: deps.flags } };
+    return { status: 200, body: { ...MISSING, reason: 'nessun artefatto', shadowV2, v1LiveDiagnostics, v1LiveMarks, v1NearMiss, flags: deps.flags } };
   }
   const artifact = readJsonSafe(deps.fs, path);
   if (artifact === null) {
-    return { status: 200, body: { ...MISSING, reason: 'artefatto illeggibile', shadowV2, v1LiveDiagnostics, v1LiveMarks, flags: deps.flags } };
+    return { status: 200, body: { ...MISSING, reason: 'artefatto illeggibile', shadowV2, v1LiveDiagnostics, v1LiveMarks, v1NearMiss, flags: deps.flags } };
   }
   const deathcheck = readJsonSafe(deps.fs, deps.deathcheckPath);
   return {
@@ -112,6 +113,7 @@ export function getShadowLatest(deps: ShadowDeps): ShadowResponse {
       shadowV2,
       v1LiveDiagnostics,
       v1LiveMarks,
+      v1NearMiss,
       limitations: artifact.limitations ?? [],
       registry: registryCounts(deps.fs, deps.registryPath),
       flags: deps.flags,

@@ -33,6 +33,8 @@ import {
   runInShadowV1LiveStoreQueue,
   type ObserveResponse,
 } from './shadowV1LiveCollector';
+import { getActiveMarketsAt } from './shadowMarketScheduler';
+import { updateShadowV1NearMiss } from './shadowV1LiveNearMiss';
 import { updateShadowV1LiveMarksOnDisk } from './shadowV1LiveMarks';
 import { shadowV1LiveTmpPath } from './shadowV1LiveStore';
 
@@ -96,6 +98,10 @@ const GATE_LABELS_IT: Record<string, string> = {
   G11: 'Punteggio sotto soglia minima',
   G12: 'Target oltre lo spazio ADR residuo',
   G13: 'Dati non freschi (ritardo feed)',
+  ADX_BELOW_MARKET_THRESHOLD: 'Veto ADX: trend sotto soglia minima',
+  SUPERTREND_OPPOSED: 'Veto Supertrend contrario alla direzione',
+  VWAP_OPPOSED: 'Veto VWAP contrario con volumi confermati',
+  MARKET_CLOSED_OR_STALE: 'Mercato chiuso o feed in attesa della seduta',
   WARMUP_INCOMPLETE: 'Indicatori 5m ancora in warmup',
   INVALID_PAYLOAD: 'Livelli incoerenti o incompleti',
   CALENDAR_SELECTOR: 'Blocco filtro calendario/orario',
@@ -181,6 +187,7 @@ export async function observeShadowV1LiveScan(
 
     const candidateDiags: ShadowV1LiveCandidateDiag[] = [];
     const payloadsToSend: ShadowV1LiveBridgePayload[] = [];
+    const nearMissPairs: Array<{ cand: typeof allScored[number]; setup: ReturnType<typeof buildExecutionSetup> }> = [];
 
     for (const cand of allScored) {
       const ticker = cand.quote.ticker;
@@ -189,15 +196,24 @@ export async function observeShadowV1LiveScan(
 
       if (cand.score.warmupIncomplete) {
         blockedThisScan += 1;
-        bumpGate('WARMUP_INCOMPLETE');
+        const ind = cand.quote.setupIndicators;
+        const reasons = [
+          ind?.atr?.reason,
+          ind?.supertrend?.reason,
+          ind?.adx?.reason,
+          ind?.stochRsi?.reason,
+        ];
+        const isClosedOrStale = reasons.some((r) => r === 'STALE' || r === 'AFTER_HOURS');
+        const gateKey = isClosedOrStale ? 'MARKET_CLOSED_OR_STALE' : 'WARMUP_INCOMPLETE';
+        bumpGate(gateKey);
         candidateDiags.push({
           ticker,
           market,
           score: cand.score.total,
           isTopPick,
           decision: 'BLOCKED',
-          gate: 'WARMUP_INCOMPLETE',
-          reason: GATE_LABELS_IT.WARMUP_INCOMPLETE,
+          gate: gateKey,
+          reason: labelForGate(gateKey),
         });
         continue;
       }
@@ -205,6 +221,23 @@ export async function observeShadowV1LiveScan(
       const setup = buildExecutionSetup(cand, null, market, parameters, {
         currentTime: nowDate,
       });
+
+      if (cand.score.veto != null) {
+        blockedThisScan += 1;
+        const gateKey = cand.score.veto;
+        bumpGate(gateKey);
+        nearMissPairs.push({ cand, setup });
+        candidateDiags.push({
+          ticker,
+          market,
+          score: cand.score.total,
+          isTopPick,
+          decision: 'BLOCKED',
+          gate: gateKey,
+          reason: labelForGate(gateKey),
+        });
+        continue;
+      }
 
       if (setup.decision === 'TRADE') {
         const payload = buildShadowV1LivePayload(setup);
@@ -237,6 +270,7 @@ export async function observeShadowV1LiveScan(
       }
 
       blockedThisScan += 1;
+      nearMissPairs.push({ cand, setup });
       const gateKey = setup.blockedGate ?? 'CALENDAR_SELECTOR';
       bumpGate(gateKey, setup.reasonNoTrade);
       candidateDiags.push({
@@ -260,6 +294,17 @@ export async function observeShadowV1LiveScan(
         const message = err instanceof Error ? err.message : String(err);
         console.warn(`[Shadow V1 Live Scanner] invio interno ${payload.ticker}: ${message}`);
       }
+    }
+
+    const activeMarkets = getActiveMarketsAt(nowMs);
+    if (activeMarkets.length > 0 && nearMissPairs.length > 0) {
+      updateShadowV1NearMiss({
+        candidates: nearMissPairs,
+        parameters,
+        quotes: validQuotes,
+        rootDir,
+        nowMs,
+      });
     }
 
     const gateCounts: ShadowV1LiveGateCount[] = Array.from(gateMap.entries())
@@ -289,10 +334,17 @@ export async function observeShadowV1LiveScan(
     };
 
     const diagnosticsPath = path.join(rootDir, SHADOW_V1_LIVE_DIAGNOSTICS_PATH);
-    writeDiagnosticsAtomic(diagnosticsPath, diagnostics);
-    // I marks vivono in un altro file della stessa famiglia: la scrittura passa
-    // dalla coda V1-live attiva (qui siamo fuori da ogni task accodato, quindi
-    // nessun annidamento) e non puo' sovrapporsi a handler o ciclo.
+    // Fuori orario di borsa (notte/weekend/festivi), evita di sovrascrivere la
+    // diagnostica reale dell'ultima sessione con falsi blocchi MARKET_CLOSED_OR_STALE.
+    const shouldPreserveLastSessionDiag =
+      activeMarkets.length === 0 &&
+      emittedThisScan === 0 &&
+      fs.existsSync(diagnosticsPath);
+
+    if (!shouldPreserveLastSessionDiag) {
+      writeDiagnosticsAtomic(diagnosticsPath, diagnostics);
+    }
+
     await runInShadowV1LiveStoreQueue(async () => {
       updateShadowV1LiveMarksOnDisk(validQuotes, { rootDir, nowMs });
     });

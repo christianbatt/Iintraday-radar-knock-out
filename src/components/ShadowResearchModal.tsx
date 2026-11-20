@@ -91,6 +91,7 @@ export const ShadowResearchModal: React.FC<{
               v2={data?.shadowV2 ?? null}
               diagnostics={data?.v1LiveDiagnostics ?? null}
               liveMarks={data?.v1LiveMarks ?? null}
+              v1NearMiss={data?.v1NearMiss ?? null}
               refreshSignal={lastScanAt}
             />
           </div>

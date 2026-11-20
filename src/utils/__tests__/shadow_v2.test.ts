@@ -14,6 +14,7 @@ import {
   type ShadowV2Record,
 } from '../../knowledge/shadowV2';
 import {
+  assessCostEfficiency,
   calculateImpliedVolatilityMetrics,
   calculateIntradaySeasonality,
   calculateOrbFromIntradayBars,
@@ -533,5 +534,74 @@ describe('Shadow V2 — Strategia Parallela & Regressioni Critiche', () => {
       clearShadowV2BarsForTest();
       fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
+  });
+
+  it('T15: Shadow V2 calcola esperimenti A/B (trailBe120m + sizing 2.5k + filtro costi) e persiste le barre su disco al riavvio', async () => {
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const {
+      clearShadowV2BarsForTest,
+      loadShadowV2BarsFromDisk,
+      observeShadowV2Scan,
+      recordClosedBarsForShadowV2,
+    } = await import('../../server/shadowV2Collector');
+
+    const { bars, lastClosedBarEndMs } = buildDirectionalSeries('LONG');
+    const recs = evaluateShadowV2OnBars('NVDA', 'US', bars, { nowMs: lastClosedBarEndMs });
+    const resolved = recs.filter((r) => r.status === 'RESOLVED');
+    assert.ok(resolved.length >= 1);
+    assert.ok(resolved[0].altOutcomes?.trailBe120m, 'altOutcomes.trailBe120m deve essere popolato sui risolti');
+
+    const sum = summarizeShadowV2(recs, '2026-11-06T16:00:00.000Z');
+    assert.ok(sum.experiments, 'experiments deve essere definito');
+    assert.equal(sum.experiments.length, 4);
+    assert.deepEqual(
+      sum.experiments.map((e) => e.id),
+      ['BASE_1K', 'CAPITAL_2500', 'COST_AWARE_FILTER', 'TRAIL_BE_120M']
+    );
+    const expCap = sum.experiments.find((e) => e.id === 'CAPITAL_2500')!;
+    const expBase = sum.experiments.find((e) => e.id === 'BASE_1K')!;
+    assert.ok((expCap.meanRNet ?? 0) > (expBase.meanRNet ?? 0), 'sizing €2.500 migliora il R netto riducendo incidenza fee €2');
+
+    // Verifica persistenza bars.json su disco + riavvio
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shadow-v2-bars-'));
+    try {
+      clearShadowV2BarsForTest();
+      recordClosedBarsForShadowV2('NVDA', 'US', bars, lastClosedBarEndMs);
+      observeShadowV2Scan([], tmpRoot, lastClosedBarEndMs);
+
+      const barsFile = path.join(tmpRoot, 'artifacts', 'shadow_v2', 'bars.json');
+      assert.equal(fs.existsSync(barsFile), true, 'artifacts/shadow_v2/bars.json deve essere salvato');
+
+      // Simula riavvio server svuotando RAM e ricaricando da disco
+      clearShadowV2BarsForTest();
+      const restoredCount = loadShadowV2BarsFromDisk(tmpRoot, lastClosedBarEndMs);
+      assert.equal(restoredCount, 1);
+      const parsedBarsFile = JSON.parse(fs.readFileSync(barsFile, 'utf8')) as {
+        entries: Array<{ bars: unknown[] }>;
+      };
+      assert.equal(parsedBarsFile.entries[0]?.bars.length, bars.length);
+    } finally {
+      clearShadowV2BarsForTest();
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('T16: assessCostEfficiency classifica correttamente EROSIVE / HEAVY / OPTIMAL rispetto alla fee fissa €2', () => {
+    const erosive = assessCostEfficiency({ riskEur: 5, target1Multiplier: 1.5 });
+    assert.equal(erosive.status, 'EROSIVE');
+    assert.equal(erosive.feeImpactR, 0.4);
+    assert.equal(erosive.netTarget1R, 1.1);
+
+    const heavy = assessCostEfficiency({ riskEur: 10, target1Multiplier: 1.5 });
+    assert.equal(heavy.status, 'HEAVY');
+    assert.equal(heavy.feeImpactR, 0.2);
+    assert.equal(heavy.netTarget1R, 1.3);
+    assert.equal(heavy.minRecommendedRiskEur, 20);
+
+    const optimal = assessCostEfficiency({ riskEur: 25, target1Multiplier: 1.5 });
+    assert.equal(optimal.status, 'OPTIMAL');
+    assert.equal(optimal.feeImpactR, 0.08);
+    assert.equal(optimal.netTarget1R, 1.42);
   });
 });
