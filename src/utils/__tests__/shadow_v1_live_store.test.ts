@@ -494,22 +494,24 @@ test('P18b loadRecords: record senza moduleVersion e\' legacy, non fuori schema'
   assert.equal(res.records.length, 1);
   assert.equal(res.records[0].moduleVersion, undefined, 'in lettura nessuna versione inventata');
 
-  // P18b: un record non terminale aggiornato prende la versione corrente, anche se
-  // era legacy: l'esito che registra e' prodotto dal metodo nuovo.
+  // P18c: il record legacy ha gia' un `fillBarTs`, cioe' l'ingresso e' stato
+  // fissato dal metodo precedente. Un aggiornamento non gli assegna la versione
+  // corrente e non riscrive l'ingresso: resta metodo precedente.
   const next = upsertObservation(
     res.records,
     observation('OPEN', { fillBarTs: D0 + 2 * BAR_MS }),
     D0 + 3 * BAR_MS
   );
   assert.equal(next.outcome, 'UPDATED');
-  assert.equal(next.records[0].moduleVersion, SHADOW_V1_LIVE_MODULE_VERSION);
+  assert.equal(next.records[0].moduleVersion, undefined, 'ingresso legacy: versione invariata');
+  assert.equal(next.records[0].fillBarTs, D0 + BAR_MS, 'fillBarTs non riscritto');
   assert.equal(SHADOW_V1_LIVE_MODULE_VERSION, 'shadowV1Live@3');
 
   // Lo store e' puro: il file su disco non viene riscritto da `upsertObservation`.
   assert.equal(fs.readFileSync(file, 'utf8'), raw, 'il file non viene riscritto');
 });
 
-test('P18b upsert: non terminale legacy -> terminale prende la versione corrente', () => {
+test('P18c upsert: legacy con fillBarTs -> terminale resta metodo precedente', () => {
   const open = recordFrom(observation('OPEN', { fillBarTs: D0 + BAR_MS })) as unknown as Record<string, unknown>;
   delete open.moduleVersion;
   const seeded = [open as unknown as PersistedShadowV1LiveRecord];
@@ -526,8 +528,84 @@ test('P18b upsert: non terminale legacy -> terminale prende la versione corrente
   );
   assert.equal(next.outcome, 'UPDATED');
   assert.equal(next.records[0].status, 'STOP');
-  assert.equal(next.records[0].moduleVersion, 'shadowV1Live@3', 'l\'esito e\' del metodo nuovo');
+  assert.equal(next.records[0].moduleVersion, undefined, 'ingresso fissato prima di @3');
   assert.equal(seeded[0].moduleVersion, undefined, 'input non mutato');
+});
+
+test('P18c upsert: @2 con fillBarTs che chiude sotto @3 resta @2', () => {
+  const open: PersistedShadowV1LiveRecord = {
+    ...recordFrom(observation('OPEN', { fillBarTs: D0 + BAR_MS })),
+    moduleVersion: 'shadowV1Live@2',
+  };
+
+  const next = upsertObservation(
+    [open],
+    observation('STOP', {
+      r: -1,
+      fillBarTs: D0 + 2 * BAR_MS,
+      exitBarTs: D0 + 3 * BAR_MS,
+      exitPrice: CTX.stop,
+    }),
+    D0 + 3 * BAR_MS
+  );
+  assert.equal(next.outcome, 'UPDATED');
+  assert.equal(next.records[0].status, 'STOP');
+  assert.equal(next.records[0].moduleVersion, 'shadowV1Live@2', 'versione di chi ha fissato l\'ingresso');
+  assert.equal(next.records[0].fillBarTs, D0 + BAR_MS, 'fillBarTs non riscritto');
+  assert.equal(next.records[0].exitPrice, CTX.stop);
+  // Effetto sulle metriche: non e' il metodo corrente, quindi la vista lo conta in
+  // `metricsLegacy` e non nell'headline (`moduleVersion === SHADOW_V1_LIVE_MODULE_VERSION`).
+  assert.notEqual(next.records[0].moduleVersion, SHADOW_V1_LIVE_MODULE_VERSION);
+});
+
+test('P18c upsert: @2 con fillBarTs che resta aperto sotto @3 resta @2', () => {
+  const open: PersistedShadowV1LiveRecord = {
+    ...recordFrom(observation('OPEN', { fillBarTs: D0 + BAR_MS })),
+    moduleVersion: 'shadowV1Live@2',
+  };
+
+  const next = upsertObservation(
+    [open],
+    observation('OPEN', { fillBarTs: D0 + 2 * BAR_MS }),
+    D0 + 2 * BAR_MS
+  );
+  assert.equal(next.outcome, 'UPDATED');
+  assert.equal(next.records[0].status, 'OPEN');
+  assert.equal(next.records[0].moduleVersion, 'shadowV1Live@2', 'nessuna promozione senza nuovo ingresso');
+  assert.equal(next.records[0].fillBarTs, D0 + BAR_MS, 'fillBarTs non riscritto');
+});
+
+test('P18c upsert: PENDING_FILL senza fillBarTs -> OPEN prende @3', () => {
+  const pending = recordFrom(observation('PENDING_FILL')) as unknown as Record<string, unknown>;
+  delete pending.moduleVersion;
+  const seeded = [pending as unknown as PersistedShadowV1LiveRecord];
+
+  const next = upsertObservation(
+    seeded,
+    observation('OPEN', { fillBarTs: D0 + 2 * BAR_MS }),
+    D0 + 2 * BAR_MS
+  );
+  assert.equal(next.outcome, 'UPDATED');
+  assert.equal(next.records[0].status, 'OPEN');
+  // E' il metodo corrente a fissare l'ingresso.
+  assert.equal(next.records[0].moduleVersion, 'shadowV1Live@3');
+  assert.equal(next.records[0].fillBarTs, D0 + 2 * BAR_MS);
+});
+
+test('P18c upsert: PENDING_FILL senza fillBarTs -> terminale prende @3', () => {
+  const pending = recordFrom(observation('PENDING_FILL')) as unknown as Record<string, unknown>;
+  delete pending.moduleVersion;
+  const seeded = [pending as unknown as PersistedShadowV1LiveRecord];
+
+  const next = upsertObservation(
+    seeded,
+    observation('NOT_FILLED', { reason: 'sessione finita senza tocco' }),
+    CLOSE
+  );
+  assert.equal(next.outcome, 'UPDATED');
+  assert.equal(next.records[0].status, 'NOT_FILLED');
+  assert.equal(next.records[0].moduleVersion, 'shadowV1Live@3');
+  assert.equal(next.records[0].fillBarTs, null);
 });
 
 test('P18b upsert: terminale legacy non viene ne\' aggiornato ne\' etichettato', () => {
