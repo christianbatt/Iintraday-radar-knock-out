@@ -49,9 +49,12 @@ export const SHADOW_V1_LIVE_STORE_VERSION = 1;
  *
  * I record gia' scritti (`@2`, `@1` o senza campo) conservano la versione con cui
  * sono nati: sono metodo precedente, non vengono ricalcolati ne' riscritti e le
- * metriche li contano separatamente (`metricsLegacy`). Un record non terminale
- * aggiornato dal collector prende invece la versione corrente, perche' l'esito
- * che registra e' prodotto dal metodo nuovo.
+ * metriche li contano separatamente (`metricsLegacy`).
+ *
+ * Un record non terminale aggiornato dal collector prende la versione corrente
+ * solo se non ha ancora un `fillBarTs` (P18c): la versione e' quella del metodo
+ * che ha fissato l'ingresso. Un `@2` gia' riempito resta `@2` anche se chiude o
+ * resta aperto sotto `@3`, e il suo `fillBarTs` non viene riscritto.
  */
 export const SHADOW_V1_LIVE_MODULE_VERSION = 'shadowV1Live@3';
 
@@ -295,20 +298,29 @@ export function upsertObservation(
   }
 
   // Non terminale -> non terminale (OPEN dopo PENDING_FILL) oppure -> terminale.
-  // `decidedAtMs` e `firstSeenAtMs` restano quelli della prima volta; la
-  // `moduleVersion` passa invece a quella corrente (P18b): l'esito appena
-  // registrato e' prodotto dal metodo nuovo, anche se il record era nato legacy.
-  // I terminali non si toccano (uscita anticipata sopra) e i record invariati non
+  // `decidedAtMs` e `firstSeenAtMs` restano quelli della prima volta.
+  //
+  // Versione (P18c): la versione e' quella del metodo che ha fissato l'ingresso,
+  // cioe' che ha prodotto `fillBarTs`. Se il record ha gia' un `fillBarTs` di un
+  // metodo precedente (`@2`, `@1` o campo assente), ne' la versione ne' l'istante
+  // di ingresso cambiano: chiudere il record sotto il metodo nuovo non rende
+  // l'ingresso attribuibile ad esso, quindi il record resta fuori dalla headline
+  // e finisce in `metricsLegacy`. Solo un record senza `fillBarTs`
+  // (PENDING_FILL) che riceve il primo fill prende la versione corrente. I
+  // terminali non si toccano (uscita anticipata sopra) e i record invariati non
   // cambiano nulla (UNCHANGED).
+  const entryFromPreviousMethod =
+    existing.fillBarTs !== null && existing.moduleVersion !== SHADOW_V1_LIVE_MODULE_VERSION;
   const updated: PersistedShadowV1LiveRecord = {
     ...existing,
     status: observation.status,
     r: observation.r,
     reason: observation.reason,
-    fillBarTs: observation.fillBarTs,
+    fillBarTs: entryFromPreviousMethod ? existing.fillBarTs : observation.fillBarTs,
     exitBarTs: observation.exitBarTs,
     exitPrice: observation.exitPrice,
-    moduleVersion: SHADOW_V1_LIVE_MODULE_VERSION,
+    moduleVersion:
+      existing.fillBarTs !== null ? existing.moduleVersion : SHADOW_V1_LIVE_MODULE_VERSION,
     updatedAtMs: nowMs,
   };
   const next = [...records];
