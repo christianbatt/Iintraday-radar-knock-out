@@ -470,3 +470,152 @@ test('summarizeShadowV2 recentSignals tiene le posizioni OPEN/PENDING_OPEN in te
   assert.equal(summary.recentSignals.length, 25);
   assert.equal(summary.recentSignals[0].id, 'open-oldest');
 });
+
+function backupFilesIn(dir: string, prefix: string): string[] {
+  return fs
+    .readdirSync(dir)
+    .filter((name) => name.startsWith(`${prefix}.bak-`))
+    .sort();
+}
+
+test('idratazione V1: righe corrotte o con versione diversa finiscono in .bak, le valide restano', async () => {
+  resetShadowFirestoreSyncForTest();
+  clearShadowV1LiveBarsForTest();
+  setShadowFirestoreAdapter(createMemoryFirestoreAdapter());
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shadow-bak-v1-'));
+
+  try {
+    const nowMs = Date.UTC(2026, 10, 20, 12, 0, 0);
+    const valid = sampleV1Record({ key: 'BAK|LONG|2026-11-19|1', status: 'OPEN' });
+    const corrupt = '{"key":"rotto"';
+    const wrongVersion = JSON.stringify({ ...sampleV1Record({ key: 'OLD|LONG|2026-11-19|1' }), v: 2 });
+    const dir = path.join(tmpRoot, 'artifacts', 'shadow_v1_live');
+    fs.mkdirSync(dir, { recursive: true });
+    const signalsPath = path.join(tmpRoot, SHADOW_V1_LIVE_SIGNALS_PATH);
+    const original = `${JSON.stringify(valid)}\n${corrupt}\n${wrongVersion}\n`;
+    fs.writeFileSync(signalsPath, original, 'utf8');
+
+    const report = await hydrateAllShadowStateFromFirestore(tmpRoot, { nowMs, seedV1Bars: () => {} });
+
+    assert.equal(report.v1SignalsMerged, 1, 'solo la riga valida resta nel ledger');
+    assert.equal(loadRecords(signalsPath).records.length, 1);
+    const backups = backupFilesIn(dir, 'signals.jsonl');
+    assert.equal(backups.length, 1, 'deve esistere esattamente una copia di sicurezza');
+    assert.equal(
+      fs.readFileSync(path.join(dir, backups[0]), 'utf8'),
+      original,
+      'il backup conserva le righe originali, comprese quelle scartate'
+    );
+  } finally {
+    clearShadowV1LiveBarsForTest();
+    resetShadowFirestoreSyncForTest();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('idratazione V1: un file pulito non crea alcun .bak', async () => {
+  resetShadowFirestoreSyncForTest();
+  clearShadowV1LiveBarsForTest();
+  setShadowFirestoreAdapter(createMemoryFirestoreAdapter());
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shadow-bak-clean-'));
+
+  try {
+    const nowMs = Date.UTC(2026, 10, 20, 12, 0, 0);
+    const valid = sampleV1Record({ key: 'CLEAN|LONG|2026-11-19|1', status: 'OPEN' });
+    const dir = path.join(tmpRoot, 'artifacts', 'shadow_v1_live');
+    fs.mkdirSync(dir, { recursive: true });
+    const signalsPath = path.join(tmpRoot, SHADOW_V1_LIVE_SIGNALS_PATH);
+    fs.writeFileSync(signalsPath, `${JSON.stringify(valid)}\n`, 'utf8');
+
+    const report = await hydrateAllShadowStateFromFirestore(tmpRoot, { nowMs, seedV1Bars: () => {} });
+
+    assert.equal(report.v1SignalsMerged, 1);
+    assert.equal(loadRecords(signalsPath).records.length, 1);
+    assert.deepEqual(backupFilesIn(dir, 'signals.jsonl'), [], 'nessun backup su file pulito');
+  } finally {
+    clearShadowV1LiveBarsForTest();
+    resetShadowFirestoreSyncForTest();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('idratazione near-miss: le righe non valide finiscono in .bak', async () => {
+  resetShadowFirestoreSyncForTest();
+  clearShadowV1LiveBarsForTest();
+  setShadowFirestoreAdapter(createMemoryFirestoreAdapter());
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shadow-bak-nm-'));
+
+  try {
+    const nowMs = Date.UTC(2026, 10, 20, 12, 0, 0);
+    const nm: ShadowV1NearMissRecord = {
+      id: 'EU|AIR.PA|2026-11-20|G11_SCORE',
+      ticker: 'AIR.PA',
+      market: 'EU',
+      sessionDate: '2026-11-20',
+      direction: 'LONG',
+      nearMissGate: 'G11_SCORE',
+      gateDetail: 'Score 64 vs 65',
+      score: 64,
+      adxValue: 22,
+      extensionPct: 0.2,
+      entryLevel: 150,
+      stopLossLevel: 148,
+      target1Level: 154,
+      decidedAtMs: nowMs - 600_000,
+      sessionCloseMs: Date.UTC(2026, 10, 20, 16, 30, 0),
+      status: 'OPEN',
+      r: null,
+      fillBarTs: nowMs - 300_000,
+      exitBarTs: null,
+      exitPrice: null,
+      updatedAtMs: nowMs - 300_000,
+    };
+    const dir = path.join(tmpRoot, 'artifacts', 'shadow_v1_live');
+    fs.mkdirSync(dir, { recursive: true });
+    const nearMissPath = path.join(tmpRoot, SHADOW_V1_NEAR_MISS_PATH);
+    const original = `${JSON.stringify(nm)}\nnon-json\n${JSON.stringify({ ticker: 'X' })}\n`;
+    fs.writeFileSync(nearMissPath, original, 'utf8');
+
+    const report = await hydrateAllShadowStateFromFirestore(tmpRoot, { nowMs, seedV1Bars: () => {} });
+
+    assert.equal(report.v1NearMissMerged, 1);
+    assert.equal(loadNearMissRecords(nearMissPath).length, 1);
+    const backups = backupFilesIn(dir, 'near_miss.jsonl');
+    assert.equal(backups.length, 1);
+    assert.equal(fs.readFileSync(path.join(dir, backups[0]), 'utf8'), original);
+  } finally {
+    clearShadowV1LiveBarsForTest();
+    resetShadowFirestoreSyncForTest();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('idratazione V2: le righe non valide finiscono in .bak', async () => {
+  resetShadowFirestoreSyncForTest();
+  clearShadowV1LiveBarsForTest();
+  setShadowFirestoreAdapter(createMemoryFirestoreAdapter());
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shadow-bak-v2-'));
+
+  try {
+    const nowMs = Date.UTC(2026, 10, 20, 12, 0, 0);
+    const v2a = sampleV2Record({ id: 'v2-bak-a' });
+    const v2b = sampleV2Record({ id: 'v2-bak-b' });
+    const dir = path.join(tmpRoot, 'artifacts', 'shadow_v2');
+    fs.mkdirSync(dir, { recursive: true });
+    const signalsPath = path.join(dir, 'signals.jsonl');
+    const original = `${JSON.stringify(v2a)}\n${JSON.stringify(v2b)}\nriga-rotta\n`;
+    fs.writeFileSync(signalsPath, original, 'utf8');
+
+    const report = await hydrateAllShadowStateFromFirestore(tmpRoot, { nowMs, seedV1Bars: () => {} });
+
+    assert.equal(report.v2SignalsMerged, 2);
+    assert.equal(loadShadowV2Records(signalsPath).length, 2);
+    const backups = backupFilesIn(dir, 'signals.jsonl');
+    assert.equal(backups.length, 1);
+    assert.equal(fs.readFileSync(path.join(dir, backups[0]), 'utf8'), original);
+  } finally {
+    clearShadowV1LiveBarsForTest();
+    resetShadowFirestoreSyncForTest();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});

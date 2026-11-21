@@ -141,27 +141,41 @@ export function saveShadowV2BarsToDisk(
   }
 }
 
-export function loadShadowV2Records(signalsPath: string): ShadowV2Record[] {
-  if (!fs.existsSync(signalsPath)) return [];
+export interface ShadowV2LoadResult {
+  records: ShadowV2Record[];
+  /** Righe non vuote scartate: JSON invalido o record senza `id`. */
+  skipped: number;
+}
+
+/** Lettura con inventario delle righe scartate (per la copia di sicurezza). */
+export function loadShadowV2RecordsWithStats(signalsPath: string): ShadowV2LoadResult {
+  const records: ShadowV2Record[] = [];
+  let skipped = 0;
+  if (!fs.existsSync(signalsPath)) return { records, skipped };
   try {
     const raw = fs.readFileSync(signalsPath, 'utf8');
-    const out: ShadowV2Record[] = [];
     for (const line of raw.split('\n')) {
       const trimmed = line.trim();
       if (!trimmed) continue;
       try {
         const parsed = JSON.parse(trimmed) as ShadowV2Record;
         if (parsed && typeof parsed.id === 'string') {
-          out.push(parsed);
+          records.push(parsed);
+        } else {
+          skipped += 1;
         }
       } catch {
-        // Riga JSONL malformata ignorata senza inventario
+        skipped += 1;
       }
     }
-    return out;
+    return { records, skipped };
   } catch {
-    return [];
+    return { records, skipped };
   }
+}
+
+export function loadShadowV2Records(signalsPath: string): ShadowV2Record[] {
+  return loadShadowV2RecordsWithStats(signalsPath).records;
 }
 
 function writeFileAtomic(targetPath: string, content: string): void {

@@ -106,27 +106,41 @@ function writeAtomic(targetPath: string, content: string): void {
   fs.renameSync(tmpPath, targetPath);
 }
 
-export function loadNearMissRecords(filePath: string): ShadowV1NearMissRecord[] {
-  if (!fs.existsSync(filePath)) return [];
+export interface NearMissLoadResult {
+  records: ShadowV1NearMissRecord[];
+  /** Righe non vuote scartate: JSON invalido o record senza i campi minimi. */
+  skipped: number;
+}
+
+/** Lettura con inventario delle righe scartate (per la copia di sicurezza). */
+export function loadNearMissRecordsWithStats(filePath: string): NearMissLoadResult {
+  const records: ShadowV1NearMissRecord[] = [];
+  let skipped = 0;
+  if (!fs.existsSync(filePath)) return { records, skipped };
   try {
     const raw = fs.readFileSync(filePath, 'utf8');
-    const out: ShadowV1NearMissRecord[] = [];
     for (const line of raw.split('\n')) {
       const t = line.trim();
       if (!t) continue;
       try {
         const parsed = JSON.parse(t) as ShadowV1NearMissRecord;
         if (parsed && typeof parsed.id === 'string' && typeof parsed.ticker === 'string') {
-          out.push(parsed);
+          records.push(parsed);
+        } else {
+          skipped += 1;
         }
       } catch {
-        // riga corrotta ignorata
+        skipped += 1;
       }
     }
-    return out;
+    return { records, skipped };
   } catch {
-    return [];
+    return { records, skipped };
   }
+}
+
+export function loadNearMissRecords(filePath: string): ShadowV1NearMissRecord[] {
+  return loadNearMissRecordsWithStats(filePath).records;
 }
 
 export function hasOpenNearMissRecords(rootDir: string = process.cwd()): boolean {
