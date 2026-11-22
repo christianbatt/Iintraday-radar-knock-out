@@ -141,7 +141,7 @@ const quoteAt = (price: number): RawQuoteData =>
   // questo file non riscrive piu' le stringhe della regione.
   assertRegionHasNoStateReads(src, APP_REGIONS.scan, 'V5 scansione');
   assert.ok(
-    src.includes('}, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries]);'),
+    src.includes('}, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries, accountCapital]);'),
     'V5: dipendenze della scansione invariate (nessun rilancio automatico)',
   );
   console.log('[V5_scan_refs] PASS');
