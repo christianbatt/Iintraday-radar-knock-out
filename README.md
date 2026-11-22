@@ -185,3 +185,28 @@ Specializzato nella progettazione e realizzazione di applicazioni software ad al
 ## 📜 Licenza
 
 Questo progetto è distribuito sotto licenza **MIT**. Consulta il file `LICENSE` per ulteriori dettagli.
+
+---
+
+## 🗄️ Variabili d'Ambiente Firestore
+
+Solo nomi e punto di lettura nel codice: nessun valore, nessun segreto. I valori si impostano in `.env` (locale) o nell'ambiente del deploy.
+
+| Variabile | Letta in |
+|---|---|
+| `FIREBASE_PROJECT_ID` | `server.ts:208` |
+| `GOOGLE_CLOUD_PROJECT` | `server.ts:209` |
+| `GCLOUD_PROJECT` | `server.ts:210` |
+| `VITE_FIREBASE_PROJECT_ID` | `server.ts:211`, `src/services/firebaseSync.ts:51` |
+| `FIRESTORE_DATABASE_ID` | `server.ts:213`, `server.ts:218` |
+| `AI_MEMORY_SYSTEM_UID` | `server.ts:227` |
+| `VITE_FIREBASE_API_KEY` | `src/services/firebaseSync.ts:45` |
+| `VITE_FIRESTORE_DATABASE_ID` | `src/services/firebaseSync.ts:74` |
+
+Note di comportamento:
+
+- **Project id**: vale il primo valore non vuoto della catena `server.ts:207-212` (`FIREBASE_PROJECT_ID` → `GOOGLE_CLOUD_PROJECT` → `GCLOUD_PROJECT` → `VITE_FIREBASE_PROJECT_ID`). Se resta vuoto, l'Admin SDK non viene inizializzato (`server.ts:235`).
+- **Database id**: `server.ts:213` parte da `FIRESTORE_DATABASE_ID` o `(default)`; `server.ts:215-221` legge `firebase-applet-config.json` (se il file esiste) e usa `firestoreDatabaseId` come fallback, con la variabile d'ambiente che resta prioritaria.
+- **Credenziali Admin SDK**: non sono lette dal codice. `initializeFirebaseAdminApp({ projectId }, 'intraday-radar-auth')` (`server.ts:236-237`) usa le Application Default Credentials dell'SDK.
+- **`AI_MEMORY_SYSTEM_UID`** (`server.ts:227`, default `system`) determina il documento della memoria AI: `users/<uid>/ai_specialization_memory/current` (`server.ts:228-233`).
+- Le variabili `VITE_*` sono lette anche dal client (`src/services/firebaseSync.ts`); le altre solo dal server.

@@ -55,6 +55,18 @@ export const SHADOW_V1_LIVE_STORE_VERSION = 1;
  * solo se non ha ancora un `fillBarTs` (P18c): la versione e' quella del metodo
  * che ha fissato l'ingresso. Un `@2` gia' riempito resta `@2` anche se chiude o
  * resta aperto sotto `@3`, e il suo `fillBarTs` non viene riscritto.
+ *
+ * Le regole di veto del produttore di candidati NON fanno parte di questo numero:
+ * il veto non cambia il metodo di esito (finestra di fill, stop in gap, R), quindi
+ * non richiede un bump. Cambio del 2026-11-20 (commit 5bf0d7f) in
+ * `observeShadowV1LiveScan` (`src/server/shadowV1LiveScanner.ts`): il veto
+ * (`cand.score.veto`) e' diventato un gate bloccante autonomo, contato in
+ * `gateCounts` con la propria etichetta (`ADX_BELOW_MARKET_THRESHOLD`,
+ * `SUPERTREND_OPPOSED`, `VWAP_OPPOSED`) e passato a `updateShadowV1NearMiss` per
+ * il controfattuale; il candidato non prosegue verso l'emissione (`continue` prima
+ * del ramo `decision === 'TRADE'`). Prima di quel commit il ramo non esisteva: un
+ * candidato con veto seguiva il percorso normale dei gate G1-G13 e il veto restava
+ * solo nei dettagli dello score.
  */
 export const SHADOW_V1_LIVE_MODULE_VERSION = 'shadowV1Live@3';
 
