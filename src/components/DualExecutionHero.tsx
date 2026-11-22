@@ -69,6 +69,8 @@ interface SingleMarketHeroCardProps {
   isPreferredSession?: boolean;
   freezeState?: MarketFreezeState;
   onToggleFreeze?: () => void;
+  /** ADDITIVO (v7, Parte 5.1): motivo reale se il commento AI non è disponibile. */
+  catalystError?: string | null;
 }
 
 export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
@@ -87,6 +89,7 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
   isPreferredSession,
   freezeState,
   onToggleFreeze,
+  catalystError,
 }) => {
   const isNoTrade = !setup || setup.decision === 'NESSUN_TRADE';
   const quote = setup?.candidate || candidate?.quote;
@@ -683,6 +686,37 @@ Regola Ferrea: Chiusura entro orario limite (${setup.cutoffTime}) - Nessun Turbo
         {/* Technical Analysis & Execution/Monitoring Details */}
         {setup && (
           <div className="space-y-4">
+          {/* ADDITIVO (v6, Parte 3): commento AI visibile senza click per ogni setup consigliato. */}
+          {setup.catalystAnalysis ? (
+            <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800 text-[11px] text-slate-300 font-sans space-y-1">
+              <div>
+                <span className="text-slate-400">Catalizzatore AI: </span>
+                {setup.catalystAnalysis.catalizzatore}
+              </div>
+              {setup.catalystAnalysis.punti_a_favore?.length > 0 && (
+                <div>
+                  <span className="text-emerald-400">A favore: </span>
+                  {setup.catalystAnalysis.punti_a_favore.join(' · ')}
+                </div>
+              )}
+              {setup.catalystAnalysis.rischi?.length > 0 && (
+                <div>
+                  <span className="text-rose-400">Contro: </span>
+                  {setup.catalystAnalysis.rischi.join(' · ')}
+                </div>
+              )}
+              {setup.catalystAnalysis.condizioni_invalidazione?.length > 0 && (
+                <div>
+                  <span className="text-amber-400">Invalida se: </span>
+                  {setup.catalystAnalysis.condizioni_invalidazione.join(' · ')}
+                </div>
+              )}
+            </div>
+          ) : catalystError ? (
+            <div className="p-2.5 rounded-lg bg-amber-950/40 border border-amber-800/60 text-[11px] text-amber-300 font-sans">
+              Commento AI non disponibile. Motivo: {catalystError}. Apri la card del catalizzatore per riprovare.
+            </div>
+          ) : null}
           {/* Strategy Title & ORB Phase */}
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
             <div className="flex items-center gap-2">
@@ -1771,6 +1805,8 @@ interface DualExecutionHeroProps {
   freezeStateUS?: MarketFreezeState;
   onToggleFreezeEU?: () => void;
   onToggleFreezeUS?: () => void;
+  /** ADDITIVO (v7, Parte 5.1): errori catalyst per ticker, visibili nella card. */
+  catalystErrors?: Record<string, string>;
 }
 
 export const DualExecutionHero: React.FC<DualExecutionHeroProps> = ({
@@ -1789,6 +1825,7 @@ export const DualExecutionHero: React.FC<DualExecutionHeroProps> = ({
   freezeStateUS,
   onToggleFreezeEU,
   onToggleFreezeUS,
+  catalystErrors,
 }) => {
   return (
     <section className="mb-8">
@@ -1834,6 +1871,7 @@ export const DualExecutionHero: React.FC<DualExecutionHeroProps> = ({
           isPreferredSession={currentSession === 'EU' || currentSession === 'GLOBAL'}
           freezeState={freezeStateEU}
           onToggleFreeze={onToggleFreezeEU}
+          catalystError={candidateEU ? catalystErrors?.[candidateEU.quote.ticker] ?? null : null}
         />
 
         {/* Card 2: TOP USA */}
@@ -1853,6 +1891,7 @@ export const DualExecutionHero: React.FC<DualExecutionHeroProps> = ({
           isPreferredSession={currentSession === 'US' || currentSession === 'GLOBAL'}
           freezeState={freezeStateUS}
           onToggleFreeze={onToggleFreezeUS}
+          catalystError={candidateUS ? catalystErrors?.[candidateUS.quote.ticker] ?? null : null}
         />
       </div>
     </section>

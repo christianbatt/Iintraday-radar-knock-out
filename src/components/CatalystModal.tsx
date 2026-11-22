@@ -20,6 +20,8 @@ interface CatalystModalProps {
   catalyst: GeminiCatalystAnalysis | null;
   isLoading: boolean;
   onReanalyze: () => void;
+  /** ADDITIVO (R4): motivo reale quando la LLM non risponde o la chiamata fallisce. */
+  errorMessage?: string | null;
 }
 
 export const CatalystModal: React.FC<CatalystModalProps> = ({
@@ -30,6 +32,7 @@ export const CatalystModal: React.FC<CatalystModalProps> = ({
   catalyst,
   isLoading,
   onReanalyze,
+  errorMessage,
 }) => {
   if (!isOpen || !candidate) return null;
 
@@ -229,9 +232,16 @@ export const CatalystModal: React.FC<CatalystModalProps> = ({
                 )}
               </div>
             ) : (
+              <>
+              {errorMessage && (
+                <div className="text-center py-2 text-amber-400 text-xs">
+                  {`Commento AI non disponibile. Motivo: ${errorMessage}. Puoi riprovare con "Rianalizza".`}
+                </div>
+              )}
               <div className="text-center py-4 text-slate-500 text-xs">
                 Nessuna analisi disponibile per questo titolo. Clicca su "Rianalizza".
               </div>
+              </>
             )}
           </div>
 

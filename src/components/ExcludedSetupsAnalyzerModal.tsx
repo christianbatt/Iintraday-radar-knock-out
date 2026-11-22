@@ -71,6 +71,9 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
   const [isLoadingAIMemory, setIsLoadingAIMemory] = useState<boolean>(false);
   const [isSpecializeRunning, setIsSpecializeRunning] = useState<boolean>(false);
   const [specializeFeedback, setSpecializeFeedback] = useState<string | null>(null);
+  const [specializeReason, setSpecializeReason] = useState<string | null>(null);
+  // ADDITIVO (v6, Parte 5): conteggio reale del campione decisivo.
+  const [specializeSample, setSpecializeSample] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -93,10 +96,22 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
   const handleRunAISpecialization = async () => {
     setIsSpecializeRunning(true);
     setSpecializeFeedback(null);
+    setSpecializeReason(null);
+    setSpecializeSample(null);
     try {
       const res = await triggerAISpecialization(trades, records);
       if (res.success && res.memory) {
         setAiMemory(res.memory);
+        setSpecializeReason(
+          res.reason
+            ? `${res.reason}${res.reasonDetail ? `: ${res.reasonDetail}` : ''}`
+            : null
+        );
+        setSpecializeSample(
+          typeof res.sampleDecisive === 'number'
+            ? `${res.sampleDecisive}/${res.minSample ?? 30} trade decisivi`
+            : null
+        );
         setSpecializeFeedback(
           res.message || 'Eventuali proposte LLM non sono state persistite; la memoria richiede validazione statistica sui trade reali.'
         );
@@ -700,6 +715,19 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
                 <div className="p-3.5 rounded-xl bg-purple-950/60 border border-purple-800/80 text-xs text-purple-200 flex items-start gap-2.5 animate-in fade-in">
                   <Lightbulb className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
                   <span className="font-sans leading-relaxed">{specializeFeedback}</span>
+                </div>
+              )}
+
+              {/* ADDITIVO (R2): motivo esplicito del ramo, mai una frase generica senza causa. */}
+              {specializeReason && (
+                <div className="p-3 rounded-xl bg-slate-950 border border-purple-800/60 text-[11px] text-slate-300 font-mono">
+                  Motivo: {specializeReason}
+                </div>
+              )}
+
+              {specializeSample && (
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-300 font-mono">
+                  Campione: {specializeSample} (sotto 30 nessuna regola viene scritta)
                 </div>
               )}
 

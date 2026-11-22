@@ -54,6 +54,8 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
   const [isLoadingPostMortem, setIsLoadingPostMortem] = useState<boolean>(false);
   const [postMortemDirectivesAdded, setPostMortemDirectivesAdded] = useState<number>(0);
   const [postMortemError, setPostMortemError] = useState<string | null>(null);
+  // ADDITIVO (v6, Parte 4): motivo esplicito del ramo desk.
+  const [postMortemReason, setPostMortemReason] = useState<string | null>(null);
 
   // AUDIT D1: tutti gli hook stanno prima di ogni return condizionale (regole degli hook React).
   if (!isOpen) return null;
@@ -82,6 +84,11 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
       if (res.success && res.postMortem) {
         setPostMortemReport(res.postMortem);
         setPostMortemDirectivesAdded(res.newDirectivesAdded);
+        setPostMortemReason(
+          res.reason
+            ? `${res.reason}${res.reasonDetail ? `: ${res.reasonDetail}` : ''}`
+            : null
+        );
       } else {
         setPostMortemError(res.error || 'Impossibile generare il report');
       }
@@ -634,6 +641,12 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
             {postMortemError && (
               <div className="p-3 rounded-lg bg-rose-950/50 border border-rose-800 text-rose-300 text-xs font-sans">
                 {postMortemError}
+              </div>
+            )}
+
+            {postMortemReason && (
+              <div className="p-2.5 rounded-lg bg-slate-950 border border-purple-800/60 text-[11px] text-slate-300 font-mono">
+                Motivo: {postMortemReason}
               </div>
             )}
 
