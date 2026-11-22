@@ -2265,19 +2265,36 @@ let lastMarketScanAtMs = 0;
 let schedulerScanInFlight: Promise<void> | null = null;
 
 async function executeMarketDataScan(underlyings: any[], bypass: boolean): Promise<any[]> {
-  // Esecuzione concorrente a lotti controllati (concurrency = 6) per evitare saturazione e timeout da Yahoo Finance
-  const results = await mapConcurrent(
-    underlyings,
-    6,
-    (item) =>
-      fetchQuoteForTicker(
-        item.ticker,
-        item.nome || item.name,
-        item.mercato || item.market || 'EU',
-        item.valuta || item.currency || 'EUR',
-        bypass
-      )
-  );
+  let results: any[];
+  let scanError: unknown = null;
+  try {
+    // Esecuzione concorrente a lotti controllati (concurrency = 6) per evitare saturazione e timeout da Yahoo Finance
+    results = await mapConcurrent(
+      underlyings,
+      6,
+      (item) =>
+        fetchQuoteForTicker(
+          item.ticker,
+          item.nome || item.name,
+          item.mercato || item.market || 'EU',
+          item.valuta || item.currency || 'EUR',
+          bypass
+        )
+    );
+  } catch (err) {
+    scanError = err;
+    throw err;
+  } finally {
+    // Flush delle barre V1-live anche se il batch si interrompe a metà loop: un
+    // errore del flush non deve oscurare l'errore originale (viene solo loggato).
+    try {
+      flushShadowV1LiveBarsToDisk();
+    } catch (flushErr) {
+      const message = flushErr instanceof Error ? flushErr.message : String(flushErr);
+      console.warn(`[Shadow V1-live] flush barre non riuscito: ${message}`);
+      if (scanError === null) throw flushErr;
+    }
+  }
 
   // Qualita' dati VWAP per scansione: solo log/report, nessun impatto su UI o punteggi.
   console.log(formatVwapDataQualityScan('ALL', results));
@@ -2412,8 +2429,8 @@ async function executeMarketDataScan(underlyings: any[], bypass: boolean): Promi
     console.log(`[Setup score] log non disponibile: ${err?.message || err}`);
   }
 
-  // Flush singolo di bars.json a fine batch + Shadow V2 & V1-live paralleli lato server (zero impatto live).
-  flushShadowV1LiveBarsToDisk();
+  // Shadow V2 & V1-live paralleli lato server (zero impatto live).
+  // Il flush di bars.json sta nel finally che copre il loop, cosi' gira anche se il batch fallisce.
   observeShadowV2Scan(results);
   await observeShadowV1LiveScan(results, futuresScan);
   lastMarketScanAtMs = Date.now();
