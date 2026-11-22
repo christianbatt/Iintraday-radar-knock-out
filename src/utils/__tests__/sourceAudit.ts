@@ -586,7 +586,7 @@ export const APP_REGIONS = {
     // `const handleRunScreeningRef = React.useRef(...)`): l'ancora deve essere
     // unica, altrimenti l'invariante non sa quale regione sta guardando.
     anchor: 'const handleRunScreening = useCallback(async () => {',
-    end: '}, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries]);',
+    end: '}, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries, accountCapital]);',
     allowed: [] as RegionAllowRule[],
   },
 } as const;
