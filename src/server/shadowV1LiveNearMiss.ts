@@ -33,6 +33,21 @@ export const SHADOW_V1_NEAR_MISS_PATH = 'artifacts/shadow_v1_live/near_miss.json
 export const SHADOW_V1_NEAR_MISS_SUMMARY_PATH = 'artifacts/shadow_v1_live/near_miss_summary.json';
 export const SHADOW_V1_NEAR_MISS_MAX_RECORDS = 400;
 
+/**
+ * Soglie del classificatore near-miss (erano valori letterali nelle condizioni di
+ * `classifyNearMissCandidate`). I numeri sono invariati: qui se ne dichiara il significato,
+ * per non doverli interpretare ogni volta dal contesto della condizione.
+ */
+
+/** ADX minimo perché un veto ADX sia trattato come borderline: sotto 14 il trend è considerato assente. */
+export const NEAR_MISS_ADX_BORDERLINE_MIN = 14;
+/** Estensione minima oltre il gate G4 (in %): G4 scatta a +0,40%, sotto non c'è nulla da registrare. */
+export const NEAR_MISS_G4_EXTENSION_MIN_PCT = 0.4;
+/** Estensione massima tollerata (in %): oltre +1,20% il setup è troppo esteso per essere un near-miss utile. */
+export const NEAR_MISS_G4_EXTENSION_MAX_PCT = 1.2;
+/** Distanza massima in punti dal punteggio minimo di mercato: oltre 6 pt il caso G11 non è più "vicino". */
+export const NEAR_MISS_G11_MAX_SCORE_GAP = 6;
+
 export type NearMissGate = 'ADX_BORDERLINE' | 'G4_EXTENDED' | 'G5_EXPIRED' | 'G11_SCORE';
 
 export type NearMissStatus =
@@ -179,11 +194,18 @@ export function classifyNearMissCandidate(
 
   const market = cand.quote.market;
 
-  // Caso 1: unico blocco = veto ADX borderline [14, minThreshold) con tutti gli altri gate (escluso G11 privato dei punti ADX) verdi
+  // Caso 1: unico blocco = veto ADX borderline [NEAR_MISS_ADX_BORDERLINE_MIN, minThreshold)
+  // con tutti gli altri gate (escluso G11 privato dei punti ADX) verdi
   if (cand.score.veto === 'ADX_BELOW_MARKET_THRESHOLD') {
     const adx = cand.quote.setupIndicators?.adx?.value ?? null;
     const minAdx = adxThresholds(market).min;
-    if (adx != null && Number.isFinite(adx) && adx >= 14 && adx < minAdx && setup.gateResults) {
+    if (
+      adx != null &&
+      Number.isFinite(adx) &&
+      adx >= NEAR_MISS_ADX_BORDERLINE_MIN &&
+      adx < minAdx &&
+      setup.gateResults
+    ) {
       const failedNonScore = Object.entries(setup.gateResults).filter(
         ([k, g]) => k !== 'G11' && g && !g.passed
       );
@@ -209,7 +231,7 @@ export function classifyNearMissCandidate(
 
   if (onlyFailed === 'G4') {
     const ext = setup.extensionPct ?? null;
-    if (ext != null && ext > 0.4 && ext <= 1.2) {
+    if (ext != null && ext > NEAR_MISS_G4_EXTENSION_MIN_PCT && ext <= NEAR_MISS_G4_EXTENSION_MAX_PCT) {
       return {
         gate: 'G4_EXTENDED',
         detail: `Estensione +${ext.toFixed(2)}% > 0,40%`,
@@ -224,7 +246,7 @@ export function classifyNearMissCandidate(
     const minScore =
       market === 'EU' ? parameters.minScoreEurope : parameters.minScoreUSA;
     const diff = minScore - cand.score.total;
-    if (diff > 0 && diff <= 6) {
+    if (diff > 0 && diff <= NEAR_MISS_G11_MAX_SCORE_GAP) {
       return {
         gate: 'G11_SCORE',
         detail: `Score ${cand.score.total} vs soglia ${minScore} (-${diff.toFixed(1)} pt)`,
