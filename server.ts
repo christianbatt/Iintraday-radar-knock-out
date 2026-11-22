@@ -173,7 +173,7 @@ function loadAIMemoryFromDisk(): AILearnedInsight[] {
 }
 
 function saveAIMemoryLocally(memory: AILearnedInsight[]): void {
-  const temporaryPath = `${AI_MEMORY_FILE}.${process.pid}.tmp`;
+  const temporaryPath = `${AI_MEMORY_FILE}.tmp-${process.pid}-${randomUUID()}`;
   try {
     fs.writeFileSync(temporaryPath, JSON.stringify(memory, null, 2), 'utf-8');
     fs.renameSync(temporaryPath, AI_MEMORY_FILE);
