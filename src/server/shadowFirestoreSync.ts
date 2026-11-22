@@ -21,7 +21,7 @@ import type { ShadowV1LiveBar } from '../knowledge/shadowV1Live';
 import { summarizeShadowV2, type ShadowV2Record, type ShadowV2Summary } from '../knowledge/shadowV2';
 import type { ShadowV1LiveMarksPayload } from './shadowV1LiveMarks';
 import {
-  loadNearMissRecords,
+  loadNearMissRecordsWithStats,
   SHADOW_V1_NEAR_MISS_MAX_RECORDS,
   SHADOW_V1_NEAR_MISS_PATH,
   SHADOW_V1_NEAR_MISS_SUMMARY_PATH,
@@ -45,7 +45,7 @@ import {
   type PersistedShadowV1LiveRecord,
 } from './shadowV1LiveStore';
 import { recordBarsForShadowV1Live } from './shadowV1LiveCollector';
-import { loadShadowV2Records } from './shadowV2Collector';
+import { loadShadowV2RecordsWithStats } from './shadowV2Collector';
 
 export const SHADOW_V1_SIGNALS_COLLECTION = '_system/shadow_v1_live/signals';
 export const SHADOW_V1_NEAR_MISS_COLLECTION = '_system/shadow_v1_live/near_miss';
@@ -194,6 +194,41 @@ function readJsonFileSafe<T>(filePath: string): T | null {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8')) as T;
   } catch {
+    return null;
+  }
+}
+
+/**
+ * Copia di sicurezza prima di una riscrittura che scarta righe non valide.
+ * Non sovrascrive mai un backup esistente (suffisso progressivo in caso di
+ * collisione) e non propaga eccezioni: un backup fallito non blocca l'idratazione.
+ */
+function backupBeforeRewrite(
+  filePath: string,
+  skippedLines: number,
+  label: string,
+  nowMs: number
+): string | null {
+  if (skippedLines <= 0) return null;
+  if (!fs.existsSync(filePath)) return null;
+  const base = `${filePath}.bak-${new Date(nowMs).toISOString()}`;
+  let target = base;
+  let attempt = 1;
+  while (fs.existsSync(target)) {
+    target = `${base}-${attempt}`;
+    attempt += 1;
+  }
+  try {
+    fs.copyFileSync(filePath, target, fs.constants.COPYFILE_EXCL);
+    console.warn(
+      `[Shadow Firestore] ${label}: ${skippedLines} righe scartate in lettura; copia di sicurezza in ${path.basename(target)}`
+    );
+    return target;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[Shadow Firestore] ${label}: backup non riuscito (${msg}); ${skippedLines} righe scartate in lettura`
+    );
     return null;
   }
 }
@@ -539,10 +574,13 @@ export async function hydrateAllShadowStateFromFirestore(
   try {
     // 1. Shadow V1-live signals (attivo + eventuali archivi mensili)
     const signalsPath = path.join(rootDir, SHADOW_V1_LIVE_SIGNALS_PATH);
+    const activeSignalsExists = fs.existsSync(signalsPath);
     const localFiles = [
-      ...(fs.existsSync(signalsPath) ? [signalsPath] : []),
+      ...(activeSignalsExists ? [signalsPath] : []),
       ...listArchivePaths(signalsPath),
     ];
+    // Righe scartate nel solo file attivo: gli archivi non vengono riscritti.
+    const activeSignalsSkipped = activeSignalsExists ? loadRecords(signalsPath).skipped : 0;
     const localV1 = localFiles.length > 0 ? mergeRecordFiles(localFiles, loadRecords).records : [];
     report.v1SignalsLocal = localV1.length;
 
@@ -570,6 +608,7 @@ export async function hydrateAllShadowStateFromFirestore(
       const retained = archiveClosedMonths({ signalsPath, records: mergedV1, nowMs });
       const activeToWrite = retained.records.length > 0 || !currentMonth ? retained.records : [];
       if (activeToWrite.length > 0) {
+        backupBeforeRewrite(signalsPath, activeSignalsSkipped, 'V1-live signals', nowMs);
         writeRecordsAtomic(signalsPath, activeToWrite);
       } else if (!fs.existsSync(signalsPath) && retained.archived > 0) {
         // Tutti i record sono in archivi mensili: mantiene file attivo vuoto valido
@@ -581,7 +620,8 @@ export async function hydrateAllShadowStateFromFirestore(
     // 2. Shadow V1 Near-Miss + Summary
     const nearMissPath = path.join(rootDir, SHADOW_V1_NEAR_MISS_PATH);
     const nearMissSummaryPath = path.join(rootDir, SHADOW_V1_NEAR_MISS_SUMMARY_PATH);
-    const localNearMiss = loadNearMissRecords(nearMissPath);
+    const localNearMissLoad = loadNearMissRecordsWithStats(nearMissPath);
+    const localNearMiss = localNearMissLoad.records;
     const remoteNearMissDocs = (await withTimeout(
       adapter.listDocs(SHADOW_V1_NEAR_MISS_COLLECTION),
       'hydrate V1 near-miss'
@@ -601,6 +641,7 @@ export async function hydrateAllShadowStateFromFirestore(
     if (mergedNearMiss.length > 0) {
       const summary = summarizeNearMissRecords(mergedNearMiss, nowMs);
       const jsonl = mergedNearMiss.map((r) => JSON.stringify(r)).join('\n') + '\n';
+      backupBeforeRewrite(nearMissPath, localNearMissLoad.skipped, 'V1 near-miss', nowMs);
       writeFileAtomicSync(nearMissPath, jsonl);
       writeFileAtomicSync(nearMissSummaryPath, JSON.stringify(summary, null, 2));
       await syncShadowV1NearMissToFirestore(mergedNearMiss, summary);
@@ -677,7 +718,8 @@ export async function hydrateAllShadowStateFromFirestore(
     // 6. Shadow V2 signals & summary
     const v2SignalsPath = path.join(rootDir, 'artifacts', 'shadow_v2', 'signals.jsonl');
     const v2SummaryPath = path.join(rootDir, 'artifacts', 'shadow_v2', 'summary.json');
-    const localV2 = loadShadowV2Records(v2SignalsPath);
+    const localV2Load = loadShadowV2RecordsWithStats(v2SignalsPath);
+    const localV2 = localV2Load.records;
     report.v2SignalsLocal = localV2.length;
 
     const remoteV2Docs = (await withTimeout(
@@ -702,6 +744,7 @@ export async function hydrateAllShadowStateFromFirestore(
     if (mergedV2.length > 0) {
       const summary = summarizeShadowV2(mergedV2, new Date(nowMs).toISOString());
       const jsonl = mergedV2.map((r) => JSON.stringify(r)).join('\n') + '\n';
+      backupBeforeRewrite(v2SignalsPath, localV2Load.skipped, 'Shadow V2 signals', nowMs);
       writeFileAtomicSync(v2SignalsPath, jsonl);
       writeFileAtomicSync(v2SummaryPath, JSON.stringify(summary, null, 2));
       await syncShadowV2ToFirestore(mergedV2, summary);

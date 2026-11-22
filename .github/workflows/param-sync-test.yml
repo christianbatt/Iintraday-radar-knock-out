@@ -43,3 +43,5 @@ jobs:
         run: npx tsx src/utils/__tests__/shadow_v1_live_scanner.test.ts
       - name: Shadow market scheduler tests
         run: npx tsx src/utils/__tests__/shadow_market_scheduler.test.ts
+      - name: Shadow Firestore sync tests
+        run: npx tsx src/utils/__tests__/shadow_firestore_sync.test.ts

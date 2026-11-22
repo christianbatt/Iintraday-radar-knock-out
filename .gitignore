@@ -15,3 +15,5 @@ shared_radar_state.json
 artifacts/shadow_v1_live/bars.json
 # Artefatto runtime Shadow V2 riscritto dal collector a ogni scansione: non va versionato.
 artifacts/shadow_v2/summary.json
+# Backup di sicurezza da idratazione Firestore (shadowFirestoreSync)
+*.bak-*
