@@ -2261,10 +2261,30 @@ app.get('/api/futures', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * Stato dell'idratazione Shadow (V1-live, Near-Miss, V2) da Firestore all'avvio (punto 9).
+ *
+ * `pending` finché `hydrateAllShadowStateFromFirestore` non termina, **anche in errore**:
+ * senza il passaggio a `ready` nel `finally` le scansioni resterebbero bloccate per sempre.
+ * Finché lo stato non e' `ready`, `executeMarketDataScan` salta la scansione con un log.
+ *
+ * LIMITE NOTO, NON RISOLTO: non c'e' mutua esclusione fra istanze. Il flag e' per processo:
+ * due processi sulla stessa directory idratano e scansionano entrambi, e il secondo puo'
+ * sovrascrivere lo stato appena idratato dal primo. Non e' un lock distribuito.
+ */
+let startupShadowHydrationState: 'pending' | 'ready' = 'pending';
+
 let lastMarketScanAtMs = 0;
 let schedulerScanInFlight: Promise<void> | null = null;
 
 async function executeMarketDataScan(underlyings: any[], bypass: boolean): Promise<any[]> {
+  if (startupShadowHydrationState !== 'ready') {
+    console.warn(
+      '[Startup] Scansione saltata: idratazione Shadow da Firestore ancora in corso (le barre locali non sono state ricaricate).'
+    );
+    return [];
+  }
+
   let results: any[];
   let scanError: unknown = null;
   try {
@@ -3462,15 +3482,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Set up Vite or Static Serving
 async function startServer() {
-  // Idrata Shadow V1-live, Near-Miss e Shadow V2 da Firebase Firestore prima
-  // di avviare il collector o servire route HTTP/Vite.
-  if (firebaseAdminFirestore) {
-    setShadowFirestoreAdapter(createAdminFirestoreAdapter(firebaseAdminFirestore));
-    await hydrateAllShadowStateFromFirestore(__dirname);
-  }
-
-  // Registra le route Shadow e avvia il collector SOLO dopo l'idratazione da Firestore,
-  // e PRIMA del middleware Vite/SPA (altrimenti app.get('*') cattura /api/shadow/*).
+  // Registra le route Shadow e avvia il collector PRIMA del middleware Vite/SPA
+  // (altrimenti app.get('*') cattura /api/shadow/*).
   registerShadowRoutesFromDisk(app);
   app.post('/api/shadow/v1-live/observe', requireApiAuth);
   registerShadowV1LiveCollector(app);
@@ -3507,6 +3520,25 @@ async function startServer() {
       if (typeof intervalTimer.unref === 'function') intervalTimer.unref();
     }
   });
+
+  // Punto 9: il listen e' gia' attivo, l'idratazione Shadow gira in background e le scansioni
+  // restano bloccate da `startupShadowHydrationState` finche' non termina (anche in errore).
+  // Limite noto: nessuna mutua esclusione fra istanze (vedi commento del flag).
+  if (firebaseAdminFirestore) {
+    setShadowFirestoreAdapter(createAdminFirestoreAdapter(firebaseAdminFirestore));
+    void hydrateAllShadowStateFromFirestore(__dirname)
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[Startup] Idratazione Shadow da Firestore non riuscita: ${message}`);
+      })
+      .finally(() => {
+        startupShadowHydrationState = 'ready';
+        console.log('[Startup] Idratazione Shadow da Firestore conclusa: scansioni abilitate.');
+      });
+  } else {
+    startupShadowHydrationState = 'ready';
+    console.log('[Startup] Firestore non configurato: nessuna idratazione Shadow, scansioni abilitate.');
+  }
 
   let shuttingDown = false;
   const gracefulShutdown = (signal: string) => {
