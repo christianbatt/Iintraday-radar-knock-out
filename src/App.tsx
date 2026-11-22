@@ -259,6 +259,8 @@ export default function App() {
   // 4. News & Catalyst State
   const [newsCache, setNewsCache] = useState<Record<string, NewsItem[]>>({});
   const [catalystCache, setCatalystCache] = useState<Record<string, GeminiCatalystAnalysis>>({});
+  // ADDITIVO (R4): motivo reale dell'ultimo fallimento catalyst per ticker.
+  const [catalystErrorCache, setCatalystErrorCache] = useState<Record<string, string>>({});
   const [activeCatalystCandidate, setActiveCatalystCandidate] = useState<ScoredCandidate | null>(null);
   const [isCatalystModalOpen, setIsCatalystModalOpen] = useState<boolean>(false);
   const [isLoadingCatalyst, setIsLoadingCatalyst] = useState<boolean>(false);
@@ -740,6 +742,7 @@ export default function App() {
       return res;
     } catch (err) {
       console.warn(`Fallback setup per ${ticker} (catalyst non disponibile):`, err);
+      setCatalystErrorCache((prev) => ({ ...prev, [ticker]: err instanceof Error ? err.message : 'Errore di connessione' }));
       return null;
     }
   };
@@ -1322,6 +1325,7 @@ export default function App() {
         setCatalystCache((prev) => ({ ...prev, [ticker]: res }));
       } catch (err) {
         console.error('Errore catalyst Gemini:', err);
+        setCatalystErrorCache((prev) => ({ ...prev, [ticker]: err instanceof Error ? err.message : 'Errore di connessione' }));
       } finally {
         setIsLoadingCatalyst(false);
       }
@@ -1349,6 +1353,7 @@ export default function App() {
       }
     } catch (err) {
       console.error('Errore rianalisi:', err);
+      setCatalystErrorCache((prev) => ({ ...prev, [ticker]: err instanceof Error ? err.message : 'Errore di connessione' }));
     } finally {
       setIsLoadingCatalyst(false);
     }
@@ -2097,6 +2102,7 @@ export default function App() {
           freezeStateUS={freezeStateUS}
           onToggleFreezeEU={handleToggleFreezeEU}
           onToggleFreezeUS={handleToggleFreezeUS}
+          catalystErrors={catalystErrorCache}
         />
 
         {/* 6. Intraday Live Radar: Titoli a Mercati Aperti con Filtri e ATR Esteso */}
@@ -2199,6 +2205,7 @@ export default function App() {
         catalyst={activeCatalystCandidate ? catalystCache[activeCatalystCandidate.quote.ticker] || null : null}
         isLoading={isLoadingCatalyst}
         onReanalyze={handleReanalyzeActiveCatalyst}
+        errorMessage={activeCatalystCandidate ? catalystErrorCache[activeCatalystCandidate.quote.ticker] || null : null}
       />
 
       {/* Creator Profile & Contact Modal */}

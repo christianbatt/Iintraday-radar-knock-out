@@ -34,6 +34,9 @@ import { VWAP_PROMPT_BLOCK } from './src/config/vwapPrompt';
 import { SETUP_PROMPT_BLOCK } from './src/config/setupPrompt';
 import { AILearnedInsight, VwapSignalState, VwapDataQuality, SetupIndicators, IndicatorBarInput } from './src/types/radar';
 import { runNightlyLearning } from './scripts/nightly_learning';
+import { validateLearningPattern, MIN_REAL_TRADE_SAMPLE } from './src/utils/learningValidator';
+import { updateAIMemory } from './src/utils/memoryUpdater';
+import { resolveSpecializationReason } from './src/utils/specializationReason';
 import { authStartupWarning } from './src/utils/authStartupWarning';
 import { recordClosedBarsForShadowV2, observeShadowV2Scan, saveShadowV2BarsToDisk, syncShadowV2SummaryFromDisk } from './src/server/shadowV2Collector';
 import {
@@ -2689,6 +2692,7 @@ Restituisci eventuali proposte non persistenti nel campo "newDirectives". Non di
     const systemInstruction = `Sei un Risk Manager quantitativo rigoroso. Estrai solo regole concrete, empiriche e non banali basate esclusivamente sui dati forniti. Rispondi solo in formato JSON.`;
 
     let generated: any = null;
+    let llmErrorDetail: string | null = null;
     if (openRouterKey) {
       const openRouterRes = await callOpenRouterModel(
         [OPENROUTER_PRIMARY_MODEL, OPENROUTER_FALLBACK_MODEL],
@@ -2699,6 +2703,12 @@ Restituisci eventuali proposte non persistenti nel campo "newDirectives". Non di
       );
       if (openRouterRes?.data?.newDirectives) {
         generated = openRouterRes.data;
+      } else if (openRouterRes?.keyInvalid) {
+        llmErrorDetail = 'openrouter:401';
+      } else if (openRouterRes?.creditsExhausted) {
+        llmErrorDetail = 'openrouter:402/429';
+      } else if (typeof openRouterRes?.status === 'number' && openRouterRes.status > 0) {
+        llmErrorDetail = `openrouter:${openRouterRes.status}`;
       }
     }
 
@@ -2706,6 +2716,8 @@ Restituisci eventuali proposte non persistenti nel campo "newDirectives". Non di
       const gemRes = await callGeminiModel(systemInstruction, promptText);
       if (gemRes?.data?.newDirectives) {
         generated = gemRes.data;
+      } else if (gemRes?.quotaExhausted) {
+        llmErrorDetail = 'gemini:402/429';
       }
     }
 
@@ -2713,15 +2725,85 @@ Restituisci eventuali proposte non persistenti nel campo "newDirectives". Non di
       ? generated.newDirectives.filter((item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string')
       : [];
     aiLearnedMemory = await loadPersistentAIMemory();
+
+    // ADDITIVO (R1): motivo esplicito del ramo, sempre presente nella risposta.
+    const decisiveSample = trades.filter((trade: any) =>
+      trade &&
+      trade.status !== 'OPEN' &&
+      (trade.outcome === 'WIN' || trade.outcome === 'LOSS') &&
+      Number.isFinite(trade.rMultiple) &&
+      typeof trade.id === 'string' &&
+      trade.id.length > 0
+    ).length;
+
+    let reason: string;
+    let reasonDetail = '';
+    let persistedCount = 0;
+
+    // ADDITIVO (v6): i rami pre-validazione vivono in una funzione pura testata.
+    const preReason = resolveSpecializationReason({
+      hasOpenRouterKey: Boolean(openRouterKey),
+      geminiAvailable: isGeminiAvailable(),
+      llmErrorDetail,
+      proposedDirectivesCount: proposedDirectives.length,
+      decisiveSample,
+      minSample: MIN_REAL_TRADE_SAMPLE,
+    });
+    if (preReason.reason !== 'SAMPLE_OK') {
+      reason = preReason.reason;
+      reasonDetail = preReason.reasonDetail;
+    } else {
+      const primary = proposedDirectives[0];
+      const validationMarket: 'EU' | 'US' | 'GLOBAL' =
+        primary?.market === 'EU' || primary?.market === 'US' ? primary.market : 'GLOBAL';
+      const validation = validateLearningPattern(trades, excluded, String(primary.topic), validationMarket);
+      if (!validation) {
+        reason = 'CAMPIONE_INSUFFICIENTE';
+        reasonDetail = `${decisiveSample}/${MIN_REAL_TRADE_SAMPLE} trade chiusi decisivi (WIN/LOSS).`;
+      } else {
+        const foundBefore = aiLearnedMemory.find((entry) => entry.topic === validation.topic);
+        // R3: persistenza tramite le funzioni esistenti; i gate (n, q, avgR, profitFactor) sono dentro updateAIMemory.
+        updateAIMemory([validation]);
+        aiLearnedMemory = loadAIMemoryFromDisk();
+        if (firebaseAdminFirestore) {
+          try {
+            await persistAIMemoryToFirestore(aiLearnedMemory);
+          } catch (persistError) {
+            console.warn('[AI Specialization] Persistenza Firestore fallita:', persistError);
+          }
+        }
+        const foundAfter = aiLearnedMemory.find((entry) => entry.topic === validation.topic);
+        if (foundAfter && foundAfter.learnedAt !== foundBefore?.learnedAt) {
+          reason = 'OK_SCRITTO';
+          reasonDetail = `Direttiva scritta per topic ${validation.topic}.`;
+          persistedCount = 1;
+        } else {
+          reason = 'GATE_NON_SUPERATI';
+          reasonDetail =
+            `n=${validation.stats.n}, q=${validation.stats.adjustedPValue.toFixed(4)}, ` +
+            `avgR=${validation.stats.avgR.toFixed(2)}, profitFactor=${validation.stats.profitFactor.toFixed(2)}.`;
+        }
+      }
+    }
+
     return res.json({
       success: true,
-      addedCount: 0,
-      newInsightsCount: 0,
+      reason,
+      reasonDetail,
+      addedCount: persistedCount,
+      newInsightsCount: persistedCount,
       proposedDirectives,
+      sampleDecisive: decisiveSample,
+      minSample: MIN_REAL_TRADE_SAMPLE,
       memory: aiLearnedMemory,
-      message: proposedDirectives.length > 0
-        ? 'Proposte LLM non persistite: la memoria viene aggiornata solo dalla pipeline statistica sui trade reali.'
-        : 'Nessuna proposta LLM; la memoria persistente resta invariata.',
+      message: reason === 'OK_SCRITTO'
+        ? `Direttiva scritta: ${reasonDetail}`
+        : proposedDirectives.length > 0
+          ? 'Proposte LLM non persistite: la memoria viene aggiornata solo dalla pipeline statistica sui trade reali.'
+          : 'Nessuna proposta LLM; la memoria persistente resta invariata.',
+      messageDetail: reasonDetail,
+      proposedCount: proposedDirectives.length,
+      discardedCount: proposedDirectives.length,
       totalRules: aiLearnedMemory.length,
       directives: aiLearnedMemory,
     });
@@ -2794,6 +2876,7 @@ Restituisci un JSON rigoroso con questi campi:
     const systemInstruction = `Sei un Senior Risk Officer rigoroso ed esperto. Analizza con occhio clinico e linguaggio istituzionale da hedge fund. Non inventare dati. Rispondi solo in formato JSON.`;
 
     let generated: any = null;
+    let llmErrorDetail: string | null = null;
     if (openRouterKey) {
       const openRouterRes = await callOpenRouterModel(
         [OPENROUTER_PRIMARY_MODEL, OPENROUTER_FALLBACK_MODEL],
@@ -2804,6 +2887,12 @@ Restituisci un JSON rigoroso con questi campi:
       );
       if (openRouterRes?.data?.executiveSummary) {
         generated = openRouterRes.data;
+      } else if (openRouterRes?.keyInvalid) {
+        llmErrorDetail = 'openrouter:401';
+      } else if (openRouterRes?.creditsExhausted) {
+        llmErrorDetail = 'openrouter:402/429';
+      } else if (typeof openRouterRes?.status === 'number' && openRouterRes.status > 0) {
+        llmErrorDetail = `openrouter:${openRouterRes.status}`;
       }
     }
 
@@ -2811,6 +2900,8 @@ Restituisci un JSON rigoroso con questi campi:
       const gemRes = await callGeminiModel(systemInstruction, promptText);
       if (gemRes?.data?.executiveSummary) {
         generated = gemRes.data;
+      } else if (gemRes?.quotaExhausted) {
+        llmErrorDetail = 'gemini:402/429';
       }
     }
 
@@ -2835,9 +2926,37 @@ Restituisci un JSON rigoroso con questi campi:
       : [];
     aiLearnedMemory = await loadPersistentAIMemory();
 
+    // ADDITIVO (v6, Parte 4): stesso schema reason anche per il desk.
+    const deskDecisiveSample = sessionTrades.filter((trade: any) =>
+      trade &&
+      trade.status !== 'OPEN' &&
+      (trade.outcome === 'WIN' || trade.outcome === 'LOSS') &&
+      Number.isFinite(trade.rMultiple) &&
+      typeof trade.id === 'string' &&
+      trade.id.length > 0
+    ).length;
+    const deskPreReason = resolveSpecializationReason({
+      hasOpenRouterKey: Boolean(openRouterKey),
+      geminiAvailable: isGeminiAvailable(),
+      llmErrorDetail,
+      proposedDirectivesCount: proposedDirectives.length,
+      decisiveSample: deskDecisiveSample,
+      minSample: MIN_REAL_TRADE_SAMPLE,
+    });
+    const deskReason = deskPreReason.reason === 'SAMPLE_OK' || deskPreReason.reason === 'TOPIC_NON_FILTRATO'
+      ? 'OK_NON_PERSISTITO'
+      : deskPreReason.reason;
+    const deskReasonDetail = deskPreReason.reason === 'SAMPLE_OK'
+      ? `Post-mortem generato; proposte non persistite (campione ${deskDecisiveSample}/${MIN_REAL_TRADE_SAMPLE}).`
+      : deskPreReason.reasonDetail;
+
     return res.json({
       success: true,
       market,
+      reason: deskReason,
+      reasonDetail: deskReasonDetail,
+      sampleDecisive: deskDecisiveSample,
+      minSample: MIN_REAL_TRADE_SAMPLE,
       postMortem: {
         executiveSummary: generated.executiveSummary,
         strengths: generated.strengths || [],
@@ -2863,7 +2982,7 @@ async function callOpenRouterModel(
   userPrompt: string,
   apiKey: string,
   timeoutMs: number = 10000
-): Promise<{ data: any; keyInvalid?: boolean; creditsExhausted?: boolean } | null> {
+): Promise<{ data: any; keyInvalid?: boolean; creditsExhausted?: boolean; status?: number } | null> {
   if (Date.now() < openRouterRateLimitedUntil) {
     return null;
   }
@@ -2905,19 +3024,19 @@ async function callOpenRouterModel(
 
     if (res.status === 401) {
       console.info(`[OpenRouter] 401 Unauthorized per ${modelDesc} - Chiave non valida.`);
-      return { data: null, keyInvalid: true };
+      return { data: null, keyInvalid: true, status: 401 };
     }
 
     if (res.status === 402 || res.status === 429) {
       openRouterRateLimitedUntil = Date.now() + 10 * 60 * 1000; // Cooldown 10 minuti
       console.info(`[OpenRouter] HTTP ${res.status} per ${modelDesc} (crediti esauriti o rate limit). Attivato cooldown 10m e transizione a fallback immediato.`);
-      return { data: null, creditsExhausted: true };
+      return { data: null, creditsExhausted: true, status: res.status };
     }
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
       console.info(`[OpenRouter] HTTP ${res.status} per ${modelDesc}: ${errText.slice(0, 150)}`);
-      return null;
+      return { data: null, status: res.status };
     }
 
     const json = await res.json();

@@ -189,7 +189,7 @@ export async function fetchAIMemory(): Promise<AILearnedInsight[]> {
 export async function triggerAISpecialization(
   trades: any[],
   excludedSetups: any[]
-): Promise<{ success: boolean; newInsightsCount: number; memory: AILearnedInsight[]; message?: string }> {
+): Promise<{ success: boolean; newInsightsCount: number; memory: AILearnedInsight[]; message?: string; reason?: string; reasonDetail?: string; addedCount?: number; sampleDecisive?: number; minSample?: number }> {
   try {
     const res = await fetchWithFirebaseAuth('/api/ai/specialize', {
       method: 'POST',
@@ -224,6 +224,10 @@ export async function fetchDeskPostMortem(
   newDirectivesAdded: number;
   totalRules: number;
   error?: string;
+  reason?: string;
+  reasonDetail?: string;
+  sampleDecisive?: number;
+  minSample?: number;
 }> {
   try {
     const res = await fetchWithFirebaseAuth('/api/ai/desk-post-mortem', {
