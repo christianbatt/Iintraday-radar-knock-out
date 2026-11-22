@@ -2478,11 +2478,24 @@ export function buildExecutionSetup(
     orderFlow: quote.orderFlow ?? null,
     earningsWarning,
     costEfficiency: assessCostEfficiency({
-      riskEur: options?.riskEur ?? 10,
+      riskEur: options?.riskEur ?? DEFAULT_RISK_EUR_FALLBACK,
       target1Multiplier: t1Multiplier,
     }),
   }, options?.macroCalendar, SETUP_SELECTOR_LIVE === 'on');
 }
+
+/**
+ * Rischio per trade (€) usato solo come ultima risorsa, quando il chiamante non passa
+ * `riskEur` (nessun capitale disponibile). I chiamanti reali passano il rischio effettivo:
+ * `src/App.tsx` lo deriva dal capitale dell'account con `DEFAULT_MAX_RISK_PERCENT`.
+ */
+export const DEFAULT_RISK_EUR_FALLBACK = 10;
+
+/**
+ * Percentuale di rischio per trade usata dal pannello esecuzione (default 1%).
+ * Serve a derivare il rischio reale da passare al cost guard: prima era il fisso €10.
+ */
+export const DEFAULT_MAX_RISK_PERCENT = 1.0;
 
 export function assessCostEfficiency(input: {
   riskEur: number;

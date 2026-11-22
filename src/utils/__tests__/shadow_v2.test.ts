@@ -587,6 +587,10 @@ describe('Shadow V2 — Strategia Parallela & Regressioni Critiche', () => {
     }
   });
 
+  // Fixture: qui `target1Multiplier` vale 1.5 esplicitamente, mentre `TRADING_PARAMS.T1_R`
+  // vale 1.6 (il default usato quando il moltiplicatore non viene passato). La differenza è
+  // voluta: il test isola la classificazione del cost guard sulle soglie 25%/12% con un
+  // target dichiarato, senza dipendere dal valore di config.
   it('T16: assessCostEfficiency classifica correttamente EROSIVE / HEAVY / OPTIMAL rispetto alla fee fissa €2', () => {
     const erosive = assessCostEfficiency({ riskEur: 5, target1Multiplier: 1.5 });
     assert.equal(erosive.status, 'EROSIVE');
