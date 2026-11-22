@@ -27,6 +27,7 @@ import {
   getDualTopCandidates,
   scoreAllRadarCandidates,
   buildExecutionSetup,
+  DEFAULT_MAX_RISK_PERCENT,
   DEFAULT_SYSTEM_PARAMETERS,
   evaluateSystemOptimization,
   evaluateDualSystemOptimization,
@@ -93,6 +94,15 @@ import { FilteringAuditBanner } from './components/FilteringAuditBanner';
 import { FilteringAuditModal } from './components/FilteringAuditModal';
 import { ExcludedSetupsAnalyzerModal } from './components/ExcludedSetupsAnalyzerModal';
 import { ShadowResearchModal } from './components/ShadowResearchModal';
+
+/**
+ * Rischio per trade (€) derivato dal capitale dell'account, con il default percentuale del
+ * pannello esecuzione (`DEFAULT_MAX_RISK_PERCENT`, 1%) e il minimo di €1 applicato dal pannello.
+ * Serve a passare al cost guard un rischio reale invece del fisso €10 usato prima.
+ */
+function riskEurFromCapital(accountCapital: number): number {
+  return Math.max(1, accountCapital * (DEFAULT_MAX_RISK_PERCENT / 100));
+}
 
 function migrateUnderlyings(items: UnderlyingItem[]): UnderlyingItem[] {
   const seen = new Set<string>();
@@ -668,6 +678,10 @@ export default function App() {
   const tradesTodayCount = todayTrades.length;
   const todayPnlEur = todayTrades.reduce((acc, curr) => acc + curr.pnlEur, 0);
   const dailyPnlPercent = accountCapital > 0 ? +((todayPnlEur / accountCapital) * 100).toFixed(2) : 0;
+  // Cost guard (punto 7): il rischio per trade passato ai setup deriva dal capitale reale
+  // con il default del pannello esecuzione (1%). Prima il campo `costEfficiency` usava
+  // un rischio fisso di €10 e non rifletteva il conto.
+  const setupRiskEur = riskEurFromCapital(accountCapital);
 
   // Circuit Breaker triggers if 2 trades reached OR loss exceeds -2.0%
   const isLossCircuitBreaker = dailyPnlPercent <= -2.0;
@@ -933,8 +947,8 @@ export default function App() {
       if (!isAlive()) return;
       setTopCandidateEU(finalTopEU);
       setTopCandidateUS(finalTopUS);
-      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU, macroEvents: macroCalendarRef.current?.events, macroCalendar: macroCalendarRef.current ?? undefined }));
-      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters, { entryMode: entryModeUS, macroEvents: macroCalendarRef.current?.events, macroCalendar: macroCalendarRef.current ?? undefined }));
+      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU, riskEur: setupRiskEur, macroEvents: macroCalendarRef.current?.events, macroCalendar: macroCalendarRef.current ?? undefined }));
+      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters, { entryMode: entryModeUS, riskEur: setupRiskEur, macroEvents: macroCalendarRef.current?.events, macroCalendar: macroCalendarRef.current ?? undefined }));
 
       // 4.5. Visual Filtering Audit Generation (triggers 3-5s notification banner)
       const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCacheRef.current };
@@ -983,7 +997,7 @@ export default function App() {
     } finally {
       if (scanAbortRef.current === controller) setIsScanning(false);
     }
-  }, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries]);
+  }, [underlyings, currentSession, futures, rsiFilterActive, parameters, journalEntries, accountCapital]);
 
   // Re-rank instantly when RSI Filter or parameters are changed
   useEffect(() => {
@@ -1083,8 +1097,8 @@ export default function App() {
 
       setTopCandidateEU(finalTopEU);
       setTopCandidateUS(finalTopUS);
-      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU, macroEvents: macroCalendarRef.current?.events, macroCalendar: macroCalendarRef.current ?? undefined }));
-      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters, { entryMode: entryModeUS, macroEvents: macroCalendarRef.current?.events, macroCalendar: macroCalendarRef.current ?? undefined }));
+      setSetupEU(buildExecutionSetup(finalTopEU, finalCatEU, 'EU', parameters, { entryMode: entryModeEU, riskEur: setupRiskEur, macroEvents: macroCalendarRef.current?.events, macroCalendar: macroCalendarRef.current ?? undefined }));
+      setSetupUS(buildExecutionSetup(finalTopUS, finalCatUS, 'US', parameters, { entryMode: entryModeUS, riskEur: setupRiskEur, macroEvents: macroCalendarRef.current?.events, macroCalendar: macroCalendarRef.current ?? undefined }));
 
       // PASSO E: catalystCache resta dallo state di proposito (snapshot pre-run: in questo run setCatalystCache e' gia' stato chiamato).
       const currentCache: Record<string, GeminiCatalystAnalysis> = { ...catalystCache };
@@ -1101,7 +1115,7 @@ export default function App() {
       );
       setAuditReport(audit);
     });
-  }, [rsiFilterActive, parameters]);
+  }, [rsiFilterActive, parameters, accountCapital]);
 
   // Auto-refresh interval (Real-time live monitoring)
   const handleRunScreeningRef = React.useRef(handleRunScreening);
@@ -1328,10 +1342,10 @@ export default function App() {
 
       // Update setups if active candidate is either top EU or top US
       if (!cand.score.warmupIncomplete && topCandidateEU?.quote.ticker === ticker) {
-        setSetupEU(buildExecutionSetup(cand, res, 'EU', parameters, { entryMode: getActiveEntryMode('EU'), macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
+        setSetupEU(buildExecutionSetup(cand, res, 'EU', parameters, { entryMode: getActiveEntryMode('EU'), riskEur: setupRiskEur, macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
       }
       if (!cand.score.warmupIncomplete && topCandidateUS?.quote.ticker === ticker) {
-        setSetupUS(buildExecutionSetup(cand, res, 'US', parameters, { entryMode: getActiveEntryMode('US'), macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
+        setSetupUS(buildExecutionSetup(cand, res, 'US', parameters, { entryMode: getActiveEntryMode('US'), riskEur: setupRiskEur, macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
       }
     } catch (err) {
       console.error('Errore rianalisi:', err);
@@ -1359,6 +1373,7 @@ export default function App() {
 
     const newSetup = buildExecutionSetup(cand, existingCat, market, parameters, {
       entryMode: getActiveEntryMode(market),
+      riskEur: setupRiskEur,
       macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined,
     });
 
@@ -1639,10 +1654,10 @@ export default function App() {
         })
       );
       if (dual.topEU) {
-        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', newParams, { entryMode: getActiveEntryMode('EU'), macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
+        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', newParams, { entryMode: getActiveEntryMode('EU'), riskEur: setupRiskEur, macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
       }
       if (dual.topUS) {
-        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', newParams, { entryMode: getActiveEntryMode('US'), macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
+        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', newParams, { entryMode: getActiveEntryMode('US'), riskEur: setupRiskEur, macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
       }
       const audit = generateFilteringAuditReport(
         quotes,
@@ -1655,10 +1670,10 @@ export default function App() {
       setAuditReport(audit);
     } else {
       if (topCandidateEU) {
-        setSetupEU(buildExecutionSetup(topCandidateEU, catalystCache[topCandidateEU.quote.ticker] || null, 'EU', newParams, { entryMode: getActiveEntryMode('EU'), macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
+        setSetupEU(buildExecutionSetup(topCandidateEU, catalystCache[topCandidateEU.quote.ticker] || null, 'EU', newParams, { entryMode: getActiveEntryMode('EU'), riskEur: setupRiskEur, macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
       }
       if (topCandidateUS) {
-        setSetupUS(buildExecutionSetup(topCandidateUS, catalystCache[topCandidateUS.quote.ticker] || null, 'US', newParams, { entryMode: getActiveEntryMode('US'), macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
+        setSetupUS(buildExecutionSetup(topCandidateUS, catalystCache[topCandidateUS.quote.ticker] || null, 'US', newParams, { entryMode: getActiveEntryMode('US'), riskEur: setupRiskEur, macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
       }
     }
   };
@@ -1788,10 +1803,10 @@ export default function App() {
       }
 
       if (dual.topEU) {
-        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', updated, { entryMode: getActiveEntryMode('EU'), macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
+        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', updated, { entryMode: getActiveEntryMode('EU'), riskEur: setupRiskEur, macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
       }
       if (dual.topUS) {
-        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', updated, { entryMode: getActiveEntryMode('US'), macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
+        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', updated, { entryMode: getActiveEntryMode('US'), riskEur: setupRiskEur, macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
       }
 
       const audit = generateFilteringAuditReport(
@@ -1883,10 +1898,10 @@ export default function App() {
       }
 
       if (dual.topEU) {
-        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', updated, { entryMode: getActiveEntryMode('EU'), macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
+        setSetupEU(buildExecutionSetup(dual.topEU, catalystCache[dual.topEU.quote.ticker] || null, 'EU', updated, { entryMode: getActiveEntryMode('EU'), riskEur: setupRiskEur, macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
       }
       if (dual.topUS) {
-        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', updated, { entryMode: getActiveEntryMode('US'), macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
+        setSetupUS(buildExecutionSetup(dual.topUS, catalystCache[dual.topUS.quote.ticker] || null, 'US', updated, { entryMode: getActiveEntryMode('US'), riskEur: setupRiskEur, macroEvents: macroCalendar?.events, macroCalendar: macroCalendar ?? undefined }));
       }
 
       const audit = generateFilteringAuditReport(
