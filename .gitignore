@@ -19,3 +19,4 @@ artifacts/shadow_v2/summary.json
 *.bak-*
 # Artefatto runtime Shadow V2 riscritto dal collector: non va versionato.
 artifacts/shadow_v2/bars.json
+# artifacts/shadow_v2/signals.jsonl è versionato intenzionalmente: non aggiungere regole di ignore.
