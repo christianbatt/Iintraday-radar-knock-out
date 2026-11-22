@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,7 +55,7 @@ export function updateAIMemory(
   if (memory.length > 50) memory = memory.slice(-50);
 
   const directory = path.dirname(memoryPath);
-  const temporaryPath = `${memoryPath}.${process.pid}.tmp`;
+  const temporaryPath = `${memoryPath}.tmp-${process.pid}-${randomUUID()}`;
   fs.mkdirSync(directory, { recursive: true });
   try {
     fs.writeFileSync(temporaryPath, JSON.stringify(memory, null, 2), { encoding: 'utf8', mode: 0o600 });
