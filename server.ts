@@ -3521,6 +3521,9 @@ async function startServer() {
 
   // Punto 9: il listen e' gia' attivo, l'idratazione Shadow gira in background e le scansioni
   // attendono `startupShadowHydrationPromise` (limitata dal timeout Firestore 5s) cosi'
+  // Nota sui tempi: le letture di hydrateAllShadowStateFromFirestore sono 6 chiamate
+  // sequenziali con timeout di 5s (massimo teorico 30s); le scritture e i sync successivi
+  // non hanno timeout, quindi il gate può durare più dei 5s citati sopra.
   // `/api/market-data` al cold start non restituisce mai un radar vuoto.
   if (firebaseAdminFirestore) {
     setShadowFirestoreAdapter(createAdminFirestoreAdapter(firebaseAdminFirestore));

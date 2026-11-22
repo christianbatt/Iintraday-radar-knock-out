@@ -135,6 +135,8 @@ npm ci
 ```
 `npm ci` installa esattamente le versioni registrate in `package-lock.json`, senza modificarlo. Usa `npm install` solo quando devi aggiornare intenzionalmente le dipendenze (riscrive il lockfile).
 
+> Nota: nel repository è presente anche `bun.lock`, mantenuto intenzionalmente. L'installazione di riferimento resta `npm ci` con `package-lock.json`.
+
 ### 4. Avviare l'Applicazione in Locale
 ```bash
 npm run dev
