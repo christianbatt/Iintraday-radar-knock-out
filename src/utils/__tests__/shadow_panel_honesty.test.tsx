@@ -198,3 +198,53 @@ describe('C7 — riepilogo in parole semplici con equivalenti in Euro', () => {
     assert.equal(empty.includes('data-testid="shadow-v2-plain-summary"'), false);
   });
 });
+
+describe('C8 — pairing 90m Base vs 120m Trail su TRAIL_BE_120M', () => {
+  it('mostra il confronto finestra uguale vs estesa senza violare la regola sul termine segnale', () => {
+    const html = panel({
+      shadowV2: baseV2({
+        experiments: [
+          {
+            id: 'BASE_90M_R15',
+            label: 'Base 90m 1.5R',
+            description: 'Regola attuale',
+            n: 31,
+            wins: 18,
+            winRatePct: 58.1,
+            meanRGross: 0.42,
+            meanRNet: 0.31,
+            sumRNet: 9.61,
+            profitFactor: 1.4,
+          },
+          {
+            id: 'TRAIL_BE_120M',
+            label: 'Trail + BE 120m',
+            description: 'Variante con trailing BE e finestra 120m',
+            n: 31,
+            wins: 17,
+            winRatePct: 54.8,
+            meanRGross: 0.46,
+            meanRNet: 0.35,
+            sumRNet: 10.85,
+            profitFactor: 1.52,
+          },
+        ],
+        trailBe120mPairing: {
+          n: 31,
+          sameWindow: 24,
+          differentWindow: 7,
+          baseVerticalBars: 18,
+          trailMaxVerticalBars: 24,
+        },
+      }),
+    });
+    assert.ok(html.includes('data-testid="shadow-v2-trail-pairing"'));
+    assert.ok(html.includes('24 uguale'));
+    assert.ok(html.includes('7 estesa'));
+    assert.ok(html.includes('n=31'));
+    const total = (html.match(/segnale/g) ?? []).length;
+    const negated = (html.match(/non è un segnale operativo/g) ?? []).length;
+    assert.equal(total, negated);
+  });
+});
+

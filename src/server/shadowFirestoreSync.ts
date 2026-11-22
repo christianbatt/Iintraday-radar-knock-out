@@ -44,7 +44,12 @@ import {
   writeRecordsAtomic,
   type PersistedShadowV1LiveRecord,
 } from './shadowV1LiveStore';
-import { recordBarsForShadowV1Live } from './shadowV1LiveCollector';
+import {
+  flushShadowV1LiveBarsToDisk,
+  recordBarsForShadowV1Live,
+  runInShadowV1LiveStoreQueue,
+  saveShadowV1LiveBarsToDisk,
+} from './shadowV1LiveCollector';
 import { loadShadowV2RecordsWithStats } from './shadowV2Collector';
 
 export const SHADOW_V1_SIGNALS_COLLECTION = '_system/shadow_v1_live/signals';
@@ -553,6 +558,7 @@ export async function hydrateAllShadowStateFromFirestore(
   options: {
     nowMs?: number;
     seedV1Bars?: (ticker: string, market: 'EU' | 'US', bars: readonly ShadowV1LiveBar[], nowMs: number) => void;
+    activeBarsPath?: string;
   } = {}
 ): Promise<HydrationReport> {
   const nowMs = options.nowMs ?? Date.now();
@@ -573,17 +579,9 @@ export async function hydrateAllShadowStateFromFirestore(
 
   try {
     // 1. Shadow V1-live signals (attivo + eventuali archivi mensili)
+    // Scarica prima i documenti remoti fuori dalla coda locale, poi acquisisce la coda
+    // unica dello store per evitare race con POST /observe o cycle() gia' attivi.
     const signalsPath = path.join(rootDir, SHADOW_V1_LIVE_SIGNALS_PATH);
-    const activeSignalsExists = fs.existsSync(signalsPath);
-    const localFiles = [
-      ...(activeSignalsExists ? [signalsPath] : []),
-      ...listArchivePaths(signalsPath),
-    ];
-    // Righe scartate nel solo file attivo: gli archivi non vengono riscritti.
-    const activeSignalsSkipped = activeSignalsExists ? loadRecords(signalsPath).skipped : 0;
-    const localV1 = localFiles.length > 0 ? mergeRecordFiles(localFiles, loadRecords).records : [];
-    report.v1SignalsLocal = localV1.length;
-
     const remoteV1Docs = (await withTimeout(
       adapter.listDocs(SHADOW_V1_SIGNALS_COLLECTION),
       'hydrate V1 signals'
@@ -600,21 +598,38 @@ export async function hydrateAllShadowStateFromFirestore(
     }
     report.v1SignalsRemote = remoteV1.length;
 
-    const mergedV1 = mergeV1LiveRecordsMonotone(localV1, remoteV1);
-    report.v1SignalsMerged = mergedV1.length;
+    let mergedV1ToSync: PersistedShadowV1LiveRecord[] = [];
+    await runInShadowV1LiveStoreQueue(async () => {
+      const activeSignalsExists = fs.existsSync(signalsPath);
+      const localFiles = [
+        ...(activeSignalsExists ? [signalsPath] : []),
+        ...listArchivePaths(signalsPath),
+      ];
+      // Righe scartate nel solo file attivo: gli archivi non vengono riscritti.
+      const activeSignalsSkipped = activeSignalsExists ? loadRecords(signalsPath).skipped : 0;
+      const localV1 = localFiles.length > 0 ? mergeRecordFiles(localFiles, loadRecords).records : [];
+      report.v1SignalsLocal = localV1.length;
 
-    if (mergedV1.length > 0) {
-      const currentMonth = monthKeyUtc(nowMs);
-      const retained = archiveClosedMonths({ signalsPath, records: mergedV1, nowMs });
-      const activeToWrite = retained.records.length > 0 || !currentMonth ? retained.records : [];
-      if (activeToWrite.length > 0) {
-        backupBeforeRewrite(signalsPath, activeSignalsSkipped, 'V1-live signals', nowMs);
-        writeRecordsAtomic(signalsPath, activeToWrite);
-      } else if (!fs.existsSync(signalsPath) && retained.archived > 0) {
-        // Tutti i record sono in archivi mensili: mantiene file attivo vuoto valido
-        writeFileAtomicSync(signalsPath, '');
+      const mergedV1 = mergeV1LiveRecordsMonotone(localV1, remoteV1);
+      report.v1SignalsMerged = mergedV1.length;
+
+      if (mergedV1.length > 0) {
+        const currentMonth = monthKeyUtc(nowMs);
+        const retained = archiveClosedMonths({ signalsPath, records: mergedV1, nowMs });
+        const activeToWrite = retained.records.length > 0 || !currentMonth ? retained.records : [];
+        if (activeToWrite.length > 0) {
+          backupBeforeRewrite(signalsPath, activeSignalsSkipped, 'V1-live signals', nowMs);
+          writeRecordsAtomic(signalsPath, activeToWrite);
+        } else if (!fs.existsSync(signalsPath) && retained.archived > 0) {
+          // Tutti i record sono in archivi mensili: mantiene file attivo vuoto valido
+          writeFileAtomicSync(signalsPath, '');
+        }
+        mergedV1ToSync = mergedV1;
       }
-      await syncShadowV1LiveRecordsToFirestore(mergedV1);
+    });
+
+    if (mergedV1ToSync.length > 0) {
+      await syncShadowV1LiveRecordsToFirestore(mergedV1ToSync);
     }
 
     // 2. Shadow V1 Near-Miss + Summary
@@ -711,6 +726,13 @@ export async function hydrateAllShadowStateFromFirestore(
         ) {
           seedBars(e.ticker, e.market, e.bars, nowMs);
           report.activeBarsRestored += 1;
+        }
+      }
+      if (report.activeBarsRestored > 0 && !options.seedV1Bars) {
+        if (options.activeBarsPath) {
+          saveShadowV1LiveBarsToDisk(options.activeBarsPath);
+        } else {
+          flushShadowV1LiveBarsToDisk();
         }
       }
     }

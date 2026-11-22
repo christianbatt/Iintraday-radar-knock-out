@@ -129,6 +129,13 @@ export type ShadowPanelData = {
       sumRNet: number | null;
       profitFactor: number | null;
     }>;
+    trailBe120mPairing?: {
+      n: number;
+      sameWindow: number;
+      differentWindow: number;
+      baseVerticalBars: number;
+      trailMaxVerticalBars: number;
+    } | null;
     limitations?: string[];
     recentSignals?: Array<{
       id: string;
@@ -745,6 +752,20 @@ export const ShadowV2Section: React.FC<{ shadowV2?: ShadowPanelData['shadowV2'] 
                         <td className="py-1 pr-2 font-sans">
                           <div className="font-semibold text-white">{exp.label}</div>
                           <div className="text-[9px] text-slate-500">{exp.description}</div>
+                          {exp.id === 'TRAIL_BE_120M' &&
+                            shadowV2.trailBe120mPairing &&
+                            shadowV2.trailBe120mPairing.n > 0 && (
+                              <div
+                                className="text-[9px] text-amber-300/90 mt-0.5"
+                                data-testid="shadow-v2-trail-pairing"
+                              >
+                                Finestra vs Base ({shadowV2.trailBe120mPairing.baseVerticalBars} vs max{' '}
+                                {shadowV2.trailBe120mPairing.trailMaxVerticalBars} barre):{' '}
+                                {shadowV2.trailBe120mPairing.sameWindow} uguale ·{' '}
+                                {shadowV2.trailBe120mPairing.differentWindow} estesa (n=
+                                {shadowV2.trailBe120mPairing.n})
+                              </div>
+                            )}
                         </td>
                         <td className="py-1 text-right">{exp.n}</td>
                         <td className="py-1 text-right">

@@ -2273,16 +2273,14 @@ app.get('/api/futures', async (req: Request, res: Response) => {
  * sovrascrivere lo stato appena idratato dal primo. Non e' un lock distribuito.
  */
 let startupShadowHydrationState: 'pending' | 'ready' = 'pending';
+let startupShadowHydrationPromise: Promise<void> = Promise.resolve();
 
 let lastMarketScanAtMs = 0;
 let schedulerScanInFlight: Promise<void> | null = null;
 
 async function executeMarketDataScan(underlyings: any[], bypass: boolean): Promise<any[]> {
   if (startupShadowHydrationState !== 'ready') {
-    console.warn(
-      '[Startup] Scansione saltata: idratazione Shadow da Firestore ancora in corso (le barre locali non sono state ricaricate).'
-    );
-    return [];
+    await startupShadowHydrationPromise;
   }
 
   let results: any[];
@@ -3522,11 +3520,14 @@ async function startServer() {
   });
 
   // Punto 9: il listen e' gia' attivo, l'idratazione Shadow gira in background e le scansioni
-  // restano bloccate da `startupShadowHydrationState` finche' non termina (anche in errore).
-  // Limite noto: nessuna mutua esclusione fra istanze (vedi commento del flag).
+  // attendono `startupShadowHydrationPromise` (limitata dal timeout Firestore 5s) cosi'
+  // `/api/market-data` al cold start non restituisce mai un radar vuoto.
   if (firebaseAdminFirestore) {
     setShadowFirestoreAdapter(createAdminFirestoreAdapter(firebaseAdminFirestore));
-    void hydrateAllShadowStateFromFirestore(__dirname)
+    startupShadowHydrationPromise = hydrateAllShadowStateFromFirestore(__dirname)
+      .then(() => {
+        syncShadowV2SummaryFromDisk(__dirname);
+      })
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`[Startup] Idratazione Shadow da Firestore non riuscita: ${message}`);
@@ -3537,6 +3538,7 @@ async function startServer() {
       });
   } else {
     startupShadowHydrationState = 'ready';
+    startupShadowHydrationPromise = Promise.resolve();
     console.log('[Startup] Firestore non configurato: nessuna idratazione Shadow, scansioni abilitate.');
   }
 

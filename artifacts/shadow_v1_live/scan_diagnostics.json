@@ -1,148 +1,128 @@
 {
-  "version": 1,
-  "lastScanAt": "2026-11-20T13:36:44.002Z",
-  "scannedTickers": 20,
-  "evaluatedTickers": 20,
-  "emittedThisScan": 0,
   "persistedThisScan": 0,
-  "blockedThisScan": 20,
-  "topEU": "RACE.MI",
-  "topUS": null,
-  "gateCounts": [
-    {
-      "gate": "G4",
-      "label": "Prezzo gia' esteso oltre +0,40%",
-      "count": 15
-    },
-    {
-      "gate": "SUPERTREND_OPPOSED",
-      "label": "Veto Supertrend contrario alla direzione",
-      "count": 2
-    },
-    {
-      "gate": "G5",
-      "label": "Breakout scaduto oltre 60 minuti",
-      "count": 1
-    },
-    {
-      "gate": "G7",
-      "label": "Range giornaliero ADR esaurito (>60%)",
-      "count": 1
-    },
-    {
-      "gate": "G8",
-      "label": "Stop troppo distante per leva KO",
-      "count": 1
-    }
-  ],
+  "version": 1,
+  "emittedThisScan": 0,
+  "blockedThisScan": 40,
+  "scannedTickers": 40,
+  "evaluatedTickers": 40,
+  "lastScanAt": "2026-11-20T15:53:56.844Z",
   "sampleCandidates": [
     {
-      "ticker": "RACE.MI",
+      "ticker": "STMMI.MI",
       "market": "EU",
-      "score": 69,
-      "isTopPick": true,
-      "decision": "BLOCKED",
-      "gate": "G4",
-      "reason": "Prezzo gia' esteso oltre +0,40%"
-    },
-    {
-      "ticker": "SIE.DE",
-      "market": "EU",
-      "score": 68,
+      "score": 30,
       "isTopPick": false,
       "decision": "BLOCKED",
-      "gate": "G4",
-      "reason": "Prezzo gia' esteso oltre +0,40%"
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
     },
     {
-      "ticker": "ENEL.MI",
-      "market": "EU",
-      "score": 65,
+      "ticker": "AVGO",
+      "market": "US",
+      "score": 30,
       "isTopPick": false,
       "decision": "BLOCKED",
-      "gate": "G4",
-      "reason": "Prezzo gia' esteso oltre +0,40%"
-    },
-    {
-      "ticker": "SAP.DE",
-      "market": "EU",
-      "score": 65,
-      "isTopPick": false,
-      "decision": "BLOCKED",
-      "gate": "G4",
-      "reason": "Prezzo gia' esteso oltre +0,40%"
-    },
-    {
-      "ticker": "MC.PA",
-      "market": "EU",
-      "score": 65,
-      "isTopPick": false,
-      "decision": "BLOCKED",
-      "gate": "G4",
-      "reason": "Prezzo gia' esteso oltre +0,40%"
-    },
-    {
-      "ticker": "ALV.DE",
-      "market": "EU",
-      "score": 63,
-      "isTopPick": false,
-      "decision": "BLOCKED",
-      "gate": "G4",
-      "reason": "Prezzo gia' esteso oltre +0,40%"
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
     },
     {
       "ticker": "ASML.AS",
       "market": "EU",
-      "score": 62,
+      "score": 30,
       "isTopPick": false,
       "decision": "BLOCKED",
-      "gate": "G4",
-      "reason": "Prezzo gia' esteso oltre +0,40%"
-    },
-    {
-      "ticker": "AIR.PA",
-      "market": "EU",
-      "score": 62,
-      "isTopPick": false,
-      "decision": "BLOCKED",
-      "gate": "G4",
-      "reason": "Prezzo gia' esteso oltre +0,40%"
-    },
-    {
-      "ticker": "NOV.DE",
-      "market": "EU",
-      "score": 59,
-      "isTopPick": false,
-      "decision": "BLOCKED",
-      "gate": "G8",
-      "reason": "Stop troppo distante per leva KO"
-    },
-    {
-      "ticker": "MBG.DE",
-      "market": "EU",
-      "score": 59,
-      "isTopPick": false,
-      "decision": "BLOCKED",
-      "gate": "G7",
-      "reason": "Range giornaliero ADR esaurito (>60%)"
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
     },
     {
       "ticker": "ISP.MI",
       "market": "EU",
-      "score": 59,
+      "score": 30,
       "isTopPick": false,
       "decision": "BLOCKED",
-      "gate": "G4",
-      "reason": "Prezzo gia' esteso oltre +0,40%"
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "SMCI",
+      "market": "US",
+      "score": 28,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "HOOD",
+      "market": "US",
+      "score": 28,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "MC.PA",
+      "market": "EU",
+      "score": 28,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
     },
     {
       "ticker": "UCG.MI",
       "market": "EU",
-      "score": 57,
+      "score": 28,
       "isTopPick": false,
       "decision": "BLOCKED",
-      "gate": "G4",
-      "reason": "Prezzo gia' esteso oltre +0,40%"
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "RACE.MI",
+      "market": "EU",
+      "score": 28,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "ENI.MI",
+      "market": "EU",
+      "score": 28,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "RHM.DE",
+      "market": "EU",
+      "score": 24,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    },
+    {
+      "ticker": "SAP.DE",
+      "market": "EU",
+      "score": 24,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "WARMUP_INCOMPLETE",
+      "reason": "Indicatori 5m ancora in warmup"
+    }
+  ],
+  "topEU": null,
+  "topUS": null,
+  "gateCounts": [
+    {
+      "gate": "WARMUP_INCOMPLETE",
+      "label": "Indicatori 5m ancora in warmup",
+      "count": 40
     }
   ]
 }

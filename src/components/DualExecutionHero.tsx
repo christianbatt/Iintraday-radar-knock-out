@@ -11,6 +11,7 @@ import {
   calculateKnockOutSafety,
   computeKoPresetFromLeverage,
   createDefaultSafetyCheck,
+  DEFAULT_MAX_RISK_PERCENT,
   TRADE_REPUBLIC_KO_LEVERAGE_GRID,
 } from '../utils/calculator';
 import { TRADING_PARAMS } from '../config/tradingParams';
@@ -112,7 +113,7 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
   const [target1MovedToBE, setTarget1MovedToBE] = useState<boolean>(false);
   const triggerAudioRef = React.useRef<{ playedBreakout?: string; playedT1?: string }>({});
 
-  const [maxRiskPercent, setMaxRiskPercent] = useState<number>(1.0);
+  const [maxRiskPercent] = useState<number>(DEFAULT_MAX_RISK_PERCENT);
   const [spreadEur, setSpreadEur] = useState<number>(0.02);
   const [brokerFeeEur, setBrokerFeeEur] = useState<number>(1.0);
   const [tradeSaved, setTradeSaved] = useState<boolean>(false);

@@ -619,3 +619,100 @@ test('idratazione V2: le righe non valide finiscono in .bak', async () => {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
+
+test('idratazione V1 serializza la scrittura locale in coda evitando race con observe concorrenti e salva active_bars su disco', async () => {
+  resetShadowFirestoreSyncForTest();
+  clearShadowV1LiveBarsForTest();
+  const baseAdapter = createMemoryFirestoreAdapter();
+  let releaseV1List!: () => void;
+  const v1ListStarted = new Promise<void>((resolve) => {
+    const gate = new Promise<void>((r) => {
+      releaseV1List = r;
+    });
+    setShadowFirestoreAdapter({
+      ...baseAdapter,
+      async listDocs(collectionPath: string) {
+        if (collectionPath === SHADOW_V1_SIGNALS_COLLECTION) {
+          resolve();
+          await gate;
+        }
+        return baseAdapter.listDocs(collectionPath);
+      },
+    });
+  });
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shadow-race-v1-'));
+
+  try {
+    const nowMs = Date.UTC(2026, 10, 20, 12, 0, 0);
+    const remoteRec = sampleV1Record({
+      key: 'SAP.DE|LONG|remote-race',
+      ticker: 'SAP.DE',
+      market: 'EU',
+      status: 'TARGET',
+      r: 2.0,
+      exitBarTs: nowMs - 60_000,
+      exitPrice: 204,
+    });
+    baseAdapter.docs.set(
+      `${SHADOW_V1_SIGNALS_COLLECTION}/${shadowDocIdForKey(remoteRec.key)}`,
+      structuredClone(remoteRec) as unknown as Record<string, unknown>
+    );
+    baseAdapter.docs.set(SHADOW_V1_ACTIVE_BARS_DOC, {
+      version: 1,
+      entries: [
+        {
+          ticker: 'SAP.DE',
+          market: 'EU',
+          updatedAt: nowMs - 60_000,
+          bars: [{ t: nowMs - 300_000, o: 200, h: 201, l: 199.5, c: 200.8 }],
+        },
+      ],
+    });
+
+    const hydrationPromise = hydrateAllShadowStateFromFirestore(tmpRoot, {
+      nowMs,
+      activeBarsPath: path.join(tmpRoot, 'artifacts', 'shadow_v1_live', 'active_bars.json'),
+    });
+
+    // Attende che hydrate sia fermo su listDocs Firestore, poi esegue un observe locale concorrente
+    await v1ListStarted;
+    const signalsPath = path.join(tmpRoot, SHADOW_V1_LIVE_SIGNALS_PATH);
+    const decidedAtMs = Date.UTC(2026, 10, 20, 11, 55, 0);
+    const handler = createObserveHandler({
+      env: {},
+      signalsPath,
+      now: () => nowMs,
+      bars: () => [],
+    });
+    const obsRes = await handler({
+      body: {
+        ticker: 'NVDA',
+        market: 'US',
+        direction: 'LONG',
+        entry: 140,
+        stop: 138,
+        target: 144,
+        calculatedAt: new Date(decidedAtMs).toISOString(),
+      },
+      skipRateLimit: true,
+    });
+    assert.equal(obsRes.status, 200);
+
+    releaseV1List();
+    const report = await hydrationPromise;
+    await flushPendingShadowFirestoreSync();
+
+    const merged = loadRecords(signalsPath).records;
+    assert.equal(merged.length, 2, 'entrambi i record (remoto + observe concorrente) devono persistere');
+    assert.ok(merged.some((r) => r.key === remoteRec.key && r.status === 'TARGET'));
+    assert.ok(merged.some((r) => r.ticker === 'NVDA' && r.status === 'PENDING_FILL'));
+    assert.equal(report.activeBarsRestored, 1);
+    const barsFile = path.join(tmpRoot, 'artifacts', 'shadow_v1_live', 'active_bars.json');
+    assert.ok(fs.existsSync(barsFile), 'active_bars.json deve essere flushato su disco dopo idratazione');
+  } finally {
+    clearShadowV1LiveBarsForTest();
+    resetShadowFirestoreSyncForTest();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+

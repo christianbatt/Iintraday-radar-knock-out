@@ -194,19 +194,19 @@ Solo nomi e punto di lettura nel codice: nessun valore, nessun segreto. I valori
 
 | Variabile | Letta in |
 |---|---|
-| `FIREBASE_PROJECT_ID` | `server.ts:208` |
-| `GOOGLE_CLOUD_PROJECT` | `server.ts:209` |
-| `GCLOUD_PROJECT` | `server.ts:210` |
-| `VITE_FIREBASE_PROJECT_ID` | `server.ts:211`, `src/services/firebaseSync.ts:51` |
-| `FIRESTORE_DATABASE_ID` | `server.ts:213`, `server.ts:218` |
-| `AI_MEMORY_SYSTEM_UID` | `server.ts:227` |
-| `VITE_FIREBASE_API_KEY` | `src/services/firebaseSync.ts:45` |
-| `VITE_FIRESTORE_DATABASE_ID` | `src/services/firebaseSync.ts:74` |
+| `FIREBASE_PROJECT_ID` | `server.ts` (`firebaseProjectId`) |
+| `GOOGLE_CLOUD_PROJECT` | `server.ts` (`firebaseProjectId`) |
+| `GCLOUD_PROJECT` | `server.ts` (`firebaseProjectId`) |
+| `VITE_FIREBASE_PROJECT_ID` | `server.ts` (`firebaseProjectId`), `src/services/firebaseSync.ts` (`projectId`) |
+| `FIRESTORE_DATABASE_ID` | `server.ts` (`firebaseDatabaseId`) |
+| `AI_MEMORY_SYSTEM_UID` | `server.ts` (`AI_MEMORY_SYSTEM_UID`) |
+| `VITE_FIREBASE_API_KEY` | `src/services/firebaseSync.ts` (`apiKey`) |
+| `VITE_FIRESTORE_DATABASE_ID` | `src/services/firebaseSync.ts` (`databaseId`) |
 
 Note di comportamento:
 
-- **Project id**: vale il primo valore non vuoto della catena `server.ts:207-212` (`FIREBASE_PROJECT_ID` → `GOOGLE_CLOUD_PROJECT` → `GCLOUD_PROJECT` → `VITE_FIREBASE_PROJECT_ID`). Se resta vuoto, l'Admin SDK non viene inizializzato (`server.ts:235`).
-- **Database id**: `server.ts:213` parte da `FIRESTORE_DATABASE_ID` o `(default)`; `server.ts:215-221` legge `firebase-applet-config.json` (se il file esiste) e usa `firestoreDatabaseId` come fallback, con la variabile d'ambiente che resta prioritaria.
-- **Credenziali Admin SDK**: non sono lette dal codice. `initializeFirebaseAdminApp({ projectId }, 'intraday-radar-auth')` (`server.ts:236-237`) usa le Application Default Credentials dell'SDK.
-- **`AI_MEMORY_SYSTEM_UID`** (`server.ts:227`, default `system`) determina il documento della memoria AI: `users/<uid>/ai_specialization_memory/current` (`server.ts:228-233`).
+- **Project id**: vale il primo valore non vuoto della catena `FIREBASE_PROJECT_ID` → `GOOGLE_CLOUD_PROJECT` → `GCLOUD_PROJECT` → `VITE_FIREBASE_PROJECT_ID` in `server.ts`. Se resta vuoto, `firebaseAdminApp` non viene inizializzato.
+- **Database id**: `server.ts` parte da `FIRESTORE_DATABASE_ID` o `(default)`; legge `firebase-applet-config.json` (se il file esiste) e usa `firestoreDatabaseId` come fallback, con la variabile d'ambiente che resta prioritaria.
+- **Credenziali Admin SDK**: non sono lette dal codice. `initializeFirebaseAdminApp({ projectId }, 'intraday-radar-auth')` in `server.ts` usa le Application Default Credentials dell'SDK.
+- **`AI_MEMORY_SYSTEM_UID`** (default `system`) determina il documento della memoria AI tramite `AI_MEMORY_FIRESTORE_PATH`: `users/<uid>/ai_specialization_memory/current`.
 - Le variabili `VITE_*` sono lette anche dal client (`src/services/firebaseSync.ts`); le altre solo dal server.
