@@ -45,7 +45,17 @@ jobs:
         run: npx tsx src/utils/__tests__/shadow_market_scheduler.test.ts
       - name: Shadow Firestore sync tests
         run: npx tsx src/utils/__tests__/shadow_firestore_sync.test.ts
-      # Non eseguiti in CI (presenti in package.json): test:sprint1, test:phase1,
-      # test:audit, test:audit2, test:learning, test:sprint3.
       - name: Firebase sync tests
         run: npm run test:firebase-sync
+      - name: Test sprint1
+        run: npm run test:sprint1
+      - name: Test phase1
+        run: npm run test:phase1
+      - name: Test audit
+        run: npm run test:audit
+      - name: Test audit2
+        run: npm run test:audit2
+      - name: Test learning
+        run: npm run test:learning
+      - name: Test sprint3
+        run: npm run test:sprint3
