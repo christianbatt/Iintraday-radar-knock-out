@@ -4,7 +4,7 @@ import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
 import rateLimit from 'express-rate-limit';
@@ -142,7 +142,7 @@ function getSharedAppState(userId: string): SharedAppState {
 }
 
 function saveSharedAppStateToDisk() {
-  const temporaryPath = `${SHARED_STATE_FILE}.${process.pid}.tmp`;
+  const temporaryPath = `${SHARED_STATE_FILE}.tmp-${process.pid}-${randomUUID()}`;
   try {
     fs.writeFileSync(temporaryPath, JSON.stringify({ version: 1, users: Object.fromEntries(sharedAppStates) }, null, 2), 'utf-8');
     fs.renameSync(temporaryPath, SHARED_STATE_FILE);
