@@ -155,6 +155,34 @@ export interface ShadowV2Record {
   };
 }
 
+/**
+ * Tetto verticale del ramo controfattuale TRAIL (24 barre = 120 minuti).
+ * Il ramo BASE chiude a `SHADOW_V2_HYPOTHESES.VERTICAL_BARS` (18 barre = 90 minuti).
+ */
+export const SHADOW_V2_TRAIL_MAX_VERTICAL_BARS = 24;
+
+/**
+ * Diagnostica di appaiamento BASE/TRAIL per `trailBe120m` (solo lettura).
+ *
+ * BASE simula al massimo `VERTICAL_BARS` barre (90 minuti), TRAIL fino a
+ * `SHADOW_V2_TRAIL_MAX_VERTICAL_BARS` (120 minuti) con lo stesso ingresso: se il numero di
+ * barre effettivamente simulate coincide, i due esiti sono confrontabili; se differisce, il
+ * confronto mescola finestre diverse. Questi conteggi espongono il fenomeno e non alterano
+ * nel modo piu' assoluto il valore di `trailBe120m`.
+ */
+export interface ShadowV2TrailPairingDiagnostic {
+  /** Record risolti che hanno un esito `trailBe120m`. */
+  n: number;
+  /** Casi in cui BASE e TRAIL hanno simulato lo stesso numero di barre. */
+  sameWindow: number;
+  /** Casi in cui il numero di barre simulate differisce. */
+  differentWindow: number;
+  /** Limite verticale del ramo BASE (barre). */
+  baseVerticalBars: number;
+  /** Limite verticale del ramo TRAIL (barre). */
+  trailMaxVerticalBars: number;
+}
+
 export interface ShadowV2Summary {
   strategyName: string;
   generatedAt: string;
@@ -180,6 +208,8 @@ export interface ShadowV2Summary {
   clusterBootstrapPValue: number | null;
   nDayClusters: number;
   experiments?: ShadowV2ExperimentSummary[];
+  /** Appaiamento BASE/TRAIL di `trailBe120m`: campione confrontabile e non. */
+  trailBe120mPairing?: ShadowV2TrailPairingDiagnostic;
   hypotheses: typeof SHADOW_V2_HYPOTHESES;
   limitations: string[];
   recentSignals: ShadowV2Record[];
@@ -963,7 +993,7 @@ export function evaluateShadowV2OnBars(
       let altOutcome: ShadowV2Outcome = 'OPEN';
       let altExitPrice: number | null = null;
       let altBarsHeld = 0;
-      const altMaxVertical = 24; // 120 minuti
+      const altMaxVertical = SHADOW_V2_TRAIL_MAX_VERTICAL_BARS; // 120 minuti
       const altMaxIdx = Math.min(closed.length - 1, entryIdx + altMaxVertical - 1);
 
       for (let k = entryIdx; k <= altMaxIdx; k++) {
@@ -1286,6 +1316,18 @@ export function summarizeShadowV2(records: readonly ShadowV2Record[], generatedA
       .map((a) => ({ rGross: a.rGross, rNet: a.rNet }))
   );
 
+  const trailPaired = resolved.filter((r) => r.altOutcomes?.trailBe120m != null);
+  const trailSameWindow = trailPaired.filter(
+    (r) => r.altOutcomes?.trailBe120m?.barsHeld === r.barsHeld
+  ).length;
+  const trailBe120mPairing: ShadowV2TrailPairingDiagnostic = {
+    n: trailPaired.length,
+    sameWindow: trailSameWindow,
+    differentWindow: trailPaired.length - trailSameWindow,
+    baseVerticalBars: SHADOW_V2_HYPOTHESES.VERTICAL_BARS,
+    trailMaxVerticalBars: SHADOW_V2_TRAIL_MAX_VERTICAL_BARS,
+  };
+
   const experiments: ShadowV2ExperimentSummary[] = [
     expBase,
     expCap2500,
@@ -1317,6 +1359,7 @@ export function summarizeShadowV2(records: readonly ShadowV2Record[], generatedA
     dsrNote: dsrRes.note,
     clusterBootstrapPValue: boot.pValue,
     nDayClusters: boot.nDayClusters,
+    trailBe120mPairing,
     experiments,
     hypotheses: SHADOW_V2_HYPOTHESES,
     limitations,
