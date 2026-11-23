@@ -1,6 +1,7 @@
 import { ExcludedSetupRecord, TradeJournalEntry } from '../types/radar';
 import type { DeflatedSharpeResult, ExpectancyBootstrapResult } from '../knowledge/shadowAlgorithms';
 import { deflatedSharpeRatio, expectancyBootstrap } from '../knowledge/shadowAlgorithms';
+import { benjaminiHochberg } from '../../scripts/nightly_learning';
 
 export const MIN_REAL_TRADE_SAMPLE = 30;
 
@@ -214,6 +215,93 @@ export function validateLearningPattern(
       counterfactual,
     },
   };
+}
+
+export interface PredicateScanEntry {
+  predicateId: LearningPredicateId;
+  /** Trade decisivi (WIN/LOSS con rMultiple finito) del predicato. */
+  n: number;
+  pValue: number;
+  qValue: number;
+  avgR: number;
+  profitFactor: number;
+  tested: boolean;
+  passesGates: boolean;
+  /** Risultato completo del validatore quando tested, altrimenti null. */
+  result: LearningResult | null;
+}
+
+/** Soglia q identica a quella applicata da updateAIMemory (src/utils/memoryUpdater.ts:25). */
+const SCAN_Q_THRESHOLD = 0.05;
+
+/**
+ * ADDITIVO (v10, Parte 2.1): scansione deterministica dei predicati chiusi.
+ *
+ * - Ogni id di LEARNING_PREDICATE_IDS viene filtrato con applyPredicate e validato
+ *   riusando validateLearningPattern (nessuna logica statistica duplicata).
+ * - Campione decisivo < MIN_REAL_TRADE_SAMPLE => pValue = 1, tested = false.
+ * - Benjamini-Hochberg è applicata alla famiglia FISSA di 14 p-value, incluse le
+ *   ipotesi non testate (p = 1), non al solo sottoinsieme testato.
+ * - Limite noto dichiarato: la famiglia è corretta per la singola esecuzione; la
+ *   ripetizione della scansione nel tempo NON è corretta (nessun correction
+ *   across-occasion), quindi il q-value non tiene conto di quante volte la stessa
+ *   famiglia viene ricalcolata su dati che crescono.
+ * - Nessuna soglia nuova: q <= 0.05 (stessa di updateAIMemory), avgR > 0,
+ *   profitFactor > 1, n >= MIN_REAL_TRADE_SAMPLE.
+ */
+export function scanLearningPredicates(
+  trades: TradeJournalEntry[],
+  excluded: ExcludedSetupRecord[]
+): PredicateScanEntry[] {
+  const raw = LEARNING_PREDICATE_IDS.map((predicateId) => {
+    const filtered = trades.filter((trade) => applyPredicate(trade, predicateId));
+    const decisive = filtered.filter(
+      (trade) =>
+        trade &&
+        trade.status !== 'OPEN' &&
+        (trade.outcome === 'WIN' || trade.outcome === 'LOSS') &&
+        Number.isFinite(trade.rMultiple) &&
+        typeof trade.id === 'string' &&
+        trade.id.length > 0
+    ).length;
+    const result = validateLearningPattern(
+      filtered,
+      excluded,
+      `PREDICATO_${predicateId}`,
+      'GLOBAL',
+      {},
+      predicateId
+    );
+    return { predicateId, decisive, result };
+  });
+
+  const adjusted = benjaminiHochberg(raw.map((entry) => (entry.result ? entry.result.stats.pValue : 1)));
+
+  return raw.map((entry, index) => {
+    const qValue = adjusted[index];
+    const tested = entry.result !== null;
+    const stats = entry.result?.stats;
+    const avgR = stats ? stats.avgR : 0;
+    const profitFactor = stats ? stats.profitFactor : 0;
+    const n = stats ? stats.n : entry.decisive;
+    const passesGates =
+      tested &&
+      n >= MIN_REAL_TRADE_SAMPLE &&
+      qValue <= SCAN_Q_THRESHOLD &&
+      avgR > 0 &&
+      profitFactor > 1;
+    return {
+      predicateId: entry.predicateId,
+      n,
+      pValue: stats ? stats.pValue : 1,
+      qValue,
+      avgR,
+      profitFactor,
+      tested,
+      passesGates,
+      result: entry.result,
+    };
+  });
 }
 
 export function binomialPValue(wins: number, total: number, p0 = 0.5): number {

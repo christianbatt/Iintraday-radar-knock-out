@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ExcludedSetupRecord, TradeJournalEntry } from '../../types/radar';
-import { binomialPValue, validateLearningPattern } from '../learningValidator';
+import { binomialPValue, validateLearningPattern, scanLearningPredicates, LEARNING_PREDICATE_IDS } from '../learningValidator';
 import { updateAIMemory } from '../memoryUpdater';
 import { benjaminiHochberg } from '../../../scripts/nightly_learning';
 
@@ -136,5 +136,64 @@ try {
 } finally {
   fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 }
+
+// ---- ADDITIVO (v10, Parte 4.1): scansione deterministica dei predicati ----
+const weakTrades: TradeJournalEntry[] = Array.from({ length: 15 }, (_, index) => ({
+  ...createTrade(index, index % 2 === 0 ? 'WIN' : 'LOSS'),
+  market: 'EU',
+  session: 'EU',
+  direction: 'LONG',
+  entryMode: 'SNAPSHOT_0915',
+  selectedLeverage: 10,
+}));
+const weakScan = scanLearningPredicates(weakTrades, []);
+assert(weakScan.length === 14, `La famiglia deve essere fissa a 14, trovati ${weakScan.length}`);
+assert(
+  weakScan.every((entry) => entry.tested === false && entry.pValue === 1),
+  'Con campione sotto MIN tutti i predicati devono essere non testati con p=1'
+);
+assert(weakScan.every((entry) => entry.passesGates === false), 'Nessun predicato deve passare con campione insufficiente');
+assert(
+  weakScan.some((entry) => entry.predicateId === 'MARKET_EU' && entry.n === 15),
+  'Il conteggio decisivo del predicato MARKET_EU deve essere 15'
+);
+console.log('Test 6 - scan: tutti i predicati sotto MIN => non testati, p=1, nessun vincente: PASS');
+
+const strongTrades: TradeJournalEntry[] = Array.from({ length: 40 }, (_, index) => ({
+  ...createTrade(1000 + index, index < 34 ? 'WIN' : 'LOSS'),
+  market: 'EU',
+  session: 'GLOBAL',
+  direction: index % 2 === 0 ? 'LONG' : 'SHORT',
+  entryMode: null,
+  selectedLeverage: null,
+}));
+const strongScan = scanLearningPredicates(strongTrades, []);
+const marketEu = strongScan.find((entry) => entry.predicateId === 'MARKET_EU');
+assert(strongScan.length === 14, `La famiglia deve essere fissa a 14, trovati ${strongScan.length}`);
+assert(marketEu !== undefined && marketEu.tested === true, 'MARKET_EU deve essere testato con 40 trade decisivi');
+assert(marketEu !== undefined && marketEu.n === 40, 'MARKET_EU deve avere n=40');
+assert(marketEu !== undefined && marketEu.passesGates === true, 'MARKET_EU forte deve superare i gate');
+assert(
+  strongScan.filter((entry) => entry.passesGates).every((entry) => entry.tested),
+  'Nessun predicato non testato deve comparire tra i vincenti'
+);
+assert(
+  strongScan.filter((entry) => entry.passesGates).length === 1 &&
+    strongScan.filter((entry) => entry.passesGates)[0].predicateId === 'MARKET_EU',
+  'Solo MARKET_EU deve essere vincente in questa fixture'
+);
+console.log('Test 7 - scan: MARKET_EU forte testato e vincente, famiglia 14, non testati mai vincenti: PASS');
+
+const expectedQValues = benjaminiHochberg(strongScan.map((entry) => entry.pValue));
+assert(expectedQValues.length === 14, 'BH deve essere applicata alla famiglia fissa di 14 p-value');
+assert(
+  strongScan.every((entry, index) => Math.abs(entry.qValue - expectedQValues[index]) < 1e-12),
+  'qValue deve derivare da benjaminiHochberg sulla famiglia di 14, non da un valore hardcoded'
+);
+assert(
+  marketEu !== undefined && Math.abs(marketEu.qValue - expectedQValues[LEARNING_PREDICATE_IDS.indexOf('MARKET_EU')]) < 1e-12,
+  'Il q-value di MARKET_EU deve coincidere con la posizione nella famiglia BH'
+);
+console.log('Test 8 - scan: qValue calcolato da benjaminiHochberg sulla famiglia di 14: PASS');
 
 console.log('=== Tutti i test Learning Validator completati ===');

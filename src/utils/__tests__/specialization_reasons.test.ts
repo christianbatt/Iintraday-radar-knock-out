@@ -60,7 +60,7 @@ check('LLM_VUOTA', r3.reason === 'LLM_VUOTA', r3.reason);
 // 4) PREDICATO_NON_VALIDO (tutte le direttive scartate per predicateId)
 const r4 = resolveSpecializationOutcome({ ...base, hasOpenRouterKey: true, validDirectivesCount: 0, discardedCount: 2 });
 check(
-  'PREDICATO_NON_VALIDO con 2 scartate',
+  'PREDICATO_NON_VALIDO solo su invocazione diretta (non emesso dal flusso v10)',
   r4.reason === 'PREDICATO_NON_VALIDO' && r4.reasonDetail === '2/2 direttive scartate: predicateId assente o fuori enum.',
   `${r4.reason} ${r4.reasonDetail}`
 );
@@ -69,7 +69,7 @@ check(
 const r5 = resolveSpecializationOutcome({ ...base, hasOpenRouterKey: true, decisiveSample: 12 });
 check(
   'CAMPIONE_INSUFFICIENTE 12/30',
-  r5.reason === 'CAMPIONE_INSUFFICIENTE' && r5.reasonDetail === '12/30 trade chiusi decisivi (WIN/LOSS) per il miglior predicato.',
+  r5.reason === 'CAMPIONE_INSUFFICIENTE' && r5.reasonDetail === '12/30 trade decisivi: nessun predicato con campione sufficiente.',
   `${r5.reason} ${r5.reasonDetail}`
 );
 
@@ -92,6 +92,43 @@ check(
   'OK_SCRITTO con 2 regole',
   r7.reason === 'OK_SCRITTO' && r7.reasonDetail === '2 regola/e scritte in memoria dopo i gate statistici.',
   `${r7.reason} ${r7.reasonDetail}`
+);
+
+// 6b) gateDetail coerente: mai "X/30 … nessun predicato" con X >= 30
+const r6b = resolveSpecializationOutcome({
+  ...base,
+  hasOpenRouterKey: true,
+  decisiveSample: 40,
+  testedCount: 1,
+  writtenCount: 0,
+  gateDetail: 'PREDICATO MARKET_EU: n=40, q=0.2000, avgR=0.50, profitFactor=1.50',
+});
+const c1 = resolveSpecializationOutcome({
+  ...base,
+  hasOpenRouterKey: true,
+  decisiveSample: 40,
+  testedCount: 1,
+  writtenCount: 0,
+});
+check(
+  'gateDetail coerente quando decisiveSample >= 30',
+  r6b.reasonDetail === 'PREDICATO MARKET_EU: n=40, q=0.2000, avgR=0.50, profitFactor=1.50' &&
+    !r6b.reasonDetail.includes('0/30') &&
+    !c1.reasonDetail.includes('40/30'),
+  `${r6b.reasonDetail} | ${c1.reasonDetail}`
+);
+
+// 6c) CAMPIONE_INSUFFICIENTE con 0 predicati testati
+const r6c = resolveSpecializationOutcome({
+  ...base,
+  hasOpenRouterKey: true,
+  decisiveSample: 8,
+  testedCount: 0,
+});
+check(
+  'CAMPIONE_INSUFFICIENTE con 0 predicati testati',
+  r6c.reason === 'CAMPIONE_INSUFFICIENTE' && r6c.reasonDetail.includes('8/30'),
+  `${r6c.reason} ${r6c.reasonDetail}`
 );
 
 // 8) TOPIC_NON_FILTRATO non viene più emesso

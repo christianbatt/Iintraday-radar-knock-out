@@ -33,14 +33,12 @@ import { TRADING_PARAMS } from './src/config/tradingParams';
 import { VWAP_PROMPT_BLOCK } from './src/config/vwapPrompt';
 import { SETUP_PROMPT_BLOCK } from './src/config/setupPrompt';
 import { AILearnedInsight, VwapSignalState, VwapDataQuality, SetupIndicators, IndicatorBarInput } from './src/types/radar';
-import { runNightlyLearning, benjaminiHochberg } from './scripts/nightly_learning';
+import { runNightlyLearning } from './scripts/nightly_learning';
 import {
-  validateLearningPattern,
   MIN_REAL_TRADE_SAMPLE,
   LEARNING_PREDICATE_IDS,
   isLearningPredicateId,
-  applyPredicate,
-  LearningPredicateId,
+  scanLearningPredicates,
   LearningResult,
 } from './src/utils/learningValidator';
 import { updateAIMemory } from './src/utils/memoryUpdater';
@@ -2744,60 +2742,36 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
     const shapeValidDirectives = rawDirectives.filter(
       (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
     );
-    const proposedDirectives = shapeValidDirectives.filter((item: any) =>
-      isLearningPredicateId(item?.predicateId)
-    );
-    const discardedCount = rawDirectives.length - proposedDirectives.length;
+    const proposedDirectives = shapeValidDirectives;
+    // ADDITIVO (v10, Parte 3.2): la LLM fornisce solo il testo; il predicato lo decide la scansione.
+    const directiveTextByPredicate = new Map<string, string>();
+    for (const item of shapeValidDirectives) {
+      if (isLearningPredicateId(item?.predicateId) && !directiveTextByPredicate.has(item.predicateId)) {
+        directiveTextByPredicate.set(item.predicateId, String(item.directive));
+      }
+    }
     aiLearnedMemory = await loadPersistentAIMemory();
     const memoryBefore = new Map(aiLearnedMemory.map((entry) => [entry.topic, entry.learnedAt]));
 
-    // ADDITIVO (v9): campione decisivo del miglior predicato valido.
-    const decisiveTradesFor = (predicateId: string): number =>
-      trades.filter(
-        (trade: any) =>
-          applyPredicate(trade, predicateId) &&
-          trade &&
-          trade.status !== 'OPEN' &&
-          (trade.outcome === 'WIN' || trade.outcome === 'LOSS') &&
-          Number.isFinite(trade.rMultiple) &&
-          typeof trade.id === 'string' &&
-          trade.id.length > 0
-      ).length;
-    const decisiveSample =
-      proposedDirectives.length === 0
-        ? 0
-        : Math.max(
-            ...proposedDirectives.map((item: any) => decisiveTradesFor(String(item.predicateId)))
-          );
+    // ADDITIVO (v10): scansione deterministica dei 14 predicati chiusi.
+    const scan = scanLearningPredicates(trades, excluded);
+    const testedPredicates = scan.filter((entry) => entry.tested);
+    const winningPredicates = scan.filter((entry) => entry.passesGates);
+    const decisiveSample = Math.max(0, ...scan.map((entry) => entry.n));
+    const discardedCount = shapeValidDirectives.length - winningPredicates.length;
 
-    // ADDITIVO (v9, Parte 3.3): TUTTE le direttive valide vengono validate.
-    const validations: LearningResult[] = [];
-    for (const item of proposedDirectives) {
-      const validationMarket: 'EU' | 'US' | 'GLOBAL' =
-        item?.market === 'EU' || item?.market === 'US' ? item.market : 'GLOBAL';
-      const validation = validateLearningPattern(
-        trades,
-        excluded,
-        String(item.topic),
-        validationMarket,
-        {},
-        item.predicateId as LearningPredicateId
-      );
-      if (validation) validations.push(validation);
-    }
-
-    // ADDITIVO (v9, Parte 2.2): BH già presente nel progetto, applicata a TUTTE le proposte del batch.
-    const adjustedPValues = benjaminiHochberg(validations.map((result) => result.stats.pValue));
-    const adjustedValidations: LearningResult[] = validations.map((result, index) => ({
-      ...result,
-      confidence: 1 - adjustedPValues[index],
-      stats: { ...result.stats, adjustedPValue: adjustedPValues[index] },
+    const winnerResults: LearningResult[] = winningPredicates.map((entry) => ({
+      ...(entry.result as LearningResult),
+      directive:
+        directiveTextByPredicate.get(entry.predicateId) ??
+        `Predicato ${entry.predicateId}: n=${entry.n}, q=${entry.qValue.toFixed(4)}, avgR=${entry.avgR.toFixed(2)}, profitFactor=${entry.profitFactor.toFixed(2)}`,
+      confidence: 1 - entry.qValue,
     }));
 
     let persistedCount = 0;
-    if (adjustedValidations.length > 0) {
+    if (winnerResults.length > 0) {
       // R3: persistenza tramite le funzioni esistenti; i gate (n, q, avgR, profitFactor) sono dentro updateAIMemory.
-      updateAIMemory(adjustedValidations);
+      updateAIMemory(winnerResults);
       aiLearnedMemory = loadAIMemoryFromDisk();
       if (firebaseAdminFirestore) {
         try {
@@ -2806,7 +2780,7 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
           console.warn('[AI Specialization] Persistenza Firestore fallita:', persistError);
         }
       }
-      for (const validation of adjustedValidations) {
+      for (const validation of winnerResults) {
         const foundAfter = aiLearnedMemory.find((entry) => entry.topic === validation.topic);
         if (foundAfter && foundAfter.learnedAt !== memoryBefore.get(validation.topic)) {
           persistedCount += 1;
@@ -2814,14 +2788,15 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
       }
     }
 
+    // ADDITIVO (v10, Parte 3.4): gateDetail coerente col ramo (n=0/30 solo se non testato).
     const gateDetail =
-      adjustedValidations.length === 0
-        ? `${decisiveSample}/${MIN_REAL_TRADE_SAMPLE} trade decisivi: nessun pattern con campione sufficiente.`
-        : adjustedValidations
+      testedPredicates.length === 0
+        ? `${decisiveSample}/${MIN_REAL_TRADE_SAMPLE} trade decisivi: nessun predicato con campione sufficiente.`
+        : testedPredicates
             .map(
-              (result) =>
-                `n=${result.stats.n}, q=${result.stats.adjustedPValue.toFixed(4)}, ` +
-                `avgR=${result.stats.avgR.toFixed(2)}, profitFactor=${result.stats.profitFactor.toFixed(2)}`
+              (entry) =>
+                `PREDICATO ${entry.predicateId}: n=${entry.n}, q=${entry.qValue.toFixed(4)}, ` +
+                `avgR=${entry.avgR.toFixed(2)}, profitFactor=${entry.profitFactor.toFixed(2)}`
             )
             .join(' | ');
 
@@ -2830,8 +2805,10 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
       hasOpenRouterKey: Boolean(openRouterKey),
       geminiAvailable: isGeminiAvailable(),
       llmErrorDetail,
-      validDirectivesCount: proposedDirectives.length,
-      discardedCount,
+      validDirectivesCount: winningPredicates.length,
+      discardedCount: 0,
+      llmDirectiveCount: shapeValidDirectives.length,
+      testedCount: testedPredicates.length,
       decisiveSample,
       minSample: MIN_REAL_TRADE_SAMPLE,
       writtenCount: persistedCount,
@@ -2982,56 +2959,34 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
     const shapeValidDirectives = rawDirectives.filter(
       (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
     );
-    const proposedDirectives = shapeValidDirectives.filter((item: any) =>
-      isLearningPredicateId(item?.predicateId)
-    );
-    const deskDiscardedCount = rawDirectives.length - proposedDirectives.length;
+    const proposedDirectives = shapeValidDirectives;
+    const directiveTextByPredicate = new Map<string, string>();
+    for (const item of shapeValidDirectives) {
+      if (isLearningPredicateId(item?.predicateId) && !directiveTextByPredicate.has(item.predicateId)) {
+        directiveTextByPredicate.set(item.predicateId, String(item.directive));
+      }
+    }
     aiLearnedMemory = await loadPersistentAIMemory();
     const deskMemoryBefore = new Map(aiLearnedMemory.map((entry) => [entry.topic, entry.learnedAt]));
 
-    const deskDecisiveTradesFor = (predicateId: string): number =>
-      sessionTrades.filter(
-        (trade: any) =>
-          applyPredicate(trade, predicateId) &&
-          trade &&
-          trade.status !== 'OPEN' &&
-          (trade.outcome === 'WIN' || trade.outcome === 'LOSS') &&
-          Number.isFinite(trade.rMultiple) &&
-          typeof trade.id === 'string' &&
-          trade.id.length > 0
-      ).length;
-    const deskDecisiveSample =
-      proposedDirectives.length === 0
-        ? 0
-        : Math.max(
-            ...proposedDirectives.map((item: any) => deskDecisiveTradesFor(String(item.predicateId)))
-          );
+    // ADDITIVO (v10, Parte 3.6): stessa scansione deterministica su sessionTrades, excluded = [].
+    const deskScan = scanLearningPredicates(sessionTrades, []);
+    const deskTestedPredicates = deskScan.filter((entry) => entry.tested);
+    const deskWinningPredicates = deskScan.filter((entry) => entry.passesGates);
+    const deskDecisiveSample = Math.max(0, ...deskScan.map((entry) => entry.n));
+    const deskDiscardedCount = shapeValidDirectives.length - deskWinningPredicates.length;
 
-    const deskValidations: LearningResult[] = [];
-    for (const item of proposedDirectives) {
-      const validationMarket: 'EU' | 'US' | 'GLOBAL' =
-        item?.market === 'EU' || item?.market === 'US' ? item.market : 'GLOBAL';
-      const validation = validateLearningPattern(
-        sessionTrades,
-        [],
-        String(item.topic),
-        validationMarket,
-        {},
-        item.predicateId as LearningPredicateId
-      );
-      if (validation) deskValidations.push(validation);
-    }
-
-    const deskAdjustedPValues = benjaminiHochberg(deskValidations.map((result) => result.stats.pValue));
-    const deskAdjustedValidations: LearningResult[] = deskValidations.map((result, index) => ({
-      ...result,
-      confidence: 1 - deskAdjustedPValues[index],
-      stats: { ...result.stats, adjustedPValue: deskAdjustedPValues[index] },
+    const deskWinnerResults: LearningResult[] = deskWinningPredicates.map((entry) => ({
+      ...(entry.result as LearningResult),
+      directive:
+        directiveTextByPredicate.get(entry.predicateId) ??
+        `Predicato ${entry.predicateId}: n=${entry.n}, q=${entry.qValue.toFixed(4)}, avgR=${entry.avgR.toFixed(2)}, profitFactor=${entry.profitFactor.toFixed(2)}`,
+      confidence: 1 - entry.qValue,
     }));
 
     let deskPersistedCount = 0;
-    if (deskAdjustedValidations.length > 0) {
-      updateAIMemory(deskAdjustedValidations);
+    if (deskWinnerResults.length > 0) {
+      updateAIMemory(deskWinnerResults);
       aiLearnedMemory = loadAIMemoryFromDisk();
       if (firebaseAdminFirestore) {
         try {
@@ -3040,7 +2995,7 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
           console.warn('[AI Desk Post-Mortem] Persistenza Firestore fallita:', persistError);
         }
       }
-      for (const validation of deskAdjustedValidations) {
+      for (const validation of deskWinnerResults) {
         const foundAfter = aiLearnedMemory.find((entry) => entry.topic === validation.topic);
         if (foundAfter && foundAfter.learnedAt !== deskMemoryBefore.get(validation.topic)) {
           deskPersistedCount += 1;
@@ -3049,13 +3004,13 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
     }
 
     const deskGateDetail =
-      deskAdjustedValidations.length === 0
-        ? `${deskDecisiveSample}/${MIN_REAL_TRADE_SAMPLE} trade decisivi: nessun pattern con campione sufficiente.`
-        : deskAdjustedValidations
+      deskTestedPredicates.length === 0
+        ? `${deskDecisiveSample}/${MIN_REAL_TRADE_SAMPLE} trade decisivi: nessun predicato con campione sufficiente.`
+        : deskTestedPredicates
             .map(
-              (result) =>
-                `n=${result.stats.n}, q=${result.stats.adjustedPValue.toFixed(4)}, ` +
-                `avgR=${result.stats.avgR.toFixed(2)}, profitFactor=${result.stats.profitFactor.toFixed(2)}`
+              (entry) =>
+                `PREDICATO ${entry.predicateId}: n=${entry.n}, q=${entry.qValue.toFixed(4)}, ` +
+                `avgR=${entry.avgR.toFixed(2)}, profitFactor=${entry.profitFactor.toFixed(2)}`
             )
             .join(' | ');
 
@@ -3063,8 +3018,10 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
       hasOpenRouterKey: Boolean(openRouterKey),
       geminiAvailable: isGeminiAvailable(),
       llmErrorDetail,
-      validDirectivesCount: proposedDirectives.length,
-      discardedCount: deskDiscardedCount,
+      validDirectivesCount: deskWinningPredicates.length,
+      discardedCount: 0,
+      llmDirectiveCount: shapeValidDirectives.length,
+      testedCount: deskTestedPredicates.length,
       decisiveSample: deskDecisiveSample,
       minSample: MIN_REAL_TRADE_SAMPLE,
       writtenCount: deskPersistedCount,
