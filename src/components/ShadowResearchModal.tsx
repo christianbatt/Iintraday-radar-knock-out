@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import ShadowResearchPanel, { type ShadowPanelData } from './ShadowResearchPanel';
 import ShadowV1LivePanel from './ShadowV1LivePanel';
+import ShadowAISection from './ShadowAISection';
 
 /**
  * Trigger + modale per ShadowResearchPanel (Passo M).
@@ -94,6 +95,7 @@ export const ShadowResearchModal: React.FC<{
               v1NearMiss={data?.v1NearMiss ?? null}
               refreshSignal={lastScanAt}
             />
+            <ShadowAISection refreshSignal={lastScanAt} />
           </div>
         </div>
       )}
