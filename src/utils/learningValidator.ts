@@ -5,6 +5,87 @@ import { deflatedSharpeRatio, expectancyBootstrap } from '../knowledge/shadowAlg
 export const MIN_REAL_TRADE_SAMPLE = 30;
 
 /**
+ * ADDITIVO (v9, Parte 2.2): enum CHIUSO dei predicati.
+ * Ogni id corrisponde a una condizione semplice su un campo verificato di
+ * TradeJournalEntry (src/types/radar.ts:512-575).
+ * `score` NON è un campo di TradeJournalEntry: nessun predicato di score è
+ * definito qui (dichiarato in Parte 1.3).
+ */
+export const LEARNING_PREDICATES = {
+  MARKET_EU: 'MARKET_EU',
+  MARKET_US: 'MARKET_US',
+  SESSION_EU: 'SESSION_EU',
+  SESSION_US: 'SESSION_US',
+  DIRECTION_LONG: 'DIRECTION_LONG',
+  DIRECTION_SHORT: 'DIRECTION_SHORT',
+  LEVERAGE_5: 'LEVERAGE_5',
+  LEVERAGE_10: 'LEVERAGE_10',
+  LEVERAGE_15: 'LEVERAGE_15',
+  LEVERAGE_20: 'LEVERAGE_20',
+  LEVERAGE_25: 'LEVERAGE_25',
+  ENTRY_SNAPSHOT_0915: 'ENTRY_SNAPSHOT_0915',
+  ENTRY_UNFROZEN_LATE: 'ENTRY_UNFROZEN_LATE',
+  ENTRY_MANUAL_FREEZE: 'ENTRY_MANUAL_FREEZE',
+} as const;
+
+export type LearningPredicateId = keyof typeof LEARNING_PREDICATES;
+
+export const LEARNING_PREDICATE_IDS: LearningPredicateId[] =
+  Object.keys(LEARNING_PREDICATES) as LearningPredicateId[];
+
+export function isLearningPredicateId(value: unknown): value is LearningPredicateId {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(LEARNING_PREDICATES, value);
+}
+
+/** Valori di L_sel ammessi dai predicati di leva (chiusi, non arbitrari). */
+const PREDICATE_LEVERAGE: Partial<Record<LearningPredicateId, number>> = {
+  LEVERAGE_5: 5,
+  LEVERAGE_10: 10,
+  LEVERAGE_15: 15,
+  LEVERAGE_20: 20,
+  LEVERAGE_25: 25,
+};
+
+/**
+ * Funzione pura: vero solo se il trade soddisfa il predicato chiuso.
+ * Campo mancante, valore non finito o predicato sconosciuto => false, mai eccezione.
+ */
+export function applyPredicate(trade: TradeJournalEntry, predicateId: string): boolean {
+  if (!trade || typeof trade !== 'object') return false;
+  if (!isLearningPredicateId(predicateId)) return false;
+  try {
+    const leverage = PREDICATE_LEVERAGE[predicateId];
+    if (leverage !== undefined) {
+      return typeof trade.selectedLeverage === 'number' && Number.isFinite(trade.selectedLeverage) && trade.selectedLeverage === leverage;
+    }
+    switch (predicateId) {
+      case 'MARKET_EU':
+        return trade.market === 'EU';
+      case 'MARKET_US':
+        return trade.market === 'US';
+      case 'SESSION_EU':
+        return trade.session === 'EU';
+      case 'SESSION_US':
+        return trade.session === 'US';
+      case 'DIRECTION_LONG':
+        return trade.direction === 'LONG';
+      case 'DIRECTION_SHORT':
+        return trade.direction === 'SHORT';
+      case 'ENTRY_SNAPSHOT_0915':
+        return trade.entryMode === 'SNAPSHOT_0915';
+      case 'ENTRY_UNFROZEN_LATE':
+        return trade.entryMode === 'UNFROZEN_LATE';
+      case 'ENTRY_MANUAL_FREEZE':
+        return trade.entryMode === 'MANUAL_FREEZE';
+      default:
+        return false;
+    }
+  } catch {
+    return false;
+  }
+}
+
+/**
  * IPOTESI: opzioni informative della validazione. Non cambiano i gate esistenti
  * (MIN_REAL_TRADE_SAMPLE, q-value FDR, avgR, profit factor): aggiungono solo campi al risultato.
  */
@@ -54,9 +135,15 @@ export function validateLearningPattern(
   excluded: ExcludedSetupRecord[],
   topic: string,
   market: 'EU' | 'US' | 'GLOBAL',
-  options: LearningValidationOptions = {}
+  options: LearningValidationOptions = {},
+  predicateId?: LearningPredicateId
 ): LearningResult | null {
-  const actualTrades = trades.filter((trade) =>
+  // ADDITIVO (v9, Parte 2.2): predicato fuori enum => nessun risultato (nessuna scrittura).
+  if (predicateId !== undefined && !isLearningPredicateId(predicateId)) return null;
+  const candidateTrades = predicateId
+    ? trades.filter((trade) => applyPredicate(trade, predicateId))
+    : trades;
+  const actualTrades = candidateTrades.filter((trade) =>
     trade.status !== 'OPEN' &&
     (trade.outcome === 'WIN' || trade.outcome === 'LOSS' || trade.outcome === 'BREAKEVEN' || trade.outcome === 'EXPIRED') &&
     Number.isFinite(trade.rMultiple) &&

@@ -33,10 +33,21 @@ import { TRADING_PARAMS } from './src/config/tradingParams';
 import { VWAP_PROMPT_BLOCK } from './src/config/vwapPrompt';
 import { SETUP_PROMPT_BLOCK } from './src/config/setupPrompt';
 import { AILearnedInsight, VwapSignalState, VwapDataQuality, SetupIndicators, IndicatorBarInput } from './src/types/radar';
-import { runNightlyLearning } from './scripts/nightly_learning';
-import { validateLearningPattern, MIN_REAL_TRADE_SAMPLE } from './src/utils/learningValidator';
+import { runNightlyLearning, benjaminiHochberg } from './scripts/nightly_learning';
+import {
+  validateLearningPattern,
+  MIN_REAL_TRADE_SAMPLE,
+  LEARNING_PREDICATE_IDS,
+  isLearningPredicateId,
+  applyPredicate,
+  LearningPredicateId,
+  LearningResult,
+} from './src/utils/learningValidator';
 import { updateAIMemory } from './src/utils/memoryUpdater';
-import { resolveSpecializationReason } from './src/utils/specializationReason';
+import { resolveSpecializationOutcome } from './src/utils/specializationReason';
+
+// ADDITIVO (v9, Parte 3.2): enum dei predicati esposto alla LLM.
+const LEARNING_PREDICATE_PROMPT = `predicateId ∈ { ${LEARNING_PREDICATE_IDS.join(' | ')} }`;
 import { authStartupWarning } from './src/utils/authStartupWarning';
 import { recordClosedBarsForShadowV2, observeShadowV2Scan, saveShadowV2BarsToDisk, syncShadowV2SummaryFromDisk } from './src/server/shadowV2Collector';
 import {
@@ -2680,13 +2691,20 @@ STATISTICHE FORNITE (trade reali e paper trading):
 - Esempi Esclusi Andati a Target: ${JSON.stringify(profitableExcluded.slice(0, 4).map((e) => ({ ticker: e.ticker, reason: e.primaryReasonCategory, gap: e.gapPercent, rvol: e.rvol })))}
 
 Istruzioni:
-Restituisci eventuali proposte non persistenti nel campo "newDirectives". Non dichiarare una confidence statistica e non affermare che le proposte sono state validate:
+Restituisci eventuali proposte non persistenti nel campo "newDirectives" (array). Ogni elemento deve contenere un predicato CHIUSO scelto esclusivamente da questo enum, senza inventarne altri:
+${LEARNING_PREDICATE_PROMPT}
+Non dichiarare una confidence statistica e non affermare che le proposte sono state validate:
 {
-  "topic": "STRINGA_SINTETICA_MAIUSCOLA",
-  "market": "EU" | "US" | "GLOBAL",
-  "directive": "Regola operativa chiara, concisa e vincolante da applicare nelle future analisi",
-  "confidence": null,
-  "sampleEvidence": "Spiegazione quantitativa basata sui dati reali esaminati"
+  "newDirectives": [
+    {
+      "topic": "STRINGA_SINTETICA_MAIUSCOLA",
+      "market": "EU" | "US" | "GLOBAL",
+      "predicateId": "UNO_DEGLI_ID_DELL_ENUM",
+      "directive": "Regola operativa chiara, concisa e vincolante da applicare nelle future analisi",
+      "confidence": null,
+      "sampleEvidence": "Spiegazione quantitativa basata sui dati reali esaminati"
+    }
+  ]
 }`;
 
     const systemInstruction = `Sei un Risk Manager quantitativo rigoroso. Estrai solo regole concrete, empiriche e non banali basate esclusivamente sui dati forniti. Rispondi solo in formato JSON.`;
@@ -2721,70 +2739,106 @@ Restituisci eventuali proposte non persistenti nel campo "newDirectives". Non di
       }
     }
 
-    const proposedDirectives = Array.isArray(generated?.newDirectives)
-      ? generated.newDirectives.filter((item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string')
-      : [];
+    // ADDITIVO (v9, Parte 3.2): direttive divise fra valide (predicateId in enum) e scartate.
+    const rawDirectives = Array.isArray(generated?.newDirectives) ? generated.newDirectives : [];
+    const shapeValidDirectives = rawDirectives.filter(
+      (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
+    );
+    const proposedDirectives = shapeValidDirectives.filter((item: any) =>
+      isLearningPredicateId(item?.predicateId)
+    );
+    const discardedCount = rawDirectives.length - proposedDirectives.length;
     aiLearnedMemory = await loadPersistentAIMemory();
+    const memoryBefore = new Map(aiLearnedMemory.map((entry) => [entry.topic, entry.learnedAt]));
 
-    // ADDITIVO (R1): motivo esplicito del ramo, sempre presente nella risposta.
-    const decisiveSample = trades.filter((trade: any) =>
-      trade &&
-      trade.status !== 'OPEN' &&
-      (trade.outcome === 'WIN' || trade.outcome === 'LOSS') &&
-      Number.isFinite(trade.rMultiple) &&
-      typeof trade.id === 'string' &&
-      trade.id.length > 0
-    ).length;
+    // ADDITIVO (v9): campione decisivo del miglior predicato valido.
+    const decisiveTradesFor = (predicateId: string): number =>
+      trades.filter(
+        (trade: any) =>
+          applyPredicate(trade, predicateId) &&
+          trade &&
+          trade.status !== 'OPEN' &&
+          (trade.outcome === 'WIN' || trade.outcome === 'LOSS') &&
+          Number.isFinite(trade.rMultiple) &&
+          typeof trade.id === 'string' &&
+          trade.id.length > 0
+      ).length;
+    const decisiveSample =
+      proposedDirectives.length === 0
+        ? 0
+        : Math.max(
+            ...proposedDirectives.map((item: any) => decisiveTradesFor(String(item.predicateId)))
+          );
 
-    let reason: string;
-    let reasonDetail = '';
-    let persistedCount = 0;
-
-    // ADDITIVO (v6): i rami pre-validazione vivono in una funzione pura testata.
-    const preReason = resolveSpecializationReason({
-      hasOpenRouterKey: Boolean(openRouterKey),
-      geminiAvailable: isGeminiAvailable(),
-      llmErrorDetail,
-      proposedDirectivesCount: proposedDirectives.length,
-      decisiveSample,
-      minSample: MIN_REAL_TRADE_SAMPLE,
-    });
-    if (preReason.reason !== 'SAMPLE_OK') {
-      reason = preReason.reason;
-      reasonDetail = preReason.reasonDetail;
-    } else {
-      const primary = proposedDirectives[0];
+    // ADDITIVO (v9, Parte 3.3): TUTTE le direttive valide vengono validate.
+    const validations: LearningResult[] = [];
+    for (const item of proposedDirectives) {
       const validationMarket: 'EU' | 'US' | 'GLOBAL' =
-        primary?.market === 'EU' || primary?.market === 'US' ? primary.market : 'GLOBAL';
-      const validation = validateLearningPattern(trades, excluded, String(primary.topic), validationMarket);
-      if (!validation) {
-        reason = 'CAMPIONE_INSUFFICIENTE';
-        reasonDetail = `${decisiveSample}/${MIN_REAL_TRADE_SAMPLE} trade chiusi decisivi (WIN/LOSS).`;
-      } else {
-        const foundBefore = aiLearnedMemory.find((entry) => entry.topic === validation.topic);
-        // R3: persistenza tramite le funzioni esistenti; i gate (n, q, avgR, profitFactor) sono dentro updateAIMemory.
-        updateAIMemory([validation]);
-        aiLearnedMemory = loadAIMemoryFromDisk();
-        if (firebaseAdminFirestore) {
-          try {
-            await persistAIMemoryToFirestore(aiLearnedMemory);
-          } catch (persistError) {
-            console.warn('[AI Specialization] Persistenza Firestore fallita:', persistError);
-          }
+        item?.market === 'EU' || item?.market === 'US' ? item.market : 'GLOBAL';
+      const validation = validateLearningPattern(
+        trades,
+        excluded,
+        String(item.topic),
+        validationMarket,
+        {},
+        item.predicateId as LearningPredicateId
+      );
+      if (validation) validations.push(validation);
+    }
+
+    // ADDITIVO (v9, Parte 2.2): BH già presente nel progetto, applicata a TUTTE le proposte del batch.
+    const adjustedPValues = benjaminiHochberg(validations.map((result) => result.stats.pValue));
+    const adjustedValidations: LearningResult[] = validations.map((result, index) => ({
+      ...result,
+      confidence: 1 - adjustedPValues[index],
+      stats: { ...result.stats, adjustedPValue: adjustedPValues[index] },
+    }));
+
+    let persistedCount = 0;
+    if (adjustedValidations.length > 0) {
+      // R3: persistenza tramite le funzioni esistenti; i gate (n, q, avgR, profitFactor) sono dentro updateAIMemory.
+      updateAIMemory(adjustedValidations);
+      aiLearnedMemory = loadAIMemoryFromDisk();
+      if (firebaseAdminFirestore) {
+        try {
+          await persistAIMemoryToFirestore(aiLearnedMemory);
+        } catch (persistError) {
+          console.warn('[AI Specialization] Persistenza Firestore fallita:', persistError);
         }
+      }
+      for (const validation of adjustedValidations) {
         const foundAfter = aiLearnedMemory.find((entry) => entry.topic === validation.topic);
-        if (foundAfter && foundAfter.learnedAt !== foundBefore?.learnedAt) {
-          reason = 'OK_SCRITTO';
-          reasonDetail = `Direttiva scritta per topic ${validation.topic}.`;
-          persistedCount = 1;
-        } else {
-          reason = 'GATE_NON_SUPERATI';
-          reasonDetail =
-            `n=${validation.stats.n}, q=${validation.stats.adjustedPValue.toFixed(4)}, ` +
-            `avgR=${validation.stats.avgR.toFixed(2)}, profitFactor=${validation.stats.profitFactor.toFixed(2)}.`;
+        if (foundAfter && foundAfter.learnedAt !== memoryBefore.get(validation.topic)) {
+          persistedCount += 1;
         }
       }
     }
+
+    const gateDetail =
+      adjustedValidations.length === 0
+        ? `${decisiveSample}/${MIN_REAL_TRADE_SAMPLE} trade decisivi: nessun pattern con campione sufficiente.`
+        : adjustedValidations
+            .map(
+              (result) =>
+                `n=${result.stats.n}, q=${result.stats.adjustedPValue.toFixed(4)}, ` +
+                `avgR=${result.stats.avgR.toFixed(2)}, profitFactor=${result.stats.profitFactor.toFixed(2)}`
+            )
+            .join(' | ');
+
+    // ADDITIVO (v9, Parte 5.1): unico resolver condiviso con il desk.
+    const outcome = resolveSpecializationOutcome({
+      hasOpenRouterKey: Boolean(openRouterKey),
+      geminiAvailable: isGeminiAvailable(),
+      llmErrorDetail,
+      validDirectivesCount: proposedDirectives.length,
+      discardedCount,
+      decisiveSample,
+      minSample: MIN_REAL_TRADE_SAMPLE,
+      writtenCount: persistedCount,
+      gateDetail,
+    });
+    const reason = outcome.reason;
+    const reasonDetail = outcome.reasonDetail;
 
     return res.json({
       success: true,
@@ -2803,7 +2857,7 @@ Restituisci eventuali proposte non persistenti nel campo "newDirectives". Non di
           : 'Nessuna proposta LLM; la memoria persistente resta invariata.',
       messageDetail: reasonDetail,
       proposedCount: proposedDirectives.length,
-      discardedCount: proposedDirectives.length,
+      discardedCount,
       totalRules: aiLearnedMemory.length,
       directives: aiLearnedMemory,
     });
@@ -2871,7 +2925,9 @@ Restituisci un JSON rigoroso con questi campi:
 2. "strengths": array di 2-3 stringhe che evidenziano cosa ha funzionato a livello di timing, selezione o disciplina.
 3. "failurePatterns": array di 2-3 stringhe che evidenziano i punti critici reali (falsi breakout, trade lenti, mancato allineamento o violazioni di timing).
 4. "tacticalAdvice": stringa con il piano d'azione operativo concreto per la prossima sessione.
-5. "newDirectives": array opzionale di ipotesi non persistenti ({ "topic": string, "market": "${market}", "directive": string, "confidence": null, "sampleEvidence": string }).`;
+5. "newDirectives": array opzionale di ipotesi non persistenti. Ogni elemento deve contenere un predicato CHIUSO scelto esclusivamente da questo enum, senza inventarne altri:
+${LEARNING_PREDICATE_PROMPT}
+Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "directive": string, "confidence": null, "sampleEvidence": string }).`;
 
     const systemInstruction = `Sei un Senior Risk Officer rigoroso ed esperto. Analizza con occhio clinico e linguaggio istituzionale da hedge fund. Non inventare dati. Rispondi solo in formato JSON.`;
 
@@ -2921,40 +2977,105 @@ Restituisci un JSON rigoroso con questi campi:
       };
     }
 
-    const proposedDirectives = Array.isArray(generated.newDirectives)
-      ? generated.newDirectives.filter((item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string')
-      : [];
+    // ADDITIVO (v9, Parte 4.2/4.3): stesso flusso dell'handler, stessi gate e stesso resolver.
+    const rawDirectives = Array.isArray(generated.newDirectives) ? generated.newDirectives : [];
+    const shapeValidDirectives = rawDirectives.filter(
+      (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
+    );
+    const proposedDirectives = shapeValidDirectives.filter((item: any) =>
+      isLearningPredicateId(item?.predicateId)
+    );
+    const deskDiscardedCount = rawDirectives.length - proposedDirectives.length;
     aiLearnedMemory = await loadPersistentAIMemory();
+    const deskMemoryBefore = new Map(aiLearnedMemory.map((entry) => [entry.topic, entry.learnedAt]));
 
-    // ADDITIVO (v6, Parte 4): stesso schema reason anche per il desk.
-    const deskDecisiveSample = sessionTrades.filter((trade: any) =>
-      trade &&
-      trade.status !== 'OPEN' &&
-      (trade.outcome === 'WIN' || trade.outcome === 'LOSS') &&
-      Number.isFinite(trade.rMultiple) &&
-      typeof trade.id === 'string' &&
-      trade.id.length > 0
-    ).length;
-    const deskPreReason = resolveSpecializationReason({
+    const deskDecisiveTradesFor = (predicateId: string): number =>
+      sessionTrades.filter(
+        (trade: any) =>
+          applyPredicate(trade, predicateId) &&
+          trade &&
+          trade.status !== 'OPEN' &&
+          (trade.outcome === 'WIN' || trade.outcome === 'LOSS') &&
+          Number.isFinite(trade.rMultiple) &&
+          typeof trade.id === 'string' &&
+          trade.id.length > 0
+      ).length;
+    const deskDecisiveSample =
+      proposedDirectives.length === 0
+        ? 0
+        : Math.max(
+            ...proposedDirectives.map((item: any) => deskDecisiveTradesFor(String(item.predicateId)))
+          );
+
+    const deskValidations: LearningResult[] = [];
+    for (const item of proposedDirectives) {
+      const validationMarket: 'EU' | 'US' | 'GLOBAL' =
+        item?.market === 'EU' || item?.market === 'US' ? item.market : 'GLOBAL';
+      const validation = validateLearningPattern(
+        sessionTrades,
+        [],
+        String(item.topic),
+        validationMarket,
+        {},
+        item.predicateId as LearningPredicateId
+      );
+      if (validation) deskValidations.push(validation);
+    }
+
+    const deskAdjustedPValues = benjaminiHochberg(deskValidations.map((result) => result.stats.pValue));
+    const deskAdjustedValidations: LearningResult[] = deskValidations.map((result, index) => ({
+      ...result,
+      confidence: 1 - deskAdjustedPValues[index],
+      stats: { ...result.stats, adjustedPValue: deskAdjustedPValues[index] },
+    }));
+
+    let deskPersistedCount = 0;
+    if (deskAdjustedValidations.length > 0) {
+      updateAIMemory(deskAdjustedValidations);
+      aiLearnedMemory = loadAIMemoryFromDisk();
+      if (firebaseAdminFirestore) {
+        try {
+          await persistAIMemoryToFirestore(aiLearnedMemory);
+        } catch (persistError) {
+          console.warn('[AI Desk Post-Mortem] Persistenza Firestore fallita:', persistError);
+        }
+      }
+      for (const validation of deskAdjustedValidations) {
+        const foundAfter = aiLearnedMemory.find((entry) => entry.topic === validation.topic);
+        if (foundAfter && foundAfter.learnedAt !== deskMemoryBefore.get(validation.topic)) {
+          deskPersistedCount += 1;
+        }
+      }
+    }
+
+    const deskGateDetail =
+      deskAdjustedValidations.length === 0
+        ? `${deskDecisiveSample}/${MIN_REAL_TRADE_SAMPLE} trade decisivi: nessun pattern con campione sufficiente.`
+        : deskAdjustedValidations
+            .map(
+              (result) =>
+                `n=${result.stats.n}, q=${result.stats.adjustedPValue.toFixed(4)}, ` +
+                `avgR=${result.stats.avgR.toFixed(2)}, profitFactor=${result.stats.profitFactor.toFixed(2)}`
+            )
+            .join(' | ');
+
+    const deskOutcome = resolveSpecializationOutcome({
       hasOpenRouterKey: Boolean(openRouterKey),
       geminiAvailable: isGeminiAvailable(),
       llmErrorDetail,
-      proposedDirectivesCount: proposedDirectives.length,
+      validDirectivesCount: proposedDirectives.length,
+      discardedCount: deskDiscardedCount,
       decisiveSample: deskDecisiveSample,
       minSample: MIN_REAL_TRADE_SAMPLE,
+      writtenCount: deskPersistedCount,
+      gateDetail: deskGateDetail,
     });
-    const deskReason = deskPreReason.reason === 'SAMPLE_OK' || deskPreReason.reason === 'TOPIC_NON_FILTRATO'
-      ? 'OK_NON_PERSISTITO'
-      : deskPreReason.reason;
-    const deskReasonDetail = deskPreReason.reason === 'SAMPLE_OK'
-      ? `Post-mortem generato; proposte non persistite (campione ${deskDecisiveSample}/${MIN_REAL_TRADE_SAMPLE}).`
-      : deskPreReason.reasonDetail;
 
     return res.json({
       success: true,
       market,
-      reason: deskReason,
-      reasonDetail: deskReasonDetail,
+      reason: deskOutcome.reason,
+      reasonDetail: deskOutcome.reasonDetail,
       sampleDecisive: deskDecisiveSample,
       minSample: MIN_REAL_TRADE_SAMPLE,
       postMortem: {
@@ -2964,9 +3085,12 @@ Restituisci un JSON rigoroso con questi campi:
         tacticalAdvice: generated.tacticalAdvice,
         generatedAt: new Date().toISOString(),
       },
-      newDirectivesAdded: 0,
+      newDirectivesAdded: deskPersistedCount,
       proposedDirectives,
-      note: 'Le proposte del post-mortem non sono persistite; la memoria richiede validazione statistica sui trade reali.',
+      discardedCount: deskDiscardedCount,
+      note: deskPersistedCount > 0
+        ? 'Direttive validate e persistite con gli stessi gate statistici dell\'handler di specializzazione.'
+        : 'Le proposte del post-mortem non sono persistite; la memoria richiede validazione statistica sui trade reali.',
       totalRules: aiLearnedMemory.length,
       directives: aiLearnedMemory,
     });
