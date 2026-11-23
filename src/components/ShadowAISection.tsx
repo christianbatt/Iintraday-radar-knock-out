@@ -14,7 +14,7 @@ export interface AiShadowLogEntry {
   setup: string | null;
   aiOutcome: string | null;
   aiCategory: string | null;
-  source: 'specialize' | 'desk';
+  source: 'scan' | 'specialize' | 'desk';
   status: 'NON_VALIDATO';
   outcome: null | unknown;
   evaluated?: boolean;
@@ -128,7 +128,7 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
               {entries.map((e) => (
                 <li key={e.id} className="text-[11px] text-slate-300 flex items-center gap-2">
                   <span className="px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 font-bold">NON VALIDATO</span>
-                  <span>{e.ticker ?? '—'} · {e.market} · {e.aiCategory}</span>
+                  <span>{e.ticker ?? '—'} · {e.market} · {e.aiCategory ?? '—'}</span>
                   <span className="text-slate-500 truncate">{e.aiOutcome ?? '—'}</span>
                 </li>
               ))}
