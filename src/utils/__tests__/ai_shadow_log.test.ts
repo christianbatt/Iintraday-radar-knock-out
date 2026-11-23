@@ -12,6 +12,9 @@ import {
   AI_SHADOW_LOG_RELATIVE_PATH,
   AI_SHADOW_LOG_DEFAULT_LIMIT,
   AI_SHADOW_LOG_MAX_LIMIT,
+  AI_SHADOW_LOG_MAX_BYTES,
+  AI_SHADOW_LOG_MAX_ARCHIVES,
+  aiShadowLogArchivePath,
 } from '../../server/aiShadowLog';
 
 describe('aiShadowLog — scrittura', () => {
@@ -167,6 +170,43 @@ describe('aiShadowLog — scrittura', () => {
     assert.equal(last2.length, 2);
     assert.equal(last2[0].aiOutcome, 'b');
     assert.equal(last2[1].aiOutcome, 'c');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('rotazione a soglia: oltre 5 MB il file diventa .1 e il nuovo file riparte', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-shadow-log-'));
+    const file = path.join(dir, 'log.jsonl');
+    fs.writeFileSync(file, Buffer.alloc(AI_SHADOW_LOG_MAX_BYTES + 1, 120), 'utf8');
+    const before = fs.statSync(file).size;
+    assert.ok(before > AI_SHADOW_LOG_MAX_BYTES);
+
+    const res = appendAiShadowLog([{ aiOutcome: 'post-rotazione', aiCategory: 'X' }], file);
+    assert.equal(res.ok, true);
+
+    const archive1 = aiShadowLogArchivePath(file, 1);
+    assert.equal(fs.existsSync(archive1), true);
+    assert.equal(fs.statSync(archive1).size, before);
+    const entries = readAiShadowLog(undefined, file);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].aiOutcome, 'post-rotazione');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('rotazione: mantiene al massimo tre archivi, elimina il piu\' vecchio', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-shadow-log-'));
+    const file = path.join(dir, 'log.jsonl');
+    assert.equal(AI_SHADOW_LOG_MAX_ARCHIVES, 3);
+    fs.writeFileSync(aiShadowLogArchivePath(file, 2), 'vecchio-2');
+    fs.writeFileSync(aiShadowLogArchivePath(file, 3), 'vecchio-3');
+    fs.writeFileSync(file, Buffer.alloc(AI_SHADOW_LOG_MAX_BYTES + 1, 120), 'utf8');
+
+    appendAiShadowLog([{ aiOutcome: 'a', aiCategory: 'c' }], file);
+
+    // .3 preesistente eliminato, .2 scalato a .3, file corrente diventato .1.
+    assert.equal(fs.readFileSync(aiShadowLogArchivePath(file, 1), 'utf8').length > AI_SHADOW_LOG_MAX_BYTES, true);
+    assert.equal(fs.existsSync(aiShadowLogArchivePath(file, 2)), false);
+    assert.equal(fs.readFileSync(aiShadowLogArchivePath(file, 3), 'utf8'), 'vecchio-2');
+    assert.equal(fs.existsSync(aiShadowLogArchivePath(file, 4)), false);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
