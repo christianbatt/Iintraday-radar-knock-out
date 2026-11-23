@@ -17,6 +17,8 @@ export interface AiShadowLogEntry {
   source: 'specialize' | 'desk';
   status: 'NON_VALIDATO';
   outcome: null | unknown;
+  discarded?: boolean;
+  discardReason?: string | null;
 }
 
 export interface ShadowAISectionProps {
@@ -90,6 +92,9 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
   const knownOutcomeCount = Array.isArray(entries)
     ? entries.filter((e) => e.outcome !== null && e.outcome !== undefined).length
     : 0;
+  const discardedCount = Array.isArray(entries)
+    ? entries.filter((e) => e.discarded === true).length
+    : 0;
 
   return (
     <div data-testid="shadow-ai-section" data-section="shadow-ai" className="rounded border border-slate-700 bg-slate-900/40 p-3 space-y-2">
@@ -127,6 +132,9 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
           )}
           <p className="text-[10px] text-slate-500" data-testid="shadow-ai-known-outcome-count">
             esiti noti: {knownOutcomeCount}
+          </p>
+          <p className="text-[10px] text-slate-500" data-testid="shadow-ai-discarded-count">
+            scartate: {discardedCount}
           </p>
         </>
       )}
