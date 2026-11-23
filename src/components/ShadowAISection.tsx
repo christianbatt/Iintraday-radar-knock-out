@@ -12,11 +12,12 @@ export interface AiShadowLogEntry {
   market: string;
   direction: string | null;
   setup: string | null;
-  aiOutcome: string;
-  aiCategory: string;
+  aiOutcome: string | null;
+  aiCategory: string | null;
   source: 'specialize' | 'desk';
   status: 'NON_VALIDATO';
   outcome: null | unknown;
+  evaluated?: boolean;
   discarded?: boolean;
   discardReason?: string | null;
 }
@@ -95,6 +96,9 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
   const discardedCount = Array.isArray(entries)
     ? entries.filter((e) => e.discarded === true).length
     : 0;
+  const notEvaluatedCount = Array.isArray(entries)
+    ? entries.filter((e) => e.evaluated === false).length
+    : 0;
 
   return (
     <div data-testid="shadow-ai-section" data-section="shadow-ai" className="rounded border border-slate-700 bg-slate-900/40 p-3 space-y-2">
@@ -125,7 +129,7 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
                 <li key={e.id} className="text-[11px] text-slate-300 flex items-center gap-2">
                   <span className="px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 font-bold">NON VALIDATO</span>
                   <span>{e.ticker ?? '—'} · {e.market} · {e.aiCategory}</span>
-                  <span className="text-slate-500 truncate">{e.aiOutcome}</span>
+                  <span className="text-slate-500 truncate">{e.aiOutcome ?? '—'}</span>
                 </li>
               ))}
             </ul>
@@ -135,6 +139,9 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
           </p>
           <p className="text-[10px] text-slate-500" data-testid="shadow-ai-discarded-count">
             scartate: {discardedCount}
+          </p>
+          <p className="text-[10px] text-slate-500" data-testid="shadow-ai-not-evaluated-count">
+            non valutate: {notEvaluatedCount}
           </p>
         </>
       )}
