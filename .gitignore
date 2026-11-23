@@ -21,4 +21,6 @@ artifacts/shadow_v2/summary.json
 artifacts/shadow_v2/bars.json
 # Log shadow AI (runtime, append-only): non va versionato.
 shadow_ai_log.jsonl
+# Archivi di rotazione del log shadow AI (5 MB per file, massimo tre).
+shadow_ai_log.*.jsonl
 # artifacts/shadow_v2/signals.jsonl è versionato intenzionalmente: non aggiungere regole di ignore.

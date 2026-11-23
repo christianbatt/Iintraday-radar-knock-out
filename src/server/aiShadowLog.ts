@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-export type AiShadowLogSource = 'specialize' | 'desk';
+export type AiShadowLogSource = 'scan' | 'specialize' | 'desk';
 
 export type AiShadowLogStatus = 'NON_VALIDATO';
 
@@ -54,6 +54,19 @@ export interface AiShadowLogResponse {
 export const AI_SHADOW_LOG_RELATIVE_PATH = 'shadow_ai_log.jsonl';
 export const AI_SHADOW_LOG_DEFAULT_LIMIT = 50;
 export const AI_SHADOW_LOG_MAX_LIMIT = 200;
+/** Soglia di rotazione: 5 MB. Oltre, il file corrente diventa un archivio. */
+export const AI_SHADOW_LOG_MAX_BYTES = 5 * 1024 * 1024;
+/** Archivi mantenuti: .1 (piu' recente), .2, .3. Il piu' vecchio viene eliminato. */
+export const AI_SHADOW_LOG_MAX_ARCHIVES = 3;
+
+/** Motivi di scarto ammessi (stringhe fisse). */
+export const AI_SHADOW_DISCARD_REASONS = {
+  SCARTATO_DAL_FILTRO: 'SCARTATO_DAL_FILTRO',
+  NON_RESTITUITO_DALLA_LLM: 'NON_RESTITUITO_DALLA_LLM',
+  NON_INVIATO_ALLA_LLM: 'NON_INVIATO_ALLA_LLM',
+  ERRORE_PARSING: 'ERRORE_PARSING',
+  LLM_NON_DISPONIBILE: 'LLM_NON_DISPONIBILE',
+} as const;
 
 function shapeDiscardReason(hasTopic: boolean, hasDirective: boolean): string {
   const reasons: string[] = [];
@@ -72,7 +85,8 @@ function normalizeEntries(input: unknown): AiShadowLogEntry[] {
     const ticker = r.ticker == null ? null : String(r.ticker);
     const market = typeof r.market === 'string' ? r.market : 'GLOBAL';
     const direction = r.direction == null ? null : String(r.direction);
-    const source: AiShadowLogSource = r.source === 'desk' ? 'desk' : 'specialize';
+    const source: AiShadowLogSource =
+      r.source === 'desk' ? 'desk' : r.source === 'scan' ? 'scan' : 'specialize';
 
     // Entry gia' normalizzata: contiene la chiave aiOutcome (anche null).
     if ('aiOutcome' in r) {
@@ -147,6 +161,66 @@ function resolveLogPath(filePath?: string): string {
   return path.isAbsolute(target) ? target : path.join(process.cwd(), target);
 }
 
+/** `shadow_ai_log.jsonl` + indice => `shadow_ai_log.1.jsonl`. */
+export function aiShadowLogArchivePath(resolvedPath: string, index: number): string {
+  const dir = path.dirname(resolvedPath);
+  const ext = path.extname(resolvedPath);
+  const base = path.basename(resolvedPath, ext);
+  return path.join(dir, `${base}.${index}${ext}`);
+}
+
+/**
+ * Rotazione a soglia: se il file supera 5 MB diventa `.1`, i precedenti scalano
+ * e il `.3` viene eliminato. Best-effort: un errore di rotazione non blocca
+ * l'append (il file continua a crescere finche' la rotazione non riesce).
+ */
+function rotateIfOversized(resolvedPath: string): void {
+  try {
+    if (!fs.existsSync(resolvedPath)) return;
+    if (fs.statSync(resolvedPath).size <= AI_SHADOW_LOG_MAX_BYTES) return;
+    const oldest = aiShadowLogArchivePath(resolvedPath, AI_SHADOW_LOG_MAX_ARCHIVES);
+    if (fs.existsSync(oldest)) fs.rmSync(oldest, { force: true });
+    for (let i = AI_SHADOW_LOG_MAX_ARCHIVES - 1; i >= 1; i--) {
+      const from = aiShadowLogArchivePath(resolvedPath, i);
+      if (fs.existsSync(from)) fs.renameSync(from, aiShadowLogArchivePath(resolvedPath, i + 1));
+    }
+    fs.renameSync(resolvedPath, aiShadowLogArchivePath(resolvedPath, 1));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn('[AI Shadow Log] rotazione non riuscita:', message);
+  }
+}
+
+/**
+ * Candidati della scansione (tutti i titoli, prima di qualunque filtro).
+ * L'LLM non li riceve: `evaluated: false` e motivo NON_INVIATO_ALLA_LLM.
+ */
+export function buildScanCandidateEntries(
+  candidates: ReadonlyArray<{
+    ticker?: unknown;
+    market?: unknown;
+    direction?: unknown;
+    setup?: unknown;
+  }>
+): AiShadowLogEntry[] {
+  return candidates.map((c) => ({
+    id: randomUUID(),
+    timestamp: new Date().toISOString(),
+    ticker: c.ticker == null ? null : String(c.ticker),
+    market: typeof c.market === 'string' && c.market.length > 0 ? c.market : 'GLOBAL',
+    direction: c.direction == null ? null : String(c.direction),
+    setup: c.setup == null ? null : String(c.setup),
+    aiOutcome: null,
+    aiCategory: null,
+    source: 'scan' as const,
+    evaluated: false,
+    discarded: false,
+    discardReason: AI_SHADOW_DISCARD_REASONS.NON_INVIATO_ALLA_LLM,
+    status: 'NON_VALIDATO' as const,
+    outcome: null,
+  }));
+}
+
 export function appendAiShadowLog(
   entries: unknown,
   filePath?: string
@@ -159,6 +233,7 @@ export function appendAiShadowLog(
 
   try {
     fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+    rotateIfOversized(resolvedPath);
     const lines = normalized.map((e) => JSON.stringify(e)).join('\n') + '\n';
     fs.appendFileSync(resolvedPath, lines, 'utf8');
     return { ok: true, written: normalized.length };

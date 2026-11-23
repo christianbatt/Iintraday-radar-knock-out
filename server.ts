@@ -46,6 +46,7 @@ import { resolveSpecializationOutcome } from './src/utils/specializationReason';
 import {
   safeAppendAiShadowLog,
   buildAiShadowLogResponse,
+  buildScanCandidateEntries,
   AI_SHADOW_LOG_RELATIVE_PATH,
 } from './src/server/aiShadowLog';
 
@@ -2333,6 +2334,22 @@ async function executeMarketDataScan(underlyings: any[], bypass: boolean): Promi
 
   // Qualita' dati VWAP per scansione: solo log/report, nessun impatto su UI o punteggi.
   console.log(formatVwapDataQualityScan('ALL', results));
+
+  // ADDITIVO (Fase 1): ogni candidato prodotto dalla scansione finisce nel log
+  // shadow PRIMA di qualunque filtro (gate, scoring, soglie). Il flusso di
+  // selezione non cambia: safeAppendAiShadowLog non lancia mai.
+  safeAppendAiShadowLog(
+    buildScanCandidateEntries(
+      results.map((quote: any) => ({
+        ticker: quote?.ticker ?? null,
+        market: quote?.market ?? null,
+        direction:
+          typeof quote?.gapPercent === 'number' ? (quote.gapPercent >= 0 ? 'LONG' : 'SHORT') : null,
+        setup: null,
+      }))
+    ),
+    path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+  );
 
   let futuresScan: any = null;
   // Log di scan (IPOTESI): per candidato breakdown, veti e stati indicatori; poi distribuzione punteggi.
