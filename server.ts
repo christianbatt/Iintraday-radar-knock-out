@@ -2746,17 +2746,12 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
     const proposedDirectives = shapeValidDirectives;
     // ADDITIVO (Fase 1): ogni proposta AI viene registrata come osservazione shadow NON_VALIDATO.
     try {
-      const shadowEntries = shapeValidDirectives.map((item: any) => ({
-        ticker: typeof item?.ticker === 'string' ? item.ticker : null,
-        market: typeof item?.market === 'string' ? item.market : 'GLOBAL',
-        direction: typeof item?.direction === 'string' ? item.direction : null,
-        setup: typeof item?.topic === 'string' ? item.topic : (typeof item?.setup === 'string' ? item.setup : null),
-        aiOutcome: String(item?.directive ?? ''),
-        aiCategory: String(item?.predicateId ?? item?.topic ?? 'unknown'),
+      const shadowEntries = rawDirectives.map((item: any) => ({
+        ...item,
         source: 'specialize' as const,
       }));
       if (shadowEntries.length > 0) {
-        appendAiShadowLog(path.join(process.cwd(), 'artifacts', 'ai_shadow_log.jsonl'), shadowEntries);
+        appendAiShadowLog(shadowEntries, path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH));
       }
     } catch (shadowLogError) {
       console.warn('[AI Shadow Log] specialize: log fallito:', shadowLogError);
@@ -2980,17 +2975,12 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
     const proposedDirectives = shapeValidDirectives;
     // ADDITIVO (Fase 1): ogni proposta AI viene registrata come osservazione shadow NON_VALIDATO.
     try {
-      const shadowEntries = shapeValidDirectives.map((item: any) => ({
-        ticker: typeof item?.ticker === 'string' ? item.ticker : null,
-        market: typeof item?.market === 'string' ? item.market : String(market || 'GLOBAL'),
-        direction: typeof item?.direction === 'string' ? item.direction : null,
-        setup: typeof item?.topic === 'string' ? item.topic : (typeof item?.setup === 'string' ? item.setup : null),
-        aiOutcome: String(item?.directive ?? ''),
-        aiCategory: String(item?.predicateId ?? item?.topic ?? 'unknown'),
+      const shadowEntries = rawDirectives.map((item: any) => ({
+        ...item,
         source: 'desk' as const,
       }));
       if (shadowEntries.length > 0) {
-        appendAiShadowLog(path.join(process.cwd(), 'artifacts', 'ai_shadow_log.jsonl'), shadowEntries);
+        appendAiShadowLog(shadowEntries, path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH));
       }
     } catch (shadowLogError) {
       console.warn('[AI Shadow Log] desk: log fallito:', shadowLogError);
@@ -3718,10 +3708,22 @@ async function startServer() {
   // Registra le route Shadow e avvia il collector PRIMA del middleware Vite/SPA
   // (altrimenti app.get('*') cattura /api/shadow/*).
   registerShadowRoutesFromDisk(app);
-  app.get('/api/shadow/ai-log', (_req: Request, res: Response) => {
+  app.get('/api/shadow/ai-log', (req: Request, res: Response) => {
     try {
-      const entries = readAiShadowLog(path.join(process.cwd(), 'artifacts', 'ai_shadow_log.jsonl'));
-      return res.json({ entries, count: entries.length });
+      const rawLimit = Number((req.query as any)?.limit ?? 50);
+      const limit = Number.isFinite(rawLimit)
+        ? Math.min(200, Math.max(1, Math.floor(rawLimit)))
+        : 50;
+      const filePath = path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH);
+      const all = readAiShadowLog(undefined, filePath);
+      const entries = all.slice(-limit);
+      const byStatus: Record<string, number> = {};
+      const byDiscarded: Record<string, number> = { true: 0, false: 0 };
+      for (const e of entries) {
+        byStatus[String(e.status)] = (byStatus[String(e.status)] || 0) + 1;
+        byDiscarded[String(e.discarded)] = (byDiscarded[String(e.discarded)] || 0) + 1;
+      }
+      return res.json({ entries, count: entries.length, total: all.length, byStatus, byDiscarded });
     } catch (err: any) {
       return res.status(500).json({ entries: [], count: 0, error: err?.message || String(err) });
     }

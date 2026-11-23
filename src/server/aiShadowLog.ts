@@ -30,9 +30,11 @@ export interface AiShadowLogEntry {
   source: AiShadowLogSource;
   status: AiShadowLogStatus;
   outcome: null;
+  discarded: boolean;
+  discardReason: string | null;
 }
 
-export const AI_SHADOW_LOG_RELATIVE_PATH = 'artifacts/ai_shadow_log.jsonl';
+export const AI_SHADOW_LOG_RELATIVE_PATH = 'shadow_ai_log.jsonl';
 
 export interface AiShadowLogWriteResult {
   ok: boolean;
@@ -40,20 +42,15 @@ export interface AiShadowLogWriteResult {
   written?: number;
 }
 
-/**
- * Normalizza l'input in una lista di entry. Accetta:
- *  - un singolo oggetto entry
- *  - un array di entry
- *  - un array di oggetti "proposta" (newDirective) che vengono mappati
- */
 function normalizeEntries(input: unknown): AiShadowLogEntry[] {
   const arr = Array.isArray(input) ? input : [input];
   const out: AiShadowLogEntry[] = [];
   for (const raw of arr) {
     if (!raw || typeof raw !== 'object') continue;
     const r = raw as Record<string, unknown>;
-    // Se e' gia' una entry completa, la accettiamo (con default difensivi).
-    if (typeof r.status === 'string' && r.status === 'NON_VALIDATO' && typeof r.aiOutcome === 'string') {
+
+    // Entry gia' normalizzata (oggetto con aiOutcome): accettata as-is.
+    if (typeof r.aiOutcome === 'string') {
       out.push({
         id: typeof r.id === 'string' ? r.id : randomUUID(),
         timestamp: typeof r.timestamp === 'string' ? r.timestamp : new Date().toISOString(),
@@ -66,14 +63,29 @@ function normalizeEntries(input: unknown): AiShadowLogEntry[] {
         source: r.source === 'desk' ? 'desk' : 'specialize',
         status: 'NON_VALIDATO',
         outcome: null,
+        discarded: typeof r.discarded === 'boolean' ? r.discarded : false,
+        discardReason: r.discardReason == null ? null : String(r.discardReason),
       });
       continue;
     }
-    // Altrimenti interpretiamo come proposta LLM (newDirective).
+
+    // Proposta LLM (newDirective): calcola discarded in base alla shape.
+    const hasTopic = typeof r.topic === 'string';
+    const hasDirective = typeof r.directive === 'string';
+    const discarded = !(hasTopic && hasDirective);
+    let discardReason: string | null = null;
+    if (discarded) {
+      const reasons: string[] = [];
+      if (!hasTopic) reasons.push('missing topic');
+      if (!hasDirective) reasons.push('missing directive');
+      discardReason = `shape: ${reasons.join(' and ')}`;
+    }
+
     const directive = r.directive ?? r.aiOutcome ?? r.outcome ?? '';
     const category = r.predicateId ?? r.topic ?? r.aiCategory ?? 'unknown';
     const setup = r.topic ?? r.setup ?? null;
     const market = typeof r.market === 'string' ? r.market : 'GLOBAL';
+
     out.push({
       id: randomUUID(),
       timestamp: new Date().toISOString(),
@@ -86,73 +98,40 @@ function normalizeEntries(input: unknown): AiShadowLogEntry[] {
       source: r.source === 'desk' ? 'desk' : 'specialize',
       status: 'NON_VALIDATO',
       outcome: null,
+      discarded,
+      discardReason,
     });
   }
   return out;
 }
 
-/**
- * Append-only best-effort. Non lancia mai. Accetta firme flessibili:
- *   appendAiShadowLog(filePath, entries)
- *   appendAiShadowLog(entries, filePath?)
- *   appendAiShadowLog(entries)  (path di default)
- */
 export function appendAiShadowLog(
-  first: string | unknown | unknown[],
-  second?: unknown,
-  third?: string
+  entries: unknown,
+  filePath: string = AI_SHADOW_LOG_RELATIVE_PATH
 ): AiShadowLogWriteResult {
-  let filePath: string;
-  let entriesInput: unknown;
-  if (typeof first === 'string') {
-    filePath = first;
-    entriesInput = second;
-  } else if (Array.isArray(first)) {
-    entriesInput = first;
-    filePath = typeof second === 'string' ? second : (typeof third === 'string' ? third : AI_SHADOW_LOG_RELATIVE_PATH);
-  } else if (first && typeof first === 'object') {
-    // potrebbe essere una singola entry o { filePath, entries }
-    const obj = first as Record<string, unknown>;
-    if (Array.isArray(obj.entries)) {
-      entriesInput = obj.entries;
-      filePath = typeof obj.filePath === 'string' ? obj.filePath : (typeof second === 'string' ? second : AI_SHADOW_LOG_RELATIVE_PATH);
-    } else {
-      entriesInput = first;
-      filePath = typeof second === 'string' ? second : AI_SHADOW_LOG_RELATIVE_PATH;
-    }
-  } else {
-    filePath = AI_SHADOW_LOG_RELATIVE_PATH;
-    entriesInput = first;
-  }
+  const resolvedPath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
 
-  if (!path.isAbsolute(filePath)) {
-    filePath = path.join(process.cwd(), filePath);
-  }
-
-  const entries = normalizeEntries(entriesInput);
-  if (entries.length === 0) {
+  const normalized = normalizeEntries(entries);
+  if (normalized.length === 0) {
     return { ok: true, written: 0 };
   }
 
   try {
-    const dir = path.dirname(filePath);
+    const dir = path.dirname(resolvedPath);
     fs.mkdirSync(dir, { recursive: true });
-    const lines = entries.map((e) => JSON.stringify(e)).join('\n') + '\n';
-    fs.appendFileSync(filePath, lines, 'utf8');
-    return { ok: true, written: entries.length };
+    const lines = normalized.map((e) => JSON.stringify(e)).join('\n') + '\n';
+    fs.appendFileSync(resolvedPath, lines, 'utf8');
+    return { ok: true, written: normalized.length };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, error: message, written: 0 };
   }
 }
 
-/** Alias per compatibilita'. */
-export const appendAiShadowLogEntries = appendAiShadowLog;
-export const appendAiShadowObservation = (entry: unknown, filePath?: string) =>
-  appendAiShadowLog(filePath ?? AI_SHADOW_LOG_RELATIVE_PATH, entry);
-export const logAiShadowObservation = appendAiShadowObservation;
-
-export function readAiShadowLog(filePath: string = AI_SHADOW_LOG_RELATIVE_PATH): AiShadowLogEntry[] {
+export function readAiShadowLog(
+  limit?: number,
+  filePath: string = AI_SHADOW_LOG_RELATIVE_PATH
+): AiShadowLogEntry[] {
   const resolved = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
   if (!fs.existsSync(resolved)) return [];
   try {
@@ -168,12 +147,11 @@ export function readAiShadowLog(filePath: string = AI_SHADOW_LOG_RELATIVE_PATH):
         // riga illeggibile: si salta
       }
     }
+    if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) {
+      return out.slice(-Math.floor(limit));
+    }
     return out;
   } catch {
     return [];
   }
 }
-
-/** Alias per compatibilita'. */
-export const loadAiShadowLog = readAiShadowLog;
-export const readAiShadowObservations = readAiShadowLog;
