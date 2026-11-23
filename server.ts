@@ -43,6 +43,7 @@ import {
 } from './src/utils/learningValidator';
 import { updateAIMemory } from './src/utils/memoryUpdater';
 import { resolveSpecializationOutcome } from './src/utils/specializationReason';
+import { appendAiShadowLog, readAiShadowLog, AI_SHADOW_LOG_RELATIVE_PATH } from './src/server/aiShadowLog';
 
 // ADDITIVO (v9, Parte 3.2): enum dei predicati esposto alla LLM.
 const LEARNING_PREDICATE_PROMPT = `predicateId ∈ { ${LEARNING_PREDICATE_IDS.join(' | ')} }`;
@@ -2743,6 +2744,23 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
       (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
     );
     const proposedDirectives = shapeValidDirectives;
+    // ADDITIVO (Fase 1): ogni proposta AI viene registrata come osservazione shadow NON_VALIDATO.
+    try {
+      const shadowEntries = shapeValidDirectives.map((item: any) => ({
+        ticker: typeof item?.ticker === 'string' ? item.ticker : null,
+        market: typeof item?.market === 'string' ? item.market : 'GLOBAL',
+        direction: typeof item?.direction === 'string' ? item.direction : null,
+        setup: typeof item?.topic === 'string' ? item.topic : (typeof item?.setup === 'string' ? item.setup : null),
+        aiOutcome: String(item?.directive ?? ''),
+        aiCategory: String(item?.predicateId ?? item?.topic ?? 'unknown'),
+        source: 'specialize' as const,
+      }));
+      if (shadowEntries.length > 0) {
+        appendAiShadowLog(path.join(process.cwd(), 'artifacts', 'ai_shadow_log.jsonl'), shadowEntries);
+      }
+    } catch (shadowLogError) {
+      console.warn('[AI Shadow Log] specialize: log fallito:', shadowLogError);
+    }
     // ADDITIVO (v10, Parte 3.2): la LLM fornisce solo il testo; il predicato lo decide la scansione.
     const directiveTextByPredicate = new Map<string, string>();
     for (const item of shapeValidDirectives) {
@@ -2960,6 +2978,23 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
       (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
     );
     const proposedDirectives = shapeValidDirectives;
+    // ADDITIVO (Fase 1): ogni proposta AI viene registrata come osservazione shadow NON_VALIDATO.
+    try {
+      const shadowEntries = shapeValidDirectives.map((item: any) => ({
+        ticker: typeof item?.ticker === 'string' ? item.ticker : null,
+        market: typeof item?.market === 'string' ? item.market : String(market || 'GLOBAL'),
+        direction: typeof item?.direction === 'string' ? item.direction : null,
+        setup: typeof item?.topic === 'string' ? item.topic : (typeof item?.setup === 'string' ? item.setup : null),
+        aiOutcome: String(item?.directive ?? ''),
+        aiCategory: String(item?.predicateId ?? item?.topic ?? 'unknown'),
+        source: 'desk' as const,
+      }));
+      if (shadowEntries.length > 0) {
+        appendAiShadowLog(path.join(process.cwd(), 'artifacts', 'ai_shadow_log.jsonl'), shadowEntries);
+      }
+    } catch (shadowLogError) {
+      console.warn('[AI Shadow Log] desk: log fallito:', shadowLogError);
+    }
     const directiveTextByPredicate = new Map<string, string>();
     for (const item of shapeValidDirectives) {
       if (isLearningPredicateId(item?.predicateId) && !directiveTextByPredicate.has(item.predicateId)) {
@@ -3683,6 +3718,14 @@ async function startServer() {
   // Registra le route Shadow e avvia il collector PRIMA del middleware Vite/SPA
   // (altrimenti app.get('*') cattura /api/shadow/*).
   registerShadowRoutesFromDisk(app);
+  app.get('/api/shadow/ai-log', (_req: Request, res: Response) => {
+    try {
+      const entries = readAiShadowLog(path.join(process.cwd(), 'artifacts', 'ai_shadow_log.jsonl'));
+      return res.json({ entries, count: entries.length });
+    } catch (err: any) {
+      return res.status(500).json({ entries: [], count: 0, error: err?.message || String(err) });
+    }
+  });
   app.post('/api/shadow/v1-live/observe', requireApiAuth);
   registerShadowV1LiveCollector(app);
   registerShadowV1LiveViewRoute(app);
