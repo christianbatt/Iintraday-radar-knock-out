@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ShadowAISection from '../ShadowAISection';
+import { SHADOW_AI_SECTION, isShadowAiSectionEnabled } from '../../config/shadowAiSection';
 
 describe('ShadowAISection — flag', () => {
   it('flag off: non renderizza nulla', () => {
@@ -14,6 +15,14 @@ describe('ShadowAISection — flag', () => {
     const out = renderToStaticMarkup(React.createElement(ShadowAISection, { flag: 'on', entries: [] }));
     assert.ok(out.includes('data-testid=\"shadow-ai-section\"'));
     assert.ok(out.includes('NON VALIDATO') === false || out.includes('shadow-ai-empty'));
+  });
+});
+
+describe('ShadowAISection — flag di config', () => {
+  it("default 'on' come deciso dall'utente", () => {
+    assert.equal(SHADOW_AI_SECTION, 'on');
+    assert.equal(isShadowAiSectionEnabled(), true);
+    assert.equal(isShadowAiSectionEnabled('off'), false);
   });
 });
 
@@ -65,6 +74,22 @@ describe('ShadowAISection — nuovi casi', () => {
     );
     assert.ok(out.includes('NON VALIDATO'));
     assert.ok(out.includes('data-testid=\"shadow-ai-list\"'));
+    assert.ok(out.includes('scartate: 1'));
+    assert.ok(out.includes('esiti noti: 0'));
+    assert.ok(out.includes('non valutate: 0'));
+  });
+
+  it('conteggio proposte non valutate dall\'LLM', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAISection, {
+        flag: 'on',
+        entries: [
+          { id: '1', timestamp: 't', ticker: null, market: 'US', direction: null, setup: null, aiOutcome: null, aiCategory: null, source: 'desk', status: 'NON_VALIDATO', outcome: null, evaluated: false, discarded: true, discardReason: 'llm: nessuna direttiva restituita' },
+          { id: '2', timestamp: 't', ticker: 'AAA', market: 'EU', direction: 'LONG', setup: 'X', aiOutcome: 'd', aiCategory: 'C', source: 'specialize', status: 'NON_VALIDATO', outcome: null, evaluated: true, discarded: false, discardReason: null },
+        ],
+      })
+    );
+    assert.ok(out.includes('non valutate: 1'));
     assert.ok(out.includes('scartate: 1'));
     assert.ok(out.includes('esiti noti: 0'));
   });
