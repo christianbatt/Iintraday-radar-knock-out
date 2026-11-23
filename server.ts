@@ -43,7 +43,11 @@ import {
 } from './src/utils/learningValidator';
 import { updateAIMemory } from './src/utils/memoryUpdater';
 import { resolveSpecializationOutcome } from './src/utils/specializationReason';
-import { appendAiShadowLog, readAiShadowLog, AI_SHADOW_LOG_RELATIVE_PATH } from './src/server/aiShadowLog';
+import {
+  safeAppendAiShadowLog,
+  buildAiShadowLogResponse,
+  AI_SHADOW_LOG_RELATIVE_PATH,
+} from './src/server/aiShadowLog';
 
 // ADDITIVO (v9, Parte 3.2): enum dei predicati esposto alla LLM.
 const LEARNING_PREDICATE_PROMPT = `predicateId ∈ { ${LEARNING_PREDICATE_IDS.join(' | ')} }`;
@@ -2656,6 +2660,58 @@ app.get(['/api/ai/memory', '/api/ai-memory'], requireApiAuth, async (_req: Reque
   });
 });
 
+/**
+ * ADDITIVO (Fase 1): mappa le proposte restituite dalla LLM in voci di log shadow.
+ *
+ * - proposta con `topic` e `directive` => `evaluated: true`;
+ * - proposta senza shape valida => `evaluated: false` con motivo di scarto;
+ * - `predicateId` fuori enum => valutata ma scartata dal flusso esistente;
+ * - nessuna direttiva restituita => una voce `evaluated: false` che documenta l'assenza,
+ *   cosi' il log non dipende dal fatto che `newDirectives` sia non vuoto.
+ */
+function buildAiShadowLogEntries(
+  rawDirectives: any[],
+  source: 'specialize' | 'desk',
+  market: string
+): any[] {
+  if (!Array.isArray(rawDirectives) || rawDirectives.length === 0) {
+    return [
+      {
+        source,
+        ticker: null,
+        market,
+        direction: null,
+        setup: null,
+        aiOutcome: null,
+        aiCategory: null,
+        evaluated: false,
+        discarded: true,
+        discardReason: 'llm: nessuna direttiva restituita (newDirectives assente o vuoto)',
+      },
+    ];
+  }
+  return rawDirectives.map((item: any) => {
+    const shapeOk =
+      typeof item?.topic === 'string' &&
+      item.topic.length > 0 &&
+      typeof item?.directive === 'string' &&
+      item.directive.length > 0;
+    const predicateOk = shapeOk && isLearningPredicateId(item?.predicateId);
+    return {
+      ...item,
+      source,
+      market: typeof item?.market === 'string' ? item.market : market,
+      evaluated: shapeOk,
+      discarded: !shapeOk || !predicateOk,
+      discardReason: !shapeOk
+        ? 'shape non valida: topic o directive mancante'
+        : !predicateOk
+          ? `predicateId fuori enum: ${String(item?.predicateId)}`
+          : null,
+    };
+  });
+}
+
 // POST /api/ai/specialize: L'AI analizza i trade e i setup scartati per distillare nuove regole empiriche di condotta
 app.post('/api/ai/specialize', requireApiAuth, async (req: Request, res: Response) => {
   try {
@@ -2740,22 +2796,16 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
 
     // ADDITIVO (v9, Parte 3.2): direttive divise fra valide (predicateId in enum) e scartate.
     const rawDirectives = Array.isArray(generated?.newDirectives) ? generated.newDirectives : [];
+    // ADDITIVO (Fase 1): log shadow di TUTTE le proposte valutate, prima di qualunque filtro.
+    // safeAppend non lancia mai: un errore di I/O non altera la risposta.
+    safeAppendAiShadowLog(
+      buildAiShadowLogEntries(rawDirectives, 'specialize', 'GLOBAL'),
+      path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+    );
     const shapeValidDirectives = rawDirectives.filter(
       (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
     );
     const proposedDirectives = shapeValidDirectives;
-    // ADDITIVO (Fase 1): ogni proposta AI viene registrata come osservazione shadow NON_VALIDATO.
-    try {
-      const shadowEntries = rawDirectives.map((item: any) => ({
-        ...item,
-        source: 'specialize' as const,
-      }));
-      if (shadowEntries.length > 0) {
-        appendAiShadowLog(shadowEntries, path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH));
-      }
-    } catch (shadowLogError) {
-      console.warn('[AI Shadow Log] specialize: log fallito:', shadowLogError);
-    }
     // ADDITIVO (v10, Parte 3.2): la LLM fornisce solo il testo; il predicato lo decide la scansione.
     const directiveTextByPredicate = new Map<string, string>();
     for (const item of shapeValidDirectives) {
@@ -2969,22 +3019,15 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
 
     // ADDITIVO (v9, Parte 4.2/4.3): stesso flusso dell'handler, stessi gate e stesso resolver.
     const rawDirectives = Array.isArray(generated.newDirectives) ? generated.newDirectives : [];
+    // ADDITIVO (Fase 1): log shadow di TUTTE le proposte valutate, prima di qualunque filtro.
+    safeAppendAiShadowLog(
+      buildAiShadowLogEntries(rawDirectives, 'desk', typeof market === 'string' ? market : 'GLOBAL'),
+      path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+    );
     const shapeValidDirectives = rawDirectives.filter(
       (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
     );
     const proposedDirectives = shapeValidDirectives;
-    // ADDITIVO (Fase 1): ogni proposta AI viene registrata come osservazione shadow NON_VALIDATO.
-    try {
-      const shadowEntries = rawDirectives.map((item: any) => ({
-        ...item,
-        source: 'desk' as const,
-      }));
-      if (shadowEntries.length > 0) {
-        appendAiShadowLog(shadowEntries, path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH));
-      }
-    } catch (shadowLogError) {
-      console.warn('[AI Shadow Log] desk: log fallito:', shadowLogError);
-    }
     const directiveTextByPredicate = new Map<string, string>();
     for (const item of shapeValidDirectives) {
       if (isLearningPredicateId(item?.predicateId) && !directiveTextByPredicate.has(item.predicateId)) {
@@ -3710,20 +3753,11 @@ async function startServer() {
   registerShadowRoutesFromDisk(app);
   app.get('/api/shadow/ai-log', (req: Request, res: Response) => {
     try {
-      const rawLimit = Number((req.query as any)?.limit ?? 50);
-      const limit = Number.isFinite(rawLimit)
-        ? Math.min(200, Math.max(1, Math.floor(rawLimit)))
-        : 50;
-      const filePath = path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH);
-      const all = readAiShadowLog(undefined, filePath);
-      const entries = all.slice(-limit);
-      const byStatus: Record<string, number> = {};
-      const byDiscarded: Record<string, number> = { true: 0, false: 0 };
-      for (const e of entries) {
-        byStatus[String(e.status)] = (byStatus[String(e.status)] || 0) + 1;
-        byDiscarded[String(e.discarded)] = (byDiscarded[String(e.discarded)] || 0) + 1;
-      }
-      return res.json({ entries, count: entries.length, total: all.length, byStatus, byDiscarded });
+      const body = buildAiShadowLogResponse(
+        (req.query as any)?.limit,
+        path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+      );
+      return res.json(body);
     } catch (err: any) {
       return res.status(500).json({ entries: [], count: 0, error: err?.message || String(err) });
     }
