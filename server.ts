@@ -56,8 +56,10 @@ import {
   resolveScanCandidateInput,
   setHandlerScanInput,
   consumeHandlerScanInput,
-  getLastScanRunId,
-  setLastScanRunId,
+  resetHandlerScanInput,
+  createScanRunIdHandle,
+  beginScanRun,
+  type ScanRunIdHandle,
   buildNoCandidateEntry,
   AI_SHADOW_BATCH_SIZE,
 } from './src/server/aiScanEvaluation';
@@ -2308,7 +2310,14 @@ let startupShadowHydrationPromise: Promise<void> = Promise.resolve();
 let lastMarketScanAtMs = 0;
 let schedulerScanInFlight: Promise<void> | null = null;
 
-async function executeMarketDataScan(underlyings: any[], bypass: boolean): Promise<any[]> {
+async function executeMarketDataScan(
+  underlyings: any[],
+  bypass: boolean,
+  runIdHandle?: ScanRunIdHandle | null
+): Promise<any[]> {
+  // ADDITIVO (P3-fix): runId locale alla richiesta, generato prima di ogni await
+  // e assegnato all'handle della richiesta stessa.
+  const scanRunId = beginScanRun(runIdHandle);
   if (startupShadowHydrationState !== 'ready') {
     await startupShadowHydrationPromise;
   }
@@ -2352,8 +2361,9 @@ async function executeMarketDataScan(underlyings: any[], bypass: boolean): Promi
   // selezione non cambia: safeAppendAiShadowLog non lancia mai.
   // ADDITIVO (P3): ogni scansione ha un runId; le righe di scansione e quelle
   // degli handler condividono candidateKey = runId + ':' + ticker.
-  const scanRunId = randomUUID();
-  setLastScanRunId(scanRunId);
+  // ADDITIVO (P3-fix): `scanRunId` e' generato sopra, all'inizio della
+  // scansione, e resta locale alla richiesta: non viene riletto dallo stato
+  // di processo.
   safeAppendAiShadowLog(
     buildScanCandidateEntries(
       results.map((quote: any) => ({
@@ -2556,15 +2566,18 @@ app.post('/api/market-data', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Array "underlyings" richiesto' });
     }
 
-    const results = await executeMarketDataScan(underlyings, bypass);
+    // ADDITIVO (P3-fix): handle per-richiesta; la risposta legge il runId della
+    // propria scansione, non quello dell'ultima scansione di processo.
+    const scanRunIdHandle = createScanRunIdHandle();
+    const results = await executeMarketDataScan(underlyings, bypass, scanRunIdHandle);
 
     res.json({
       count: results.length,
       data: results,
       cachedAt: new Date().toISOString(),
-      // ADDITIVO (P3): runId della scansione appena eseguita su questa istanza,
-      // cosi' il client puo' inviarlo agli handler AI nel campo `scanRunId`.
-      scanRunId: getLastScanRunId(),
+      // ADDITIVO (P3): runId della scansione di QUESTA richiesta, cosi' il
+      // client puo' inviarlo agli handler AI nel campo `scanRunId`.
+      scanRunId: scanRunIdHandle.value,
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -2794,49 +2807,54 @@ async function callScanBatchLlm(
  */
 async function logScanCandidateEvaluations(source: 'specialize' | 'desk'): Promise<void> {
   const { bodyCandidates, bodyRunId } = consumeHandlerScanInput();
-  // ADDITIVO (P2): priorita' al campo `scanCandidates` del body (scansione del
-  // client, valida anche se la richiesta arriva su un'altra istanza); in
-  // mancanza si usa l'istantanea di processo. Nessuna delle due => una riga
-  // NESSUN_CANDIDATO_DISPONIBILE, senza chiamate LLM.
-  const { candidates, candidateSource, runId } = resolveScanCandidateInput(
-    bodyCandidates,
-    bodyRunId
-  );
-  if (candidates.length === 0) {
-    safeAppendAiShadowLog(
-      buildNoCandidateEntry(source),
-      path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
-    );
-    return;
-  }
   try {
-    const result = await evaluateScanCandidates(
-      candidates,
-      source,
-      (system, user) => callScanBatchLlm(system, user),
-      AI_SHADOW_BATCH_SIZE,
-      { runId, candidateSource }
+    // ADDITIVO (P2): priorita' al campo `scanCandidates` del body (scansione del
+    // client, valida anche se la richiesta arriva su un'altra istanza); in
+    // mancanza si usa l'istantanea di processo. Nessuna delle due => una riga
+    // NESSUN_CANDIDATO_DISPONIBILE, senza chiamate LLM.
+    const { candidates, candidateSource, runId } = resolveScanCandidateInput(
+      bodyCandidates,
+      bodyRunId
     );
-    if (result.ignoredUnknownTickers > 0 || result.ignoredDuplicateTickers > 0) {
-      console.warn(
-        `[AI Shadow Log] valutazioni ignorate (${source}): ticker sconosciuti ${result.ignoredUnknownTickers}, duplicati ${result.ignoredDuplicateTickers}`
-      );
-    }
-    // ADDITIVO (P4): durata per batch e totale, solo per diagnostica nei log.
-    console.info(
-      `[AI Shadow Log] ${source} (${candidateSource}, run ${runId ?? 'n.d.'}): ${result.evaluated}/${result.entries.length} valutati in ${result.batches
-        .map((batch) => `${batch.durationMs}ms`)
-        .join(' + ')}`
-    );
-    if (result.entries.length > 0) {
+    if (candidates.length === 0) {
       safeAppendAiShadowLog(
-        result.entries,
+        buildNoCandidateEntry(source),
         path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
       );
+      return;
     }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn('[AI Shadow Log] valutazione candidati non riuscita:', message);
+    try {
+      const result = await evaluateScanCandidates(
+        candidates,
+        source,
+        (system, user) => callScanBatchLlm(system, user),
+        AI_SHADOW_BATCH_SIZE,
+        { runId, candidateSource }
+      );
+      if (result.ignoredUnknownTickers > 0 || result.ignoredDuplicateTickers > 0) {
+        console.warn(
+          `[AI Shadow Log] valutazioni ignorate (${source}): ticker sconosciuti ${result.ignoredUnknownTickers}, duplicati ${result.ignoredDuplicateTickers}`
+        );
+      }
+      // ADDITIVO (P4): durata per batch e totale, solo per diagnostica nei log.
+      console.info(
+        `[AI Shadow Log] ${source} (${candidateSource}, run ${runId ?? 'n.d.'}): ${result.evaluated}/${result.entries.length} valutati in ${result.batches
+          .map((batch) => `${batch.durationMs}ms`)
+          .join(' + ')}`
+      );
+      if (result.entries.length > 0) {
+        safeAppendAiShadowLog(
+          result.entries,
+          path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+        );
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn('[AI Shadow Log] valutazione candidati non riuscita:', message);
+    }
+  } finally {
+    // ADDITIVO (P3-fix): nessun input residuo anche se la valutazione lancia.
+    resetHandlerScanInput();
   }
 }
 

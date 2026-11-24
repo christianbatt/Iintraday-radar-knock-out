@@ -89,6 +89,33 @@ export function setLastScanRunId(runId: string | null): void {
   lastScanRunId = typeof runId === 'string' && runId.length > 0 ? runId : null;
 }
 
+/** ADDITIVO (P3-fix): handle del runId di una singola richiesta di scansione. */
+export interface ScanRunIdHandle {
+  value: string | null;
+}
+
+/** ADDITIVO (P3-fix): nuovo handle vuoto, uno per richiesta. */
+export function createScanRunIdHandle(): ScanRunIdHandle {
+  return { value: null };
+}
+
+/**
+ * ADDITIVO (P3-fix): genera il runId all'inizio della scansione, lo assegna
+ * all'handle della singola richiesta e aggiorna l'ultimo runId di processo solo
+ * come dato diagnostico. Due scansioni concorrenti sulla stessa istanza
+ * ottengono runId distinti e ogni handle conserva il proprio: la risposta HTTP
+ * legge l'handle della propria richiesta, non lo stato globale di processo.
+ */
+export function beginScanRun(
+  handle?: ScanRunIdHandle | null,
+  generate: () => string = randomUUID
+): string {
+  const runId = generate();
+  if (handle) handle.value = runId;
+  setLastScanRunId(runId);
+  return runId;
+}
+
 /** Salva l'istantanea dei candidati prodotta dalla scansione (sola memoria di processo). */
 export function setLastScanCandidates(candidates: ReadonlyArray<ScanCandidateSnapshot>): void {
   const normalized: ScanCandidateSnapshot[] = [];
@@ -171,8 +198,20 @@ export function setHandlerScanInput(bodyCandidates: unknown, bodyRunId: unknown)
 /** ADDITIVO (P2): legge e azzera l'input consegnato da `setHandlerScanInput`. */
 export function consumeHandlerScanInput(): { bodyCandidates: unknown; bodyRunId: unknown } {
   const pending = pendingHandlerScanInput;
+  try {
+    return pending ?? { bodyCandidates: undefined, bodyRunId: undefined };
+  } finally {
+    pendingHandlerScanInput = null;
+  }
+}
+
+/**
+ * ADDITIVO (P3-fix): azzera l'input in sospeso. Rete di sicurezza usata nel
+ * `finally` dell'handler: nessun input resta in stato di modulo se la
+ * valutazione lancia dopo il consumo.
+ */
+export function resetHandlerScanInput(): void {
   pendingHandlerScanInput = null;
-  return pending ?? { bodyCandidates: undefined, bodyRunId: undefined };
 }
 
 /**
