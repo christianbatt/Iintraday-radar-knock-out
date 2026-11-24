@@ -93,6 +93,8 @@ import { SystemOptimizerModal } from './components/SystemOptimizerModal';
 import { FilteringAuditBanner } from './components/FilteringAuditBanner';
 import { FilteringAuditModal } from './components/FilteringAuditModal';
 import { ExcludedSetupsAnalyzerModal } from './components/ExcludedSetupsAnalyzerModal';
+// ADDITIVO (P2): payload dei candidati della scansione per gli handler AI.
+import { buildScanCandidatesPayload } from './utils/scanCandidatesPayload';
 import { ShadowResearchModal } from './components/ShadowResearchModal';
 
 /**
@@ -2159,6 +2161,7 @@ export default function App() {
         onRejectProposal={handleRejectProposal}
         onRunAuditOnDemand={handleRunAuditOnDemand}
         trades={journalEntries}
+        scanCandidates={buildScanCandidatesPayload(topCandidates)}
       />
       <FilteringAuditModal
         isOpen={isAuditModalOpen}
@@ -2178,6 +2181,7 @@ export default function App() {
         onClearRecords={handleClearExcludedRecords}
         accountCapital={accountCapital}
         trades={journalEntries}
+        scanCandidates={buildScanCandidatesPayload(topCandidates)}
       />
       <CsvManagerModal
         isOpen={isCsvModalOpen}

@@ -43,6 +43,26 @@ import {
 } from './src/utils/learningValidator';
 import { updateAIMemory } from './src/utils/memoryUpdater';
 import { resolveSpecializationOutcome } from './src/utils/specializationReason';
+import {
+  safeAppendAiShadowLog,
+  buildAiShadowLogResponse,
+  buildScanCandidateEntries,
+  AI_SHADOW_LOG_RELATIVE_PATH,
+} from './src/server/aiShadowLog';
+import {
+  setLastScanCandidates,
+  getLastScanCandidates,
+  evaluateScanCandidates,
+  resolveScanCandidateInput,
+  setHandlerScanInput,
+  consumeHandlerScanInput,
+  resetHandlerScanInput,
+  createScanRunIdHandle,
+  beginScanRun,
+  type ScanRunIdHandle,
+  buildNoCandidateEntry,
+  AI_SHADOW_BATCH_SIZE,
+} from './src/server/aiScanEvaluation';
 
 // ADDITIVO (v9, Parte 3.2): enum dei predicati esposto alla LLM.
 const LEARNING_PREDICATE_PROMPT = `predicateId ∈ { ${LEARNING_PREDICATE_IDS.join(' | ')} }`;
@@ -2290,7 +2310,14 @@ let startupShadowHydrationPromise: Promise<void> = Promise.resolve();
 let lastMarketScanAtMs = 0;
 let schedulerScanInFlight: Promise<void> | null = null;
 
-async function executeMarketDataScan(underlyings: any[], bypass: boolean): Promise<any[]> {
+async function executeMarketDataScan(
+  underlyings: any[],
+  bypass: boolean,
+  runIdHandle?: ScanRunIdHandle | null
+): Promise<any[]> {
+  // ADDITIVO (P3-fix): runId locale alla richiesta, generato prima di ogni await
+  // e assegnato all'handle della richiesta stessa.
+  const scanRunId = beginScanRun(runIdHandle);
   if (startupShadowHydrationState !== 'ready') {
     await startupShadowHydrationPromise;
   }
@@ -2329,6 +2356,28 @@ async function executeMarketDataScan(underlyings: any[], bypass: boolean): Promi
   // Qualita' dati VWAP per scansione: solo log/report, nessun impatto su UI o punteggi.
   console.log(formatVwapDataQualityScan('ALL', results));
 
+  // ADDITIVO (Fase 1): ogni candidato prodotto dalla scansione finisce nel log
+  // shadow PRIMA di qualunque filtro (gate, scoring, soglie). Il flusso di
+  // selezione non cambia: safeAppendAiShadowLog non lancia mai.
+  // ADDITIVO (P3): ogni scansione ha un runId; le righe di scansione e quelle
+  // degli handler condividono candidateKey = runId + ':' + ticker.
+  // ADDITIVO (P3-fix): `scanRunId` e' generato sopra, all'inizio della
+  // scansione, e resta locale alla richiesta: non viene riletto dallo stato
+  // di processo.
+  safeAppendAiShadowLog(
+    buildScanCandidateEntries(
+      results.map((quote: any) => ({
+        ticker: quote?.ticker ?? null,
+        market: quote?.market ?? null,
+        direction:
+          typeof quote?.gapPercent === 'number' ? (quote.gapPercent >= 0 ? 'LONG' : 'SHORT') : null,
+        setup: null,
+      })),
+      scanRunId
+    ),
+    path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+  );
+
   let futuresScan: any = null;
   // Log di scan (IPOTESI): per candidato breakdown, veti e stati indicatori; poi distribuzione punteggi.
   try {
@@ -2344,6 +2393,19 @@ async function executeMarketDataScan(underlyings: any[], bypass: boolean): Promi
         barTime: quote.lastBarTime ?? null,
       }),
     }));
+    // ADDITIVO (Fasi 1-2): istantanea di TUTTI i candidati con score e veto gia'
+    // calcolati, prima di qualunque selezione. Gli handler AI la usano per
+    // valutare ogni candidato; la selezione dei top setup non legge questo dato.
+    setLastScanCandidates(
+      scanScores.map(({ quote, score }) => ({
+        ticker: typeof quote?.ticker === 'string' ? quote.ticker : '',
+        market: quote?.market === 'US' ? 'US' : quote?.market === 'EU' ? 'EU' : 'GLOBAL',
+        direction:
+          typeof quote?.gapPercent === 'number' ? (quote.gapPercent >= 0 ? 'LONG' : 'SHORT') : null,
+        scoreTotal: typeof score?.total === 'number' ? score.total : null,
+        veto: typeof score?.veto === 'string' ? score.veto : null,
+      }))
+    );
     if (process.env.DEBUG_SCAN_LOGS === 'true') {
       for (const { quote, score } of scanScores) {
         const ind = quote.setupIndicators;
@@ -2504,12 +2566,18 @@ app.post('/api/market-data', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Array "underlyings" richiesto' });
     }
 
-    const results = await executeMarketDataScan(underlyings, bypass);
+    // ADDITIVO (P3-fix): handle per-richiesta; la risposta legge il runId della
+    // propria scansione, non quello dell'ultima scansione di processo.
+    const scanRunIdHandle = createScanRunIdHandle();
+    const results = await executeMarketDataScan(underlyings, bypass, scanRunIdHandle);
 
     res.json({
       count: results.length,
       data: results,
       cachedAt: new Date().toISOString(),
+      // ADDITIVO (P3): runId della scansione di QUESTA richiesta, cosi' il
+      // client puo' inviarlo agli handler AI nel campo `scanRunId`.
+      scanRunId: scanRunIdHandle.value,
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -2655,6 +2723,141 @@ app.get(['/api/ai/memory', '/api/ai-memory'], requireApiAuth, async (_req: Reque
   });
 });
 
+/**
+ * ADDITIVO (Fase 1): mappa le proposte restituite dalla LLM in voci di log shadow.
+ *
+ * - proposta con `topic` e `directive` => `evaluated: true`;
+ * - proposta senza shape valida => `evaluated: false` con motivo di scarto;
+ * - `predicateId` fuori enum => valutata ma scartata dal flusso esistente;
+ * - nessuna direttiva restituita => una voce `evaluated: false` che documenta l'assenza,
+ *   cosi' il log non dipende dal fatto che `newDirectives` sia non vuoto.
+ */
+function buildAiShadowLogEntries(
+  rawDirectives: any[],
+  source: 'specialize' | 'desk',
+  market: string
+): any[] {
+  if (!Array.isArray(rawDirectives) || rawDirectives.length === 0) {
+    return [
+      {
+        source,
+        ticker: null,
+        market,
+        direction: null,
+        setup: null,
+        aiOutcome: null,
+        aiCategory: null,
+        evaluated: false,
+        discarded: true,
+        discardReason: 'llm: nessuna direttiva restituita (newDirectives assente o vuoto)',
+      },
+    ];
+  }
+  return rawDirectives.map((item: any) => {
+    const shapeOk =
+      typeof item?.topic === 'string' &&
+      item.topic.length > 0 &&
+      typeof item?.directive === 'string' &&
+      item.directive.length > 0;
+    const predicateOk = shapeOk && isLearningPredicateId(item?.predicateId);
+    return {
+      ...item,
+      source,
+      market: typeof item?.market === 'string' ? item.market : market,
+      evaluated: shapeOk,
+      discarded: !shapeOk || !predicateOk,
+      discardReason: !shapeOk
+        ? 'shape non valida: topic o directive mancante'
+        : !predicateOk
+          ? `predicateId fuori enum: ${String(item?.predicateId)}`
+          : null,
+    };
+  });
+}
+
+/**
+ * ADDITIVO (Fasi 1-2): chiamata LLM dei batch `CANDIDATI_SCANSIONE`.
+ * Restituisce il testo grezzo (il parser distingue JSON invalido da LLM assente).
+ */
+async function callScanBatchLlm(
+  systemInstruction: string,
+  userPrompt: string
+): Promise<string | null> {
+  const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
+  if (openRouterKey) {
+    const raw = await callOpenRouterRawText(
+      [OPENROUTER_PRIMARY_MODEL, OPENROUTER_FALLBACK_MODEL],
+      systemInstruction,
+      userPrompt,
+      openRouterKey,
+      15000
+    );
+    if (raw != null && raw.trim().length > 0) return raw;
+  }
+  if (isGeminiAvailable()) {
+    const gemRes = await callGeminiModel(systemInstruction, userPrompt);
+    if (gemRes?.data) return JSON.stringify(gemRes.data);
+  }
+  return null;
+}
+
+/**
+ * ADDITIVO (Fasi 1-2): valuta tutti i candidati dell'ultima scansione e li
+ * registra nel log shadow. Non lancia mai e non altera la risposta HTTP.
+ */
+async function logScanCandidateEvaluations(source: 'specialize' | 'desk'): Promise<void> {
+  const { bodyCandidates, bodyRunId } = consumeHandlerScanInput();
+  try {
+    // ADDITIVO (P2): priorita' al campo `scanCandidates` del body (scansione del
+    // client, valida anche se la richiesta arriva su un'altra istanza); in
+    // mancanza si usa l'istantanea di processo. Nessuna delle due => una riga
+    // NESSUN_CANDIDATO_DISPONIBILE, senza chiamate LLM.
+    const { candidates, candidateSource, runId } = resolveScanCandidateInput(
+      bodyCandidates,
+      bodyRunId
+    );
+    if (candidates.length === 0) {
+      safeAppendAiShadowLog(
+        buildNoCandidateEntry(source),
+        path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+      );
+      return;
+    }
+    try {
+      const result = await evaluateScanCandidates(
+        candidates,
+        source,
+        (system, user) => callScanBatchLlm(system, user),
+        AI_SHADOW_BATCH_SIZE,
+        { runId, candidateSource }
+      );
+      if (result.ignoredUnknownTickers > 0 || result.ignoredDuplicateTickers > 0) {
+        console.warn(
+          `[AI Shadow Log] valutazioni ignorate (${source}): ticker sconosciuti ${result.ignoredUnknownTickers}, duplicati ${result.ignoredDuplicateTickers}`
+        );
+      }
+      // ADDITIVO (P4): durata per batch e totale, solo per diagnostica nei log.
+      console.info(
+        `[AI Shadow Log] ${source} (${candidateSource}, run ${runId ?? 'n.d.'}): ${result.evaluated}/${result.entries.length} valutati in ${result.batches
+          .map((batch) => `${batch.durationMs}ms`)
+          .join(' + ')}`
+      );
+      if (result.entries.length > 0) {
+        safeAppendAiShadowLog(
+          result.entries,
+          path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+        );
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn('[AI Shadow Log] valutazione candidati non riuscita:', message);
+    }
+  } finally {
+    // ADDITIVO (P3-fix): nessun input residuo anche se la valutazione lancia.
+    resetHandlerScanInput();
+  }
+}
+
 // POST /api/ai/specialize: L'AI analizza i trade e i setup scartati per distillare nuove regole empiriche di condotta
 app.post('/api/ai/specialize', requireApiAuth, async (req: Request, res: Response) => {
   try {
@@ -2739,6 +2942,16 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
 
     // ADDITIVO (v9, Parte 3.2): direttive divise fra valide (predicateId in enum) e scartate.
     const rawDirectives = Array.isArray(generated?.newDirectives) ? generated.newDirectives : [];
+    // ADDITIVO (Fase 1): log shadow di TUTTE le proposte valutate, prima di qualunque filtro.
+    // safeAppend non lancia mai: un errore di I/O non altera la risposta.
+    safeAppendAiShadowLog(
+      buildAiShadowLogEntries(rawDirectives, 'specialize', 'GLOBAL'),
+      path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+    );
+    // ADDITIVO (Fasi 1-2, P2): candidati dal body della richiesta (se presenti)
+    // consegnati alla valutazione, che resta invariata nella forma della chiamata.
+    setHandlerScanInput(req.body?.scanCandidates, req.body?.scanRunId);
+    await logScanCandidateEvaluations('specialize');
     const shapeValidDirectives = rawDirectives.filter(
       (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
     );
@@ -2956,6 +3169,15 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
 
     // ADDITIVO (v9, Parte 4.2/4.3): stesso flusso dell'handler, stessi gate e stesso resolver.
     const rawDirectives = Array.isArray(generated.newDirectives) ? generated.newDirectives : [];
+    // ADDITIVO (Fase 1): log shadow di TUTTE le proposte valutate, prima di qualunque filtro.
+    safeAppendAiShadowLog(
+      buildAiShadowLogEntries(rawDirectives, 'desk', typeof market === 'string' ? market : 'GLOBAL'),
+      path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+    );
+    // ADDITIVO (Fasi 1-2, P2): candidati dal body (se presenti) consegnati alla
+    // valutazione, che resta invariata nella forma della chiamata.
+    setHandlerScanInput(req.body?.scanCandidates, req.body?.scanRunId);
+    await logScanCandidateEvaluations('desk');
     const shapeValidDirectives = rawDirectives.filter(
       (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
     );
@@ -3148,6 +3370,81 @@ async function callOpenRouterModel(
     clearTimeout(timeoutId);
     const isAbort = err?.name === 'AbortError' || err?.cause?.name === 'AbortError';
     console.info(`[OpenRouter] ${modelDesc} temporaneamente non disponibile (${isAbort ? `timeout ${timeoutMs}ms` : err?.message || 'connessione'}), transizione a fallback.`);
+    return null;
+  }
+}
+
+/**
+ * ADDITIVO (Fasi 1-2): variante di `callOpenRouterModel` che NON interpreta la
+ * risposta e restituisce il testo grezzo, cosi' il parser dei batch
+ * `CANDIDATI_SCANSIONE` distingue JSON invalido (ERRORE_PARSING) da LLM assente.
+ * Le funzioni esistenti non cambiano.
+ */
+async function callOpenRouterRawText(
+  modelOrModels: string | string[],
+  systemInstruction: string,
+  userPrompt: string,
+  apiKey: string,
+  timeoutMs: number = 15000
+): Promise<string | null> {
+  if (Date.now() < openRouterRateLimitedUntil) {
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const modelDesc = Array.isArray(modelOrModels) ? modelOrModels.join(' -> ') : modelOrModels;
+
+  try {
+    const payload: any = {
+      messages: [
+        { role: 'system', content: systemInstruction },
+        { role: 'user', content: userPrompt },
+      ],
+      response_format: { type: 'json_object' },
+      max_tokens: 2000,
+      temperature: 0.1,
+    };
+    if (Array.isArray(modelOrModels)) {
+      payload.models = modelOrModels;
+    } else {
+      payload.model = modelOrModels;
+    }
+
+    const res = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey.trim()}`,
+        'HTTP-Referer': process.env.APP_URL || 'https://aistudio.google.com',
+        'X-Title': 'Intraday Radar Knock-out',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (res.status === 402 || res.status === 429) {
+      openRouterRateLimitedUntil = Date.now() + 10 * 60 * 1000;
+      return null;
+    }
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      console.info(`[OpenRouter] HTTP ${res.status} per ${modelDesc} (batch candidati): ${errText.slice(0, 150)}`);
+      return null;
+    }
+
+    const json = await res.json();
+    const rawContent = json?.choices?.[0]?.message?.content;
+    if (typeof rawContent !== 'string' || rawContent.trim().length === 0) return null;
+    return rawContent;
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    const isAbort = err?.name === 'AbortError' || err?.cause?.name === 'AbortError';
+    console.info(
+      `[OpenRouter] ${modelDesc} batch candidati non disponibile (${isAbort ? `timeout ${timeoutMs}ms` : err?.message || 'connessione'}).`
+    );
     return null;
   }
 }
@@ -3683,6 +3980,17 @@ async function startServer() {
   // Registra le route Shadow e avvia il collector PRIMA del middleware Vite/SPA
   // (altrimenti app.get('*') cattura /api/shadow/*).
   registerShadowRoutesFromDisk(app);
+  app.get('/api/shadow/ai-log', (req: Request, res: Response) => {
+    try {
+      const body = buildAiShadowLogResponse(
+        (req.query as any)?.limit,
+        path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+      );
+      return res.json(body);
+    } catch (err: any) {
+      return res.status(500).json({ entries: [], count: 0, error: err?.message || String(err) });
+    }
+  });
   app.post('/api/shadow/v1-live/observe', requireApiAuth);
   registerShadowV1LiveCollector(app);
   registerShadowV1LiveViewRoute(app);

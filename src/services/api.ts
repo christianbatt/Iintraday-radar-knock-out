@@ -9,6 +9,8 @@ import {
 } from '../types/radar';
 import { auth } from './firebaseSync';
 import { setShadowV1LiveAuthTokenGetter } from '../utils/shadowV1LiveBridge';
+// ADDITIVO (P2): tipo del campo `scanCandidates` inviato agli handler AI.
+import type { ScanCandidatePayload } from '../utils/scanCandidatesPayload';
 
 setShadowV1LiveAuthTokenGetter(async () => {
   const user = auth?.currentUser;
@@ -101,8 +103,27 @@ export async function fetchMarketData(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ underlyings, refresh: forceRefresh }),
   }, timeoutForUrl(url)));
-  const json = await safeJson<{ data: RawQuoteData[] }>(res, 'Errore durante il recupero dei dati di mercato');
+  const json = await safeJson<{ data: RawQuoteData[]; scanRunId?: string | null }>(
+    res,
+    'Errore durante il recupero dei dati di mercato'
+  );
+  // ADDITIVO (P3): il server allega il runId della scansione; il client lo
+  // rinvia agli handler AI per condividere il candidateKey con le righe di
+  // scansione. Nessun campo esistente cambia.
+  lastMarketScanRunId =
+    typeof json.scanRunId === 'string' && json.scanRunId.length > 0 ? json.scanRunId : null;
   return json.data || [];
+}
+
+/**
+ * ADDITIVO (P3): runId dell'ultima scansione eseguita dal server per questa
+ * sessione client. Il valore e' quello restituito da `POST /api/market-data`.
+ */
+let lastMarketScanRunId: string | null = null;
+
+/** ADDITIVO (P3): runId da inviare nel campo `scanRunId` degli handler AI. */
+export function getLastMarketScanRunId(): string | null {
+  return lastMarketScanRunId;
 }
 
 export async function fetchTickerNews(ticker: string, name: string): Promise<NewsItem[]> {
@@ -188,13 +209,22 @@ export async function fetchAIMemory(): Promise<AILearnedInsight[]> {
 
 export async function triggerAISpecialization(
   trades: any[],
-  excludedSetups: any[]
+  excludedSetups: any[],
+  scanCandidates?: ScanCandidatePayload[],
+  scanRunId?: string | null
 ): Promise<{ success: boolean; newInsightsCount: number; memory: AILearnedInsight[]; message?: string; reason?: string; reasonDetail?: string; addedCount?: number; sampleDecisive?: number; minSample?: number }> {
   try {
     const res = await fetchWithFirebaseAuth('/api/ai/specialize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trades, excludedSetups }),
+      body: JSON.stringify({
+        trades,
+        excludedSetups,
+        // ADDITIVO (P2): candidati della scansione del client e relativo runId.
+        ...(Array.isArray(scanCandidates) && scanCandidates.length > 0
+          ? { scanCandidates, scanRunId: scanRunId ?? null }
+          : {}),
+      }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -216,7 +246,9 @@ export interface DeskPostMortemReport {
 
 export async function fetchDeskPostMortem(
   trades: any[],
-  market: 'EU' | 'US' | 'GLOBAL'
+  market: 'EU' | 'US' | 'GLOBAL',
+  scanCandidates?: ScanCandidatePayload[],
+  scanRunId?: string | null
 ): Promise<{
   success: boolean;
   market: string;
@@ -233,7 +265,14 @@ export async function fetchDeskPostMortem(
     const res = await fetchWithFirebaseAuth('/api/ai/desk-post-mortem', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trades, market }),
+      body: JSON.stringify({
+        trades,
+        market,
+        // ADDITIVO (P2): candidati della scansione del client e relativo runId.
+        ...(Array.isArray(scanCandidates) && scanCandidates.length > 0
+          ? { scanCandidates, scanRunId: scanRunId ?? null }
+          : {}),
+      }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
