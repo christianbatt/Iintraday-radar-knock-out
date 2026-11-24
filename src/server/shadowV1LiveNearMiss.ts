@@ -48,7 +48,18 @@ export const NEAR_MISS_G4_EXTENSION_MAX_PCT = 1.2;
 /** Distanza massima in punti dal punteggio minimo di mercato: oltre 6 pt il caso G11 non è più "vicino". */
 export const NEAR_MISS_G11_MAX_SCORE_GAP = 6;
 
-export type NearMissGate = 'ADX_BORDERLINE' | 'G4_EXTENDED' | 'G5_EXPIRED' | 'G11_SCORE';
+/** Consumo massimo ADR14 tollerato in near-miss G7. */
+export const NEAR_MISS_G7_ADR_MAX_FRACTION = 0.85;
+/** Distanza massima dello stop (%) tollerata in near-miss G8+G9. */
+export const NEAR_MISS_G8_STOP_MAX_PCT = 2.5;
+
+export type NearMissGate =
+  | 'ADX_BORDERLINE'
+  | 'G4_EXTENDED'
+  | 'G5_EXPIRED'
+  | 'G7_ADR_HIGH'
+  | 'G8_STOP_WIDE'
+  | 'G11_SCORE';
 
 export type NearMissStatus =
   | 'PENDING_FILL'
@@ -110,6 +121,8 @@ const NEAR_MISS_GATE_LABELS: Record<NearMissGate, string> = {
   ADX_BORDERLINE: 'ADX appena sotto soglia (14..soglia)',
   G4_EXTENDED: 'G4 Estensione moderata (0,40%..1,20%)',
   G5_EXPIRED: 'G5 Breakout oltre 60m',
+  G7_ADR_HIGH: 'G7 ADR elevato (fino a 85%)',
+  G8_STOP_WIDE: 'G8+G9 Stop ampio (<= 2,50%)',
   G11_SCORE: 'G11 Score vicino alla soglia (-6 pt)',
 };
 
@@ -226,6 +239,21 @@ export function classifyNearMissCandidate(
     .filter(([, g]) => g && !g.passed)
     .map(([k]) => k);
 
+  // Coppia fisiologica G8+G9 (stop leggermente oltre LMAX/minLeva rende anche la leva non compatibile)
+  if (
+    (failedGates.length === 2 && failedGates.includes('G8') && failedGates.includes('G9')) ||
+    (failedGates.length === 1 && (failedGates[0] === 'G8' || failedGates[0] === 'G9'))
+  ) {
+    const dsPct = setup.stopDistancePct ?? null;
+    if (dsPct != null && Number.isFinite(dsPct) && dsPct > 0 && dsPct <= NEAR_MISS_G8_STOP_MAX_PCT) {
+      return {
+        gate: 'G8_STOP_WIDE',
+        detail: `Stop ${dsPct.toFixed(2)}% > soglia leva KO`,
+      };
+    }
+    return null;
+  }
+
   if (failedGates.length !== 1) return null;
   const onlyFailed = failedGates[0];
 
@@ -242,6 +270,14 @@ export function classifyNearMissCandidate(
       gate: 'G5_EXPIRED',
       detail: 'Breakout > 60 min (unica causa di blocco)',
     };
+  } else if (onlyFailed === 'G7') {
+    const adrPct = setup.adrConsumptionPct ?? null;
+    if (adrPct != null && Number.isFinite(adrPct) && adrPct / 100 <= NEAR_MISS_G7_ADR_MAX_FRACTION) {
+      return {
+        gate: 'G7_ADR_HIGH',
+        detail: `Consumo ADR ${adrPct.toFixed(0)}% (<= 85%)`,
+      };
+    }
   } else if (onlyFailed === 'G11') {
     const minScore =
       market === 'EU' ? parameters.minScoreEurope : parameters.minScoreUSA;
@@ -265,6 +301,8 @@ export function summarizeNearMissRecords(
     'ADX_BORDERLINE',
     'G4_EXTENDED',
     'G5_EXPIRED',
+    'G7_ADR_HIGH',
+    'G8_STOP_WIDE',
     'G11_SCORE',
   ];
   const resolvedStatuses = new Set<NearMissStatus>(['TARGET', 'STOP', 'EXPIRED']);
@@ -297,14 +335,33 @@ export function summarizeNearMissRecords(
     };
   });
 
-  const recent = [...records]
-    .sort((a, b) => {
-      const aOpen = a.status === 'PENDING_FILL' || a.status === 'OPEN' ? 0 : 1;
-      const bOpen = b.status === 'PENDING_FILL' || b.status === 'OPEN' ? 0 : 1;
-      if (aOpen !== bOpen) return aOpen - bOpen;
-      return b.decidedAtMs - a.decidedAtMs;
-    })
-    .slice(0, 12);
+  const active = records
+    .filter((r) => r.status === 'PENDING_FILL' || r.status === 'OPEN')
+    .sort((a, b) => b.decidedAtMs - a.decidedAtMs);
+  const rest = records
+    .filter((r) => r.status !== 'PENDING_FILL' && r.status !== 'OPEN')
+    .sort((a, b) => b.decidedAtMs - a.decidedAtMs);
+  const euRest = rest.filter((r) => r.market === 'EU');
+  const usRest = rest.filter((r) => r.market === 'US');
+  const interleaved: ShadowV1NearMissRecord[] = [];
+  let ei = 0;
+  let ui = 0;
+  while (interleaved.length < 12 && (ei < euRest.length || ui < usRest.length)) {
+    if (ei < euRest.length && ui < usRest.length) {
+      if (euRest[ei].decidedAtMs >= usRest[ui].decidedAtMs) {
+        interleaved.push(euRest[ei++]);
+        if (interleaved.length < 12 && ui < usRest.length) interleaved.push(usRest[ui++]);
+      } else {
+        interleaved.push(usRest[ui++]);
+        if (interleaved.length < 12 && ei < euRest.length) interleaved.push(euRest[ei++]);
+      }
+    } else if (ei < euRest.length) {
+      interleaved.push(euRest[ei++]);
+    } else {
+      interleaved.push(usRest[ui++]);
+    }
+  }
+  const recent = [...active, ...interleaved].slice(0, 12);
 
   return {
     version: 1,

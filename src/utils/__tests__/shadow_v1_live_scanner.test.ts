@@ -410,3 +410,99 @@ test('scanner server V1-live: distingue MARKET_CLOSED_OR_STALE, rispetta veto AD
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('scanner server V1-live: sblocca titoli US con leva KO 5x e ADR_MAX_US, cattura G8_STOP_WIDE e bilancia sampleCandidates', async () => {
+  clearShadowV1LiveBarsForTest();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v1scan-us-'));
+  const env = { SHADOW_V1_LIVE_COLLECT: '1' };
+  const reg = registerShadowV1LiveCollector({ post: () => undefined }, {
+    root: dir,
+    env,
+    timers: fakeTimers(),
+    now: () => D0,
+    fetchMissingBars: null,
+  });
+
+  try {
+    // 1. NVDA: dS = ~1.50% (bloccato su 10x EU, valido su 5x LEVE_US) e ADR consumato 67.5% (< 78% ADR_MAX_US, > 60% EU) con spazio residuo per T1 -> TRADE!
+    const nvdaValid5x = makeQuote({
+      ticker: 'NVDA',
+      market: 'US',
+      currentPrice: 100.2,
+      orbHigh: 100.1,
+      orbLow: 98.8, // stop ~= 98.60 -> dS ~= 1.50% (passa con LEVE_US min 5x => max 2.00%)
+      adr14: 8.0,
+      todayHigh: 100.3,
+      todayLow: 94.9, // (100.3 - 94.9)/8.0 = 67.5% ADR consumato (residuo 2.60 > T1, sotto T1 per G6)
+      atr14: 1.5,
+      gapPercent: 1.8,
+    });
+
+    // 2. TSLA: dS = ~2.25% (oltre 2.00% della 5x, entro 2.50%) -> catturato come near-miss G8_STOP_WIDE!
+    const tslaWideStop = makeQuote({
+      ticker: 'TSLA',
+      market: 'US',
+      currentPrice: 100.2,
+      orbHigh: 100.1,
+      orbLow: 98.05, // stop ~= 97.85 -> dS ~= 2.25% (blocca G8+G9, entro NEAR_MISS_G8_STOP_MAX_PCT=2.5%)
+      adr14: 8.0,
+      todayHigh: 101.0,
+      todayLow: 98.05,
+      gapPercent: 1.6,
+    });
+
+    // 3. 8 titoli EU per verificare il bilanciamento EU/US in sampleCandidates (max 12)
+    const euQuotes = Array.from({ length: 8 }, (_, idx) =>
+      makeQuote({
+        ticker: `EU${idx}.MI`,
+        market: 'EU',
+        currency: 'EUR',
+        gapPercent: 1.1 + idx * 0.02,
+      })
+    );
+
+    recordBarsForShadowV1Live('NVDA', 'US', makeBars(D0), D0, env);
+    recordBarsForShadowV1Live('TSLA', 'US', makeBars(D0), D0, env);
+
+    const diag = await observeShadowV1LiveScan(
+      [nvdaValid5x, tslaWideStop, ...euQuotes],
+      { usa: { sp500: { changePercent: 0.6 } }, europe: { dax: { changePercent: 0.2 } } },
+      { rootDir: dir, nowMs: D0, env }
+    );
+
+    assert.ok(diag);
+    assert.ok(
+      diag.sampleCandidates.some((c) => c.ticker === 'NVDA' && c.decision === 'TRADE'),
+      'NVDA con dS 1.50% e ADR 68% deve produrre TRADE US con leva KO 5x'
+    );
+    assert.ok(
+      diag.sampleCandidates.some((c) => c.market === 'US') &&
+        diag.sampleCandidates.some((c) => c.market === 'EU'),
+      'sampleCandidates deve bilanciare EU e US'
+    );
+
+    const loaded = loadRecords(path.join(dir, 'artifacts/shadow_v1_live/signals.jsonl')).records;
+    assert.ok(loaded.some((r) => r.ticker === 'NVDA' && r.market === 'US'), 'NVDA US persistito in signals.jsonl');
+
+    const latest = getShadowLatest({
+      fs: {
+        existsSync: (p) => fs.existsSync(path.join(dir, p)),
+        readFileSync: (p, enc) => fs.readFileSync(path.join(dir, p), enc),
+        readdirSync: (p) => fs.readdirSync(path.join(dir, p)),
+      },
+      artifactDir: 'artifacts',
+      registryPath: 'registry/ai_registry.jsonl',
+      deathcheckPath: 'artifacts/ai_deathcheck.json',
+      flags: { SETUP_SELECTOR_LIVE: 'off', STALENESS_USE_MARKET_TS: 'off' },
+    });
+    const nm = latest.body.v1NearMiss as { recent: Array<{ ticker: string; nearMissGate: string }> };
+    assert.ok(
+      nm.recent.some((r) => r.ticker === 'TSLA' && r.nearMissGate === 'G8_STOP_WIDE'),
+      'TSLA bloccato su coppia G8+G9 entro 2.5% deve comparire in near_miss come G8_STOP_WIDE'
+    );
+  } finally {
+    reg.stop?.();
+    clearShadowV1LiveBarsForTest();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

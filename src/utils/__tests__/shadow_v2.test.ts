@@ -608,4 +608,70 @@ describe('Shadow V2 — Strategia Parallela & Regressioni Critiche', () => {
     assert.equal(optimal.feeImpactR, 0.08);
     assert.equal(optimal.netTarget1R, 1.42);
   });
+
+  it('T17: Shadow V2 scarta tick disallineati da 5m, pulisce bars.json al load e bilancia recentSignals EU/US', async () => {
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const {
+      clearShadowV2BarsForTest,
+      loadShadowV2BarsFromDisk,
+    } = await import('../../server/shadowV2Collector');
+
+    const alignedTs = Date.UTC(2026, 10, 20, 14, 30, 0);
+    const unalignedTs = alignedTs + 47_000;
+    const filtered = filterClosedBarsV2(
+      [
+        makeBar(alignedTs, 100, 101, 99.5, 100.5, 1000),
+        makeBar(unalignedTs, 100.5, 100.5, 100.5, 100.5, 0),
+      ],
+      alignedTs + SHADOW_V2_BAR_MS * 2
+    );
+    assert.equal(filtered.length, 1);
+    assert.equal(filtered[0].t, alignedTs);
+
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shadow-v2-align-'));
+    try {
+      clearShadowV2BarsForTest();
+      const barsFile = path.join(tmpRoot, 'artifacts', 'shadow_v2', 'bars.json');
+      fs.mkdirSync(path.dirname(barsFile), { recursive: true });
+      fs.writeFileSync(
+        barsFile,
+        JSON.stringify({
+          version: 1,
+          entries: [
+            {
+              ticker: 'ASML.AS',
+              market: 'EU',
+              updatedAt: alignedTs,
+              bars: [
+                makeBar(alignedTs, 700, 705, 699, 702, 500),
+                makeBar(unalignedTs, 702, 702, 702, 702, 0),
+              ],
+            },
+          ],
+        }),
+        'utf8'
+      );
+      const count = loadShadowV2BarsFromDisk(tmpRoot, alignedTs + SHADOW_V2_BAR_MS * 2);
+      assert.equal(count, 1);
+      const cleaned = JSON.parse(fs.readFileSync(barsFile, 'utf8')) as {
+        entries: Array<{ bars: IndicatorBarInput[] }>;
+      };
+      assert.equal(cleaned.entries[0].bars.length, 1, 'bars.json deve essere ripulito dai tick spuri');
+    } finally {
+      clearShadowV2BarsForTest();
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+
+    // Verifica bilanciamento EU/US in recentSignals anche con molti segnali EU recenti
+    const euMany = Array.from({ length: 25 }, (_, i) =>
+      mkRecord(`eu-${i}`, '2026-11-20', 1.0)
+    ).map((r, i) => ({ ...r, ticker: 'ENI.MI', market: 'EU' as const, signalBarTs: alignedTs + i * SHADOW_V2_BAR_MS }));
+    const usFew = Array.from({ length: 5 }, (_, i) =>
+      mkRecord(`us-${i}`, '2026-11-19', 1.0)
+    ).map((r, i) => ({ ...r, ticker: 'NVDA', market: 'US' as const, signalBarTs: alignedTs - (i + 1) * SHADOW_V2_BAR_MS }));
+    const balanced = summarizeShadowV2([...euMany, ...usFew], '2026-11-20T16:00:00.000Z');
+    assert.equal(balanced.recentSignals.length, 25);
+    assert.ok(balanced.recentSignals.some((r) => r.market === 'US'), 'i segnali US devono restare visibili in recentSignals');
+  });
 });

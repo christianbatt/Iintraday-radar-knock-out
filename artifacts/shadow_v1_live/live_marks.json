@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "updatedAt": "2026-11-24T13:44:47.347Z",
+  "marks": [
+    {
+      "key": "TTE.PA|77.01|77.62494|2026-11-24",
+      "ticker": "TTE.PA",
+      "market": "EU",
+      "direction": "SHORT",
+      "status": "OPEN",
+      "currency": "EUR",
+      "lastPrice": 77.13,
+      "lastPriceAtMs": 1795527887347,
+      "unrealizedR": -0.2,
+      "pctFromEntry": -0.16,
+      "priceSource": "quote"
+    },
+    {
+      "key": "ENI.MI|23.7|23.86764|2026-11-24",
+      "ticker": "ENI.MI",
+      "market": "EU",
+      "direction": "SHORT",
+      "status": "OPEN",
+      "currency": "EUR",
+      "lastPrice": 23.66,
+      "lastPriceAtMs": 1795527887347,
+      "unrealizedR": 0.24,
+      "pctFromEntry": 0.17,
+      "priceSource": "quote"
+    },
+    {
+      "key": "RACE.MI|362.4|365.2791|2026-11-24",
+      "ticker": "RACE.MI",
+      "market": "EU",
+      "direction": "SHORT",
+      "status": "OPEN",
+      "currency": "EUR",
+      "lastPrice": 361.25,
+      "lastPriceAtMs": 1795527887347,
+      "unrealizedR": 0.4,
+      "pctFromEntry": 0.32,
+      "priceSource": "quote"
+    }
+  ]
+}
