@@ -20,6 +20,49 @@ export interface AiShadowLogEntry {
   evaluated?: boolean;
   discarded?: boolean;
   discardReason?: string | null;
+  /** ADDITIVO (P3): `runId:ticker`, condiviso fra riga di scansione e riga handler. */
+  candidateKey?: string | null;
+  /** ADDITIVO (P2): origine dei candidati. */
+  candidateSource?: 'body' | 'snapshot' | 'none' | null;
+}
+
+export interface ShadowLogSummary {
+  knownOutcomeCount: number;
+  discardedCount: number;
+  notEvaluatedCount: number;
+  evaluatedCount: number;
+}
+
+/**
+ * ADDITIVO (P3): conteggio per `candidateKey` distinto, con la riga piu'
+ * recente come stato del candidato. Le righe senza `candidateKey` (direttive
+ * LLM e voci storiche) restano contate singolarmente per `id`.
+ *
+ * Cosi' una riga `source: 'scan'` con NON_INVIATO_ALLA_LLM non viene piu'
+ * contata come "non valutata" quando lo stesso candidato e' stato poi
+ * valutato dall'handler.
+ */
+export function summarizeShadowLogEntries(
+  entries: ReadonlyArray<AiShadowLogEntry> | null | undefined
+): ShadowLogSummary {
+  if (!Array.isArray(entries)) {
+    return { knownOutcomeCount: 0, discardedCount: 0, notEvaluatedCount: 0, evaluatedCount: 0 };
+  }
+  const latestByCandidate = new Map<string, AiShadowLogEntry>();
+  entries.forEach((entry, index) => {
+    const key =
+      typeof entry?.candidateKey === 'string' && entry.candidateKey.length > 0
+        ? `candidate:${entry.candidateKey}`
+        : `raw:${entry?.id ?? index}`;
+    latestByCandidate.set(key, entry);
+  });
+  const latest = [...latestByCandidate.values()];
+  return {
+    knownOutcomeCount: entries.filter((e) => e.outcome !== null && e.outcome !== undefined).length,
+    discardedCount: entries.filter((e) => e.discarded === true).length,
+    notEvaluatedCount: latest.filter((e) => e.evaluated === false).length,
+    evaluatedCount: latest.filter((e) => e.evaluated === true).length,
+  };
 }
 
 export interface ShadowAISectionProps {
@@ -90,15 +133,10 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
   const shownError = errorProp ?? netError;
   const shownLoading = loadingProp !== undefined ? loadingProp : loading;
 
-  const knownOutcomeCount = Array.isArray(entries)
-    ? entries.filter((e) => e.outcome !== null && e.outcome !== undefined).length
-    : 0;
-  const discardedCount = Array.isArray(entries)
-    ? entries.filter((e) => e.discarded === true).length
-    : 0;
-  const notEvaluatedCount = Array.isArray(entries)
-    ? entries.filter((e) => e.evaluated === false).length
-    : 0;
+  const summary = summarizeShadowLogEntries(entries);
+  const knownOutcomeCount = summary.knownOutcomeCount;
+  const discardedCount = summary.discardedCount;
+  const notEvaluatedCount = summary.notEvaluatedCount;
 
   return (
     <div data-testid="shadow-ai-section" data-section="shadow-ai" className="rounded border border-slate-700 bg-slate-900/40 p-3 space-y-2">
