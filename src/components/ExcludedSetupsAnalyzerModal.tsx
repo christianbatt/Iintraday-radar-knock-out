@@ -34,7 +34,10 @@ import { SETUP_VETO_LABELS } from '../config/setupLabels';
 import {
   fetchAIMemory,
   triggerAISpecialization,
+  getLastMarketScanRunId,
 } from '../services/api';
+// ADDITIVO (P2): candidati della scansione forniti da App.tsx.
+import type { ScanCandidatePayload } from '../utils/scanCandidatesPayload';
 
 interface ExcludedSetupsAnalyzerModalProps {
   isOpen: boolean;
@@ -47,6 +50,8 @@ interface ExcludedSetupsAnalyzerModalProps {
   onClearRecords: () => void;
   accountCapital: number;
   trades?: any[];
+  // ADDITIVO (P2): candidati della scansione (campo additivo, opzionale).
+  scanCandidates?: ScanCandidatePayload[];
 }
 
 export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalProps> = ({
@@ -60,6 +65,7 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
   onClearRecords,
   accountCapital,
   trades = [],
+  scanCandidates,
 }) => {
   const [activeTab, setActiveTab] = useState<'CATEGORIES' | 'CANDIDATES' | 'AI_SPECIALIZATION'>('CATEGORIES');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('ALL');
@@ -99,7 +105,12 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
     setSpecializeReason(null);
     setSpecializeSample(null);
     try {
-      const res = await triggerAISpecialization(trades, records);
+      const res = await triggerAISpecialization(
+        trades,
+        records,
+        scanCandidates,
+        getLastMarketScanRunId()
+      );
       if (res.success && res.memory) {
         setAiMemory(res.memory);
         setSpecializeReason(

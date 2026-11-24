@@ -24,7 +24,13 @@ import {
   Lightbulb,
   FileText,
 } from 'lucide-react';
-import { fetchDeskPostMortem, DeskPostMortemReport } from '../services/api';
+import {
+  fetchDeskPostMortem,
+  getLastMarketScanRunId,
+  DeskPostMortemReport,
+} from '../services/api';
+// ADDITIVO (P2): candidati della scansione forniti da App.tsx.
+import type { ScanCandidatePayload } from '../utils/scanCandidatesPayload';
 
 interface SystemOptimizerModalProps {
   isOpen: boolean;
@@ -36,6 +42,8 @@ interface SystemOptimizerModalProps {
   onRejectProposal: (market?: 'EU' | 'US' | 'GLOBAL') => void;
   onRunAuditOnDemand: () => void;
   trades: TradeJournalEntry[];
+  // ADDITIVO (P2): candidati della scansione (campo additivo, opzionale).
+  scanCandidates?: ScanCandidatePayload[];
 }
 
 export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
@@ -48,6 +56,7 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
   onRejectProposal,
   onRunAuditOnDemand,
   trades,
+  scanCandidates,
 }) => {
   const [activeTab, setActiveTab] = useState<'EU' | 'US'>('EU');
   const [postMortemReport, setPostMortemReport] = useState<DeskPostMortemReport | null>(null);
@@ -80,7 +89,12 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
     setIsLoadingPostMortem(true);
     setPostMortemError(null);
     try {
-      const res = await fetchDeskPostMortem(activeSessionTrades, activeTab);
+      const res = await fetchDeskPostMortem(
+        activeSessionTrades,
+        activeTab,
+        scanCandidates,
+        getLastMarketScanRunId()
+      );
       if (res.success && res.postMortem) {
         setPostMortemReport(res.postMortem);
         setPostMortemDirectivesAdded(res.newDirectivesAdded);
