@@ -18,6 +18,13 @@ export type AiShadowLogSource = 'scan' | 'specialize' | 'desk';
 
 export type AiShadowLogStatus = 'NON_VALIDATO';
 
+/**
+ * Origine dei candidati usati dall'handler per la valutazione AI:
+ * `body` = campo `scanCandidates` inviato dal client, `snapshot` = istantanea di
+ * processo dell'ultima scansione, `none` = nessuna sorgente disponibile.
+ */
+export type AiShadowLogCandidateSource = 'body' | 'snapshot' | 'none';
+
 export interface AiShadowLogEntry {
   id: string;
   timestamp: string;
@@ -33,6 +40,14 @@ export interface AiShadowLogEntry {
   discardReason: string | null;
   status: AiShadowLogStatus;
   outcome: null;
+  /** ADDITIVO (P2): origine dei candidati. */
+  candidateSource?: AiShadowLogCandidateSource | null;
+  /** ADDITIVO (P3): `runId:ticker`, identico fra riga di scansione e riga handler. */
+  candidateKey?: string | null;
+  /** ADDITIVO (P3): identificativo della scansione. */
+  runId?: string | null;
+  /** ADDITIVO (P4): durata del batch LLM che ha prodotto la valutazione. */
+  durationMs?: number | null;
 }
 
 export interface AiShadowLogWriteResult {
@@ -66,6 +81,8 @@ export const AI_SHADOW_DISCARD_REASONS = {
   NON_INVIATO_ALLA_LLM: 'NON_INVIATO_ALLA_LLM',
   ERRORE_PARSING: 'ERRORE_PARSING',
   LLM_NON_DISPONIBILE: 'LLM_NON_DISPONIBILE',
+  /** ADDITIVO (P2): nessuna sorgente di candidati (né body né istantanea). */
+  NESSUN_CANDIDATO_DISPONIBILE: 'NESSUN_CANDIDATO_DISPONIBILE',
 } as const;
 
 function shapeDiscardReason(hasTopic: boolean, hasDirective: boolean): string {
@@ -112,6 +129,21 @@ function normalizeEntries(input: unknown): AiShadowLogEntry[] {
         discardReason,
         status: 'NON_VALIDATO',
         outcome: null,
+        candidateSource:
+          r.candidateSource === 'body' ||
+          r.candidateSource === 'snapshot' ||
+          r.candidateSource === 'none'
+            ? r.candidateSource
+            : null,
+        candidateKey:
+          typeof r.candidateKey === 'string' && r.candidateKey.length > 0
+            ? r.candidateKey
+            : null,
+        runId: typeof r.runId === 'string' && r.runId.length > 0 ? r.runId : null,
+        durationMs:
+          typeof r.durationMs === 'number' && Number.isFinite(r.durationMs)
+            ? r.durationMs
+            : null,
       });
       continue;
     }
@@ -201,8 +233,10 @@ export function buildScanCandidateEntries(
     market?: unknown;
     direction?: unknown;
     setup?: unknown;
-  }>
+  }>,
+  runId?: string | null
 ): AiShadowLogEntry[] {
+  const normalizedRunId = typeof runId === 'string' && runId.length > 0 ? runId : null;
   return candidates.map((c) => ({
     id: randomUUID(),
     timestamp: new Date().toISOString(),
@@ -218,6 +252,11 @@ export function buildScanCandidateEntries(
     discardReason: AI_SHADOW_DISCARD_REASONS.NON_INVIATO_ALLA_LLM,
     status: 'NON_VALIDATO' as const,
     outcome: null,
+    candidateSource: null,
+    candidateKey:
+      normalizedRunId && c.ticker != null ? `${normalizedRunId}:${String(c.ticker)}` : null,
+    runId: normalizedRunId,
+    durationMs: null,
   }));
 }
 

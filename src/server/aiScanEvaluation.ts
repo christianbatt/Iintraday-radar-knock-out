@@ -12,7 +12,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { AiShadowLogEntry } from './aiShadowLog';
+import type { AiShadowLogCandidateSource, AiShadowLogEntry } from './aiShadowLog';
 import { AI_SHADOW_DISCARD_REASONS } from './aiShadowLog';
 
 export interface ScanCandidateSnapshot {
@@ -40,6 +40,16 @@ export interface ScanEvaluationBatchResult {
   evaluations: ScanEvaluation[];
   ignoredUnknownTickers: number;
   ignoredDuplicateTickers: number;
+  /** ADDITIVO (P4): durata misurata del batch LLM, in millisecondi. */
+  durationMs: number;
+}
+
+/** ADDITIVO (P2/P3): metadati comuni alle voci prodotte da una valutazione. */
+export interface ScanEvaluationMeta {
+  runId?: string | null;
+  candidateSource?: AiShadowLogCandidateSource | null;
+  /** ADDITIVO (P4): concorrenza dei batch (default `AI_SHADOW_CONCURRENCY`). */
+  concurrency?: number;
 }
 
 export interface ScanEvaluationRunResult {
@@ -53,6 +63,8 @@ export interface ScanEvaluationRunResult {
 
 /** Dimensione fissa dei batch inviati alla LLM. */
 export const AI_SHADOW_BATCH_SIZE = 10;
+/** ADDITIVO (P4): numero massimo di batch LLM eseguiti in parallelo. */
+export const AI_SHADOW_CONCURRENCY = 2;
 /** Titolo della sezione informativa aggiunta al prompt. */
 export const AI_SHADOW_SCAN_SECTION = 'CANDIDATI_SCANSIONE';
 /** Tetto difensivo: oltre, i candidati vengono troncati (mai in produzione: 40 titoli). */
@@ -64,6 +76,18 @@ export const AI_SHADOW_SCAN_SYSTEM_INSTRUCTION =
   'ordini. Rispondi solo in JSON valido.';
 
 let lastScanCandidates: ScanCandidateSnapshot[] = [];
+/** ADDITIVO (P3): runId dell'ultima scansione di processo. */
+let lastScanRunId: string | null = null;
+
+/** ADDITIVO (P3): runId dell'ultima scansione salvata in memoria di processo. */
+export function getLastScanRunId(): string | null {
+  return lastScanRunId;
+}
+
+/** ADDITIVO (P3): registra il runId della scansione corrente. */
+export function setLastScanRunId(runId: string | null): void {
+  lastScanRunId = typeof runId === 'string' && runId.length > 0 ? runId : null;
+}
 
 /** Salva l'istantanea dei candidati prodotta dalla scansione (sola memoria di processo). */
 export function setLastScanCandidates(candidates: ReadonlyArray<ScanCandidateSnapshot>): void {
@@ -92,6 +116,90 @@ export function getLastScanCandidates(): ScanCandidateSnapshot[] {
 /** Azzera l'istantanea (usato dai test). */
 export function resetLastScanCandidates(): void {
   lastScanCandidates = [];
+  lastScanRunId = null;
+  pendingHandlerScanInput = null;
+}
+
+/**
+ * ADDITIVO (P2): normalizza il campo `scanCandidates` inviato dal client.
+ * Accetta `score` oppure `scoreTotal`; scarta le voci senza ticker.
+ */
+export function normalizeScanCandidatesPayload(raw: unknown): ScanCandidateSnapshot[] {
+  if (!Array.isArray(raw)) return [];
+  const normalized: ScanCandidateSnapshot[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as Record<string, unknown>;
+    const ticker = typeof row.ticker === 'string' ? row.ticker.trim() : '';
+    if (ticker.length === 0) continue;
+    const market = typeof row.market === 'string' && row.market.length > 0 ? row.market : 'GLOBAL';
+    const direction = row.direction === 'LONG' || row.direction === 'SHORT' ? row.direction : null;
+    const rawScore = typeof row.score === 'number' ? row.score : row.scoreTotal;
+    const scoreTotal =
+      typeof rawScore === 'number' && Number.isFinite(rawScore) ? rawScore : null;
+    const veto = typeof row.veto === 'string' && row.veto.length > 0 ? row.veto : null;
+    normalized.push({ ticker, market, direction, scoreTotal, veto });
+    if (normalized.length >= AI_SHADOW_MAX_SCAN_CANDIDATES) break;
+  }
+  return normalized;
+}
+
+/** ADDITIVO (P2): esito della scelta fra body del client e istantanea. */
+export interface ScanCandidateInputResolution {
+  candidates: ScanCandidateSnapshot[];
+  candidateSource: AiShadowLogCandidateSource;
+  runId: string | null;
+}
+
+/** Input del body consegnato all'handler corrente (handoff sincrono). */
+let pendingHandlerScanInput: { bodyCandidates: unknown; bodyRunId: unknown } | null = null;
+
+/**
+ * ADDITIVO (P2): consegna l'input del body alla valutazione immediatamente
+ * successiva. Va chiamata senza `await` in mezzo: `logScanCandidateEvaluations`
+ * legge il valore nello stesso tick sincrono, quindi nessuna richiesta
+ * concorrente puo' sovrascriverlo prima della lettura.
+ *
+ * Il passaggio esplicito come argomento resta disponibile tramite
+ * `resolveScanCandidateInput`; questo handoff esiste per non alterare la firma
+ * della chiamata negli handler (vincolo: nessun test esistente modificato).
+ */
+export function setHandlerScanInput(bodyCandidates: unknown, bodyRunId: unknown): void {
+  pendingHandlerScanInput = { bodyCandidates, bodyRunId };
+}
+
+/** ADDITIVO (P2): legge e azzera l'input consegnato da `setHandlerScanInput`. */
+export function consumeHandlerScanInput(): { bodyCandidates: unknown; bodyRunId: unknown } {
+  const pending = pendingHandlerScanInput;
+  pendingHandlerScanInput = null;
+  return pending ?? { bodyCandidates: undefined, bodyRunId: undefined };
+}
+
+/**
+ * ADDITIVO (P2): risolve la sorgente dei candidati per un handler.
+ * Priorita': campo `scanCandidates` del body, poi istantanea di processo,
+ * infine nessuna sorgente (`candidateSource: 'none'`). Non chiama la LLM.
+ */
+export function resolveScanCandidateInput(
+  bodyScanCandidates?: unknown,
+  bodyScanRunId?: unknown
+): ScanCandidateInputResolution {
+  const fromBody = normalizeScanCandidatesPayload(bodyScanCandidates);
+  if (fromBody.length > 0) {
+    return {
+      candidates: fromBody,
+      candidateSource: 'body',
+      runId:
+        typeof bodyScanRunId === 'string' && bodyScanRunId.length > 0
+          ? bodyScanRunId
+          : getLastScanRunId(),
+    };
+  }
+  const snapshot = getLastScanCandidates();
+  if (snapshot.length > 0) {
+    return { candidates: snapshot, candidateSource: 'snapshot', runId: getLastScanRunId() };
+  }
+  return { candidates: [], candidateSource: 'none', runId: null };
 }
 
 /**
@@ -194,7 +302,12 @@ function buildEntry(
   evaluated: boolean,
   aiOutcome: string | null,
   aiCategory: string | null,
-  discardReason: string | null
+  discardReason: string | null,
+  meta: {
+    runId: string | null;
+    candidateSource: AiShadowLogCandidateSource | null;
+    durationMs: number | null;
+  }
 ): AiShadowLogEntry {
   const scorePart =
     typeof candidate.scoreTotal === 'number' ? `scan score ${candidate.scoreTotal}/100` : 'scan';
@@ -214,6 +327,37 @@ function buildEntry(
     discardReason,
     status: 'NON_VALIDATO',
     outcome: null,
+    candidateSource: meta.candidateSource,
+    candidateKey: meta.runId ? `${meta.runId}:${candidate.ticker}` : null,
+    runId: meta.runId,
+    durationMs: meta.durationMs,
+  };
+}
+
+/**
+ * ADDITIVO (P2): voce unica scritta quando né il body né l'istantanea
+ * forniscono candidati. Nessuna chiamata LLM viene effettuata.
+ */
+export function buildNoCandidateEntry(source: 'specialize' | 'desk'): AiShadowLogEntry {
+  return {
+    id: randomUUID(),
+    timestamp: new Date().toISOString(),
+    ticker: null,
+    market: 'GLOBAL',
+    direction: null,
+    setup: null,
+    aiOutcome: null,
+    aiCategory: null,
+    source,
+    evaluated: false,
+    discarded: false,
+    discardReason: AI_SHADOW_DISCARD_REASONS.NESSUN_CANDIDATO_DISPONIBILE,
+    status: 'NON_VALIDATO',
+    outcome: null,
+    candidateSource: 'none',
+    candidateKey: null,
+    runId: null,
+    durationMs: null,
   };
 }
 
@@ -225,11 +369,18 @@ function buildEntry(
 export function combineScanEvaluations(
   candidates: ReadonlyArray<ScanCandidateSnapshot>,
   batches: ReadonlyArray<ScanEvaluationBatchResult>,
-  source: 'specialize' | 'desk'
+  source: 'specialize' | 'desk',
+  meta: ScanEvaluationMeta = {}
 ): AiShadowLogEntry[] {
+  const runId = typeof meta.runId === 'string' && meta.runId.length > 0 ? meta.runId : null;
+  const candidateSource = meta.candidateSource ?? null;
   const byTicker = new Map<
     string,
-    { status: ScanEvaluationBatchStatus; evaluation: ScanEvaluation | null }
+    {
+      status: ScanEvaluationBatchStatus;
+      evaluation: ScanEvaluation | null;
+      durationMs: number | null;
+    }
   >();
   for (const batch of batches) {
     const allowed = new Set(batch.candidateTickers);
@@ -241,12 +392,20 @@ export function combineScanEvaluations(
     }
     for (const ticker of batch.candidateTickers) {
       const evaluation = seen.get(ticker) ?? null;
-      byTicker.set(ticker, { status: batch.status, evaluation });
+      byTicker.set(ticker, {
+        status: batch.status,
+        evaluation,
+        durationMs:
+          typeof batch.durationMs === 'number' && Number.isFinite(batch.durationMs)
+            ? batch.durationMs
+            : null,
+      });
     }
   }
 
   return candidates.map((candidate) => {
     const hit = byTicker.get(candidate.ticker);
+    const rowMeta = { runId, candidateSource, durationMs: hit?.durationMs ?? null };
     if (!hit) {
       return buildEntry(
         candidate,
@@ -254,7 +413,8 @@ export function combineScanEvaluations(
         false,
         null,
         null,
-        AI_SHADOW_DISCARD_REASONS.NON_INVIATO_ALLA_LLM
+        AI_SHADOW_DISCARD_REASONS.NON_INVIATO_ALLA_LLM,
+        rowMeta
       );
     }
     if (hit.status === 'parse_error') {
@@ -264,7 +424,8 @@ export function combineScanEvaluations(
         false,
         null,
         null,
-        AI_SHADOW_DISCARD_REASONS.ERRORE_PARSING
+        AI_SHADOW_DISCARD_REASONS.ERRORE_PARSING,
+        rowMeta
       );
     }
     if (hit.status === 'llm_missing') {
@@ -274,7 +435,8 @@ export function combineScanEvaluations(
         false,
         null,
         null,
-        AI_SHADOW_DISCARD_REASONS.LLM_NON_DISPONIBILE
+        AI_SHADOW_DISCARD_REASONS.LLM_NON_DISPONIBILE,
+        rowMeta
       );
     }
     if (!hit.evaluation) {
@@ -284,7 +446,8 @@ export function combineScanEvaluations(
         false,
         null,
         null,
-        AI_SHADOW_DISCARD_REASONS.NON_RESTITUITO_DALLA_LLM
+        AI_SHADOW_DISCARD_REASONS.NON_RESTITUITO_DALLA_LLM,
+        rowMeta
       );
     }
     return buildEntry(
@@ -293,7 +456,8 @@ export function combineScanEvaluations(
       true,
       hit.evaluation.aiOutcome,
       hit.evaluation.aiCategory,
-      null
+      null,
+      rowMeta
     );
   });
 }
@@ -302,68 +466,96 @@ export function combineScanEvaluations(
  * Esegue la valutazione di tutti i candidati con la LLM fornita dal chiamante.
  * Non lancia mai: un errore di chiamata produce `llm_missing` per il batch.
  */
+async function evaluateSingleBatch(
+  index: number,
+  batch: ReadonlyArray<ScanCandidateSnapshot>,
+  callLlm: (systemInstruction: string, userPrompt: string) => Promise<string | null>
+): Promise<ScanEvaluationBatchResult> {
+  const startedAt = performance.now();
+  let raw: string | null = null;
+  try {
+    raw = await callLlm(AI_SHADOW_SCAN_SYSTEM_INSTRUCTION, buildScanEvaluationPrompt(batch));
+  } catch {
+    raw = null;
+  }
+  const durationMs = Math.round((performance.now() - startedAt) * 1000) / 1000;
+
+  let status: ScanEvaluationBatchStatus;
+  let evaluations: ScanEvaluation[] = [];
+  if (raw == null || raw.trim().length === 0) {
+    status = 'llm_missing';
+  } else {
+    const parsed = parseScanEvaluations(raw);
+    if (!parsed.ok) {
+      status = 'parse_error';
+    } else {
+      status = 'ok';
+      evaluations = parsed.evaluations;
+    }
+  }
+
+  const allowed = new Set(batch.map((candidate) => candidate.ticker));
+  const seen = new Set<string>();
+  let ignoredUnknownTickers = 0;
+  let ignoredDuplicateTickers = 0;
+  const kept: ScanEvaluation[] = [];
+  for (const evaluation of evaluations) {
+    if (!allowed.has(evaluation.ticker)) {
+      ignoredUnknownTickers += 1;
+      continue;
+    }
+    if (seen.has(evaluation.ticker)) {
+      ignoredDuplicateTickers += 1;
+      continue;
+    }
+    seen.add(evaluation.ticker);
+    kept.push(evaluation);
+  }
+
+  return {
+    batchIndex: index,
+    candidateTickers: batch.map((candidate) => candidate.ticker),
+    status,
+    evaluations: kept,
+    ignoredUnknownTickers,
+    ignoredDuplicateTickers,
+    durationMs,
+  };
+}
+
 export async function evaluateScanCandidates(
   candidates: ReadonlyArray<ScanCandidateSnapshot>,
   source: 'specialize' | 'desk',
   callLlm: (systemInstruction: string, userPrompt: string) => Promise<string | null>,
-  batchSize: number = AI_SHADOW_BATCH_SIZE
+  batchSize: number = AI_SHADOW_BATCH_SIZE,
+  meta: ScanEvaluationMeta = {}
 ): Promise<ScanEvaluationRunResult> {
   const list = candidates.map((candidate) => ({ ...candidate }));
   const batchList = splitScanCandidatesInBatches(list, batchSize);
-  const batches: ScanEvaluationBatchResult[] = [];
-
-  for (let index = 0; index < batchList.length; index++) {
-    const batch = batchList[index];
-    let raw: string | null = null;
-    try {
-      raw = await callLlm(AI_SHADOW_SCAN_SYSTEM_INSTRUCTION, buildScanEvaluationPrompt(batch));
-    } catch {
-      raw = null;
+  const requestedConcurrency =
+    typeof meta.concurrency === 'number' && Number.isFinite(meta.concurrency)
+      ? Math.floor(meta.concurrency)
+      : AI_SHADOW_CONCURRENCY;
+  const concurrency = Math.max(1, requestedConcurrency);
+  // I risultati restano nell'ordine dei batch: ogni worker scrive nel proprio
+  // indice, poi `batches` viene usato in ordine crescente.
+  const slots: (ScanEvaluationBatchResult | null)[] = new Array(batchList.length).fill(null);
+  let cursor = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= batchList.length) return;
+      slots[index] = await evaluateSingleBatch(index, batchList[index], callLlm);
     }
+  };
+  const workerCount = Math.min(concurrency, batchList.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  const batches: ScanEvaluationBatchResult[] = slots.filter(
+    (batch): batch is ScanEvaluationBatchResult => batch !== null
+  );
 
-    let status: ScanEvaluationBatchStatus;
-    let evaluations: ScanEvaluation[] = [];
-    if (raw == null || raw.trim().length === 0) {
-      status = 'llm_missing';
-    } else {
-      const parsed = parseScanEvaluations(raw);
-      if (!parsed.ok) {
-        status = 'parse_error';
-      } else {
-        status = 'ok';
-        evaluations = parsed.evaluations;
-      }
-    }
-
-    const allowed = new Set(batch.map((candidate) => candidate.ticker));
-    const seen = new Set<string>();
-    let ignoredUnknownTickers = 0;
-    let ignoredDuplicateTickers = 0;
-    const kept: ScanEvaluation[] = [];
-    for (const evaluation of evaluations) {
-      if (!allowed.has(evaluation.ticker)) {
-        ignoredUnknownTickers += 1;
-        continue;
-      }
-      if (seen.has(evaluation.ticker)) {
-        ignoredDuplicateTickers += 1;
-        continue;
-      }
-      seen.add(evaluation.ticker);
-      kept.push(evaluation);
-    }
-
-    batches.push({
-      batchIndex: index,
-      candidateTickers: batch.map((candidate) => candidate.ticker),
-      status,
-      evaluations: kept,
-      ignoredUnknownTickers,
-      ignoredDuplicateTickers,
-    });
-  }
-
-  const entries = combineScanEvaluations(list, batches, source);
+  const entries = combineScanEvaluations(list, batches, source, meta);
   const evaluated = entries.filter((entry) => entry.evaluated).length;
   return {
     entries,

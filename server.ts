@@ -53,6 +53,13 @@ import {
   setLastScanCandidates,
   getLastScanCandidates,
   evaluateScanCandidates,
+  resolveScanCandidateInput,
+  setHandlerScanInput,
+  consumeHandlerScanInput,
+  getLastScanRunId,
+  setLastScanRunId,
+  buildNoCandidateEntry,
+  AI_SHADOW_BATCH_SIZE,
 } from './src/server/aiScanEvaluation';
 
 // ADDITIVO (v9, Parte 3.2): enum dei predicati esposto alla LLM.
@@ -2343,6 +2350,10 @@ async function executeMarketDataScan(underlyings: any[], bypass: boolean): Promi
   // ADDITIVO (Fase 1): ogni candidato prodotto dalla scansione finisce nel log
   // shadow PRIMA di qualunque filtro (gate, scoring, soglie). Il flusso di
   // selezione non cambia: safeAppendAiShadowLog non lancia mai.
+  // ADDITIVO (P3): ogni scansione ha un runId; le righe di scansione e quelle
+  // degli handler condividono candidateKey = runId + ':' + ticker.
+  const scanRunId = randomUUID();
+  setLastScanRunId(scanRunId);
   safeAppendAiShadowLog(
     buildScanCandidateEntries(
       results.map((quote: any) => ({
@@ -2351,7 +2362,8 @@ async function executeMarketDataScan(underlyings: any[], bypass: boolean): Promi
         direction:
           typeof quote?.gapPercent === 'number' ? (quote.gapPercent >= 0 ? 'LONG' : 'SHORT') : null,
         setup: null,
-      }))
+      })),
+      scanRunId
     ),
     path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
   );
@@ -2550,6 +2562,9 @@ app.post('/api/market-data', async (req: Request, res: Response) => {
       count: results.length,
       data: results,
       cachedAt: new Date().toISOString(),
+      // ADDITIVO (P3): runId della scansione appena eseguita su questa istanza,
+      // cosi' il client puo' inviarlo agli handler AI nel campo `scanRunId`.
+      scanRunId: getLastScanRunId(),
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -2778,17 +2793,41 @@ async function callScanBatchLlm(
  * registra nel log shadow. Non lancia mai e non altera la risposta HTTP.
  */
 async function logScanCandidateEvaluations(source: 'specialize' | 'desk'): Promise<void> {
-  const candidates = getLastScanCandidates();
-  if (candidates.length === 0) return;
+  const { bodyCandidates, bodyRunId } = consumeHandlerScanInput();
+  // ADDITIVO (P2): priorita' al campo `scanCandidates` del body (scansione del
+  // client, valida anche se la richiesta arriva su un'altra istanza); in
+  // mancanza si usa l'istantanea di processo. Nessuna delle due => una riga
+  // NESSUN_CANDIDATO_DISPONIBILE, senza chiamate LLM.
+  const { candidates, candidateSource, runId } = resolveScanCandidateInput(
+    bodyCandidates,
+    bodyRunId
+  );
+  if (candidates.length === 0) {
+    safeAppendAiShadowLog(
+      buildNoCandidateEntry(source),
+      path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+    );
+    return;
+  }
   try {
-    const result = await evaluateScanCandidates(candidates, source, (system, user) =>
-      callScanBatchLlm(system, user)
+    const result = await evaluateScanCandidates(
+      candidates,
+      source,
+      (system, user) => callScanBatchLlm(system, user),
+      AI_SHADOW_BATCH_SIZE,
+      { runId, candidateSource }
     );
     if (result.ignoredUnknownTickers > 0 || result.ignoredDuplicateTickers > 0) {
       console.warn(
         `[AI Shadow Log] valutazioni ignorate (${source}): ticker sconosciuti ${result.ignoredUnknownTickers}, duplicati ${result.ignoredDuplicateTickers}`
       );
     }
+    // ADDITIVO (P4): durata per batch e totale, solo per diagnostica nei log.
+    console.info(
+      `[AI Shadow Log] ${source} (${candidateSource}, run ${runId ?? 'n.d.'}): ${result.evaluated}/${result.entries.length} valutati in ${result.batches
+        .map((batch) => `${batch.durationMs}ms`)
+        .join(' + ')}`
+    );
     if (result.entries.length > 0) {
       safeAppendAiShadowLog(
         result.entries,
@@ -2891,7 +2930,9 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
       buildAiShadowLogEntries(rawDirectives, 'specialize', 'GLOBAL'),
       path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
     );
-    // ADDITIVO (Fasi 1-2): valutazione AI di tutti i candidati della scansione.
+    // ADDITIVO (Fasi 1-2, P2): candidati dal body della richiesta (se presenti)
+    // consegnati alla valutazione, che resta invariata nella forma della chiamata.
+    setHandlerScanInput(req.body?.scanCandidates, req.body?.scanRunId);
     await logScanCandidateEvaluations('specialize');
     const shapeValidDirectives = rawDirectives.filter(
       (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
@@ -3115,7 +3156,9 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
       buildAiShadowLogEntries(rawDirectives, 'desk', typeof market === 'string' ? market : 'GLOBAL'),
       path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
     );
-    // ADDITIVO (Fasi 1-2): valutazione AI di tutti i candidati della scansione.
+    // ADDITIVO (Fasi 1-2, P2): candidati dal body (se presenti) consegnati alla
+    // valutazione, che resta invariata nella forma della chiamata.
+    setHandlerScanInput(req.body?.scanCandidates, req.body?.scanRunId);
     await logScanCandidateEvaluations('desk');
     const shapeValidDirectives = rawDirectives.filter(
       (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
