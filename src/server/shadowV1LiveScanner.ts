@@ -17,6 +17,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { RawQuoteData, SystemParameters } from '../types/radar';
+import { TRADING_PARAMS } from '../config/tradingParams';
 import {
   buildExecutionSetup,
   DEFAULT_SYSTEM_PARAMETERS,
@@ -97,7 +98,7 @@ const GATE_LABELS_IT: Record<string, string> = {
   G4: 'Prezzo gia\' esteso oltre +0,40%',
   G5: 'Breakout scaduto oltre 60 minuti',
   G6: 'Target T1 gia\' raggiunto',
-  G7: 'Range giornaliero ADR esaurito (>60%)',
+  G7: 'Range giornaliero ADR esaurito',
   G8: 'Stop troppo distante per leva KO',
   G9: 'Nessuna leva/barriera KO sicura',
   G10: 'Stop gia\' toccato dal prezzo attuale',
@@ -224,8 +225,18 @@ export async function observeShadowV1LiveScan(
         continue;
       }
 
+      // Lo scanner passivo gira senza catalyst AI (W_NEWS=10 = 0, punteggio max 90 invece di 100):
+      // su US la soglia 58/90 (64.4%) vs EU 48/90 (53.3%) era asimmetrica. Se non c'e' override
+      // esplicito di parameters, compensiamo parte del peso news mancante (-6 pt => 52/90 = 57.8%).
+      const usNoNewsMinScore =
+        market === 'US' && options.parameters === undefined
+          ? Math.max(TRADING_PARAMS.MIN_SCORE_EU, parameters.minScoreUSA - 6)
+          : undefined;
       const setup = buildExecutionSetup(cand, null, market, parameters, {
         currentTime: nowDate,
+        customLeve: market === 'US' ? TRADING_PARAMS.LEVE_US : undefined,
+        adrMax: market === 'US' ? TRADING_PARAMS.ADR_MAX_US : undefined,
+        minScoreOverride: usNoNewsMinScore,
       });
 
       if (cand.score.veto != null) {
@@ -304,9 +315,16 @@ export async function observeShadowV1LiveScan(
 
     const activeMarkets = getActiveMarketsAt(nowMs);
     if ((activeMarkets.length > 0 && nearMissPairs.length > 0) || hasOpenNearMissRecords(rootDir)) {
+      const effectiveNearMissParams: SystemParameters =
+        options.parameters === undefined
+          ? {
+              ...parameters,
+              minScoreUSA: Math.max(TRADING_PARAMS.MIN_SCORE_EU, parameters.minScoreUSA - 6),
+            }
+          : parameters;
       updateShadowV1NearMiss({
         candidates: activeMarkets.length > 0 ? nearMissPairs : [],
-        parameters,
+        parameters: effectiveNearMissParams,
         quotes: validQuotes,
         rootDir,
         nowMs,
@@ -317,13 +335,28 @@ export async function observeShadowV1LiveScan(
       .map(([gate, info]) => ({ gate, label: info.label, count: info.count }))
       .sort((a, b) => b.count - a.count || a.gate.localeCompare(b.gate));
 
-    const prioritized = [
-      ...candidateDiags.filter((c) => c.decision === 'TRADE'),
-      ...candidateDiags.filter((c) => c.decision !== 'TRADE' && c.isTopPick),
-      ...candidateDiags
+    const sortDiagGroup = (list: ShadowV1LiveCandidateDiag[]) => {
+      const trades = list.filter((c) => c.decision === 'TRADE');
+      const topBlocked = list.filter((c) => c.decision !== 'TRADE' && c.isTopPick);
+      const restBlocked = list
         .filter((c) => c.decision !== 'TRADE' && !c.isTopPick)
-        .sort((a, b) => b.score - a.score),
-    ].slice(0, SHADOW_V1_LIVE_SCAN_SAMPLE_SIZE);
+        .sort((a, b) => b.score - a.score);
+      return [...trades, ...topBlocked, ...restBlocked];
+    };
+    const euSample = sortDiagGroup(candidateDiags.filter((c) => c.market === 'EU'));
+    const usSample = sortDiagGroup(candidateDiags.filter((c) => c.market === 'US'));
+    const prioritized: ShadowV1LiveCandidateDiag[] = [];
+    let ei = 0;
+    let ui = 0;
+    while (
+      prioritized.length < SHADOW_V1_LIVE_SCAN_SAMPLE_SIZE &&
+      (ei < euSample.length || ui < usSample.length)
+    ) {
+      if (ei < euSample.length) prioritized.push(euSample[ei++]);
+      if (prioritized.length < SHADOW_V1_LIVE_SCAN_SAMPLE_SIZE && ui < usSample.length) {
+        prioritized.push(usSample[ui++]);
+      }
+    }
 
     const diagnostics: ShadowV1LiveScanDiagnostics = {
       version: 1,

@@ -63,10 +63,9 @@ export const SHADOW_V2_SUMMARY_DOC = '_system/shadow_v2/meta/summary';
 
 const FIRESTORE_SYNC_TIMEOUT_MS = 5_000;
 const FIRESTORE_BATCH_MAX = 400;
-const ACTIVE_BARS_MAX_PER_TICKER = 80;
-// Misura locale (artifacts/shadow_v1_live/bars.json, 40 ticker): 600 barre per ticker,
-// quindi il documento Firestore conserva 80/600 = 13,3% della storia. Il contenuto del
-// documento remoto non è stato verificato: la proporzione va riletta sul dato reale.
+const ACTIVE_BARS_MAX_PER_TICKER = 250;
+// Esteso da 80 (~1 seduta) a 250 barre 5m per ticker (~2,5-3 sedute complete) cosi'
+// eventuali segnali multi-sessione o buchi di avvio mantengono contesto sufficiente in Firestore.
 
 export interface ActiveBarsCacheEntry {
   ticker: string;

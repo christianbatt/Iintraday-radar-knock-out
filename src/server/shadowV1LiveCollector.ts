@@ -1504,11 +1504,14 @@ export interface RegistrationOptions {
   fetchMissingBars?: CollectorDeps['fetchMissingBars'] | null;
   /** Coda condivisa fra handler e ciclo (default: una nuova per registrazione). */
   queue?: ShadowV1LiveStoreQueue;
+  /** Se true, salta il ciclo immediato all'avvio e lascia al caller l'invocazione di `triggerCycle` post-idratazione. */
+  deferInitialCycle?: boolean;
 }
 
 export interface RegistrationResult {
   enabled: boolean;
   stop: (() => void) | null;
+  triggerCycle?: (() => void) | null;
 }
 
 type MinimalApp = {
@@ -1593,18 +1596,21 @@ export function registerShadowV1LiveCollector(
       });
   });
 
-  if (!enabled) return { enabled: false, stop: null };
+  if (!enabled) return { enabled: false, stop: null, triggerCycle: null };
 
   const cycle = () => {
     void runShadowV1LiveRevaluationCycle(deps);
   };
-  // Primo giro immediato all'avvio per sbloccare eventuali record stale dopo riavvio.
-  cycle();
+  // Primo giro immediato all'avvio (salvo deferInitialCycle in server.ts post-idratazione).
+  if (!options.deferInitialCycle) {
+    cycle();
+  }
   const handle = timers.setInterval(cycle, options.cycleMs ?? SHADOW_V1_LIVE_CYCLE_MS);
   if (typeof handle?.unref === 'function') handle.unref();
 
   return {
     enabled: true,
+    triggerCycle: cycle,
     stop: () => {
       activeObserveHandler = null;
       if (activeStoreQueue === storeQueue) activeStoreQueue = null;

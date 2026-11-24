@@ -39,7 +39,7 @@ export const DEFAULT_TRADE_REPUBLIC_UNDERLYINGS: UnderlyingItem[] = [
   { ticker: 'MARA', nome: 'MARA Holdings Inc.', mercato: 'US', valuta: 'USD' },
   { ticker: 'PLTR', nome: 'Palantir Technologies', mercato: 'US', valuta: 'USD' },
   { ticker: 'COIN', nome: 'Coinbase Global Inc.', mercato: 'US', valuta: 'USD' },
-  { ticker: 'SPCX', nome: 'SpaceX (Space Exploration Tech)', mercato: 'US', valuta: 'USD' },
+  { ticker: 'SPCX', nome: 'Space Exploration Technologies Corp.', mercato: 'US', valuta: 'USD' },
   { ticker: 'AVGO', nome: 'Broadcom Inc.', mercato: 'US', valuta: 'USD' },
   { ticker: 'SMCI', nome: 'Super Micro Computer Inc.', mercato: 'US', valuta: 'USD' },
   { ticker: 'HOOD', nome: 'Robinhood Markets Inc.', mercato: 'US', valuta: 'USD' },

@@ -37,15 +37,15 @@ export const SHADOW_V2_HYPOTHESES = {
   /** IPOTESI: distanza minima in ATR dalla VWAP durante pullback (lato sfavorevole). */
   PULLBACK_MIN_DIST_ATR: -0.35,
   /** IPOTESI: distanza massima in ATR dalla VWAP durante pullback (lato favorevole). */
-  PULLBACK_MAX_DIST_ATR: 0.40,
+  PULLBACK_MAX_DIST_ATR: 0.55,
   /** IPOTESI: volume pullback contratto rispetto a SMA20 volumi. */
-  PULLBACK_MAX_VOL_RATIO: 0.95,
+  PULLBACK_MAX_VOL_RATIO: 1.05,
   /** IPOTESI: espansione volume minima sulla barra di reclaim vs SMA20 volumi. */
-  RECLAIM_MIN_VOL_RATIO: 1.35,
+  RECLAIM_MIN_VOL_RATIO: 1.20,
   /** IPOTESI: forza trend minima ADX(14) alla barra reclaim. */
   ADX_MIN: 20,
   /** IPOTESI: floor dello stop strutturale in multipli di ATR14 (5m). */
-  STOP_ATR_FLOOR_MULT: 1.6,
+  STOP_ATR_FLOOR_MULT: 1.35,
   /** IPOTESI: cuscinetto oltre lo swing del pullback per lo stop strutturale. */
   STOP_SWING_PAD_ATR: 0.15,
   /** IPOTESI: target R-multiplo simmetrico post-reclaim. */
@@ -63,7 +63,7 @@ export const SHADOW_V2_HYPOTHESES = {
   /** IPOTESI: rapporto massimo (spread sottostante + spread KO) / rischio in R. */
   VAR_SPREAD_MAX_R: 0.25,
   /** IPOTESI: tetto massimo proxy spread sottostante sul rischio (CS / (dS/E)). */
-  UNDERLYING_SPREAD_MAX_R: 0.08,
+  UNDERLYING_SPREAD_MAX_R: 0.16,
   /** IPOTESI: spread stimato sul certificato KO per lato (frazione del prezzo cert). */
   KO_SPREAD_CERT_PCT_PER_SIDE: 0.002,
   /** Commissione fissa reale Trade Republic round-trip (EUR 1 ingresso + EUR 1 uscita). */
@@ -229,6 +229,7 @@ export function filterClosedBarsV2<T extends IndicatorBarInput>(
     (b) =>
       Number.isFinite(b.t) &&
       b.t > 0 &&
+      b.t % barMs === 0 &&
       b.t + barMs <= nowMs &&
       [b.o, b.h, b.l, b.c].every((v) => typeof v === 'number' && Number.isFinite(v) && v > 0) &&
       b.h >= b.l
@@ -1363,14 +1364,35 @@ export function summarizeShadowV2(records: readonly ShadowV2Record[], generatedA
     experiments,
     hypotheses: SHADOW_V2_HYPOTHESES,
     limitations,
-    recentSignals: [...records]
-      .sort((a, b) => {
-        const aActive = a.status === 'OPEN' || a.status === 'PENDING_OPEN' ? 0 : 1;
-        const bActive = b.status === 'OPEN' || b.status === 'PENDING_OPEN' ? 0 : 1;
-        if (aActive !== bActive) return aActive - bActive;
-        return b.signalBarTs - a.signalBarTs;
-      })
-      .slice(0, 25),
+    recentSignals: (() => {
+      const active = [...records]
+        .filter((r) => r.status === 'OPEN' || r.status === 'PENDING_OPEN')
+        .sort((a, b) => b.signalBarTs - a.signalBarTs);
+      const rest = [...records]
+        .filter((r) => r.status !== 'OPEN' && r.status !== 'PENDING_OPEN')
+        .sort((a, b) => b.signalBarTs - a.signalBarTs);
+      const euRest = rest.filter((r) => r.market === 'EU');
+      const usRest = rest.filter((r) => r.market === 'US');
+      const interleaved: ShadowV2Record[] = [];
+      let ei = 0;
+      let ui = 0;
+      while (interleaved.length < 25 && (ei < euRest.length || ui < usRest.length)) {
+        if (ei < euRest.length && ui < usRest.length) {
+          if (euRest[ei].signalBarTs >= usRest[ui].signalBarTs) {
+            interleaved.push(euRest[ei++]);
+            if (interleaved.length < 25 && ui < usRest.length) interleaved.push(usRest[ui++]);
+          } else {
+            interleaved.push(usRest[ui++]);
+            if (interleaved.length < 25 && ei < euRest.length) interleaved.push(euRest[ei++]);
+          }
+        } else if (ei < euRest.length) {
+          interleaved.push(euRest[ei++]);
+        } else {
+          interleaved.push(usRest[ui++]);
+        }
+      }
+      return [...active, ...interleaved].slice(0, 25);
+    })(),
   };
 }
 

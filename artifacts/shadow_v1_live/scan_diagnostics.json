@@ -1,128 +1,153 @@
 {
-  "persistedThisScan": 0,
   "version": 1,
-  "emittedThisScan": 0,
-  "blockedThisScan": 40,
+  "lastScanAt": "2026-11-24T13:44:50.247Z",
   "scannedTickers": 40,
   "evaluatedTickers": 40,
-  "lastScanAt": "2026-11-20T15:53:56.844Z",
+  "emittedThisScan": 0,
+  "persistedThisScan": 0,
+  "blockedThisScan": 40,
+  "topEU": "ENEL.MI",
+  "topUS": null,
+  "gateCounts": [
+    {
+      "gate": "MARKET_CLOSED_OR_STALE",
+      "label": "Mercato chiuso o feed in attesa della seduta",
+      "count": 20
+    },
+    {
+      "gate": "G4",
+      "label": "Prezzo gia' esteso oltre +0,40%",
+      "count": 7
+    },
+    {
+      "gate": "G5",
+      "label": "Breakout scaduto oltre 60 minuti",
+      "count": 5
+    },
+    {
+      "gate": "SUPERTREND_OPPOSED",
+      "label": "Veto Supertrend contrario alla direzione",
+      "count": 5
+    },
+    {
+      "gate": "ADX_BELOW_MARKET_THRESHOLD",
+      "label": "Veto ADX: trend sotto soglia minima",
+      "count": 2
+    },
+    {
+      "gate": "G11",
+      "label": "Punteggio sotto soglia minima",
+      "count": 1
+    }
+  ],
   "sampleCandidates": [
     {
-      "ticker": "STMMI.MI",
+      "ticker": "ENEL.MI",
       "market": "EU",
-      "score": 30,
-      "isTopPick": false,
+      "score": 59,
+      "isTopPick": true,
       "decision": "BLOCKED",
-      "gate": "WARMUP_INCOMPLETE",
-      "reason": "Indicatori 5m ancora in warmup"
+      "gate": "G5",
+      "reason": "Breakout scaduto oltre 60 minuti"
     },
     {
-      "ticker": "AVGO",
+      "ticker": "NVDA",
       "market": "US",
-      "score": 30,
+      "score": 8,
       "isTopPick": false,
       "decision": "BLOCKED",
-      "gate": "WARMUP_INCOMPLETE",
-      "reason": "Indicatori 5m ancora in warmup"
-    },
-    {
-      "ticker": "ASML.AS",
-      "market": "EU",
-      "score": 30,
-      "isTopPick": false,
-      "decision": "BLOCKED",
-      "gate": "WARMUP_INCOMPLETE",
-      "reason": "Indicatori 5m ancora in warmup"
+      "gate": "MARKET_CLOSED_OR_STALE",
+      "reason": "Mercato chiuso o feed in attesa della seduta"
     },
     {
       "ticker": "ISP.MI",
       "market": "EU",
-      "score": 30,
+      "score": 47,
       "isTopPick": false,
       "decision": "BLOCKED",
-      "gate": "WARMUP_INCOMPLETE",
-      "reason": "Indicatori 5m ancora in warmup"
+      "gate": "G4",
+      "reason": "Prezzo gia' esteso oltre +0,40%"
     },
     {
-      "ticker": "SMCI",
+      "ticker": "AAPL",
       "market": "US",
-      "score": 28,
+      "score": 8,
       "isTopPick": false,
       "decision": "BLOCKED",
-      "gate": "WARMUP_INCOMPLETE",
-      "reason": "Indicatori 5m ancora in warmup"
+      "gate": "MARKET_CLOSED_OR_STALE",
+      "reason": "Mercato chiuso o feed in attesa della seduta"
     },
     {
-      "ticker": "HOOD",
+      "ticker": "MBG.DE",
+      "market": "EU",
+      "score": 46,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "G5",
+      "reason": "Breakout scaduto oltre 60 minuti"
+    },
+    {
+      "ticker": "TSLA",
       "market": "US",
-      "score": 28,
+      "score": 8,
       "isTopPick": false,
       "decision": "BLOCKED",
-      "gate": "WARMUP_INCOMPLETE",
-      "reason": "Indicatori 5m ancora in warmup"
+      "gate": "MARKET_CLOSED_OR_STALE",
+      "reason": "Mercato chiuso o feed in attesa della seduta"
     },
     {
-      "ticker": "MC.PA",
+      "ticker": "SIE.DE",
       "market": "EU",
-      "score": 28,
+      "score": 46,
       "isTopPick": false,
       "decision": "BLOCKED",
-      "gate": "WARMUP_INCOMPLETE",
-      "reason": "Indicatori 5m ancora in warmup"
+      "gate": "G4",
+      "reason": "Prezzo gia' esteso oltre +0,40%"
     },
     {
-      "ticker": "UCG.MI",
-      "market": "EU",
-      "score": 28,
+      "ticker": "MSFT",
+      "market": "US",
+      "score": 8,
       "isTopPick": false,
       "decision": "BLOCKED",
-      "gate": "WARMUP_INCOMPLETE",
-      "reason": "Indicatori 5m ancora in warmup"
+      "gate": "MARKET_CLOSED_OR_STALE",
+      "reason": "Mercato chiuso o feed in attesa della seduta"
     },
     {
-      "ticker": "RACE.MI",
+      "ticker": "ASML.AS",
       "market": "EU",
-      "score": 28,
+      "score": 44,
       "isTopPick": false,
       "decision": "BLOCKED",
-      "gate": "WARMUP_INCOMPLETE",
-      "reason": "Indicatori 5m ancora in warmup"
+      "gate": "G4",
+      "reason": "Prezzo gia' esteso oltre +0,40%"
     },
     {
-      "ticker": "ENI.MI",
-      "market": "EU",
-      "score": 28,
+      "ticker": "AMZN",
+      "market": "US",
+      "score": 8,
       "isTopPick": false,
       "decision": "BLOCKED",
-      "gate": "WARMUP_INCOMPLETE",
-      "reason": "Indicatori 5m ancora in warmup"
+      "gate": "MARKET_CLOSED_OR_STALE",
+      "reason": "Mercato chiuso o feed in attesa della seduta"
     },
     {
-      "ticker": "RHM.DE",
+      "ticker": "STMMI.MI",
       "market": "EU",
-      "score": 24,
+      "score": 43,
       "isTopPick": false,
       "decision": "BLOCKED",
-      "gate": "WARMUP_INCOMPLETE",
-      "reason": "Indicatori 5m ancora in warmup"
+      "gate": "G4",
+      "reason": "Prezzo gia' esteso oltre +0,40%"
     },
     {
-      "ticker": "SAP.DE",
-      "market": "EU",
-      "score": 24,
+      "ticker": "META",
+      "market": "US",
+      "score": 8,
       "isTopPick": false,
       "decision": "BLOCKED",
-      "gate": "WARMUP_INCOMPLETE",
-      "reason": "Indicatori 5m ancora in warmup"
-    }
-  ],
-  "topEU": null,
-  "topUS": null,
-  "gateCounts": [
-    {
-      "gate": "WARMUP_INCOMPLETE",
-      "label": "Indicatori 5m ancora in warmup",
-      "count": 40
+      "gate": "MARKET_CLOSED_OR_STALE",
+      "reason": "Mercato chiuso o feed in attesa della seduta"
     }
   ]
 }

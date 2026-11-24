@@ -1049,8 +1049,9 @@ test('server.ts: una sola alimentazione barre e una sola registrazione', () => {
   );
   const feed = source.match(/recordBarsForShadowV1Live\(/g) ?? [];
   assert.equal(feed.length, 1, 'una sola riga additiva di alimentazione');
-  const registrations = source.match(/registerShadowV1LiveCollector\(app\);/g) ?? [];
+  const registrations = source.match(/registerShadowV1LiveCollector\(app(?:,|\))/g) ?? [];
   assert.equal(registrations.length, 1, 'una sola registrazione');
+  assert.ok(source.includes('deferInitialCycle: true'), 'server.ts differisce il primo ciclo dopo idratazione');
   // Import verificato per simboli e modulo, non per formattazione: la lista
   // puo' essere su piu' righe (P10 aggiunge i middleware del limite body).
   assert.match(
@@ -2084,6 +2085,74 @@ test('recordBarsForShadowV1Live con deferDiskSave + flushShadowV1LiveBarsToDisk 
     clearShadowV1LiveBarsForTest();
     const loaded = loadShadowV1LiveBarsFromDisk(barsPath, D0);
     assert.equal(loaded, 1);
+  } finally {
+    reg.stop?.();
+    clearShadowV1LiveBarsForTest();
+  }
+});
+
+test('deferInitialCycle: evita la rivalutazione prima della idratazione ed esegue su triggerCycle()', async () => {
+  clearShadowV1LiveBarsForTest();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'v1live-defer-cycle-'));
+  tmpDirs.push(root);
+  const signalsPath = path.join(root, SHADOW_V1_LIVE_SIGNALS_PATH);
+  fs.mkdirSync(path.dirname(signalsPath), { recursive: true });
+  const seed = {
+    v: 1,
+    moduleVersion: SHADOW_V1_LIVE_MODULE_VERSION,
+    key: shadowV1LiveKeyOf('ENI.MI', 14.0, 13.7, D0),
+    ticker: 'ENI.MI',
+    market: 'EU',
+    direction: 'LONG',
+    entry: 14.0,
+    stop: 13.7,
+    target: 14.6,
+    decidedAtMs: D0,
+    sessionCloseMs: CLOSE,
+    firstSeenAtMs: D0 + 5_000,
+    status: 'PENDING_FILL',
+    r: null,
+    reason: null,
+    fillBarTs: null,
+    exitBarTs: null,
+    exitPrice: null,
+    updatedAtMs: D0,
+  };
+  fs.writeFileSync(signalsPath, `${JSON.stringify(seed)}\n`, 'utf8');
+
+  recordBarsForShadowV1Live(
+    'ENI.MI',
+    'EU',
+    [{ t: D0 + BAR_MS, o: 14.0, h: 14.2, l: 13.95, c: 14.1 }],
+    D0 + 2 * BAR_MS,
+    ON
+  );
+
+  const reg = registerShadowV1LiveCollector(
+    { post: () => undefined },
+    {
+      root,
+      env: ON,
+      now: () => D0 + 2 * BAR_MS,
+      timers: fakeTimers,
+      fetchMissingBars: null,
+      deferInitialCycle: true,
+    }
+  );
+  try {
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(
+      loadRecords(signalsPath).records[0].status,
+      'PENDING_FILL',
+      'con deferInitialCycle il ciclo immediato non parte prima del via'
+    );
+    reg.triggerCycle?.();
+    await new Promise((r) => setTimeout(r, 40));
+    assert.equal(
+      loadRecords(signalsPath).records[0].status,
+      'OPEN',
+      'triggerCycle avvia la rivalutazione dopo idratazione'
+    );
   } finally {
     reg.stop?.();
     clearShadowV1LiveBarsForTest();

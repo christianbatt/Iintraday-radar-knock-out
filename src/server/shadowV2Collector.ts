@@ -45,6 +45,7 @@ function mergeClosedBarsV2(
       b &&
       Number.isFinite(b.t) &&
       b.t > 0 &&
+      b.t % SHADOW_V2_BAR_MS === 0 &&
       b.t + SHADOW_V2_BAR_MS <= nowMs &&
       [b.o, b.h, b.l, b.c].every((v) => typeof v === 'number' && Number.isFinite(v) && v > 0) &&
       b.h >= b.l
@@ -95,6 +96,7 @@ export function loadShadowV2BarsFromDisk(
     } | null;
     if (!raw || !Array.isArray(raw.entries)) return 0;
     let loaded = 0;
+    let sanitized = false;
     for (const entry of raw.entries) {
       if (
         !entry ||
@@ -107,6 +109,9 @@ export function loadShadowV2BarsFromDisk(
       const key = barsStoreKey(entry.ticker, entry.market);
       const existing = recentBarsStore.get(key)?.bars ?? [];
       const merged = mergeClosedBarsV2(existing, entry.bars, nowMs);
+      if (merged.length < entry.bars.length) {
+        sanitized = true;
+      }
       if (merged.length > 0) {
         recentBarsStore.set(key, {
           ticker: entry.ticker,
@@ -116,6 +121,9 @@ export function loadShadowV2BarsFromDisk(
         });
         loaded += 1;
       }
+    }
+    if (sanitized && loaded > 0) {
+      saveShadowV2BarsToDisk(rootDir, nowMs);
     }
     return loaded;
   } catch {

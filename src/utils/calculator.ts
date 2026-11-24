@@ -2031,6 +2031,8 @@ export function buildExecutionSetup(
     macroEvents?: MacroEvent[];
     macroCalendar?: MacroCalendarState;
     riskEur?: number;
+    adrMax?: number;
+    minScoreOverride?: number;
     // I2b: override per-esecuzione del flag STALENESS_USE_MARKET_TS. Assente =
     // si legge la costante di config (default 'off').
     stalenessFlag?: 'on' | 'off';
@@ -2299,8 +2301,9 @@ export function buildExecutionSetup(
   };
 
   // G7 ADR: Consumo_ADR(t) > ADR_MAX → RANGE ESAURITO
+  const adrMaxLimit = options?.adrMax ?? TRADING_PARAMS.ADR_MAX;
   const g7Pass =
-    adrConsumptionFraction != null && adrConsumptionFraction <= TRADING_PARAMS.ADR_MAX + eps;
+    adrConsumptionFraction != null && adrConsumptionFraction <= adrMaxLimit + eps;
   gateResults['G7'] = {
     passed: g7Pass,
     label: 'ADR',
@@ -2308,7 +2311,7 @@ export function buildExecutionSetup(
   };
 
   // G8 Stop distanza: dS > LMAX / min(LEVE) → STOP TROPPO LONTANO
-  const minLeva = Math.min(...TRADING_PARAMS.LEVE);
+  const minLeva = Math.min(...TRADING_PARAMS.LEVE, ...leveGrid);
   const g8Pass = dS <= TRADING_PARAMS.LMAX / minLeva + eps;
   gateResults['G8'] = {
     passed: g8Pass,
@@ -2351,9 +2354,10 @@ export function buildExecutionSetup(
   };
 
   // G11 Score: score senza liquidità < minScore → PUNTEGGIO SOTTO SOGLIA
-  const minScore = isEU
+  const defaultMinScore = isEU
     ? (params?.minScoreEurope ?? params?.minScore ?? TRADING_PARAMS.MIN_SCORE_EU)
     : (params?.minScoreUSA ?? params?.minScore ?? TRADING_PARAMS.MIN_SCORE_US);
+  const minScore = options?.minScoreOverride ?? defaultMinScore;
   const g11Pass = score + eps >= minScore;
   gateResults['G11'] = {
     passed: g11Pass,

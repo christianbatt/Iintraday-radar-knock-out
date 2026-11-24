@@ -22,6 +22,7 @@ export interface TradingParamsConfig {
   // Parametri di Rischio e Derivati Turbo Knock-Out
   LMAX: number;
   LEVE: readonly number[];
+  LEVE_US: readonly number[]; // IPOTESI: griglia KO Trade Republic per mercato USA
   LEVA_MIN_PRUDENTE: number;
 
   // Soglie Gate Operative (Provvisorie - da validare empiricamente in Fase 2)
@@ -32,6 +33,7 @@ export interface TradingParamsConfig {
   ADR_PERIOD: number;
   EST_MAX: number;
   ADR_MAX: number;
+  ADR_MAX_US: number; // IPOTESI: consumo massimo ADR14 per mercato USA
   ADR_OPTIMAL_MAX_PCT: number;
   FRESH_MIN: number;
   BUF_BAR: number;
@@ -202,6 +204,7 @@ export const TRADING_PARAMS: TradingParamsConfig = {
   // Parametri di Rischio e Derivati Turbo Knock-Out
   LMAX: 0.10, // Perdita massima consentita sul certificato allo stop (10%)
   LEVE: [10, 15, 20, 25], // Griglia leve standard ammesse per selezione
+  LEVE_US: [5, 7, 10, 15, 20, 25], // IPOTESI: griglia leve KO Trade Republic reale per titoli US (5x ammette dS <= 2,00%)
   LEVA_MIN_PRUDENTE: 10, // Leva prudente minima dell'insieme valido
 
   // Soglie Gate Operative (Provvisorie - da validare empiricamente in Fase 2)
@@ -212,6 +215,7 @@ export const TRADING_PARAMS: TradingParamsConfig = {
   ADR_PERIOD: 14, // Barre complete richieste per ADR14 (14 High - Low)
   EST_MAX: 0.004, // Estensione massima tollerata oltre il trigger (0.40%) [Provvisorio]
   ADR_MAX: 0.60, // Consumo massimo tollerato dell'ADR14 prima dell'ingresso (60%) [Provvisorio]
+  ADR_MAX_US: 0.78, // IPOTESI: consumo massimo tollerato ADR14 su mercato USA (gap+open tipico US)
   ADR_OPTIMAL_MAX_PCT: 45, // Soglia % per stato OPTIMAL/MODERATE in calculateAdrInfo [Provvisorio, non in specifica base]
   FRESH_MIN: 60, // Minuti massimi trascorsi dalla prima rottura del trigger Tb prima di decadenza [Provvisorio]
   BUF_BAR: 0.001, // Distanza minima barriera KO oltre lo stop, come frazione del prezzo di entrata (0.1%) [Provvisorio]

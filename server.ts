@@ -761,26 +761,74 @@ async function mapConcurrent<T, R>(
   return results;
 }
 
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchYahooChartWithRetry(
+  url: string,
+  init: RequestInit = {},
+  options: { maxRetries?: number; timeoutMs?: number } = {}
+): Promise<globalThis.Response> {
+  const maxRetries = options.maxRetries ?? 2;
+  const timeoutMs = options.timeoutMs ?? Math.max(EXTERNAL_FETCH_TIMEOUT_MS, 14000);
+  let lastError: unknown = null;
+  let lastResp: globalThis.Response | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const resp = await fetchWithTimeout(url, init, timeoutMs);
+      if (resp.ok) return resp;
+      lastResp = resp;
+      const retryableStatus = resp.status === 429 || resp.status >= 500;
+      if (!retryableStatus || attempt >= maxRetries) {
+        return resp;
+      }
+    } catch (err) {
+      lastError = err;
+      if (attempt >= maxRetries) {
+        throw err;
+      }
+    }
+    const backoffMs = 350 * (attempt + 1) + Math.floor(Math.random() * 250);
+    await sleepMs(backoffMs);
+  }
+
+  if (lastResp) return lastResp;
+  throw lastError instanceof Error ? lastError : new Error('Yahoo fetch failed');
+}
+
+let inFlightEurUsd: Promise<number> | null = null;
+
 // Fetch real live EUR/USD exchange rate from Yahoo Finance feed (no hardcoded fallback)
 async function getLiveEurUsdRate(): Promise<number> {
   const cacheKey = 'fx:EURUSD';
   const cached = cache.get<number>(cacheKey);
   if (cached) return cached.data;
+  if (inFlightEurUsd) return inFlightEurUsd;
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X?interval=1d&range=1d&_=${Date.now()}`;
-  const resp = await fetchWithTimeout(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', Accept: 'application/json' },
-  });
-  if (!resp.ok) {
-    throw new Error(`Impossibile recuperare tasso FX EUR/USD dal feed: HTTP ${resp.status}`);
+  inFlightEurUsd = (async () => {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X?interval=1d&range=1d&_=${Date.now()}`;
+    const resp = await fetchYahooChartWithRetry(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', Accept: 'application/json' },
+    });
+    if (!resp.ok) {
+      throw new Error(`Impossibile recuperare tasso FX EUR/USD dal feed: HTTP ${resp.status}`);
+    }
+    const json = await resp.json();
+    const rate = json?.chart?.result?.[0]?.meta?.regularMarketPrice;
+    if (typeof rate !== 'number' || rate <= 0) {
+      throw new Error('Tasso FX EUR/USD non disponibile nel feed per conversione liquidità');
+    }
+    cache.set(cacheKey, rate, 300); // 5 min TTL
+    return rate;
+  })();
+
+  try {
+    return await inFlightEurUsd;
+  } finally {
+    inFlightEurUsd = null;
   }
-  const json = await resp.json();
-  const rate = json?.chart?.result?.[0]?.meta?.regularMarketPrice;
-  if (typeof rate !== 'number' || rate <= 0) {
-    throw new Error('Tasso FX EUR/USD non disponibile nel feed per conversione liquidità');
-  }
-  cache.set(cacheKey, rate, 300); // 5 min TTL
-  return rate;
 }
 
 // Fetch real 5-minute Intraday RSI, 20-minute RVOL, ORB levels & Synthetic Order Flow
@@ -791,13 +839,16 @@ async function getLiveEurUsdRate(): Promise<number> {
 async function fetchWarmup5mBars(ticker: string, range: string): Promise<IndicatorBarInput[]> {
   const ySymbol = ticker.includes('.') ? ticker : `${ticker}`;
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}?interval=5m&range=${encodeURIComponent(range)}&includePrePost=true&_=${Date.now()}`;
-  const resp = await fetchWithTimeout(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      Accept: 'application/json',
+  const resp = await fetchYahooChartWithRetry(
+    url,
+    {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        Accept: 'application/json',
+      },
     },
-    signal: AbortSignal.timeout(12000),
-  });
+    { maxRetries: 2, timeoutMs: 14000 }
+  );
   if (!resp.ok) throw new Error(`FEED_ERROR:HTTP ${resp.status}`);
   const json = await resp.json();
   const timestamps: number[] = json?.chart?.result?.[0]?.timestamp || [];
@@ -812,10 +863,7 @@ async function fetchWarmup5mBars(ticker: string, range: string): Promise<Indicat
   })) as IndicatorBarInput[];
 }
 
-async function getIntraday5mMetrics(
-  ticker: string,
-  market: 'EU' | 'US' = 'EU'
-): Promise<{
+interface Intraday5mMetricsResult {
   rsi5m: number | null;
   rvol: number | null;
   rvol20m: number | null;
@@ -833,37 +881,38 @@ async function getIntraday5mMetrics(
   lastBarTime?: number | null;
   vwapDataQuality?: VwapDataQuality | null;
   setupIndicators?: SetupIndicators | null;
-}> {
+  latestPrePostPrice?: number | null;
+  todayPrePostVolume?: number | null;
+}
+
+const inFlightIntraday5m = new Map<string, Promise<Intraday5mMetricsResult>>();
+
+async function getIntraday5mMetrics(
+  ticker: string,
+  market: 'EU' | 'US' = 'EU'
+): Promise<Intraday5mMetricsResult> {
   const cacheKey = `metrics5m:${ticker}:${market}`;
-  const cached = cache.get<{
-    rsi5m: number | null;
-    rvol: number | null;
-    rvol20m: number | null;
-    orderFlow: OrderFlowMetrics | null;
-    orbHigh: number | null;
-    orbLow: number | null;
-    orbBreakoutTime: string | null;
-    orbBreakoutTimeLong: string | null;
-    orbBreakoutTimeShort: string | null;
-    vwapState?: VwapSignalState | null;
-    lastBarVolume?: number | null;
-    lastBarTime?: number | null;
-    vwapDataQuality?: VwapDataQuality | null;
-  setupIndicators?: SetupIndicators | null;
-  }>(cacheKey);
+  const cached = cache.get<Intraday5mMetricsResult>(cacheKey);
   if (cached) return cached.data;
 
+  const existingInFlight = inFlightIntraday5m.get(cacheKey);
+  if (existingInFlight) return existingInFlight;
+
+  const task = (async (): Promise<Intraday5mMetricsResult> => {
   try {
     const ySymbol = ticker.includes('.') ? ticker : `${ticker}`;
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}?interval=5m&range=60d&includePrePost=true&_=${Date.now()}`;
-    const resp = await fetchWithTimeout(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        Accept: 'application/json',
+    const resp = await fetchYahooChartWithRetry(
+      url,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          Accept: 'application/json',
+        },
       },
-      signal: AbortSignal.timeout(12000),
-    });
-    if (!resp.ok) return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null, orbBreakoutTimeLong: null, orbBreakoutTimeShort: null, vwapCumulative: null, vwapCumulativeWithPre: null, vwapCoverage: null, vwapState: null, lastBarVolume: null, lastBarTime: null, vwapDataQuality: { ok: false, reason: `FEED_ERROR:HTTP ${resp.status}`, coverage: 0 }, setupIndicators: null };
+      { maxRetries: 2, timeoutMs: 14000 }
+    );
+    if (!resp.ok) return { rsi5m: null, rvol: null, rvol20m: null, orderFlow: null, orbHigh: null, orbLow: null, orbBreakoutTime: null, orbBreakoutTimeLong: null, orbBreakoutTimeShort: null, vwapCumulative: null, vwapCumulativeWithPre: null, vwapCoverage: null, vwapState: null, lastBarVolume: null, lastBarTime: null, vwapDataQuality: { ok: false, reason: `FEED_ERROR:HTTP ${resp.status}`, coverage: 0 }, setupIndicators: null, latestPrePostPrice: null, todayPrePostVolume: null };
     const json = await resp.json();
     const rawQuotes = json?.chart?.result?.[0]?.indicators?.quote?.[0];
     const closes: number[] = rawQuotes?.close?.filter(
@@ -1121,6 +1170,8 @@ async function getIntraday5mMetrics(
     let lastBarVolume: number | null = null;
     let lastBarTime: number | null = null;
     let vwapDataQuality: VwapDataQuality | null = null;
+    let latestPrePostPrice: number | null = null;
+    let todayPrePostVolume: number | null = null;
     try {
       const ts: number[] = json?.chart?.result?.[0]?.timestamp || [];
       if (ts.length > 0) {
@@ -1137,12 +1188,29 @@ async function getIntraday5mMetrics(
         const nowMinutes = getMarketTime(market, new Date()).totalMinutes;
 
         // Barra 5m piu' recente della sessione corrente: volume e timestamp servono al VWAP state
-        // e vengono passati al call site di calculateCandidateScore.
-        const lastSessionBar = [...bars]
-          .reverse()
-          .find((b) => getExchangeDateStr(market, new Date(b.timestamp * 1000)) === sessionDate);
+        // e vengono passati al call site di calculateCandidateScore; stesso stream fornisce pre/post US
+        // evitando una seconda chiamata Yahoo range=1d per titolo.
+        const todaySessionBars = bars.filter(
+          (b) => getExchangeDateStr(market, new Date(b.timestamp * 1000)) === sessionDate
+        );
+        const lastSessionBar =
+          todaySessionBars.length > 0 ? todaySessionBars[todaySessionBars.length - 1] : undefined;
         lastBarVolume = lastSessionBar?.volume ?? null;
         lastBarTime = lastSessionBar?.timestamp ?? null;
+        const validTodayCloses = todaySessionBars
+          .map((b) => b.close)
+          .filter((c): c is number => typeof c === 'number' && Number.isFinite(c) && c > 0);
+        if (validTodayCloses.length > 0) {
+          latestPrePostPrice = validTodayCloses[validTodayCloses.length - 1];
+        }
+        const sumTodayVol = todaySessionBars.reduce(
+          (acc, b) =>
+            acc + (typeof b.volume === 'number' && Number.isFinite(b.volume) && b.volume > 0 ? b.volume : 0),
+          0
+        );
+        if (sumTodayVol > 0) {
+          todayPrePostVolume = sumTodayVol;
+        }
         const reg = computeSessionVwap(bars, market, sessionDate, { nowMinutes });
         vwapCumulative = reg.vwap != null ? +reg.vwap.toFixed(2) : null;
         vwapCoverage = reg.coverage != null ? +reg.coverage.toFixed(2) : null;
@@ -1165,16 +1233,25 @@ async function getIntraday5mMetrics(
         });
 
         // Quality gate (IPOTESI): serie non affidabile -> stato UNKNOWN + DATA_QUALITY:<reason>, contributo 0.
+        // Nel weekend o prima che si chiuda la prima candela 5m della sessione regolare non esiste
+        // copertura di sessione odierna attesa: non e' LOW_COVERAGE ma mercato chiuso / pre-open.
+        const openMinutes = market === 'US' ? 570 : 540;
+        const exchangeDay = new Date(`${sessionDate}T12:00:00Z`).getUTCDay();
         const metaPrice = json?.chart?.result?.[0]?.meta?.regularMarketPrice;
-        const quality = computeVwapDataQuality(
-          bars,
-          {
-            currentPrice: typeof metaPrice === 'number' ? metaPrice : lastSessionBar?.close ?? null,
-            vwap: null,
-          },
-          market,
-          new Date()
-        );
+        const quality =
+          exchangeDay === 0 || exchangeDay === 6
+            ? { ok: false, reason: 'MARKET_CLOSED', coverage: 0, nullFields: 0 }
+            : nowMinutes < openMinutes + 5
+              ? { ok: false, reason: 'PRE_MARKET', coverage: 0, nullFields: 0 }
+              : computeVwapDataQuality(
+                  bars,
+                  {
+                    currentPrice: typeof metaPrice === 'number' ? metaPrice : lastSessionBar?.close ?? null,
+                    vwap: null,
+                  },
+                  market,
+                  new Date()
+                );
         vwapDataQuality = quality;
         if (!quality.ok) {
           const dqFlag = `DATA_QUALITY:${quality.reason ?? 'UNKNOWN'}`;
@@ -1282,6 +1359,8 @@ async function getIntraday5mMetrics(
       lastBarTime,
       vwapDataQuality,
       setupIndicators,
+      latestPrePostPrice,
+      todayPrePostVolume,
     };
     cache.set(cacheKey, result, YAHOO_CACHE_TTL_MS / 1000);
     return result;
@@ -1305,7 +1384,17 @@ async function getIntraday5mMetrics(
       lastBarTime: null,
       vwapDataQuality: { ok: false, reason: 'FEED_ERROR', coverage: 0 },
       setupIndicators: null,
+      latestPrePostPrice: null,
+      todayPrePostVolume: null,
     };
+  }
+  })();
+
+  inFlightIntraday5m.set(cacheKey, task);
+  try {
+    return await task;
+  } finally {
+    inFlightIntraday5m.delete(cacheKey);
   }
 }
 
@@ -1464,12 +1553,16 @@ async function fetchQuoteForTicker(
     const ySymbol = queryTicker.includes('.') ? queryTicker : `${queryTicker}`;
     const nocache = Date.now();
     const yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}?interval=1d&range=1mo&includePrePost=true&_=${nocache}`;
-    const yResp = await fetchWithTimeout(yUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
-        Accept: 'application/json',
+    const yResp = await fetchYahooChartWithRetry(
+      yUrl,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
+          Accept: 'application/json',
+        },
       },
-    });
+      { maxRetries: 2, timeoutMs: 14000 }
+    );
 
     if (yResp.ok) {
       const yJson = await yResp.json();
@@ -1521,33 +1614,24 @@ async function fetchQuoteForTicker(
         let pmVol: number | null = meta.preMarketVolume ?? meta.postMarketVolume ?? null;
         const regVol: number | null = meta.regularMarketVolume ?? (lastBar ? lastBar.volume : null);
 
-        // For US stocks, query the 5m intraday feed if pre-market price or volume is missing
-        const cet = getCETTime();
+        // Riusa le barre 5m (includePrePost=true) gia' scaricate in intraday5mPromise
+        // evitando una seconda richiesta Yahoo range=1d per ciascun titolo USA.
+        const intradayMetrics = await intraday5mPromise;
         if (market === 'US' && (!pmVol || !preMarketP || preMarketP === prevC)) {
-          try {
-            const pmUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySymbol)}?interval=5m&range=1d&includePrePost=true&_=${Date.now()}`;
-            const pmResp = await fetchWithTimeout(pmUrl, {
-              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-            });
-            if (pmResp.ok) {
-              const pmJson = await pmResp.json();
-              const pmQuotes = pmJson?.chart?.result?.[0]?.indicators?.quote?.[0];
-              const pmCloses = pmQuotes?.close?.filter((c: any) => typeof c === 'number');
-              if (pmCloses && pmCloses.length > 0) {
-                const latestTick = pmCloses[pmCloses.length - 1];
-                if (!preMarketP || preMarketP === prevC) {
-                  preMarketP = latestTick;
-                  currentP = latestTick;
-                }
-              }
-              const pmVolumes = pmQuotes?.volume?.filter((v: any) => typeof v === 'number');
-              if (pmVolumes && pmVolumes.length > 0) {
-                const sumVol = pmVolumes.reduce((a: number, b: number) => a + b, 0);
-                if (sumVol > 0) pmVol = sumVol;
-              }
-            }
-          } catch {
-            // keep currentP
+          if (
+            typeof intradayMetrics.latestPrePostPrice === 'number' &&
+            intradayMetrics.latestPrePostPrice > 0 &&
+            (!preMarketP || preMarketP === prevC)
+          ) {
+            preMarketP = intradayMetrics.latestPrePostPrice;
+            currentP = intradayMetrics.latestPrePostPrice;
+          }
+          if (
+            typeof intradayMetrics.todayPrePostVolume === 'number' &&
+            intradayMetrics.todayPrePostVolume > 0 &&
+            !pmVol
+          ) {
+            pmVol = intradayMetrics.todayPrePostVolume;
           }
         }
 
@@ -1574,7 +1658,6 @@ async function fetchQuoteForTicker(
         const calcLiqEur = calculateLiqEurFromBars(completedBars, liveFx, isUsd ? 'USD' : 'EUR');
 
         // Real-Time ORB RVOL from calculateOrbRvolFromBars (strictly null if <20 historical sessions)
-        const intradayMetrics = await intraday5mPromise;
         const calcRvol: number | null = intradayMetrics.rvol ?? null;
 
         // Real 30-Day Historical Realized Volatility (HV30) & Derivative Implied Volatility (IV)
@@ -1893,7 +1976,7 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
   let queryTicker = upper;
   if (upper === 'SPACEX') queryTicker = 'SPCX';
   if (upper === 'LEO.MI' || upper === 'LEO' || upper === 'LDO') queryTicker = 'LDO.MI';
-  const searchName = isSpaceX ? 'SpaceX Space Exploration' : (queryTicker === 'LDO.MI' ? 'Leonardo' : name);
+  const searchName = isSpaceX ? 'Space Exploration Technologies Corp' : (queryTicker === 'LDO.MI' ? 'Leonardo' : name);
 
   const newsList: NewsItem[] = [];
 
@@ -2307,7 +2390,7 @@ app.get('/api/futures', async (req: Request, res: Response) => {
 let startupShadowHydrationState: 'pending' | 'ready' = 'pending';
 let startupShadowHydrationPromise: Promise<void> = Promise.resolve();
 
-let lastMarketScanAtMs = 0;
+const lastMarketScanAtByMarket: Record<'EU' | 'US', number> = { EU: 0, US: 0 };
 let schedulerScanInFlight: Promise<void> | null = null;
 
 async function executeMarketDataScan(
@@ -2325,10 +2408,10 @@ async function executeMarketDataScan(
   let results: any[];
   let scanError: unknown = null;
   try {
-    // Esecuzione concorrente a lotti controllati (concurrency = 6) per evitare saturazione e timeout da Yahoo Finance
+    // Esecuzione concorrente a lotti controllati (concurrency = 4) per evitare rate limit 429 e timeout da Yahoo Finance
     results = await mapConcurrent(
       underlyings,
-      6,
+      4,
       (item) =>
         fetchQuoteForTicker(
           item.ticker,
@@ -2525,27 +2608,39 @@ async function executeMarketDataScan(
   // Il flush di bars.json sta nel finally che copre il loop, cosi' gira anche se il batch fallisce.
   observeShadowV2Scan(results);
   await observeShadowV1LiveScan(results, futuresScan);
-  lastMarketScanAtMs = Date.now();
+  const scanCompletedAt = Date.now();
+  const scannedMarkets = new Set<'EU' | 'US'>();
+  for (const item of underlyings) {
+    const m = item?.mercato ?? item?.market;
+    if (m === 'EU' || m === 'US') scannedMarkets.add(m);
+  }
+  for (const m of scannedMarkets) {
+    lastMarketScanAtByMarket[m] = scanCompletedAt;
+  }
   return results;
 }
 
 async function runScheduledMarketScan(): Promise<void> {
   if (schedulerScanInFlight) return schedulerScanInFlight;
   const nowMs = Date.now();
-  if (nowMs - lastMarketScanAtMs < SHADOW_MARKET_SCAN_INTERVAL_MS - 30_000) {
-    return;
-  }
   const { activeMarkets, items } = filterUnderlyingsForActiveMarkets(
     DEFAULT_TRADE_REPUBLIC_UNDERLYINGS,
     nowMs
   );
-  if (items.length === 0) return;
+  const staleMarkets = activeMarkets.filter(
+    (m) => nowMs - lastMarketScanAtByMarket[m] >= SHADOW_MARKET_SCAN_INTERVAL_MS - 30_000
+  );
+  if (staleMarkets.length === 0) return;
+
+  const staleSet = new Set<'EU' | 'US'>(staleMarkets);
+  const targetItems = items.filter((u) => staleSet.has(u.mercato));
+  if (targetItems.length === 0) return;
 
   schedulerScanInFlight = (async () => {
     try {
-      await executeMarketDataScan(items, true);
+      await executeMarketDataScan(targetItems, true);
       console.log(
-        `[Shadow Scheduler] scansione passiva completata (${activeMarkets.join('+')} · ${items.length} titoli)`
+        `[Shadow Scheduler] scansione passiva completata (${staleMarkets.join('+')} · ${targetItems.length} titoli)`
       );
     } catch (err: any) {
       console.warn(`[Shadow Scheduler] errore scansione passiva: ${err?.message || err}`);
@@ -3992,7 +4087,7 @@ async function startServer() {
     }
   });
   app.post('/api/shadow/v1-live/observe', requireApiAuth);
-  registerShadowV1LiveCollector(app);
+  const v1CollectorReg = registerShadowV1LiveCollector(app, { deferInitialCycle: true });
   registerShadowV1LiveViewRoute(app);
   flushShadowV1LiveBarsToDisk();
 
@@ -4045,11 +4140,13 @@ async function startServer() {
       })
       .finally(() => {
         startupShadowHydrationState = 'ready';
-        console.log('[Startup] Idratazione Shadow da Firestore conclusa: scansioni abilitate.');
+        v1CollectorReg.triggerCycle?.();
+        console.log('[Startup] Idratazione Shadow da Firestore conclusa: scansioni e rivalutazione V1-live abilitate.');
       });
   } else {
     startupShadowHydrationState = 'ready';
     startupShadowHydrationPromise = Promise.resolve();
+    v1CollectorReg.triggerCycle?.();
     console.log('[Startup] Firestore non configurato: nessuna idratazione Shadow, scansioni abilitate.');
   }
 
