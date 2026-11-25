@@ -348,20 +348,20 @@ export const TRADING_PARAMS: TradingParamsConfig = {
   VWAP_VETO_ENABLED: true,
 
   // Pesi dello score: somma esattamente 100 (test dedicato)
-    W_GAP: 12,
-    W_RVOL: 14,
-    W_VWAP: 10,
-    W_SUPERTREND: 12,
-    W_ADX: 7,
-    W_STOCH_RSI: 9,
-    W_LEVELS: 6,
-    W_FUTURES: 12,
-    W_NEWS: 10,
-    W_ORDER_FLOW: 8,
-    W_LIQUIDITY: 0,
-    W_PSAR: 0,
-    W_RSI: 3,  // RSI 14 conferma trend (leggero): +3pt se allineato direzione
-    W_TREND: 0, // Confluenza EMA20 daily esclusa (vedi FUTURES per trend macro)
+  W_GAP: 12,
+  W_RVOL: 14,
+  W_VWAP: 10,
+  W_SUPERTREND: 12,
+  W_ADX: 7,
+  W_STOCH_RSI: 9,
+  W_LEVELS: 6,
+  W_FUTURES: 12,
+  W_NEWS: 10,
+  W_ORDER_FLOW: 8,
+  W_LIQUIDITY: 0,
+  W_PSAR: 0,
+  W_RSI: 0,
+  W_TREND: 0,
 
   // VWAP di sessione (contributo separato nello score + contesto per l'AI)
   // IPOTESI: 10 = 10% del punteggio massimo totale (CAPPED_MAX 100 ricavato dal codice: 0.10 * 100 = 10).
