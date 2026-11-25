@@ -37,8 +37,13 @@ export const AI_DESK_MAX_REFS_PER_CLAIM = 4;
 export const AI_DESK_MAX_STATEMENT_CHARS = 400;
 /** Lunghezza massima della sintesi. */
 export const AI_DESK_MAX_SUMMARY_CHARS = 1200;
-/** Tolleranza assoluta nel confronto fra numero citato e valore del fascicolo. */
-export const AI_DESK_NUMBER_TOLERANCE = 0.05;
+/**
+ * Tolleranza nel confronto fra numero citato e valore del fascicolo: 2%
+ * relativo con un minimo assoluto di 0.005. Il minimo copre gli arrotondamenti
+ * (0.183 vs 0.18), il rapporto relativo impedisce che 0.18 "copra" 0.21.
+ */
+export const AI_DESK_NUMBER_TOLERANCE = 0.005;
+export const AI_DESK_NUMBER_RELATIVE_TOLERANCE = 0.02;
 
 export const AI_DESK_SYSTEM_INSTRUCTION =
   'Sei un senior intraday desk analyst con quindici anni di esperienza su desk proprietari. ' +
@@ -88,6 +93,12 @@ export interface AiDeskAnalysis {
   contractVersion: typeof AI_DESK_CONTRACT_VERSION;
   evidencePackVersion: typeof AI_EVIDENCE_PACK_VERSION;
   summary: string;
+  /** `true` quando ogni numero misurato nella sintesi esiste nel fascicolo. */
+  summaryVerified: boolean;
+  /** Chiavi del fascicolo che sostengono i numeri della sintesi. */
+  summaryEvidenceRefs: string[];
+  /** Numeri della sintesi non riconducibili al fascicolo. */
+  summaryUnsupportedNumbers: string[];
   claims: AiDeskClaim[];
   proposedDirectives: AiDeskDirective[];
   dataGaps: string[];
@@ -96,6 +107,8 @@ export interface AiDeskAnalysis {
   evidenceKeysUsed: string[];
   /** `true` solo quando nessuna affermazione e' stata scartata. */
   complete: boolean;
+  /** `true` quando claim e direttive sono integri E la sintesi e' ancorata. */
+  verified: boolean;
 }
 
 export type AiDeskParseResult =
@@ -228,10 +241,14 @@ export function extractMeasuredNumbers(text: string): NumericToken[] {
 }
 
 function isSupportedNumber(value: number, cited: readonly AiEvidenceEntry[]): boolean {
+  const tolerance = Math.max(
+    AI_DESK_NUMBER_TOLERANCE,
+    AI_DESK_NUMBER_RELATIVE_TOLERANCE * Math.abs(value)
+  );
   for (const item of cited) {
     for (const candidate of [item.value, item.n]) {
       if (typeof candidate !== 'number' || !Number.isFinite(candidate)) continue;
-      if (Math.abs(candidate - value) <= AI_DESK_NUMBER_TOLERANCE) return true;
+      if (Math.abs(candidate - value) <= tolerance) return true;
     }
   }
   return false;
@@ -258,6 +275,39 @@ function collectRefs(
     if (!refs.includes(key)) refs.push(key);
   }
   return refs;
+}
+
+/**
+ * Verifica dei numeri della sintesi contro l'INTERO fascicolo (la sintesi non ha
+ * riferimenti per-claim). Un numero misurato che non esiste nel fascicolo rende
+ * la sintesi non verificata: il testo resta, ma il consumatore sa che non e'
+ * ancorato.
+ */
+export function verifyDeskSummary(
+  text: string,
+  pack: AiEvidencePack
+): { text: string; verified: boolean; evidenceRefs: string[]; unsupportedNumbers: string[] } {
+  const cleaned = clip(cleanText(text), AI_DESK_MAX_SUMMARY_CHARS);
+  const measured = extractMeasuredNumbers(cleaned).filter((token) => token.measured);
+  if (measured.length === 0) {
+    return { text: cleaned, verified: true, evidenceRefs: [], unsupportedNumbers: [] };
+  }
+  const refs = new Set<string>();
+  const unsupportedNumbers: string[] = [];
+  for (const token of measured) {
+    const matches = pack.evidence.filter((item) => isSupportedNumber(token.value, [item]));
+    if (matches.length === 0) {
+      unsupportedNumbers.push(token.text);
+      continue;
+    }
+    for (const match of matches) refs.add(match.key);
+  }
+  return {
+    text: cleaned,
+    verified: unsupportedNumbers.length === 0,
+    evidenceRefs: [...refs].sort(),
+    unsupportedNumbers,
+  };
 }
 
 function validateClaim(
@@ -368,7 +418,14 @@ export function validateDeskAnalysis(
   const rejected: AiDeskRejection[] = [];
   const record = isRecord(raw) ? raw : {};
 
-  const summary = clip(cleanText(record.summary), AI_DESK_MAX_SUMMARY_CHARS);
+  // ADDITIVO: accetta anche la forma storica (`executiveSummary`) cosi' la
+  // risposta gia' ottenuta dall'endpoint puo' essere validata senza richiamare
+  // la LLM una seconda volta.
+  const summarySource = record.summary ?? record.executiveSummary;
+  const summaryCheck = verifyDeskSummary(
+    typeof summarySource === 'string' ? summarySource : '',
+    options.pack
+  );
 
   const claims: AiDeskClaim[] = [];
   const rawClaims = Array.isArray(record.claims) ? record.claims : [];
@@ -379,7 +436,14 @@ export function validateDeskAnalysis(
   }
 
   const proposedDirectives: AiDeskDirective[] = [];
-  const rawDirectives = Array.isArray(record.proposedDirectives) ? record.proposedDirectives : [];
+  // ADDITIVO: le direttive storiche (`newDirectives`) non hanno evidenceRefs,
+  // quindi vengono scartate con `no_ref` invece di essere presentate come
+  // validate. E' esattamente la distinzione che serve.
+  const rawDirectives = Array.isArray(record.proposedDirectives)
+    ? record.proposedDirectives
+    : Array.isArray(record.newDirectives)
+      ? record.newDirectives
+      : [];
   for (let position = 0; position < rawDirectives.length; position += 1) {
     if (proposedDirectives.length >= AI_DESK_MAX_DIRECTIVES) break;
     const directive = validateDirective(rawDirectives[position], position, index, predicateIds, rejected);
@@ -402,13 +466,17 @@ export function validateDeskAnalysis(
   return {
     contractVersion: AI_DESK_CONTRACT_VERSION,
     evidencePackVersion: AI_EVIDENCE_PACK_VERSION,
-    summary,
+    summary: summaryCheck.text,
+    summaryVerified: summaryCheck.verified,
+    summaryEvidenceRefs: summaryCheck.evidenceRefs,
+    summaryUnsupportedNumbers: summaryCheck.unsupportedNumbers,
     claims,
     proposedDirectives,
     dataGaps,
     rejected,
     evidenceKeysUsed: [...used].sort(),
     complete: rejected.length === 0,
+    verified: rejected.length === 0 && summaryCheck.verified,
   };
 }
 

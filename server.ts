@@ -86,7 +86,7 @@ import {
 } from './src/server/shadowFirestoreSync';
 import { registerShadowV1LiveViewRoute } from './src/server/shadowV1LiveView';
 import { logVetoOutcomes, VETO_LOG_RELATIVE_PATH } from './src/server/vetoOutcomeLog';
-import { buildDeskEvidencePack, runDeskAnalysis, type DeskEvidenceSources } from './src/server/aiDesk';
+import { analyzeDeskEvidence, type DeskEvidenceSources } from './src/server/aiDesk';
 import { isAiDeskEvidenceEnabled } from './src/config/aiDesk';
 import {
   DEFAULT_YAHOO_USER_AGENT,
@@ -2855,43 +2855,44 @@ app.get(['/api/ai/memory', '/api/ai-memory'], requireApiAuth, async (_req: Reque
 
 /**
  * ADDITIVO (PR-B): analisi AI desk ancorata al fascicolo probatorio.
- * Con `AI_DESK_EVIDENCE` spento restituisce `null` e la risposta resta identica.
- * Non lancia mai: un guasto produce `{ available: false }`.
+ *
+ * Riusa la risposta GIA ottenuta dall'endpoint: nessuna seconda chiamata LLM,
+ * nessuna attesa aggiuntiva sul pulsante. Con `AI_DESK_EVIDENCE` spento
+ * restituisce `null` e la risposta resta identica. Non lancia mai.
  */
-async function runDeskEvidenceAnalysis(sources: DeskEvidenceSources, question: string) {
+function buildDeskEvidenceAnalysis(sources: DeskEvidenceSources, response: unknown) {
   if (!isAiDeskEvidenceEnabled()) return null;
   try {
-    const pack = buildDeskEvidencePack(sources);
-    const run = await runDeskAnalysis({
-      pack,
+    const result = analyzeDeskEvidence({
+      sources,
+      response,
       predicateIds: LEARNING_PREDICATE_IDS,
-      callLlm: callScanBatchLlm,
-      question,
     });
-    if (!run.ok) {
-      console.warn(`[AI Desk Evidence] analisi non disponibile (${run.error}): ${run.detail}`);
-      return { available: false, error: run.error, packChars: run.packChars };
-    }
-    if (run.analysis.rejected.length > 0) {
+    if (result.analysis.rejected.length > 0) {
       console.warn(
-        `[AI Desk Evidence] ${run.analysis.rejected.length} affermazioni scartate: ` +
-          run.analysis.rejected.map((rejection) => rejection.code).join(', ')
+        `[AI Desk Evidence] ${result.analysis.rejected.length} affermazioni scartate: ` +
+          result.analysis.rejected.map((rejection) => rejection.code).join(', ')
+      );
+    }
+    if (!result.analysis.summaryVerified) {
+      console.warn(
+        `[AI Desk Evidence] sintesi non ancorata al fascicolo: ${result.analysis.summaryUnsupportedNumbers.join(', ')}`
       );
     }
     return {
       available: true,
-      contractVersion: run.analysis.contractVersion,
-      evidencePackVersion: run.analysis.evidencePackVersion,
-      analysis: run.analysis,
-      rejectedCount: run.analysis.rejected.length,
-      packChars: run.packChars,
-      promptChars: run.promptChars,
-      truncatedSections: run.truncatedSections,
+      contractVersion: result.analysis.contractVersion,
+      evidencePackVersion: result.analysis.evidencePackVersion,
+      analysis: result.analysis,
+      rejectedCount: result.analysis.rejected.length,
+      summaryVerified: result.analysis.summaryVerified,
+      evidenceKeys: result.evidenceKeys,
+      missingSections: result.missingSections,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`[AI Desk Evidence] errore interno: ${message}`);
-    return { available: false, error: 'internal_error', packChars: 0 };
+    return { available: false, error: 'internal_error' };
   }
 }
 
@@ -3229,9 +3230,9 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
     const reasonDetail = outcome.reasonDetail;
 
     // ADDITIVO (PR-B): analisi AI ancorata al fascicolo, dietro AI_DESK_EVIDENCE=1.
-    const deskAnalysisPayload = await runDeskEvidenceAnalysis(
+    const deskAnalysisPayload = buildDeskEvidenceAnalysis(
       { nowMs: Date.now(), trades, excluded, rootDir: process.cwd() },
-      'Valuta la qualita della selezione e delle direttive proposte.'
+      generated
     );
 
     return res.json({
@@ -3461,9 +3462,9 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
     });
 
     // ADDITIVO (PR-B): analisi AI ancorata al fascicolo, dietro AI_DESK_EVIDENCE=1.
-    const deskAnalysisPayload = await runDeskEvidenceAnalysis(
+    const deskAnalysisPayload = buildDeskEvidenceAnalysis(
       { nowMs: Date.now(), trades: sessionTrades, excluded: [], rootDir: process.cwd() },
-      `Redigi il post-mortem delle sessioni ${market} citando solo il fascicolo.`
+      generated
     );
 
     return res.json({

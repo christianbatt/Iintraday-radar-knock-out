@@ -256,6 +256,74 @@ describe('aiDeskContract — direttive', () => {
   });
 });
 
+describe('aiDeskContract — sintesi ancorata al fascicolo', () => {
+  it('una sintesi senza numeri misurati e verificata e non cita nulla', () => {
+    const result = parse({ summary: 'Il desk ha operato con disciplina.' });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.analysis.summaryVerified, true);
+    assert.deepEqual(result.analysis.summaryEvidenceRefs, []);
+    assert.equal(result.analysis.verified, true);
+  });
+
+  it('una sintesi con numeri del fascicolo e verificata e cita le chiavi', () => {
+    const result = parse({ summary: 'Win rate 52,38% con R medio 0.18R.' });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.analysis.summaryVerified, true);
+    assert.deepEqual(result.analysis.summaryEvidenceRefs, [
+      'shadowV1Live.meanR',
+      'shadowV1Live.winRatePct',
+    ]);
+    assert.deepEqual(result.analysis.summaryUnsupportedNumbers, []);
+  });
+
+  it('una sintesi con un numero inventato e marcata non verificata', () => {
+    const result = parse({ summary: 'Win rate 61,4% nel campione.' });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.analysis.summaryVerified, false);
+    assert.deepEqual(result.analysis.summaryUnsupportedNumbers, ['61,4%']);
+    assert.equal(result.analysis.verified, false);
+  });
+
+  it('un claim valido non basta se la sintesi non e ancorata', () => {
+    const result = parse({
+      summary: 'R medio 9,99R',
+      claims: [{ statement: 'R medio 0.18R', evidenceRefs: ['shadowV1Live.meanR'] }],
+    });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.analysis.claims.length, 1);
+    assert.equal(result.analysis.complete, true);
+    assert.equal(result.analysis.verified, false);
+  });
+});
+
+describe('aiDeskContract — riuso della risposta gia ottenuta', () => {
+  it('accetta la forma storica executiveSummary/newDirectives senza richiamare la LLM', () => {
+    const result = parse({
+      executiveSummary: 'Sintesi del Risk Officer: win rate 52,38%.',
+      strengths: ['x'],
+      failurePatterns: ['y'],
+      tacticalAdvice: 'z',
+      newDirectives: [
+        { topic: 'T', market: 'EU', predicateId: 'MARKET_EU', directive: 'd' },
+      ],
+    });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.analysis.summary, 'Sintesi del Risk Officer: win rate 52,38%.');
+    assert.equal(result.analysis.summaryVerified, true);
+    assert.equal(result.analysis.proposedDirectives.length, 0);
+    assert.deepEqual(
+      result.analysis.rejected.map((item) => item.code),
+      ['no_ref']
+    );
+    assert.equal(result.analysis.complete, false);
+  });
+});
+
 describe('aiDeskContract — dataGaps e input non validi', () => {
   it('limita i dataGaps a sei voci', () => {
     const result = parse({ dataGaps: Array.from({ length: 9 }, (_, index) => `gap ${index}`) });
