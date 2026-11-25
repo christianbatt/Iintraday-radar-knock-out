@@ -591,7 +591,7 @@ export function simulateVetoForward(
 
   if (triggerFilled && target1 != null && exitStatus === 'OPEN') {
     // After trigger fill, recalculate R using remaining path (only if no stop/target hit yet)
-    const afterTriggerBars = relevantBars.filter((b) => b.t > fillBarTs);
+    const afterTriggerBars = relevantBars.filter((b) => b.t > fillBarTs!);
     let rTrigger: number | null = null;
     for (const bar of afterTriggerBars) {
       if (direction === 1 ? bar.h >= target1 : bar.l <= target1) {
