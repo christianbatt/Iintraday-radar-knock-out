@@ -56,24 +56,12 @@ export function buildScanCandidatesPayload(
       score: typeof score?.total === 'number' && Number.isFinite(score.total) ? score.total : null,
       veto: typeof score?.veto === 'string' && score.veto.length > 0 ? score.veto : null,
     };
-    // ADDITIVO (gate nel log AI): copia solo se la sorgente li porta gia'; la
-    // forma del payload resta invariata quando i gate non sono disponibili.
-    // Un candidato con `decision: "TRADE"` non ha gate: il payload lo scrive
-    // come `nessuno`, mentre un gate sconosciuto resta assente (`n.d.` a valle).
-    const withGate = candidate as unknown as {
-      gate?: unknown;
-      gateReason?: unknown;
-      decision?: unknown;
-    };
-    const gate = typeof withGate.gate === 'string' ? withGate.gate : null;
-    const gateReason = typeof withGate.gateReason === 'string' ? withGate.gateReason : null;
-    if (withGate.decision === 'TRADE') {
-      row.gate = 'nessuno';
-      row.gateReason = 'nessuno';
-    } else {
-      if (gate !== null) row.gate = gate;
-      if (gateReason !== null) row.gateReason = gateReason;
-    }
+    // ADDITIVO (gate nel log AI): il ramo che copiava `gate`/`gateReason` e
+    // traduceva `decision: "TRADE"` in `nessuno` e' stato rimosso.
+    // `ScoredCandidate` (src/types/radar.ts:270-275) non espone nessuno dei tre
+    // campi e nessun chiamante li aggiunge: il ramo era irraggiungibile e
+    // richiedeva un cast `as unknown as`. I campi restano opzionali
+    // nell'interfaccia, cosi' la forma del payload non cambia.
     out.push(row);
   }
   return out;

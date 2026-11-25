@@ -10,6 +10,11 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type { RawQuoteData } from '../../types/radar';
+import { observeShadowV1LiveScan } from '../../server/shadowV1LiveScanner';
 import {
   applyScanGateDiagnostics,
   buildScanEvaluationPrompt,
@@ -40,6 +45,106 @@ function gateRows(count: number): { ticker: string; gate: string; reason: string
     const gate = GATES[i % GATES.length];
     return { ticker: `T${String(i).padStart(2, '0')}`, gate, reason: `Motivo ${gate}` };
   });
+}
+
+const D0 = Date.UTC(2026, 2, 16, 15, 0, 0);
+
+/**
+ * Citazione minima con indicatori in warmup: lo scanner produce una riga di
+ * diagnostica `WARMUP_INCOMPLETE` per ogni titolo, senza setup ne' near-miss.
+ */
+function makeWarmupQuote(ticker: string): RawQuoteData {
+  return {
+    ticker,
+    name: ticker,
+    market: 'US',
+    currency: 'USD',
+    currentPrice: 100.2,
+    prevClose: 99,
+    preMarketPrice: 100,
+    prevHigh: 99.8,
+    prevLow: 98.4,
+    preMarketHigh: 100.2,
+    preMarketLow: 99.4,
+    preMarketVolume: 250_000,
+    todayOpen: 100,
+    todayHigh: 100.6,
+    todayLow: 99.6,
+    atr14: 2.0,
+    adr14: 4.0,
+    avgVolume20d: 1_000_000,
+    liqEur20d: 80_000_000,
+    completedBarsCount: 20,
+    rvol: 2.2,
+    rvol20m: 2.0,
+    gapPercent: 1.01,
+    rsi14: 58,
+    rsi5m: 58,
+    orbHigh: 100.1,
+    orbLow: 99.5,
+    orbBreakoutTime: null,
+    orbBreakoutTimeLong: null,
+    orbBreakoutTimeShort: null,
+    vwapCumulative: 99.8,
+    lastBarTime: Math.floor((D0 - 2 * 60_000) / 1000),
+    marketTs: Math.floor((D0 - 60_000) / 1000),
+    timestamp: new Date(D0).toISOString(),
+    source: 'YAHOO',
+    vwapState: {
+      state: 'ABOVE',
+      vwapLevel: 99.8,
+      distAtr: 0.4,
+      slopeAtr: 0.1,
+      coverage: 1,
+      volumeRatio: 1.8,
+      flags: [],
+    },
+    orderFlow: {
+      buyerVolumePercent: 62,
+      sellerVolumePercent: 38,
+      netDeltaPercent: 24,
+      cvdTrend: 'EXPANDING_UP',
+      vpocPrice: 99.9,
+      isPriceAboveVpoc: true,
+      flowQuality: 'INSTITUTIONAL_BUYING',
+      summary: 'Flusso acquirente positivo',
+    },
+    setupIndicators: {
+      barsUsed: 0,
+      priorSessionsUsed: 0,
+      recentBars: [],
+      atr: { value: null, status: 'UNKNOWN', reason: 'INSUFFICIENT_BARS' },
+      supertrend: {
+        status: 'UNKNOWN',
+        reason: 'INSUFFICIENT_BARS',
+        direction: 0,
+        barsSinceFlip: null,
+        value: null,
+      },
+      adx: {
+        status: 'UNKNOWN',
+        reason: 'INSUFFICIENT_BARS',
+        value: null,
+        plusDI: null,
+        minusDI: null,
+      },
+      stochRsi: {
+        status: 'UNKNOWN',
+        reason: 'INSUFFICIENT_BARS',
+        k: null,
+        d: null,
+        lastCross: 'NONE',
+        barsSinceCross: null,
+      },
+      psar: {
+        status: 'UNKNOWN',
+        reason: 'INSUFFICIENT_BARS',
+        value: null,
+        direction: 0,
+        barsSinceFlip: null,
+      },
+    },
+  } as RawQuoteData;
 }
 
 function makeMockLlm(): (system: string, prompt: string) => Promise<string | null> {
@@ -239,6 +344,31 @@ describe('gate G1-G13 nel log AI', () => {
       'BLOCK1 | US | SHORT | score 20/100 | veto: nessuno | gate: G4 | motivo: Prezzo esteso'
     );
     resetLastScanCandidates();
+  });
+
+  it('3.1 — invariante della diagnostica: 11 chiavi, allCandidateDiags 40 non enumerabile', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-shadow-gate-invariante-'));
+    try {
+      const quotes: RawQuoteData[] = Array.from({ length: 40 }, (_, i) =>
+        makeWarmupQuote(`T${String(i).padStart(2, '0')}`)
+      );
+      const diagnostics = await observeShadowV1LiveScan(quotes, null, {
+        rootDir: dir,
+        nowMs: D0,
+        env: { SHADOW_V1_LIVE_COLLECT: '1' },
+        observe: async () => null,
+      });
+      assert.ok(diagnostics);
+      assert.equal(Object.keys(diagnostics).length, 11);
+      assert.equal(JSON.stringify(diagnostics).includes('allCandidateDiags'), false);
+      assert.equal(diagnostics.allCandidateDiags?.length, 40);
+      assert.equal(
+        Object.getOwnPropertyDescriptor(diagnostics, 'allCandidateDiags')?.enumerable,
+        false
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('C2 — formato di riga: a capo sanificati, valori assenti n.d.', () => {

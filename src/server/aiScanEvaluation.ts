@@ -181,6 +181,7 @@ export function resetLastScanCandidates(): void {
   lastScanRunId = null;
   pendingHandlerScanInput = null;
   scanGateByRunTicker = new Map();
+  scanGateRunIds = [];
   scanGateRunId = null;
 }
 
@@ -198,8 +199,16 @@ interface ScanGateEntry {
   decision: 'TRADE' | null;
 }
 let scanGateByRunTicker = new Map<string, ScanGateEntry>();
+/**
+ * ADDITIVO (tetto runId): runId tracciati nella mappa, in ordine di inserimento
+ * (il piu' vecchio per primo). Il tetto e' di due runId: corrente e precedente.
+ */
+let scanGateRunIds: string[] = [];
 /** ADDITIVO (gate nel log AI): runId a cui appartiene la diagnostica registrata. */
 let scanGateRunId: string | null = null;
+
+/** ADDITIVO (tetto runId): runId conservati nella mappa dei gate. */
+export const SCAN_GATE_MAX_RUNS = 2;
 
 /** ADDITIVO (provenienza dei gate): runId valido, oppure `null`. */
 function normalizeRunId(value: unknown): string | null {
@@ -211,6 +220,19 @@ function normalizeRunId(value: unknown): string | null {
 /** ADDITIVO (provenienza dei gate): chiave unica per una coppia runId/ticker. */
 function scanGateKey(runId: string, ticker: string): string {
   return `${runId}:${ticker}`;
+}
+
+/**
+ * ADDITIVO (tetto runId): elimina tutte le chiavi di un runId. Il prefisso usato
+ * per l'eliminazione e' esattamente `scanGateKey(runId, '')`, quindi non tocca
+ * le chiavi di altri runId a meno che un runId non sia prefisso di un altro
+ * (impossibile: il runId e' un UUID, senza `:` ne' `/`).
+ */
+function dropScanGateRun(runId: string): void {
+  const prefix = scanGateKey(runId, '');
+  for (const key of Array.from(scanGateByRunTicker.keys())) {
+    if (key.startsWith(prefix)) scanGateByRunTicker.delete(key);
+  }
 }
 
 /** ADDITIVO (gate nel log AI): stringa di una riga, senza a capo, o `null`. */
@@ -235,6 +257,12 @@ export interface ScanGateDiagnosticRow {
  * lancia mai. Se `rows` non e' un array (lettura non disponibile) o il runId
  * manca, la mappa resta invariata: nessun dato vecchio viene riusato su un
  * altro run, perche' la chiave contiene il runId.
+ *
+ * ADDITIVO (tetto runId): la mappa conserva al massimo `SCAN_GATE_MAX_RUNS`
+ * runId (corrente e precedente). Le righe di un runId gia' tracciato vengono
+ * sostituite; all'inserimento di un runId nuovo, se i runId tracciati superano
+ * il tetto, vengono eliminate tutte le chiavi del piu' vecchio. Nessun timer,
+ * nessuna scadenza temporale, nessun azzeramento totale.
  */
 export function setScanGateDiagnostics(
   runId: string | null | undefined,
@@ -243,8 +271,12 @@ export function setScanGateDiagnostics(
   const normalizedRunId = normalizeRunId(runId);
   if (normalizedRunId === null) return;
   if (!Array.isArray(rows)) return;
-  const next = new Map<string, ScanGateEntry>();
+  const next = new Map<string, ScanGateEntry>(scanGateByRunTicker);
   try {
+    const currentPrefix = scanGateKey(normalizedRunId, '');
+    for (const key of Array.from(next.keys())) {
+      if (key.startsWith(currentPrefix)) next.delete(key);
+    }
     for (const row of rows) {
       if (!row || typeof row !== 'object') continue;
       const ticker = typeof row.ticker === 'string' ? row.ticker.trim() : '';
@@ -260,6 +292,13 @@ export function setScanGateDiagnostics(
     return;
   }
   scanGateByRunTicker = next;
+  const runIds = scanGateRunIds.filter((id) => id !== normalizedRunId);
+  runIds.push(normalizedRunId);
+  while (runIds.length > SCAN_GATE_MAX_RUNS) {
+    const oldest = runIds.shift();
+    if (oldest !== undefined) dropScanGateRun(oldest);
+  }
+  scanGateRunIds = runIds;
   scanGateRunId = normalizedRunId;
 }
 
