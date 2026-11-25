@@ -2488,6 +2488,10 @@ async function executeMarketDataScan(
           typeof quote?.gapPercent === 'number' ? (quote.gapPercent >= 0 ? 'LONG' : 'SHORT') : null,
         scoreTotal: typeof score?.total === 'number' ? score.total : null,
         veto: typeof score?.veto === 'string' ? score.veto : null,
+        // ADDITIVO (provenienza dei gate): la diagnostica Shadow V1 e'
+        // indicizzata per `runId:ticker`; senza il runId della scansione i gate
+        // non vengono applicati.
+        runId: scanRunId,
       }))
     );
     if (process.env.DEBUG_SCAN_LOGS === 'true') {
@@ -2620,7 +2624,7 @@ async function executeMarketDataScan(
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`[Shadow V1 Live Scanner] diagnostica gate non disponibile: ${message}`);
   }
-  applyScanGateDiagnostics(() => shadowV1ScanDiag?.allCandidateDiags ?? null);
+  applyScanGateDiagnostics(scanRunId, () => shadowV1ScanDiag?.allCandidateDiags ?? null);
   const scanCompletedAt = Date.now();
   const scannedMarkets = new Set<'EU' | 'US'>();
   for (const item of underlyings) {

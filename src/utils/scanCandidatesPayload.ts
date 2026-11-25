@@ -58,11 +58,22 @@ export function buildScanCandidatesPayload(
     };
     // ADDITIVO (gate nel log AI): copia solo se la sorgente li porta gia'; la
     // forma del payload resta invariata quando i gate non sono disponibili.
-    const withGate = candidate as unknown as { gate?: unknown; gateReason?: unknown };
+    // Un candidato con `decision: "TRADE"` non ha gate: il payload lo scrive
+    // come `nessuno`, mentre un gate sconosciuto resta assente (`n.d.` a valle).
+    const withGate = candidate as unknown as {
+      gate?: unknown;
+      gateReason?: unknown;
+      decision?: unknown;
+    };
     const gate = typeof withGate.gate === 'string' ? withGate.gate : null;
     const gateReason = typeof withGate.gateReason === 'string' ? withGate.gateReason : null;
-    if (gate !== null) row.gate = gate;
-    if (gateReason !== null) row.gateReason = gateReason;
+    if (withGate.decision === 'TRADE') {
+      row.gate = 'nessuno';
+      row.gateReason = 'nessuno';
+    } else {
+      if (gate !== null) row.gate = gate;
+      if (gateReason !== null) row.gateReason = gateReason;
+    }
     out.push(row);
   }
   return out;

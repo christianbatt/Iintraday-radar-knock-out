@@ -2,9 +2,10 @@
  * ADDITIVO (gate nel log AI): test dell'aggancio gate G1-G13 / motivo.
  *
  * Verifica che i gate gia' calcolati dalla diagnostica Shadow V1 arrivino nelle
- * righe `CANDIDATI_SCANSIONE` e che le voci del log AI siano scritte anche
- * quando quella diagnostica manca o la lettura lancia. Nessun test esistente
- * viene modificato: questo file aggiunge solo casi nuovi.
+ * righe `CANDIDATI_SCANSIONE` solo per la scansione che li ha prodotti
+ * (chiave `runId:ticker`) e che le voci del log AI siano scritte anche quando
+ * quella diagnostica manca o la lettura lancia. Nessun test esistente viene
+ * modificato: questo file aggiunge solo casi nuovi.
  */
 
 import { describe, it } from 'node:test';
@@ -18,6 +19,7 @@ import {
   resetLastScanCandidates,
   resolveScanCandidateInput,
   setLastScanCandidates,
+  setLastScanRunId,
   type ScanCandidateSnapshot,
 } from '../../server/aiScanEvaluation';
 
@@ -61,7 +63,8 @@ describe('gate G1-G13 nel log AI', () => {
   it('E1 — 40 candidati con gate e motivo: 40 righe con gate/motivo reali e 40 voci evaluated', async () => {
     resetLastScanCandidates();
     setLastScanCandidates(snapshot(40));
-    applyScanGateDiagnostics(() => gateRows(40));
+    setLastScanRunId('run-gates');
+    applyScanGateDiagnostics('run-gates', () => gateRows(40));
 
     const resolved = resolveScanCandidateInput(undefined, undefined);
     assert.equal(resolved.candidateSource, 'snapshot');
@@ -91,7 +94,8 @@ describe('gate G1-G13 nel log AI', () => {
   it('E2 — gate assente per 5 candidati: 5 righe gate/motivo n.d., 35 con gate, 40 voci scritte', async () => {
     resetLastScanCandidates();
     setLastScanCandidates(snapshot(40));
-    applyScanGateDiagnostics(() => gateRows(35));
+    setLastScanRunId('run-gates-partial');
+    applyScanGateDiagnostics('run-gates-partial', () => gateRows(35));
 
     const resolved = resolveScanCandidateInput(undefined, undefined);
     const lines = promptLines(buildScanEvaluationPrompt(resolved.candidates));
@@ -119,8 +123,9 @@ describe('gate G1-G13 nel log AI', () => {
   it('E3 — lettura della diagnostica che lancia: 40 voci scritte, gate null, nessuna eccezione', async () => {
     resetLastScanCandidates();
     setLastScanCandidates(snapshot(40));
+    setLastScanRunId('run-gates-missing');
     assert.doesNotThrow(() =>
-      applyScanGateDiagnostics(() => {
+      applyScanGateDiagnostics('run-gates-missing', () => {
         throw new Error('shadow v1 ko');
       })
     );
@@ -142,6 +147,97 @@ describe('gate G1-G13 nel log AI', () => {
     });
     assert.equal(result.entries.length, 40);
     assert.equal(result.evaluated, 40);
+    resetLastScanCandidates();
+  });
+
+  it('4.1 — scansione N+1 con scanner null: 40 voci gate null, nessun gate della scansione N', async () => {
+    resetLastScanCandidates();
+    setLastScanCandidates(snapshot(40));
+    setLastScanRunId('run-N');
+    applyScanGateDiagnostics('run-N', () => gateRows(40));
+    assert.equal(getLastScanCandidates().length, 40);
+
+    // Scansione N+1: lo scanner restituisce `null` (uscita anomala prevista).
+    applyScanGateDiagnostics('run-N+1', () => null);
+    setLastScanCandidates(snapshot(40).map((candidate) => ({ ...candidate, runId: 'run-N+1' })));
+    setLastScanRunId('run-N+1');
+
+    const resolved = resolveScanCandidateInput(undefined, undefined);
+    assert.equal(resolved.runId, 'run-N+1');
+    assert.equal(resolved.candidates.length, 40);
+    assert.ok(
+      resolved.candidates.every(
+        (candidate) => candidate.gate === null && candidate.gateReason === null
+      )
+    );
+    const lines = promptLines(buildScanEvaluationPrompt(resolved.candidates));
+    assert.equal(lines.length, 40);
+    for (const line of lines) {
+      assert.match(line, /gate: n\.d\./);
+      assert.match(line, /motivo: n\.d\./);
+    }
+    // ASSERZIONE 4.1: nessuna riga di N+1 riporta un gate G1-G13 della scansione N.
+    assert.equal(lines.filter((line) => /gate: G\d+/.test(line)).length, 0);
+    assert.equal(lines.filter((line) => /motivo: Motivo G\d+/.test(line)).length, 0);
+
+    const result = await evaluateScanCandidates(resolved.candidates, 'specialize', makeMockLlm(), 10, {
+      runId: 'run-N+1',
+    });
+    assert.equal(result.entries.length, 40);
+    assert.equal(result.evaluated, 40);
+    resetLastScanCandidates();
+  });
+
+  it('4.2 — body con runId diverso da quello della mappa: nessun gate applicato (n.d.)', () => {
+    resetLastScanCandidates();
+    applyScanGateDiagnostics('run-N', () => gateRows(40));
+
+    const body = snapshot(2).map((candidate) => ({
+      ticker: candidate.ticker,
+      market: candidate.market,
+      direction: candidate.direction,
+      score: candidate.scoreTotal,
+      veto: null,
+    }));
+    const resolved = resolveScanCandidateInput(body, 'run-OTHER');
+    assert.equal(resolved.candidateSource, 'body');
+    assert.equal(resolved.runId, 'run-OTHER');
+    assert.ok(
+      resolved.candidates.every(
+        (candidate) =>
+          candidate.gate === null && candidate.gateReason === null && candidate.decision === null
+      )
+    );
+    const lines = resolved.candidates.map(formatScanCandidateLine);
+    assert.deepEqual(lines, [
+      'T00 | EU | LONG | score 50/100 | veto: nessuno | gate: n.d. | motivo: n.d.',
+      'T01 | US | LONG | score 51/100 | veto: nessuno | gate: n.d. | motivo: n.d.',
+    ]);
+    resetLastScanCandidates();
+  });
+
+  it('4.3 — candidato TRADE con gate null in diagnostica: gate nessuno, non n.d.', () => {
+    resetLastScanCandidates();
+    applyScanGateDiagnostics('run-T', () => [
+      { ticker: 'TRADE1', gate: null, reason: null, decision: 'TRADE' },
+      { ticker: 'BLOCK1', gate: 'G4', reason: 'Prezzo esteso', decision: 'BLOCKED' },
+    ]);
+    const resolved = resolveScanCandidateInput(
+      [
+        { ticker: 'TRADE1', market: 'EU', direction: 'LONG', score: 80, veto: null },
+        { ticker: 'BLOCK1', market: 'US', direction: 'SHORT', score: 20, veto: null },
+      ],
+      'run-T'
+    );
+    const lines = resolved.candidates.map(formatScanCandidateLine);
+    assert.equal(
+      lines[0],
+      'TRADE1 | EU | LONG | score 80/100 | veto: nessuno | gate: nessuno | motivo: nessuno'
+    );
+    assert.equal(
+      lines[1],
+      'BLOCK1 | US | SHORT | score 20/100 | veto: nessuno | gate: G4 | motivo: Prezzo esteso'
+    );
     resetLastScanCandidates();
   });
 
