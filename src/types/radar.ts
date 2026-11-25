@@ -273,6 +273,7 @@ export interface ScoredCandidate {
   rank: number;
   knockOutGuard?: KnockOutBarrierGuard;
   kellySize: number; // Dimensioni posizione frazionaria Kelly (0 = nessuna raccomandazione)
+}
 
 export interface NewsItem {
   id: string;
