@@ -16,6 +16,14 @@ export interface ScanCandidatePayload {
   direction: 'LONG' | 'SHORT' | null;
   score: number | null;
   veto: string | null;
+  /**
+   * ADDITIVO (gate nel log AI): gate G1-G13, presente solo se la sorgente lo
+   * espone gia'. Il client non calcola i gate, quindi il campo resta assente e
+   * il server lo riempie dalla propria diagnostica Shadow V1, per ticker.
+   */
+  gate?: string | null;
+  /** ADDITIVO (gate nel log AI): motivo del gate, stesse regole di `gate`. */
+  gateReason?: string | null;
 }
 
 /**
@@ -33,7 +41,7 @@ export function buildScanCandidatesPayload(
     const score = candidate.score;
     const ticker = typeof quote?.ticker === 'string' ? quote.ticker.trim() : '';
     if (ticker.length === 0) continue;
-    out.push({
+    const row: ScanCandidatePayload = {
       ticker,
       market:
         quote?.market === 'US' || quote?.market === 'EU'
@@ -47,7 +55,15 @@ export function buildScanCandidatesPayload(
           : null,
       score: typeof score?.total === 'number' && Number.isFinite(score.total) ? score.total : null,
       veto: typeof score?.veto === 'string' && score.veto.length > 0 ? score.veto : null,
-    });
+    };
+    // ADDITIVO (gate nel log AI): copia solo se la sorgente li porta gia'; la
+    // forma del payload resta invariata quando i gate non sono disponibili.
+    const withGate = candidate as unknown as { gate?: unknown; gateReason?: unknown };
+    const gate = typeof withGate.gate === 'string' ? withGate.gate : null;
+    const gateReason = typeof withGate.gateReason === 'string' ? withGate.gateReason : null;
+    if (gate !== null) row.gate = gate;
+    if (gateReason !== null) row.gateReason = gateReason;
+    out.push(row);
   }
   return out;
 }

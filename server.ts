@@ -61,6 +61,7 @@ import {
   beginScanRun,
   type ScanRunIdHandle,
   buildNoCandidateEntry,
+  applyScanGateDiagnostics,
   AI_SHADOW_BATCH_SIZE,
 } from './src/server/aiScanEvaluation';
 
@@ -2607,7 +2608,19 @@ async function executeMarketDataScan(
   // Shadow V2 & V1-live paralleli lato server (zero impatto live).
   // Il flush di bars.json sta nel finally che copre il loop, cosi' gira anche se il batch fallisce.
   observeShadowV2Scan(results);
-  await observeShadowV1LiveScan(results, futuresScan);
+  // ADDITIVO (gate nel log AI): la diagnostica Shadow V1 espone l'elenco
+  // per-candidato con gate G1-G13 e motivo. Se lo scanner lancia o e'
+  // disabilitato (valore `null`), i gate restano assenti (`gate: null`,
+  // `gateReason: null`) e le voci del log AI vengono scritte comunque: il log
+  // non dipende da Shadow V1 e la scansione non si interrompe.
+  let shadowV1ScanDiag: Awaited<ReturnType<typeof observeShadowV1LiveScan>> = null;
+  try {
+    shadowV1ScanDiag = await observeShadowV1LiveScan(results, futuresScan);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[Shadow V1 Live Scanner] diagnostica gate non disponibile: ${message}`);
+  }
+  applyScanGateDiagnostics(() => shadowV1ScanDiag?.allCandidateDiags ?? null);
   const scanCompletedAt = Date.now();
   const scannedMarkets = new Set<'EU' | 'US'>();
   for (const item of underlyings) {

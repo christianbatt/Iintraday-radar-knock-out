@@ -23,6 +23,14 @@ export interface ScanCandidateSnapshot {
   scoreTotal: number | null;
   /** Primo veto gia' calcolato dalla scansione, se presente. */
   veto: string | null;
+  /**
+   * ADDITIVO (gate nel log AI): gate G1-G13 che ha bloccato il candidato, letto
+   * dalla diagnostica Shadow V1 gia' calcolata (`observeShadowV1LiveScan`).
+   * Mai ricalcolato qui; `null` quando la diagnostica non e' disponibile.
+   */
+  gate?: string | null;
+  /** ADDITIVO (gate nel log AI): motivo testuale del gate, come prodotto dallo scanner. */
+  gateReason?: string | null;
 }
 
 export interface ScanEvaluation {
@@ -129,7 +137,9 @@ export function setLastScanCandidates(candidates: ReadonlyArray<ScanCandidateSna
     const scoreTotal =
       typeof raw.scoreTotal === 'number' && Number.isFinite(raw.scoreTotal) ? raw.scoreTotal : null;
     const veto = typeof raw.veto === 'string' && raw.veto.length > 0 ? raw.veto : null;
-    normalized.push({ ticker, market, direction, scoreTotal, veto });
+    const gate = normalizeGateText(raw.gate);
+    const gateReason = normalizeGateText(raw.gateReason);
+    normalized.push({ ticker, market, direction, scoreTotal, veto, gate, gateReason });
     if (normalized.length >= AI_SHADOW_MAX_SCAN_CANDIDATES) break;
   }
   lastScanCandidates = normalized;
@@ -145,6 +155,97 @@ export function resetLastScanCandidates(): void {
   lastScanCandidates = [];
   lastScanRunId = null;
   pendingHandlerScanInput = null;
+  scanGateByTicker = new Map();
+}
+
+/**
+ * ADDITIVO (gate nel log AI): ultima diagnostica per-candidato di Shadow V1,
+ * indicizzata per ticker. Sola lettura: nessun gate viene calcolato qui e
+ * nessuna selezione la consulta.
+ */
+let scanGateByTicker = new Map<string, { gate: string | null; gateReason: string | null }>();
+
+/** ADDITIVO (gate nel log AI): stringa di una riga, senza a capo, o `null`. */
+function normalizeGateText(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const cleaned = value.replace(/[\r\n\t]+/g, ' ').trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+/** Riga della diagnostica Shadow V1 accettata dall'aggancio dei gate. */
+export interface ScanGateDiagnosticRow {
+  ticker?: unknown;
+  gate?: unknown;
+  reason?: unknown;
+  gateReason?: unknown;
+}
+
+/**
+ * ADDITIVO (gate nel log AI): registra gate e motivo per ticker. Non lancia mai:
+ * un input non valido lascia la mappa invariata.
+ */
+export function setScanGateDiagnostics(
+  rows: ReadonlyArray<ScanGateDiagnosticRow> | null | undefined
+): void {
+  const next = new Map<string, { gate: string | null; gateReason: string | null }>();
+  try {
+    if (Array.isArray(rows)) {
+      for (const row of rows) {
+        if (!row || typeof row !== 'object') continue;
+        const ticker = typeof row.ticker === 'string' ? row.ticker.trim() : '';
+        if (ticker.length === 0) continue;
+        const gate = normalizeGateText(row.gate);
+        const gateReason = normalizeGateText(row.gateReason ?? row.reason);
+        if (gate === null && gateReason === null) continue;
+        if (!next.has(ticker)) next.set(ticker, { gate, gateReason });
+      }
+    }
+  } catch {
+    return;
+  }
+  scanGateByTicker = next;
+}
+
+/**
+ * ADDITIVO (gate nel log AI): legge la diagnostica dalla sorgente fornita e la
+ * registra. Non lancia mai: se la lettura fallisce (Shadow V1 disabilitato,
+ * assente o in errore) la mappa resta invariata e le voci del log AI vengono
+ * scritte comunque, con gate e motivo assenti.
+ */
+export function applyScanGateDiagnostics(
+  read: () => ReadonlyArray<ScanGateDiagnosticRow> | null | undefined
+): void {
+  let rows: ReadonlyArray<ScanGateDiagnosticRow> | null | undefined;
+  try {
+    rows = read();
+  } catch {
+    return;
+  }
+  setScanGateDiagnostics(rows);
+}
+
+/** Gate noto per un ticker, in sola lettura. */
+export function getScanGateForTicker(ticker: string): {
+  gate: string | null;
+  gateReason: string | null;
+} {
+  const known = scanGateByTicker.get(ticker);
+  return known ? { ...known } : { gate: null, gateReason: null };
+}
+
+/**
+ * ADDITIVO (gate nel log AI): aggiunge gate e motivo noti al candidato. Il
+ * campo gia' presente sul candidato ha la precedenza; senza informazioni il
+ * candidato resta intatto.
+ */
+function withScanGate(candidate: ScanCandidateSnapshot): ScanCandidateSnapshot {
+  const known = scanGateByTicker.get(candidate.ticker);
+  if (!known) return candidate;
+  return {
+    ...candidate,
+    gate: normalizeGateText(candidate.gate) ?? known.gate,
+    gateReason: normalizeGateText(candidate.gateReason) ?? known.gateReason,
+  };
 }
 
 /**
@@ -165,7 +266,14 @@ export function normalizeScanCandidatesPayload(raw: unknown): ScanCandidateSnaps
     const scoreTotal =
       typeof rawScore === 'number' && Number.isFinite(rawScore) ? rawScore : null;
     const veto = typeof row.veto === 'string' && row.veto.length > 0 ? row.veto : null;
-    normalized.push({ ticker, market, direction, scoreTotal, veto });
+    // ADDITIVO (gate nel log AI): i campi restano assenti quando il body non li
+    // porta, cosi' la forma delle voci esistenti non cambia.
+    const gate = normalizeGateText(row.gate);
+    const gateReason = normalizeGateText(row.gateReason);
+    const candidate: ScanCandidateSnapshot = { ticker, market, direction, scoreTotal, veto };
+    if (gate !== null) candidate.gate = gate;
+    if (gateReason !== null) candidate.gateReason = gateReason;
+    normalized.push(candidate);
     if (normalized.length >= AI_SHADOW_MAX_SCAN_CANDIDATES) break;
   }
   return normalized;
@@ -226,7 +334,7 @@ export function resolveScanCandidateInput(
   const fromBody = normalizeScanCandidatesPayload(bodyScanCandidates);
   if (fromBody.length > 0) {
     return {
-      candidates: fromBody,
+      candidates: fromBody.map(withScanGate),
       candidateSource: 'body',
       runId:
         typeof bodyScanRunId === 'string' && bodyScanRunId.length > 0
@@ -236,24 +344,38 @@ export function resolveScanCandidateInput(
   }
   const snapshot = getLastScanCandidates();
   if (snapshot.length > 0) {
-    return { candidates: snapshot, candidateSource: 'snapshot', runId: getLastScanRunId() };
+    return {
+      candidates: snapshot.map(withScanGate),
+      candidateSource: 'snapshot',
+      runId: getLastScanRunId(),
+    };
   }
   return { candidates: [], candidateSource: 'none', runId: null };
 }
 
 /**
  * Una riga compatta per candidato:
- * `ticker | mercato | direzione | esito gates (sintesi) | motivo di veto`.
- * I campi sono quelli gia' calcolati dalla scansione.
+ * `ticker | mercato | direzione | score N/100 | veto: <veto di scoring> |
+ * gate: <G1-G13> | motivo: <motivo del gate>`.
+ * Tutti i campi sono quelli gia' calcolati altrove (scoring e diagnostica Shadow
+ * V1): qui non si ricalcola nulla. Valore assente => `n.d.`.
+ *
+ * NOTA: gate e motivo stanno DOPO il veto, non fra score e veto come nella
+ * specifica, perche' `ai_shadow_log_coverage.test.ts:306-307` verifica il
+ * prefisso esatto `<ticker> | <mercato> | <direzione> | score N/100 | veto: X`
+ * e i test esistenti non vanno modificati.
  */
 export function formatScanCandidateLine(candidate: ScanCandidateSnapshot): string {
   const market =
     candidate.market === 'US' || candidate.market === 'EU' ? candidate.market : 'GLOBAL';
-  const direction = candidate.direction ?? 'n.d.';
+  const ticker = normalizeGateText(candidate.ticker) ?? 'n.d.';
+  const direction = normalizeGateText(candidate.direction) ?? 'n.d.';
   const score =
     typeof candidate.scoreTotal === 'number' ? `score ${candidate.scoreTotal}/100` : 'score n.d.';
-  const veto = candidate.veto && candidate.veto.length > 0 ? candidate.veto : 'nessuno';
-  return `${candidate.ticker} | ${market} | ${direction} | ${score} | veto: ${veto}`;
+  const veto = normalizeGateText(candidate.veto) ?? 'nessuno';
+  const gate = normalizeGateText(candidate.gate) ?? 'n.d.';
+  const gateReason = normalizeGateText(candidate.gateReason) ?? 'n.d.';
+  return `${ticker} | ${market} | ${direction} | ${score} | veto: ${veto} | gate: ${gate} | motivo: ${gateReason}`;
 }
 
 /** Sezione `CANDIDATI_SCANSIONE` completa (titolo + una riga per candidato). */

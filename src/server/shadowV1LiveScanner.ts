@@ -81,6 +81,13 @@ export interface ShadowV1LiveScanDiagnostics {
   topUS: string | null;
   gateCounts: ShadowV1LiveGateCount[];
   sampleCandidates: ShadowV1LiveCandidateDiag[];
+  /**
+   * ADDITIVO (gate nel log AI): elenco per-candidato COMPLETO gia' calcolato in
+   * questa scansione (un elemento per ogni titolo valutato, non il campione di
+   * `sampleCandidates`). Proprieta' non enumerabile, quindi assente dal JSON
+   * scritto su disco: `scan_diagnostics.json` resta identico.
+   */
+  allCandidateDiags?: ShadowV1LiveCandidateDiag[];
 }
 
 export interface ShadowV1LiveScanOptions {
@@ -371,6 +378,17 @@ export async function observeShadowV1LiveScan(
       gateCounts,
       sampleCandidates: prioritized,
     };
+
+    // ADDITIVO (gate nel log AI): espone l'intero elenco per-candidato gia'
+    // calcolato sopra (gate e motivo inclusi), senza toccare conteggi, soglie,
+    // ordine di valutazione o campione. Non enumerabile: `JSON.stringify` lo
+    // ignora, quindi `writeDiagnosticsAtomic` produce lo stesso file.
+    Object.defineProperty(diagnostics, 'allCandidateDiags', {
+      value: candidateDiags.map((diag) => ({ ...diag })),
+      enumerable: false,
+      writable: false,
+      configurable: true,
+    });
 
     const diagnosticsPath = path.join(rootDir, SHADOW_V1_LIVE_DIAGNOSTICS_PATH);
     // Fuori orario di borsa (notte/weekend/festivi), evita di sovrascrivere la
