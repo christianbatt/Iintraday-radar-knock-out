@@ -39,7 +39,6 @@ import {
   SetupVetoReason,
 } from '../types/radar';
 import { TRADING_PARAMS, adxThresholds, vwapMaxStaleMin, vwapMaxZeroVolumeBars } from '../config/tradingParams';
-import { fractionalKelly } from '../shadowAlgorithms'; // Kelly position sizing
 
 export { adxThresholds };
 import { getMarketTime, getExchangeDateStr } from './timezone';
@@ -1185,24 +1184,9 @@ export function calculateRsiFromPrices(closes: number[], period: number = 14): n
   // IPOTESI (AUDIT P1-9) - CONFERMATA dall'utente: serie piatta -> RSI neutro 50
   // (prima 100 = ipercomprato artificiale, faceva scattare RSI_EXTREME senza movimento).
   if (avgGain === 0 && avgLoss === 0) return 50;
+  if (avgLoss === 0) return 100;
   const rs = avgGain / avgLoss;
-
   return +(100 - 100 / (1 + rs)).toFixed(1);
-}
-
-/**
- * Stima RVOL quando il dato non è disponibile dal feed,
- * basandosi sul volume assoluto rispetto alla media 5m.
- * Se volume barra >= 1.5x media 5m -> RVOL stimato 1.5x, altrimenti 1.0x neutro.
- * Usato da isCandidateCompliantWithParameters come fallback.
- */
-export function estimateRvolFromVolume(quote: RawQuoteData): number {
-  const typicalVolume = quote.lastBarVolume ?? 0;
-  const avg5mVolume = quote.avg5mVolume ?? 0;
-  if (avg5mVolume > 0 && typicalVolume >= avg5mVolume * 1.5) {
-    return 1.5;
-  }
-  return 1.0; // RVOL neutro quando dato assente o volume basso
 }
 
 export function isCandidateCompliantWithParameters(
