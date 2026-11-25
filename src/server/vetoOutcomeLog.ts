@@ -295,8 +295,10 @@ export function foldVetoLog(content: string): VetoFold {
         fold.set(parsed.id, { decision: entry.decision, latest: updatedState });
       } else {
         // First see an update without a decide - create entry from state
+        const record = parseDecision(parsed);
+        if (!record) continue;
         const state = parseState(parsed.state);
-        fold.set(parsed.id, { decision: { type: 'decide', id: parsed.id }, latest: state });
+        fold.set(parsed.id, { decision: record, latest: state });
       }
     }
   }
@@ -323,7 +325,7 @@ export function readVetoState(statePath: string): Record<string, VetoState> {
  *  and compacts terminal records out of the main log file.
  *  Returns { fold, added, removed }.
  */
-export function logVetoOutcomes(args: { nowMs: number; scored: any[]; logPath: string }): { fold: VetoFold; added: number; removed: string[] } {
+export function logVetoOutcomes(args: { nowMs: number; scored: any[]; logPath: string; market: 'EU' | 'US' }): { fold: VetoFold; added: number; removed: string[] } {
   // Ensure log file exists
   if (!fs.existsSync(args.logPath)) {
     fs.writeFileSync(args.logPath, '');
@@ -398,6 +400,7 @@ export function mergeVetoState(previous: VetoState, next: VetoState): VetoState 
     exitPrice: next.exitPrice ?? previous.exitPrice,
     marks,
     mfeR: next.mfeR ?? previous.mfeR,
+    updatedAtMs: next.updatedAtMs ?? previous.updatedAtMs,
     maeR: next.maeR ?? previous.maeR,
     barsSeen: Math.max(previous.barsSeen, next.barsSeen),
   };
@@ -464,7 +467,7 @@ export function simulateVetoForward(
   };
 
   // If no levels, state is NO_LEVELS
-  if (entry == null || stop == null || markerPrice == null) {
+  if (entry == null || stop == null || markerPrice == null || target1 == null) {
     return { ...state, status: 'NO_LEVELS' };
   }
 
