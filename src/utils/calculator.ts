@@ -38,7 +38,8 @@ import {
   SetupIndicators,
   SetupVetoReason,
 } from '../types/radar';
-import { TRADING_PARAMS, adxThresholds, vwapMaxStaleMin, vwapMaxZeroVolumeBars } from '../config/tradingParams';
+import { TRADING_PARAMS, adxThresholds, vwapMaxStaleMin, vwapMaxZeroVolumeBars } from '../config/tradingParams';import { fractionalKelly } from '../shadowAlgorithms'; // Kelly position sizing
+
 
 export { adxThresholds };
 import { getMarketTime, getExchangeDateStr } from './timezone';
@@ -827,20 +828,20 @@ export function calculateCandidateScore(
     details.push(
       `Futures indice neutrali (|chg| <= ${P.FUT_NEUTRAL_BAND}% | ${benchmarkFuturesChangePercent.toFixed(2)}%)`
     );
+  } else if (Math.abs(benchmarkFuturesChangePercent) <= 0.30 + eps) {
+    // Moderato: leggero allineamento/disallineamento
+    const isAligned = (benchmarkFuturesChangePercent > 0) === isCandidateLong;
+    futuresLegacy = isAligned ? P.FUT_SCORE_ALIGNED : P.FUT_SCORE_DIVERGENT - 4;
+    details.push(
+      `Futures moderato (|chg| <= 30% | ${benchmarkFuturesChangePercent.toFixed(2)}%)` + (isAligned ? ' allineato' : ' leggero disallineamento')
+    );
   } else {
-    const isFuturesGreen = benchmarkFuturesChangePercent > P.FUT_NEUTRAL_BAND;
-    const isFuturesRed = benchmarkFuturesChangePercent < -P.FUT_NEUTRAL_BAND;
-    if ((isCandidateLong && isFuturesGreen) || (!isCandidateLong && isFuturesRed)) {
-      futuresLegacy = P.FUT_SCORE_ALIGNED;
-      details.push(
-        `Allineamento totale titolo/futures indice (${benchmarkFuturesChangePercent > 0 ? '+' : ''}${benchmarkFuturesChangePercent.toFixed(2)}%)`
-      );
-    } else {
-      futuresLegacy = P.FUT_SCORE_DIVERGENT;
-      details.push(
-        `Divergenza con futures indice (${benchmarkFuturesChangePercent > 0 ? '+' : ''}${benchmarkFuturesChangePercent.toFixed(2)}%)`
-      );
-    }
+    // Forte: allineamento o disallineamento deciso
+    const isAligned = (benchmarkFuturesChangePercent > P.FUT_NEUTRAL_BAND) === isCandidateLong;
+    futuresLegacy = isAligned ? P.FUT_SCORE_ALIGNED + 4 : P.FUT_SCORE_DIVERGENT + 4;
+    details.push(
+      `Futures forte (|chg| > 30% | ${benchmarkFuturesChangePercent.toFixed(2)}%)` + (isAligned ? ' forte allineamento' : ' forte disallineamento')
+    );
   }
   const futuresScore = scaleComponentToWeight(futuresLegacy, P.W_FUTURES, LEGACY.FUTURES);
   details.push(`Futures benchmark: +${futuresScore}pt (peso ${P.W_FUTURES})`);
@@ -1073,6 +1074,12 @@ export function calculateCandidateScore(
   const vwapLine = vwapContribution.detail;
   details.push(vwapLine);
 
+  // 13. COSTI TRANSAZIONE (sempre penalizzante, never negative)
+  const transactionCostEur = 2.00; // SPREAD_EUR + BROKER_FEE_PER_SIDE_EUR
+  const estimatedCostPct = transactionCostEur / Math.max(quote.atr14 ?? 1, 0.01);
+  const estimatedCostPoints = Math.round(estimatedCostPct * 10);
+  details.push(`Costi transazione: -${estimatedCostPoints}pt (€${transactionCostEur}: spread+commissioni)`);
+
   // 12. VETI: indipendenti dallo score, scartano il setup (soglie ADX del mercato)
   const vetoReasons = evaluateSetupVetoes(direction, indicators, effectiveVwapState, quote.market);
   for (const reason of vetoReasons) details.push(`VETO: ${reason} - setup scartato indipendentemente dallo score.`);
@@ -1185,7 +1192,23 @@ export function calculateRsiFromPrices(closes: number[], period: number = 14): n
   // (prima 100 = ipercomprato artificiale, faceva scattare RSI_EXTREME senza movimento).
   if (avgGain === 0 && avgLoss === 0) return 50;
   if (avgLoss === 0) return 100;
-  const rs = avgGain / avgLoss;
+  const rs = avgGain / avgLoss
+
+/**
+ * Stima RVOL quando il dato non è disponibile dal feed,
+ * basandosi sul volume assoluto rispetto alla media 5m.
+ * Se volume barra >= 1.5x media 5m -> RVOL stimato 1.5x, altrimenti 1.0x neutro.
+ * Usato da isCandidateCompliantWithParameters come fallback.
+ */
+export function estimateRvolFromVolume(quote: RawQuoteData): number {
+  const typicalVolume = quote.lastBarVolume ?? 0;
+  const avg5mVolume = quote.avg5mVolume ?? 0;
+  if (avg5mVolume > 0 && typicalVolume >= avg5mVolume * 1.5) {
+    return 1.5;
+  }
+  return 1.0; // RVOL neutro quando dato assente o volume basso
+}
+;
   return +(100 - 100 / (1 + rs)).toFixed(1);
 }
 
@@ -6225,10 +6248,11 @@ export function calculateVwapScoreContribution(
 
   const dirSign = direction === 'LONG' ? 1 : -1;
 
-  // Stato contrario con volume confermato: contributo 0 (mai negativo) + veto se abilitato.
+  // Stato contrario con volume confermato: contributo negativo proporzionale alla distanza da ATR
   if (sign * dirSign < 0) {
+    const oppPenalty = Math.round(weight * (1 - Math.abs(dist) / 1.0)); // piu' distante = piu' penalita'
     return {
-      score: 0,
+      score: -Math.max(1, oppPenalty),
       state: vwapState.state,
       detail: `VWAP: ${vwapState.state} | dist ${distTxt} ATR | vol ${volTxt} | contraria al setup | contributo 0/${weight}`,
       gated: vetoEnabled,
