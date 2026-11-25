@@ -21,9 +21,9 @@ import {
   Info,
   Globe2,
   Brain,
-  Lightbulb,
   FileText,
 } from 'lucide-react';
+import { DeskPostMortemCard } from './DeskPostMortemCard';
 import {
   fetchDeskPostMortem,
   getLastMarketScanRunId,
@@ -665,68 +665,7 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
             )}
 
             {postMortemReport && (
-              <div className="space-y-3 pt-2 text-xs animate-in fade-in">
-                {/* Executive Summary */}
-                <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-purple-300 block font-mono">
-                    Sintesi Esecutiva del Risk Officer
-                  </span>
-                  <p className="text-slate-200 font-sans leading-relaxed">
-                    {postMortemReport.executiveSummary}
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {/* Strengths */}
-                  <div className="p-3 rounded-xl bg-emerald-950/30 border border-emerald-800/40 space-y-1.5">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 block font-mono flex items-center gap-1.5">
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Punti di Forza dell'Esecuzione</span>
-                    </span>
-                    <ul className="space-y-1 text-[11px] text-slate-300 font-sans list-disc list-inside">
-                      {postMortemReport.strengths.map((s, i) => (
-                        <li key={i}>{s}</li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  {/* Failure Patterns */}
-                  <div className="p-3 rounded-xl bg-rose-950/30 border border-rose-800/40 space-y-1.5">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-rose-400 block font-mono flex items-center gap-1.5">
-                      <AlertTriangle className="w-3.5 h-3.5" />
-                      <span>Pattern di Errore & Falsi Breakout</span>
-                    </span>
-                    <ul className="space-y-1 text-[11px] text-slate-300 font-sans list-disc list-inside">
-                      {postMortemReport.failurePatterns.map((f, i) => (
-                        <li key={i}>{f}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-
-                {/* Tactical Advice */}
-                <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-800/40 flex items-start gap-2.5">
-                  <Lightbulb className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-300 block font-mono">
-                      Raccomandazione Tattica per la Prossima Sessione:
-                    </span>
-                    <p className="text-[11px] text-slate-200 font-sans mt-0.5 leading-relaxed">
-                      {postMortemReport.tacticalAdvice}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Directives Saved Feedback */}
-                {postMortemDirectivesAdded > 0 && (
-                  <div className="p-2.5 rounded-lg bg-purple-950/80 border border-purple-700 text-purple-200 text-[11px] flex items-center gap-2 font-mono">
-                    <CheckCircle2 className="w-4 h-4 text-purple-300 shrink-0" />
-                    <span>
-                      {postMortemDirectivesAdded} nuove direttive qualitative salvate nella Memoria Continua! Ora attive per filtrare trappole o convalidare catalizzatori.
-                    </span>
-                  </div>
-                )}
-              </div>
+              <DeskPostMortemCard report={postMortemReport} directivesAdded={postMortemDirectivesAdded} />
             )}
           </div>
         </div>

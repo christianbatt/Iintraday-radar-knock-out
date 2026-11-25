@@ -37,7 +37,7 @@
     "test:specialization": "tsx src/utils/__tests__/specialization_reasons.test.ts",
     "test:strategy-fixes": "tsx src/utils/__tests__/strategy_fixes.test.ts",
     "test:veto-outcomes": "tsx src/utils/__tests__/veto_outcome_log.test.ts",
-    "test:ai-desk": "tsx src/utils/__tests__/ai_evidence_pack.test.ts",
+    "test:ai-desk": "tsx src/utils/__tests__/ai_evidence_pack.test.ts && tsx src/utils/__tests__/ai_desk_contract.test.ts && tsx src/components/__tests__/deskPostMortemCard.test.tsx",
     "veto:report": "tsx scripts/veto_outcome_report.ts",
     "news:lift": "tsx scripts/news_bonus_lift.ts",
     "learning:nightly": "tsx scripts/nightly_learning.ts"

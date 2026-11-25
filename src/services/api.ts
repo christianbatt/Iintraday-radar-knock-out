@@ -236,12 +236,27 @@ export async function triggerAISpecialization(
   }
 }
 
+export interface DeskPostMortemMetrics {
+  total: number;
+  wins: number;
+  losses: number;
+  breakevens: number;
+  expired: number;
+  winRatePct: number;
+  netPnlEur: number;
+  avgR: number;
+}
+
 export interface DeskPostMortemReport {
   executiveSummary: string;
   strengths: string[];
   failurePatterns: string[];
   tacticalAdvice: string;
   generatedAt: string;
+  /** ADDITIVO: true quando nessun modello ha risposto e il testo e' deterministico. */
+  llmUnavailable?: boolean;
+  /** ADDITIVO: metriche gia' calcolate dal server, sempre presenti. */
+  metrics?: DeskPostMortemMetrics;
 }
 
 export async function fetchDeskPostMortem(
