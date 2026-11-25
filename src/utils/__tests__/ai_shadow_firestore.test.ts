@@ -291,4 +291,29 @@ describe('aiShadowLogFirestore — fallback in lettura dell\'endpoint', () => {
     const result = await withEnv('1', () => readAiShadowLogFromFirestore(10));
     assert.deepEqual(result, []);
   });
+
+  it('usa listRecentDocs server-side quando disponibile invece di listDocs sull\'intera collection', async () => {
+    resetShadowFirestoreSyncForTest();
+    const base = makeAdapter();
+    let recentCalls = 0;
+    const recentAdapter: ShadowFirestoreAdapter = {
+      ...base,
+      async listRecentDocs(_collectionPath, orderByField, limit) {
+        recentCalls += 1;
+        assert.equal(orderByField, 'createdAt');
+        assert.equal(limit, 5);
+        return [{ id: 'doc-recent', data: entry(7, RUN_ID, T0) as unknown as Record<string, unknown> }];
+      },
+    };
+    setShadowFirestoreAdapter(recentAdapter);
+    try {
+      const items = await withEnv('1', () => readAiShadowLogFromFirestore(5));
+      assert.equal(recentCalls, 1);
+      assert.equal(base.listCalls, 0);
+      assert.equal(items.length, 1);
+      assert.equal(items[0].docId, 'doc-recent');
+    } finally {
+      resetShadowFirestoreSyncForTest();
+    }
+  });
 });

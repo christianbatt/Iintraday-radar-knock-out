@@ -59,3 +59,7 @@ jobs:
         run: npm run test:learning
       - name: Test sprint3
         run: npm run test:sprint3
+      - name: AI Shadow log tests
+        run: npm run test:ai-shadow
+      - name: Specialization reasons tests
+        run: npm run test:specialization

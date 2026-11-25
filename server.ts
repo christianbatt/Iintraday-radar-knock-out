@@ -48,6 +48,7 @@ import {
   buildAiShadowLogResponse,
   buildScanCandidateEntries,
   AI_SHADOW_LOG_RELATIVE_PATH,
+  AI_SHADOW_SCAN_LOG_RELATIVE_PATH,
   buildAiShadowLogResponseWithFallback,
 } from './src/server/aiShadowLog';
 import {
@@ -55,7 +56,6 @@ import {
   getLastScanCandidates,
   evaluateScanCandidates,
   resolveScanCandidateInput,
-  setHandlerScanInput,
   consumeHandlerScanInput,
   resetHandlerScanInput,
   createScanRunIdHandle,
@@ -2460,7 +2460,7 @@ async function executeMarketDataScan(
       })),
       scanRunId
     ),
-    path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+    path.join(process.cwd(), AI_SHADOW_SCAN_LOG_RELATIVE_PATH)
   );
 
   let futuresScan: any = null;
@@ -2914,12 +2914,23 @@ async function callScanBatchLlm(
   return null;
 }
 
+const inFlightScanEvalKeys = new Set<string>();
+const completedScanEvalKeys: string[] = [];
+const MAX_COMPLETED_SCAN_EVAL_KEYS = 20;
+
 /**
  * ADDITIVO (Fasi 1-2): valuta tutti i candidati dell'ultima scansione e li
- * registra nel log shadow. Non lancia mai e non altera la risposta HTTP.
+ * registra nel log shadow. Non lancia mai, deduplica per `source:runId` ed
+ * e' invocata in background (non-blocking) per non saturare il timeout HTTP.
  */
-async function logScanCandidateEvaluations(source: 'specialize' | 'desk'): Promise<void> {
-  const { bodyCandidates, bodyRunId } = consumeHandlerScanInput();
+async function logScanCandidateEvaluations(
+  source: 'specialize' | 'desk',
+  input?: { bodyCandidates?: unknown; bodyRunId?: unknown }
+): Promise<void> {
+  const { bodyCandidates, bodyRunId } = input
+    ? { bodyCandidates: input.bodyCandidates, bodyRunId: input.bodyRunId }
+    : consumeHandlerScanInput();
+  let dedupKey: string | null = null;
   try {
     // ADDITIVO (P2): priorita' al campo `scanCandidates` del body (scansione del
     // client, valida anche se la richiesta arriva su un'altra istanza); in
@@ -2935,6 +2946,13 @@ async function logScanCandidateEvaluations(source: 'specialize' | 'desk'): Promi
         path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
       );
       return;
+    }
+    if (runId) {
+      dedupKey = `${source}:${runId}`;
+      if (inFlightScanEvalKeys.has(dedupKey) || completedScanEvalKeys.includes(dedupKey)) {
+        return;
+      }
+      inFlightScanEvalKeys.add(dedupKey);
     }
     try {
       const result = await evaluateScanCandidates(
@@ -2961,13 +2979,19 @@ async function logScanCandidateEvaluations(source: 'specialize' | 'desk'): Promi
           path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
         );
       }
+      if (dedupKey) {
+        completedScanEvalKeys.push(dedupKey);
+        if (completedScanEvalKeys.length > MAX_COMPLETED_SCAN_EVAL_KEYS) {
+          completedScanEvalKeys.shift();
+        }
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.warn('[AI Shadow Log] valutazione candidati non riuscita:', message);
     }
   } finally {
-    // ADDITIVO (P3-fix): nessun input residuo anche se la valutazione lancia.
-    resetHandlerScanInput();
+    if (dedupKey) inFlightScanEvalKeys.delete(dedupKey);
+    if (!input) resetHandlerScanInput();
   }
 }
 
@@ -3061,10 +3085,12 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
       buildAiShadowLogEntries(rawDirectives, 'specialize', 'GLOBAL'),
       path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
     );
-    // ADDITIVO (Fasi 1-2, P2): candidati dal body della richiesta (se presenti)
-    // consegnati alla valutazione, che resta invariata nella forma della chiamata.
-    setHandlerScanInput(req.body?.scanCandidates, req.body?.scanRunId);
-    await logScanCandidateEvaluations('specialize');
+    // ADDITIVO (Fasi 1-2, P2): valutazione asincrona in background con passaggio
+    // diretto dei parametri (non blocca la risposta HTTP ed evita timeout client).
+    void logScanCandidateEvaluations('specialize', {
+      bodyCandidates: req.body?.scanCandidates,
+      bodyRunId: req.body?.scanRunId,
+    }).catch(() => undefined);
     const shapeValidDirectives = rawDirectives.filter(
       (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
     );
@@ -3287,10 +3313,12 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
       buildAiShadowLogEntries(rawDirectives, 'desk', typeof market === 'string' ? market : 'GLOBAL'),
       path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
     );
-    // ADDITIVO (Fasi 1-2, P2): candidati dal body (se presenti) consegnati alla
-    // valutazione, che resta invariata nella forma della chiamata.
-    setHandlerScanInput(req.body?.scanCandidates, req.body?.scanRunId);
-    await logScanCandidateEvaluations('desk');
+    // ADDITIVO (Fasi 1-2, P2): valutazione asincrona in background con passaggio
+    // diretto dei parametri (non blocca la risposta HTTP ed evita timeout client).
+    void logScanCandidateEvaluations('desk', {
+      bodyCandidates: req.body?.scanCandidates,
+      bodyRunId: req.body?.scanRunId,
+    }).catch(() => undefined);
     const shapeValidDirectives = rawDirectives.filter(
       (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
     );
@@ -4098,9 +4126,12 @@ async function startServer() {
   // (fallback in lettura). In errore la risposta resta quella del file.
   app.get('/api/shadow/ai-log', async (req: Request, res: Response) => {
     try {
+      const includeScan =
+        (req.query as any)?.includeScan === '1' || (req.query as any)?.includeScan === 'true';
       const body = await buildAiShadowLogResponseWithFallback(
         (req.query as any)?.limit,
-        path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+        path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH),
+        { includeScan }
       );
       return res.json(body);
     } catch (err: any) {

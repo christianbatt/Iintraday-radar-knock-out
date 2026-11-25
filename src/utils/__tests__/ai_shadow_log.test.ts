@@ -331,4 +331,43 @@ describe('aiShadowLog — endpoint /api/shadow/ai-log', () => {
     assert.equal(AI_SHADOW_LOG_RELATIVE_PATH, 'shadow_ai_log.jsonl');
     assert.equal(AI_SHADOW_LOG_RELATIVE_PATH.includes('artifacts'), false);
   });
+
+  it('filtra di default i placeholder source=scan NON_INVIATO_ALLA_LLM, ma li include con includeScan=true', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-shadow-log-'));
+    const file = path.join(dir, 'log.jsonl');
+    appendAiShadowLog(
+      [
+        {
+          ticker: 'AAA',
+          market: 'EU',
+          source: 'scan',
+          aiOutcome: null,
+          evaluated: false,
+          discarded: false,
+          discardReason: 'NON_INVIATO_ALLA_LLM',
+        },
+        {
+          ticker: 'BBB',
+          market: 'US',
+          source: 'specialize',
+          aiOutcome: 'valutazione reale',
+          aiCategory: 'CAT',
+          evaluated: true,
+          discarded: false,
+          discardReason: null,
+        },
+      ],
+      file
+    );
+
+    const defaultRes = buildAiShadowLogResponse(undefined, file);
+    assert.equal(defaultRes.count, 1);
+    assert.equal(defaultRes.total, 1);
+    assert.equal(defaultRes.entries[0].ticker, 'BBB');
+
+    const withScan = buildAiShadowLogResponse(undefined, file, { includeScan: true });
+    assert.equal(withScan.count, 2);
+    assert.equal(withScan.total, 2);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 });

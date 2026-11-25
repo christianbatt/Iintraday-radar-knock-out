@@ -166,7 +166,11 @@ export async function readAiShadowLogFromFirestore(
   if (!adapter) return [];
 
   try {
-    const docs = await adapter.listDocs(AI_SHADOW_LOG_FIRESTORE_COLLECTION);
+    const cappedLimit = Math.floor(limit);
+    const docs =
+      typeof adapter.listRecentDocs === 'function'
+        ? await adapter.listRecentDocs(AI_SHADOW_LOG_FIRESTORE_COLLECTION, 'createdAt', cappedLimit)
+        : await adapter.listDocs(AI_SHADOW_LOG_FIRESTORE_COLLECTION);
     const items: Array<AiShadowLogFirestoreReadItem & { createdAtMs: number }> = [];
     for (const doc of docs) {
       if (!doc || typeof doc !== 'object') continue;

@@ -73,6 +73,8 @@ export interface AiShadowLogResponse {
 }
 
 export const AI_SHADOW_LOG_RELATIVE_PATH = 'shadow_ai_log.jsonl';
+/** File separato per i snapshot di scansione grezzi (`source: 'scan'`), evitando di ruotare/oscurare le valutazioni AI. */
+export const AI_SHADOW_SCAN_LOG_RELATIVE_PATH = 'shadow_ai_scans.jsonl';
 export const AI_SHADOW_LOG_DEFAULT_LIMIT = 50;
 export const AI_SHADOW_LOG_MAX_LIMIT = 200;
 /** Soglia di rotazione: 5 MB. Oltre, il file corrente diventa un archivio. */
@@ -266,6 +268,14 @@ export function buildScanCandidateEntries(
   }));
 }
 
+export function isUnprocessedScanEntry(entry: AiShadowLogEntry): boolean {
+  return (
+    entry.source === 'scan' &&
+    entry.evaluated === false &&
+    entry.discardReason === AI_SHADOW_DISCARD_REASONS.NON_INVIATO_ALLA_LLM
+  );
+}
+
 export function appendAiShadowLog(
   entries: unknown,
   filePath?: string
@@ -281,10 +291,12 @@ export function appendAiShadowLog(
     rotateIfOversized(resolvedPath);
     const lines = normalized.map((e) => JSON.stringify(e)).join('\n') + '\n';
     fs.appendFileSync(resolvedPath, lines, 'utf8');
-    // ADDITIVO (log AI su Firestore): sync subito dopo l'append su file, con la
-    // stessa lista normalizzata. Fire-and-forget: la scrittura HTTP non deve
-    // attendere Firestore e il sync non lancia mai (ritorna `{ ok: false }`).
-    void syncAiShadowLogToFirestore(normalized).catch(() => undefined);
+    // ADDITIVO (log AI su Firestore): sync subito dopo l'append su file, escludendo i
+    // placeholder automatici di scansione per non generare 40 doc/scan ogni 3 minuti.
+    const syncEntries = normalized.filter((entry) => !isUnprocessedScanEntry(entry));
+    if (syncEntries.length > 0) {
+      void syncAiShadowLogToFirestore(syncEntries).catch(() => undefined);
+    }
     return { ok: true, written: normalized.length };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -363,13 +375,20 @@ function summarizeAiShadowLogEntries(
   return { entries, count: entries.length, total, limit, byStatus, byDiscarded, byEvaluated };
 }
 
+export interface AiShadowLogReadOptions {
+  /** Se true include anche le righe placeholder `source: 'scan'` non valutate dall'LLM. Default false. */
+  includeScan?: boolean;
+}
+
 /** Corpo di `GET /api/shadow/ai-log`: sola lettura, nessuna eccezione. */
 export function buildAiShadowLogResponse(
   rawLimit?: unknown,
-  filePath?: string
+  filePath?: string,
+  options: AiShadowLogReadOptions = {}
 ): AiShadowLogResponse {
   const limit = clampAiShadowLogLimit(rawLimit);
-  const all = readAiShadowLog(undefined, filePath);
+  const rawAll = readAiShadowLog(undefined, filePath);
+  const all = options.includeScan === true ? rawAll : rawAll.filter((e) => !isUnprocessedScanEntry(e));
   return summarizeAiShadowLogEntries(all.slice(-limit), all.length, limit);
 }
 
@@ -386,17 +405,20 @@ export function buildAiShadowLogResponse(
  */
 export async function buildAiShadowLogResponseWithFallback(
   rawLimit?: unknown,
-  filePath?: string
+  filePath?: string,
+  options: AiShadowLogReadOptions = {}
 ): Promise<AiShadowLogResponse> {
-  const base = buildAiShadowLogResponse(rawLimit, filePath);
+  const base = buildAiShadowLogResponse(rawLimit, filePath, options);
   if (base.count >= base.limit) return base;
   if (!isAiShadowLogFirestoreEnabled()) return base;
 
   const remote = await readAiShadowLogFromFirestore(base.limit);
   if (remote.length === 0) return base;
 
+  const includeScan = options.includeScan === true;
   const merged = new Map<string, { entry: AiShadowLogEntry; atMs: number }>();
   for (const entry of readAiShadowLog(undefined, filePath)) {
+    if (!includeScan && isUnprocessedScanEntry(entry)) continue;
     const docId = aiShadowLogEntryDocId(entry) ?? entry.id;
     if (merged.has(docId)) continue;
     merged.set(docId, { entry, atMs: Date.parse(entry.timestamp) || 0 });
@@ -406,6 +428,7 @@ export async function buildAiShadowLogResponseWithFallback(
     // Stessa normalizzazione usata per il file: nessun cast sul documento letto.
     const normalized = normalizeEntries(item.entry)[0];
     if (!normalized) continue;
+    if (!includeScan && isUnprocessedScanEntry(normalized)) continue;
     merged.set(item.docId, { entry: normalized, atMs: Date.parse(normalized.timestamp) || 0 });
   }
 

@@ -120,11 +120,13 @@ describe('aiShadowLog — copertura di tutti i candidati (40 titoli)', () => {
     );
   });
 
-  it('wiring reale: server.ts salva i candidati e li valuta in entrambi gli handler AI', () => {
+  it('wiring reale: server.ts salva i candidati e li valuta in background in entrambi gli handler AI', () => {
     const src = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf8');
     assert.ok(src.includes('setLastScanCandidates('), 'istantanea dei candidati assente');
-    assert.equal((src.match(/await logScanCandidateEvaluations\('specialize'\)/g) ?? []).length, 1);
-    assert.equal((src.match(/await logScanCandidateEvaluations\('desk'\)/g) ?? []).length, 1);
+    assert.equal((src.match(/logScanCandidateEvaluations\('specialize'/g) ?? []).length, 1);
+    assert.equal((src.match(/logScanCandidateEvaluations\('desk'/g) ?? []).length, 1);
+    assert.equal(src.includes("await logScanCandidateEvaluations('specialize'"), false);
+    assert.equal(src.includes("await logScanCandidateEvaluations('desk'"), false);
     const snapshotIdx = src.indexOf('setLastScanCandidates(');
     const fetchIdx = src.indexOf('await mapConcurrent(');
     assert.ok(snapshotIdx > fetchIdx, 'istantanea deve seguire il fetch dei 40 titoli');

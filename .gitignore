@@ -23,4 +23,7 @@ artifacts/shadow_v2/bars.json
 shadow_ai_log.jsonl
 # Archivi di rotazione del log shadow AI (5 MB per file, massimo tre).
 shadow_ai_log.*.jsonl
+# Snapshot grezzi di scansione separati dal log AI principale.
+shadow_ai_scans.jsonl
+shadow_ai_scans.*.jsonl
 # artifacts/shadow_v2/signals.jsonl è versionato intenzionalmente: non aggiungere regole di ignore.

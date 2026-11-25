@@ -78,6 +78,11 @@ export interface ShadowFirestoreAdapter {
   getDoc(docPath: string): Promise<Record<string, unknown> | null>;
   setDoc(docPath: string, data: Record<string, unknown>): Promise<void>;
   listDocs(collectionPath: string): Promise<Array<{ id: string; data: Record<string, unknown> }>>;
+  listRecentDocs?(
+    collectionPath: string,
+    orderByField: string,
+    limit: number
+  ): Promise<Array<{ id: string; data: Record<string, unknown> }>>;
   batchSetDocs(items: Array<{ path: string; data: Record<string, unknown> }>): Promise<void>;
 }
 
@@ -124,6 +129,18 @@ export function createAdminFirestoreAdapter(firestore: Firestore): ShadowFiresto
     },
     async listDocs(collectionPath: string) {
       const snap = await firestore.collection(collectionPath).get();
+      return snap.docs.map((d) => ({
+        id: d.id,
+        data: (d.data() as Record<string, unknown>) ?? {},
+      }));
+    },
+    async listRecentDocs(collectionPath: string, orderByField: string, limit: number) {
+      const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 50;
+      const snap = await firestore
+        .collection(collectionPath)
+        .orderBy(orderByField, 'desc')
+        .limit(safeLimit)
+        .get();
       return snap.docs.map((d) => ({
         id: d.id,
         data: (d.data() as Record<string, unknown>) ?? {},
