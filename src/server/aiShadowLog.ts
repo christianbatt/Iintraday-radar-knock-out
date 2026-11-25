@@ -13,6 +13,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import {
+  aiShadowLogEntryDocId,
+  isAiShadowLogFirestoreEnabled,
+  readAiShadowLogFromFirestore,
+  syncAiShadowLogToFirestore,
+} from './aiShadowLogFirestore';
 
 export type AiShadowLogSource = 'scan' | 'specialize' | 'desk';
 
@@ -275,6 +281,10 @@ export function appendAiShadowLog(
     rotateIfOversized(resolvedPath);
     const lines = normalized.map((e) => JSON.stringify(e)).join('\n') + '\n';
     fs.appendFileSync(resolvedPath, lines, 'utf8');
+    // ADDITIVO (log AI su Firestore): sync subito dopo l'append su file, con la
+    // stessa lista normalizzata. Fire-and-forget: la scrittura HTTP non deve
+    // attendere Firestore e il sync non lancia mai (ritorna `{ ok: false }`).
+    void syncAiShadowLogToFirestore(normalized).catch(() => undefined);
     return { ok: true, written: normalized.length };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -336,14 +346,12 @@ export function clampAiShadowLogLimit(raw: unknown): number {
   return Math.min(AI_SHADOW_LOG_MAX_LIMIT, Math.max(1, Math.floor(n)));
 }
 
-/** Corpo di `GET /api/shadow/ai-log`: sola lettura, nessuna eccezione. */
-export function buildAiShadowLogResponse(
-  rawLimit?: unknown,
-  filePath?: string
+/** Conteggi della risposta: stessa forma per file e per file+Firestore. */
+function summarizeAiShadowLogEntries(
+  entries: AiShadowLogEntry[],
+  total: number,
+  limit: number
 ): AiShadowLogResponse {
-  const limit = clampAiShadowLogLimit(rawLimit);
-  const all = readAiShadowLog(undefined, filePath);
-  const entries = all.slice(-limit);
   const byStatus: Record<string, number> = {};
   const byDiscarded: Record<string, number> = { true: 0, false: 0 };
   const byEvaluated: Record<string, number> = { true: 0, false: 0 };
@@ -352,5 +360,59 @@ export function buildAiShadowLogResponse(
     byDiscarded[String(e.discarded)] = (byDiscarded[String(e.discarded)] || 0) + 1;
     byEvaluated[String(e.evaluated)] = (byEvaluated[String(e.evaluated)] || 0) + 1;
   }
-  return { entries, count: entries.length, total: all.length, limit, byStatus, byDiscarded, byEvaluated };
+  return { entries, count: entries.length, total, limit, byStatus, byDiscarded, byEvaluated };
+}
+
+/** Corpo di `GET /api/shadow/ai-log`: sola lettura, nessuna eccezione. */
+export function buildAiShadowLogResponse(
+  rawLimit?: unknown,
+  filePath?: string
+): AiShadowLogResponse {
+  const limit = clampAiShadowLogLimit(rawLimit);
+  const all = readAiShadowLog(undefined, filePath);
+  return summarizeAiShadowLogEntries(all.slice(-limit), all.length, limit);
+}
+
+/**
+ * ADDITIVO (Fase 9): stessa risposta di `buildAiShadowLogResponse`, ma se il
+ * file locale restituisce meno di `limit` voci e il flag Firestore e' acceso,
+ * unisce le voci lette da Firestore (ordinate per `createdAt` decrescente, con
+ * lo stesso `limit`), deduplica per doc id e riapplica il clamp. In errore la
+ * lettura remota ritorna `[]`: la risposta resta quella del file.
+ *
+ * L'array `entries` esce dal piu' vecchio al piu' recente, come nel percorso
+ * solo-file (`readAiShadowLog` + `slice(-limit)`): la forma e l'ordine della
+ * risposta non cambiano.
+ */
+export async function buildAiShadowLogResponseWithFallback(
+  rawLimit?: unknown,
+  filePath?: string
+): Promise<AiShadowLogResponse> {
+  const base = buildAiShadowLogResponse(rawLimit, filePath);
+  if (base.count >= base.limit) return base;
+  if (!isAiShadowLogFirestoreEnabled()) return base;
+
+  const remote = await readAiShadowLogFromFirestore(base.limit);
+  if (remote.length === 0) return base;
+
+  const merged = new Map<string, { entry: AiShadowLogEntry; atMs: number }>();
+  for (const entry of readAiShadowLog(undefined, filePath)) {
+    const docId = aiShadowLogEntryDocId(entry) ?? entry.id;
+    if (merged.has(docId)) continue;
+    merged.set(docId, { entry, atMs: Date.parse(entry.timestamp) || 0 });
+  }
+  for (const item of remote) {
+    if (merged.has(item.docId)) continue;
+    // Stessa normalizzazione usata per il file: nessun cast sul documento letto.
+    const normalized = normalizeEntries(item.entry)[0];
+    if (!normalized) continue;
+    merged.set(item.docId, { entry: normalized, atMs: Date.parse(normalized.timestamp) || 0 });
+  }
+
+  const ordered = Array.from(merged.values()).sort((a, b) => b.atMs - a.atMs);
+  const entries = ordered
+    .slice(0, base.limit)
+    .map((item) => item.entry)
+    .reverse();
+  return summarizeAiShadowLogEntries(entries, merged.size, base.limit);
 }

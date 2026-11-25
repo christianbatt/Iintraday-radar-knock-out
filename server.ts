@@ -48,6 +48,7 @@ import {
   buildAiShadowLogResponse,
   buildScanCandidateEntries,
   AI_SHADOW_LOG_RELATIVE_PATH,
+  buildAiShadowLogResponseWithFallback,
 } from './src/server/aiShadowLog';
 import {
   setLastScanCandidates,
@@ -4092,9 +4093,12 @@ async function startServer() {
   // Registra le route Shadow e avvia il collector PRIMA del middleware Vite/SPA
   // (altrimenti app.get('*') cattura /api/shadow/*).
   registerShadowRoutesFromDisk(app);
-  app.get('/api/shadow/ai-log', (req: Request, res: Response) => {
+  // ADDITIVO (Fase 9): se il file locale ha meno di `limit` voci e il flag
+  // SHADOW_AI_LOG_FIRESTORE e' acceso, le voci mancanti arrivano da Firestore
+  // (fallback in lettura). In errore la risposta resta quella del file.
+  app.get('/api/shadow/ai-log', async (req: Request, res: Response) => {
     try {
-      const body = buildAiShadowLogResponse(
+      const body = await buildAiShadowLogResponseWithFallback(
         (req.query as any)?.limit,
         path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
       );

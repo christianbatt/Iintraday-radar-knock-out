@@ -91,6 +91,12 @@ export function shadowDocIdForKey(key: string): string {
 
 export function sanitizeForFirestore<T>(value: T): T {
   if (value === null || value === undefined) return value;
+  // ADDITIVO (log AI su Firestore): i valori con `toMillis` (Timestamp di
+  // firebase-admin) restano istanze native, altrimenti verrebbero serializzati
+  // come mappe e la TTL policy non funzionerebbe.
+  if (typeof value === 'object' && typeof (value as { toMillis?: unknown }).toMillis === 'function') {
+    return value;
+  }
   if (Array.isArray(value)) {
     return value.map((item) => sanitizeForFirestore(item)) as unknown as T;
   }
@@ -134,6 +140,11 @@ export function createAdminFirestoreAdapter(firestore: Firestore): ShadowFiresto
       }
     },
   };
+}
+
+/** ADDITIVO (log AI su Firestore): adapter attivo, sola lettura. */
+export function getShadowFirestoreAdapter(): ShadowFirestoreAdapter | null {
+  return activeAdapter;
 }
 
 export function setShadowFirestoreAdapter(adapter: ShadowFirestoreAdapter | null): void {
