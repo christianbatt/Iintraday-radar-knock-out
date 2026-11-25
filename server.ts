@@ -85,6 +85,7 @@ import {
   setShadowFirestoreAdapter,
 } from './src/server/shadowFirestoreSync';
 import { registerShadowV1LiveViewRoute } from './src/server/shadowV1LiveView';
+import { logVetoOutcomes, VETO_LOG_RELATIVE_PATH } from './src/server/vetoOutcomeLog';
 import {
   DEFAULT_YAHOO_USER_AGENT,
   fetchAndCacheYahooCrumb,
@@ -2606,6 +2607,20 @@ async function executeMarketDataScan(
         // log best-effort: nessun impatto sul servizio
       }
     }
+    // Veti misurati in produzione (SUPERTREND_OPPOSED / ADX / VWAP_OPPOSED):
+    // candidato, livelli del setup che il veto ha bloccato ed esito forward
+    // aggiornato a ogni scansione. E' il dato che fino a oggi andava ricostruito
+    // con scripts/universe_replay.ts; report: scripts/veto_outcome_report.ts.
+    try {
+      logVetoOutcomes({
+        scored: scanScores,
+        nowMs: Date.now(),
+        logPath: path.join(process.cwd(), VETO_LOG_RELATIVE_PATH),
+        market: 'EU',
+      });
+    } catch (vetoErr: any) {
+      console.warn(`[Veto outcome] log non disponibile: ${vetoErr?.message || vetoErr}`);
+    }
   } catch (err: any) {
     console.log(`[Setup score] log non disponibile: ${err?.message || err}`);
   }
@@ -3290,19 +3305,22 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
       }
     }
 
+    // Nessuna prosa inventata: se nessun modello risponde, il post-mortem
+    // riporta solo le metriche gia' calcolate e lo dichiara. Le cause non sono
+    // deducibili dai soli aggregati, quindi non vengono affermate.
     if (!generated) {
       generated = {
-        executiveSummary: `Analisi delle sessioni ${market}: Win Rate ${winRate}% su ${total} trade con P&L netto di ${netPnl} €. L'esecuzione mostra tenuta del rischio e disciplina sui target.`,
-        strengths: [
-          `Preservazione del capitale con gestione rigorosa degli stop loss a 1.0R`,
-          `Rapporto R-Multiple medio coerente con l'asimmetria richiesta dal modello sistemico`
-        ],
-        failurePatterns: [
-          `Presenza di setup chiusi prima dell'estensione completa verso Target 1`,
-          `Necessità di monitorare la correlazione con i futures di apertura`
-        ],
-        tacticalAdvice: `Mantenere la selettività solo sui setup con score elevato ed evitare l'anticipazione dei trigger prima della chiusura delle prime barre.`,
-        newDirectives: []
+        executiveSummary:
+          `LLM non disponibile: riepilogo deterministico delle sessioni ${market}. ` +
+          `${total} trade analizzati (${wins.length} win, ${losses.length} loss, ${breakevens.length} BE, ${expired.length} scaduti), ` +
+          `win rate ${winRate}% sui trade analizzati, P&L netto ${netPnl} €, R medio ${avgR}R. ` +
+          `Nessuna interpretazione qualitativa: da soli questi aggregati non identificano le cause.`,
+        strengths: [],
+        failurePatterns: [],
+        tacticalAdvice:
+          'Rilanciare il post-mortem quando il modello AI e\' disponibile; nel frattempo usare solo le metriche riportate.',
+        newDirectives: [],
+        llmUnavailable: true,
       };
     }
 
@@ -3404,6 +3422,18 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
         failurePatterns: generated.failurePatterns || [],
         tacticalAdvice: generated.tacticalAdvice,
         generatedAt: new Date().toISOString(),
+        // ADDITIVO: distingue un'analisi LLM reale da un riepilogo deterministico.
+        llmUnavailable: generated.llmUnavailable === true,
+        metrics: {
+          total,
+          wins: wins.length,
+          losses: losses.length,
+          breakevens: breakevens.length,
+          expired: expired.length,
+          winRatePct: Number(winRate),
+          netPnlEur: Number(netPnl),
+          avgR: Number(avgR),
+        },
       },
       newDirectivesAdded: deskPersistedCount,
       proposedDirectives,
