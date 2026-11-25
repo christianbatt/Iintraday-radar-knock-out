@@ -17,6 +17,8 @@ jobs:
       - name: Typecheck (tsc)
         run: npm run lint
       - run: npx tsx src/utils/__tests__/param_merge.test.ts
+      - name: Setup score tests (somma pesi a 100)
+        run: npx tsx src/utils/__tests__/setup_score.test.ts
       - name: Shadow research tests
         run: npm run test:shadow
       - name: Shadow V2 tests
