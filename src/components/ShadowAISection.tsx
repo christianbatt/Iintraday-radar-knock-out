@@ -297,6 +297,8 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
       )}
       {!shownLoading && !shownError && (
         <>
+          {/* La calibrazione va prima dell'elenco: e' l'aggregato che si legge per primo. */}
+          {shownCalibration && <ShadowAiCalibrationBlock calibration={shownCalibration} />}
           {(!entries || entries.length === 0) ? (
             <p className="text-xs text-slate-400" data-testid="shadow-ai-empty">nessuna osservazione</p>
           ) : (
@@ -326,7 +328,6 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
           <p className="text-[10px] text-slate-500" data-testid="shadow-ai-not-evaluated-count">
             non valutate: {notEvaluatedCount}
           </p>
-          {shownCalibration && <ShadowAiCalibrationBlock calibration={shownCalibration} />}
         </>
       )}
     </div>

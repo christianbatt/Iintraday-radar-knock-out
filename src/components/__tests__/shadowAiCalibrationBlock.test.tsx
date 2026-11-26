@@ -196,6 +196,37 @@ describe('ShadowAISection — calibrazione nel pannello', () => {
     assert.ok(out.includes('edgeR: 0.42'));
   });
 
+  it('mette il blocco di calibrazione prima dell elenco delle righe', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAISection, {
+        flag: 'on',
+        entries: [
+          {
+            id: 'e1',
+            timestamp: '2026-11-25T09:00:00.000Z',
+            ticker: 'ENI.MI',
+            market: 'EU',
+            direction: 'LONG',
+            setup: 'ORB',
+            aiOutcome: 'APPROVATO: momentum',
+            aiCategory: 'orb',
+            source: 'scan',
+            status: 'NON_VALIDATO',
+            outcome: null,
+            decision: 'AZIONE',
+          },
+        ],
+        calibration: EVIDENCE,
+      })
+    );
+    const calibration = out.indexOf('data-testid="shadow-ai-calibration"');
+    const list = out.indexOf('data-testid="shadow-ai-list"');
+    const sectionTitle = out.indexOf('Osservazioni AI shadow');
+    assert.ok(sectionTitle >= 0 && calibration > sectionTitle, 'calibrazione assente o fuori sezione');
+    assert.ok(list >= 0, 'elenco righe assente');
+    assert.ok(calibration < list, 'la calibrazione deve precedere l elenco delle righe');
+  });
+
   it('non renderizza il blocco senza dati (null)', () => {
     const out = renderToStaticMarkup(
       React.createElement(ShadowAISection, { flag: 'on', entries: [], calibration: null })
