@@ -35,6 +35,12 @@ dicitura di fallback, né nella risposta né nel pannello.
 
 Se Firestore non risponde, resta il file locale e la route non fallisce.
 
+Il percorso Firestore è coperto da un test end-to-end senza credenziali
+(`ai_calibration_firestore_path.test.ts`): sync su un adapter in memoria,
+lettura con `readAiShadowLogFallbackDetailed` che usa la lettura Firestore
+reale, verifica di `remoteEntries`, precedenza del file locale sui documenti
+già presenti e conteggi della risposta di calibrazione.
+
 Quando la lettura **tocca il tetto** la risposta lo dichiara: `truncated: true`
 e `readLimit` (2000), con una riga in `limitations` che parla di campione
 potenzialmente incompleto. Il pannello mostra la fonte usata
