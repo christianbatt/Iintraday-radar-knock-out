@@ -29,6 +29,7 @@
     "test:sessionclose": "tsx src/utils/__tests__/session_close.test.ts",
     "test:shadowv1livestore": "tsx src/utils/__tests__/shadow_v1_live_store.test.ts",
     "test:shadowv1livecollector": "tsx src/utils/__tests__/shadow_v1_live_collector.test.ts",
+    "test:api-auth": "tsx src/utils/__tests__/api_auth.test.ts",
     "test:shadowv1livebridge": "tsx src/utils/__tests__/shadow_v1_live_bridge.test.ts",
     "test:shadowv1liveview": "tsx src/utils/__tests__/shadow_v1_live_view.test.ts",
     "test:shadowv1livepanel": "tsx src/components/__tests__/shadowV1LivePanel.test.tsx",
@@ -42,6 +43,7 @@
     "test:client-guard": "tsx src/utils/__tests__/client_process_guard.test.ts",
     "ai:desk-live": "tsx scripts/ai_desk_live_check.ts",
     "veto:report": "tsx scripts/veto_outcome_report.ts",
+    "audit:shadowv1live-backdating": "tsx scripts/audit_shadow_v1_live_backdating.ts",
     "news:lift": "tsx scripts/news_bonus_lift.ts",
     "learning:nightly": "tsx scripts/nightly_learning.ts"
   },

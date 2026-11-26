@@ -86,6 +86,7 @@ import {
   setShadowFirestoreAdapter,
 } from './src/server/shadowFirestoreSync';
 import { registerShadowV1LiveViewRoute } from './src/server/shadowV1LiveView';
+import { apiAuthErrorMessage, resolveApiAuth, type ApiAuthResolution } from './src/server/apiAuth';
 import { loadRecords, SHADOW_V1_LIVE_SIGNALS_PATH } from './src/server/shadowV1LiveStore';
 import { listArchivePaths, mergeRecordFiles } from './src/server/shadowV1LiveRetention';
 import {
@@ -378,56 +379,30 @@ function isValidApiKey(req: Request): boolean {
 }
 
 
-type ApiAuthResolution =
-  | { ok: true; uid: string }
-  | { ok: false; reason: 'missing' | 'no_backend' | 'invalid' };
-
 /**
- * Unica implementazione del controllo credenziali. Usata sia dal middleware
- * `requireApiAuth` sia dalla route observe del collector (che la riceve come
- * `authorize`), cosi' le due strade non possono divergere.
+ * Adattatore fra `server.ts` e il nucleo puro `src/server/apiAuth.ts`: qui si
+ * forniscono solo le dipendenze reali (chiavi server, Firebase Admin, ripiego
+ * legacy). Middleware e route observe passano entrambi da qui, cosi' le due
+ * strade non possono divergere.
  */
-async function resolveApiAuth(req: Request): Promise<ApiAuthResolution> {
-  if (isValidApiKey(req)) return { ok: true, uid: 'service-api-key' };
-
-  const authorization = req.get('authorization') || '';
-  const tokenMatch = authorization.match(/^Bearer\s+(.+)$/i);
-  if (!tokenMatch) {
-    // AUDIT D2: fail-closed. Nessun header = richiesta non autenticata (401), non una sessione legacy.
-    return ALLOW_LEGACY_API_AUTH ? { ok: true, uid: 'legacy' } : { ok: false, reason: 'missing' };
-  }
-  if (!firebaseAdminAuth) {
-    // AUDIT D2: senza Firebase Admin nessun token e' verificabile: 401, mai fail-open.
-    return ALLOW_LEGACY_API_AUTH ? { ok: true, uid: 'legacy' } : { ok: false, reason: 'no_backend' };
-  }
-
-  try {
-    const decoded = await firebaseAdminAuth.verifyIdToken(tokenMatch[1]);
-    return { ok: true, uid: decoded.uid };
-  } catch {
-    return { ok: false, reason: 'invalid' };
-  }
+async function resolveApiAuthFor(req: Request): Promise<ApiAuthResolution> {
+  return resolveApiAuth(req, {
+    isValidApiKey: (candidate) => isValidApiKey(candidate as Request),
+    verifyIdToken: firebaseAdminAuth
+      ? (token: string) => firebaseAdminAuth!.verifyIdToken(token)
+      : null,
+    allowLegacyApiAuth: ALLOW_LEGACY_API_AUTH,
+  });
 }
 
 async function requireApiAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const auth = await resolveApiAuth(req);
+  const auth = await resolveApiAuthFor(req);
   if (auth.ok) {
     res.locals.authenticatedUid = auth.uid;
     next();
     return;
   }
-  if (auth.reason === 'missing') {
-    res.status(401).json({ error: 'Unauthorized', message: 'Bearer token required' });
-    return;
-  }
-  if (auth.reason === 'no_backend') {
-    res.status(401).json({
-      error: 'Unauthorized',
-      message: 'Auth backend not configured: Firebase Admin credentials missing',
-    });
-    return;
-  }
-  res.status(401).json({ error: 'Unauthorized', message: 'Firebase ID token invalid or expired' });
+  res.status(401).json({ error: 'Unauthorized', message: apiAuthErrorMessage(auth.reason) });
 }
 
 function requireServerApiKey(req: Request, res: Response, next: NextFunction): void {
@@ -4335,7 +4310,7 @@ async function startServer() {
   const v1CollectorReg = registerShadowV1LiveCollector(app, {
     deferInitialCycle: true,
     authorize: async (req) => {
-      const auth = await resolveApiAuth(req as Request);
+      const auth = await resolveApiAuthFor(req as Request);
       return auth.ok ? auth.uid : null;
     },
   });
