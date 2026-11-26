@@ -1,0 +1,21 @@
+{
+  "kind": "summary",
+  "finishedAt": "2026-11-11T23:13:59.062Z",
+  "intervalSec": 10,
+  "staleThresholdSec": 300,
+  "rows": [
+    {
+      "symbol": "ENI.MI",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23857,
+      "quoteP90": 23868,
+      "quoteMax": 23868,
+      "pctOver300": 100,
+      "barMedian": 24228,
+      "distinctPrices": 1
+    }
+  ],
+  "worstMedianSec": 23857,
+  "frozenSymbols": []
+}

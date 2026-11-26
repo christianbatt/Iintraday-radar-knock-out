@@ -1,0 +1,16 @@
+{
+ "generatedAt": "2026-11-25T20:11:24.718Z",
+ "replay": "artifacts/replay_i3_30d",
+ "range": "30d",
+ "horizonSec": 3600,
+ "evaluations": 15160,
+ "setups": 0,
+ "overall": {
+  "n": 0,
+  "mean": null,
+  "sum": 0,
+  "hit": 0,
+  "ci": null
+ },
+ "rows": []
+}

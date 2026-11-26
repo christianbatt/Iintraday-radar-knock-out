@@ -1,0 +1,109 @@
+{
+  "kind": "summary",
+  "finishedAt": "2026-11-11T23:11:23.802Z",
+  "intervalSec": 30,
+  "staleThresholdSec": 300,
+  "rows": [
+    {
+      "symbol": "ENI.MI",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23682,
+      "quoteP90": 23712,
+      "quoteMax": 23712,
+      "pctOver300": 100,
+      "barMedian": 24053,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "UCG.MI",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23595,
+      "quoteP90": 23625,
+      "quoteMax": 23625,
+      "pctOver300": 100,
+      "barMedian": 24053,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "BAMI.MI",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23661,
+      "quoteP90": 23691,
+      "quoteMax": 23691,
+      "pctOver300": 100,
+      "barMedian": 24053,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "LDO.MI",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23748,
+      "quoteP90": 23778,
+      "quoteMax": 23778,
+      "pctOver300": 100,
+      "barMedian": 24053,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "STLAM.MI",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23497,
+      "quoteP90": 23527,
+      "quoteMax": 23527,
+      "pctOver300": 100,
+      "barMedian": 24053,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "RHM.DE",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23558,
+      "quoteP90": 23588,
+      "quoteMax": 23588,
+      "pctOver300": 100,
+      "barMedian": 24053,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "SAP.DE",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23563,
+      "quoteP90": 23593,
+      "quoteMax": 23593,
+      "pctOver300": 100,
+      "barMedian": 24053,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "SIE.DE",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23740,
+      "quoteP90": 23770,
+      "quoteMax": 23770,
+      "pctOver300": 100,
+      "barMedian": 24053,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "BAYN.DE",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23729,
+      "quoteP90": 23759,
+      "quoteMax": 23759,
+      "pctOver300": 100,
+      "barMedian": 24053,
+      "distinctPrices": 1
+    }
+  ],
+  "worstMedianSec": 23748,
+  "frozenSymbols": []
+}

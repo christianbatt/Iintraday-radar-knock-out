@@ -1,0 +1,44 @@
+{
+  "noSetupRows": 9493,
+  "totalRows": 15160,
+  "fields": [
+    "decisionTs",
+    "direction",
+    "emitted",
+    "entry",
+    "gates",
+    "stop",
+    "symbol",
+    "target"
+  ],
+  "needed": [
+    "orbHigh",
+    "orbLow",
+    "price",
+    "atr14",
+    "adr14",
+    "avgVolume20d",
+    "completedBarsCount"
+  ],
+  "present": [],
+  "attributable": false,
+  "bySymbol": {
+    "ENI.MI": 1958,
+    "UCG.MI": 1892,
+    "BAMI.MI": 1856,
+    "RHM.DE": 1966,
+    "SAP.DE": 1821
+  },
+  "byHour": {
+    "10": 1034,
+    "11": 1230,
+    "12": 1223,
+    "13": 1180,
+    "14": 1100,
+    "15": 1086,
+    "16": 1027,
+    "17": 541,
+    "09": 1072
+  },
+  "weekend": 0
+}

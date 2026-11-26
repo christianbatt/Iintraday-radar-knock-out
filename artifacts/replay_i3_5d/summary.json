@@ -1,0 +1,42 @@
+{
+  "mode": "adapter",
+  "horizonSec": 3600,
+  "rows": [
+    {
+      "shiftMin": 0,
+      "evaluations": 964,
+      "setups": 10,
+      "long": 10,
+      "short": 0,
+      "withR": 10,
+      "sumR": 4.706,
+      "meanR": 0.471,
+      "changedVsBase": 0,
+      "pctChanged": 0
+    },
+    {
+      "shiftMin": 15,
+      "evaluations": 958,
+      "setups": 7,
+      "long": 7,
+      "short": 0,
+      "withR": 7,
+      "sumR": 3.314,
+      "meanR": 0.473,
+      "changedVsBase": 82,
+      "pctChanged": 8.6
+    },
+    {
+      "shiftMin": 20,
+      "evaluations": 956,
+      "setups": 7,
+      "long": 7,
+      "short": 0,
+      "withR": 7,
+      "sumR": 3.258,
+      "meanR": 0.465,
+      "changedVsBase": 112,
+      "pctChanged": 11.7
+    }
+  ]
+}

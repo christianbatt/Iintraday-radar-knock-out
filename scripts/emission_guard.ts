@@ -78,6 +78,7 @@ export const CAUSE_BY_GATE: Record<string, string> = {
   G9: 'barriera',
   G10: 'vari',
   G11: 'vari',
+  G14: 'costi',
   G12: 'vari',
   G13: 'vari',
 };

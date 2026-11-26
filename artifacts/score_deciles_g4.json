@@ -1,0 +1,1025 @@
+{
+  "generatedAt": "2026-11-15T23:08:19.791Z",
+  "params": {
+    "horizon": "resolution",
+    "markHorizon": 3600,
+    "beTrigger": null,
+    "boot": 2000,
+    "deciles": 10,
+    "minN": 15,
+    "primaryShift": 0,
+    "includeBlocked": true,
+    "scoreField": "score",
+    "validatedVariant": "markRReplay"
+  },
+  "validation": {
+    "expectedSumR": {
+      "0": -4.909,
+      "15": -8.371,
+      "20": -7.955
+    },
+    "reproducedSumR": {
+      "0": -4.908762914893194,
+      "15": -8.371201357532264,
+      "20": -7.954827336472461
+    },
+    "tolerance": 0.1
+  },
+  "labelDivergence": {
+    "0": {
+      "n": 5540,
+      "signDiff": 1347,
+      "meanAbsDiff": 0.9346948034351433,
+      "meanMark": 0.0506513269876669,
+      "meanBarrier": -0.030864488655221317
+    },
+    "15": {
+      "n": 5427,
+      "signDiff": 1301,
+      "meanAbsDiff": 0.9430421496360833,
+      "meanMark": 0.043573440639308826,
+      "meanBarrier": -0.02266264459703711
+    },
+    "20": {
+      "n": 5369,
+      "signDiff": 1276,
+      "meanAbsDiff": 0.9420268708053757,
+      "meanMark": 0.04013758758593776,
+      "meanBarrier": -0.02227451604910856
+    }
+  },
+  "deciles": {
+    "cuts": [
+      32,
+      35,
+      37,
+      40,
+      43,
+      44,
+      44,
+      47,
+      50
+    ],
+    "primary": [
+      {
+        "decile": 1,
+        "n": 675,
+        "nResolved": 670,
+        "nCensored": 5,
+        "meanR": 0.3853672021884368,
+        "sumR": 258.19602546625265,
+        "hitRate": 0.5328358208955224,
+        "meanWin": 1.5999888668522495,
+        "meanLoss": 1,
+        "wlRatio": 1.5999888668522495,
+        "exits": {
+          "t1": 357,
+          "stop": 313,
+          "censored": 5
+        },
+        "ci95": [
+          -0.0972278024885369,
+          0.7955818284306869
+        ],
+        "excludesZero": false,
+        "nBlocks": 30,
+        "interpretable": true
+      },
+      {
+        "decile": 2,
+        "n": 660,
+        "nResolved": 630,
+        "nCensored": 30,
+        "meanR": 0.23808955237456025,
+        "sumR": 149.99641799597296,
+        "hitRate": 0.47619047619047616,
+        "meanWin": 1.5999880599865803,
+        "meanLoss": 1,
+        "wlRatio": 1.5999880599865803,
+        "exits": {
+          "t1": 300,
+          "stop": 330,
+          "censored": 30
+        },
+        "ci95": [
+          -0.18146055793385096,
+          0.6016849039943112
+        ],
+        "excludesZero": false,
+        "nBlocks": 29,
+        "interpretable": true
+      },
+      {
+        "decile": 3,
+        "n": 497,
+        "nResolved": 488,
+        "nCensored": 9,
+        "meanR": -0.26476305924322685,
+        "sumR": -129.2043729106947,
+        "hitRate": 0.2827868852459016,
+        "meanWin": 1.5999683122413402,
+        "meanLoss": 1,
+        "wlRatio": 1.5999683122413402,
+        "exits": {
+          "stop": 350,
+          "t1": 138,
+          "censored": 8,
+          "unresolved": 1
+        },
+        "ci95": [
+          -0.5900378849662528,
+          0.1120499109273037
+        ],
+        "excludesZero": false,
+        "nBlocks": 30,
+        "interpretable": true
+      },
+      {
+        "decile": 4,
+        "n": 551,
+        "nResolved": 515,
+        "nCensored": 36,
+        "meanR": -0.2225271353649967,
+        "sumR": -114.6014747129733,
+        "hitRate": 0.29902912621359223,
+        "meanWin": 1.599990423941732,
+        "meanLoss": 1,
+        "wlRatio": 1.599990423941732,
+        "exits": {
+          "t1": 154,
+          "stop": 361,
+          "censored": 36
+        },
+        "ci95": [
+          -0.5013306962048717,
+          0.08987051918447621
+        ],
+        "excludesZero": false,
+        "nBlocks": 30,
+        "interpretable": true
+      },
+      {
+        "decile": 5,
+        "n": 923,
+        "nResolved": 896,
+        "nCensored": 27,
+        "meanR": -0.12946976955746767,
+        "sumR": -116.00491352349103,
+        "hitRate": 0.33482142857142855,
+        "meanWin": 1.5999836215883616,
+        "meanLoss": 1,
+        "wlRatio": 1.5999836215883616,
+        "exits": {
+          "stop": 596,
+          "t1": 300,
+          "censored": 27
+        },
+        "ci95": [
+          -0.36790510374176916,
+          0.12345662825122108
+        ],
+        "excludesZero": false,
+        "nBlocks": 30,
+        "interpretable": true
+      },
+      {
+        "decile": 6,
+        "n": 778,
+        "nResolved": 774,
+        "nCensored": 4,
+        "meanR": 0.04472025279918149,
+        "sumR": 34.61347566656647,
+        "hitRate": 0.4018087855297158,
+        "meanWin": 1.6000433301175747,
+        "meanLoss": 1,
+        "wlRatio": 1.6000433301175747,
+        "exits": {
+          "stop": 463,
+          "t1": 311,
+          "censored": 4
+        },
+        "ci95": [
+          -0.3449716659707564,
+          0.39371896137906015
+        ],
+        "excludesZero": false,
+        "nBlocks": 29,
+        "interpretable": true
+      },
+      {
+        "decile": 7,
+        "n": 0,
+        "nResolved": 0,
+        "nCensored": 0,
+        "meanR": null,
+        "sumR": 0,
+        "hitRate": null,
+        "meanWin": null,
+        "meanLoss": null,
+        "wlRatio": null,
+        "exits": {},
+        "ci95": [
+          null,
+          null
+        ],
+        "excludesZero": null,
+        "nBlocks": 0,
+        "interpretable": false
+      },
+      {
+        "decile": 8,
+        "n": 736,
+        "nResolved": 728,
+        "nCensored": 8,
+        "meanR": -0.1749875543588477,
+        "sumR": -127.39093957324113,
+        "hitRate": 0.3173076923076923,
+        "meanWin": 1.6000392226266622,
+        "meanLoss": 1,
+        "wlRatio": 1.6000392226266622,
+        "exits": {
+          "stop": 497,
+          "t1": 231,
+          "censored": 8
+        },
+        "ci95": [
+          -0.4292969237553572,
+          0.0954069655191203
+        ],
+        "excludesZero": false,
+        "nBlocks": 30,
+        "interpretable": true
+      },
+      {
+        "decile": 9,
+        "n": 466,
+        "nResolved": 458,
+        "nCensored": 8,
+        "meanR": -0.18820236658645753,
+        "sumR": -86.19668389659755,
+        "hitRate": 0.31222707423580787,
+        "meanWin": 1.6000231895342822,
+        "meanLoss": 1,
+        "wlRatio": 1.6000231895342822,
+        "exits": {
+          "stop": 315,
+          "t1": 143,
+          "censored": 8
+        },
+        "ci95": [
+          -0.4995436930577107,
+          0.1484186502833967
+        ],
+        "excludesZero": false,
+        "nBlocks": 30,
+        "interpretable": true
+      },
+      {
+        "decile": 10,
+        "n": 381,
+        "nResolved": 381,
+        "nCensored": 0,
+        "meanR": -0.10602835081816181,
+        "sumR": -40.39680166171965,
+        "hitRate": 0.3438320209973753,
+        "meanWin": 1.6000244147960345,
+        "meanLoss": 1,
+        "wlRatio": 1.6000244147960345,
+        "exits": {
+          "stop": 250,
+          "t1": 131
+        },
+        "ci95": [
+          -0.44647103633313007,
+          0.2420510419409992
+        ],
+        "excludesZero": false,
+        "nBlocks": 29,
+        "interpretable": true
+      }
+    ],
+    "shift15": {
+      "rho": 1,
+      "rows": [
+        {
+          "decile": 1,
+          "n": 659,
+          "nResolved": 654,
+          "nCensored": 5,
+          "meanR": 0.38348063238580127,
+          "sumR": 250.796333580314,
+          "hitRate": 0.5321100917431193,
+          "meanWin": 1.59998946431125,
+          "meanLoss": 1,
+          "wlRatio": 1.59998946431125,
+          "exits": {
+            "t1": 348,
+            "stop": 306,
+            "censored": 5
+          },
+          "ci95": [
+            -0.10044438023292185,
+            0.7939990761948179
+          ],
+          "excludesZero": false,
+          "nBlocks": 30,
+          "interpretable": true
+        },
+        {
+          "decile": 2,
+          "n": 644,
+          "nResolved": 614,
+          "nCensored": 30,
+          "meanR": 0.2364765231477533,
+          "sumR": 145.19658521272052,
+          "hitRate": 0.4755700325732899,
+          "meanWin": 1.5999883055230193,
+          "meanLoss": 1,
+          "wlRatio": 1.5999883055230193,
+          "exits": {
+            "t1": 292,
+            "stop": 322,
+            "censored": 30
+          },
+          "ci95": [
+            -0.17922473911693335,
+            0.5930171491069092
+          ],
+          "excludesZero": false,
+          "nBlocks": 29,
+          "interpretable": true
+        },
+        {
+          "decile": 3,
+          "n": 482,
+          "nResolved": 475,
+          "nCensored": 7,
+          "meanR": -0.23916484044793698,
+          "sumR": -113.60329921277007,
+          "hitRate": 0.2926315789473684,
+          "meanWin": 1.5999762646563276,
+          "meanLoss": 1,
+          "wlRatio": 1.5999762646563276,
+          "exits": {
+            "stop": 336,
+            "t1": 139,
+            "censored": 7
+          },
+          "ci95": [
+            -0.5656981826757134,
+            0.13400164044830415
+          ],
+          "excludesZero": false,
+          "nBlocks": 30,
+          "interpretable": true
+        },
+        {
+          "decile": 4,
+          "n": 544,
+          "nResolved": 511,
+          "nCensored": 33,
+          "meanR": -0.23170490661851123,
+          "sumR": -118.40120728205923,
+          "hitRate": 0.29549902152641877,
+          "meanWin": 1.599992004754575,
+          "meanLoss": 1,
+          "wlRatio": 1.599992004754575,
+          "exits": {
+            "t1": 151,
+            "stop": 360,
+            "censored": 32,
+            "unresolved": 1
+          },
+          "ci95": [
+            -0.531625996222413,
+            0.1062059152542426
+          ],
+          "excludesZero": false,
+          "nBlocks": 30,
+          "interpretable": true
+        },
+        {
+          "decile": 5,
+          "n": 904,
+          "nResolved": 875,
+          "nCensored": 29,
+          "meanR": -0.12937765699552017,
+          "sumR": -113.20544987108016,
+          "hitRate": 0.33485714285714285,
+          "meanWin": 1.599981399757404,
+          "meanLoss": 1,
+          "wlRatio": 1.599981399757404,
+          "exits": {
+            "stop": 582,
+            "t1": 293,
+            "censored": 29
+          },
+          "ci95": [
+            -0.3701480931169762,
+            0.13225455264078112
+          ],
+          "excludesZero": false,
+          "nBlocks": 30,
+          "interpretable": true
+        },
+        {
+          "decile": 6,
+          "n": 753,
+          "nResolved": 750,
+          "nCensored": 3,
+          "meanR": 0.057351266864377616,
+          "sumR": 43.01345014828321,
+          "hitRate": 0.4066666666666667,
+          "meanWin": 1.6000440988468272,
+          "meanLoss": 1,
+          "wlRatio": 1.6000440988468272,
+          "exits": {
+            "stop": 445,
+            "t1": 305,
+            "censored": 3
+          },
+          "ci95": [
+            -0.32980966471051965,
+            0.4039688364904728
+          ],
+          "excludesZero": false,
+          "nBlocks": 29,
+          "interpretable": true
+        },
+        {
+          "decile": 7,
+          "n": 0,
+          "nResolved": 0,
+          "nCensored": 0,
+          "meanR": null,
+          "sumR": 0,
+          "hitRate": null,
+          "meanWin": null,
+          "meanLoss": null,
+          "wlRatio": null,
+          "exits": {},
+          "ci95": [
+            null,
+            null
+          ],
+          "excludesZero": null,
+          "nBlocks": 0,
+          "interpretable": false
+        },
+        {
+          "decile": 8,
+          "n": 725,
+          "nResolved": 717,
+          "nCensored": 8,
+          "meanR": -0.1587067582391961,
+          "sumR": -113.79274565750362,
+          "hitRate": 0.32357043235704325,
+          "meanWin": 1.6000312687176579,
+          "meanLoss": 1,
+          "wlRatio": 1.6000312687176579,
+          "exits": {
+            "stop": 485,
+            "t1": 232,
+            "censored": 8
+          },
+          "ci95": [
+            -0.4214729428209162,
+            0.12313435956346848
+          ],
+          "excludesZero": false,
+          "nBlocks": 30,
+          "interpretable": true
+        },
+        {
+          "decile": 9,
+          "n": 460,
+          "nResolved": 452,
+          "nCensored": 8,
+          "meanR": -0.17742894429716285,
+          "sumR": -80.19788282231761,
+          "hitRate": 0.3163716814159292,
+          "meanWin": 1.6000148054383372,
+          "meanLoss": 1,
+          "wlRatio": 1.6000148054383372,
+          "exits": {
+            "stop": 309,
+            "t1": 143,
+            "censored": 8
+          },
+          "ci95": [
+            -0.48002493688018333,
+            0.15921142919624706
+          ],
+          "excludesZero": false,
+          "nBlocks": 30,
+          "interpretable": true
+        },
+        {
+          "decile": 10,
+          "n": 379,
+          "nResolved": 379,
+          "nCensored": 0,
+          "meanR": -0.06014764201505903,
+          "sumR": -22.795956323707372,
+          "hitRate": 0.36147757255936674,
+          "meanWin": 1.6000295158853493,
+          "meanLoss": 1,
+          "wlRatio": 1.6000295158853493,
+          "exits": {
+            "stop": 242,
+            "t1": 137
+          },
+          "ci95": [
+            -0.4009061020944146,
+            0.27822590317642565
+          ],
+          "excludesZero": false,
+          "nBlocks": 29,
+          "interpretable": true
+        }
+      ]
+    },
+    "shift20": {
+      "rho": 1,
+      "rows": [
+        {
+          "decile": 1,
+          "n": 653,
+          "nResolved": 648,
+          "nCensored": 5,
+          "meanR": 0.38826601144422374,
+          "sumR": 251.59637541585698,
+          "hitRate": 0.5339506172839507,
+          "meanWin": 1.5999895243232891,
+          "meanLoss": 1,
+          "wlRatio": 1.5999895243232891,
+          "exits": {
+            "t1": 346,
+            "stop": 302,
+            "censored": 5
+          },
+          "ci95": [
+            -0.09980236518169625,
+            0.7935703665766238
+          ],
+          "excludesZero": false,
+          "nBlocks": 30,
+          "interpretable": true
+        },
+        {
+          "decile": 2,
+          "n": 634,
+          "nResolved": 604,
+          "nCensored": 30,
+          "meanR": 0.2354250405689553,
+          "sumR": 142.196724503649,
+          "hitRate": 0.47516556291390727,
+          "meanWin": 1.5999885871207318,
+          "meanLoss": 1,
+          "wlRatio": 1.5999885871207318,
+          "exits": {
+            "t1": 287,
+            "stop": 317,
+            "censored": 30
+          },
+          "ci95": [
+            -0.18063326359279058,
+            0.5843912792883204
+          ],
+          "excludesZero": false,
+          "nBlocks": 29,
+          "interpretable": true
+        },
+        {
+          "decile": 3,
+          "n": 475,
+          "nResolved": 468,
+          "nCensored": 7,
+          "meanR": -0.2500066199426466,
+          "sumR": -117.00309813315862,
+          "hitRate": 0.28846153846153844,
+          "meanWin": 1.5999770508654891,
+          "meanLoss": 1,
+          "wlRatio": 1.5999770508654891,
+          "exits": {
+            "stop": 333,
+            "t1": 135,
+            "censored": 7
+          },
+          "ci95": [
+            -0.5747610271199534,
+            0.12273681181402724
+          ],
+          "excludesZero": false,
+          "nBlocks": 30,
+          "interpretable": true
+        },
+        {
+          "decile": 4,
+          "n": 536,
+          "nResolved": 504,
+          "nCensored": 32,
+          "meanR": -0.2210339807825882,
+          "sumR": -111.40112631442446,
+          "hitRate": 0.2996031746031746,
+          "meanWin": 1.5999925409640767,
+          "meanLoss": 1,
+          "wlRatio": 1.5999925409640767,
+          "exits": {
+            "t1": 151,
+            "stop": 353,
+            "censored": 31,
+            "unresolved": 1
+          },
+          "ci95": [
+            -0.5305104283439797,
+            0.13696278995835387
+          ],
+          "excludesZero": false,
+          "nBlocks": 30,
+          "interpretable": true
+        },
+        {
+          "decile": 5,
+          "n": 894,
+          "nResolved": 866,
+          "nCensored": 28,
+          "meanR": -0.13534112147933536,
+          "sumR": -117.20541120110443,
+          "hitRate": 0.3325635103926097,
+          "meanWin": 1.5999812111072744,
+          "meanLoss": 1,
+          "wlRatio": 1.5999812111072744,
+          "exits": {
+            "stop": 578,
+            "t1": 288,
+            "censored": 28
+          },
+          "ci95": [
+            -0.37643370937159043,
+            0.12539555520162443
+          ],
+          "excludesZero": false,
+          "nBlocks": 30,
+          "interpretable": true
+        },
+        {
+          "decile": 6,
+          "n": 747,
+          "nResolved": 744,
+          "nCensored": 3,
+          "meanR": 0.06587618936061977,
+          "sumR": 49.01188488430111,
+          "hitRate": 0.4099462365591398,
+          "meanWin": 1.6000389668337713,
+          "meanLoss": 1,
+          "wlRatio": 1.6000389668337713,
+          "exits": {
+            "stop": 439,
+            "t1": 305,
+            "censored": 3
+          },
+          "ci95": [
+            -0.3268057653009344,
+            0.4130227555810364
+          ],
+          "excludesZero": false,
+          "nBlocks": 29,
+          "interpretable": true
+        },
+        {
+          "decile": 7,
+          "n": 0,
+          "nResolved": 0,
+          "nCensored": 0,
+          "meanR": null,
+          "sumR": 0,
+          "hitRate": null,
+          "meanWin": null,
+          "meanLoss": null,
+          "wlRatio": null,
+          "exits": {},
+          "ci95": [
+            null,
+            null
+          ],
+          "excludesZero": null,
+          "nBlocks": 0,
+          "interpretable": false
+        },
+        {
+          "decile": 8,
+          "n": 716,
+          "nResolved": 708,
+          "nCensored": 8,
+          "meanR": -0.1627006743577192,
+          "sumR": -115.1920774452652,
+          "hitRate": 0.3220338983050847,
+          "meanWin": 1.6000347480470836,
+          "meanLoss": 1,
+          "wlRatio": 1.6000347480470836,
+          "exits": {
+            "stop": 480,
+            "t1": 228,
+            "censored": 8
+          },
+          "ci95": [
+            -0.42052739449798815,
+            0.11958753419243717
+          ],
+          "excludesZero": false,
+          "nBlocks": 30,
+          "interpretable": true
+        },
+        {
+          "decile": 9,
+          "n": 456,
+          "nResolved": 448,
+          "nCensored": 8,
+          "meanR": -0.19329886882889902,
+          "sumR": -86.59789323534676,
+          "hitRate": 0.31026785714285715,
+          "meanWin": 1.600015156580238,
+          "meanLoss": 1,
+          "wlRatio": 1.600015156580238,
+          "exits": {
+            "stop": 309,
+            "t1": 139,
+            "censored": 8
+          },
+          "ci95": [
+            -0.48740485348881746,
+            0.14183015831751108
+          ],
+          "excludesZero": false,
+          "nBlocks": 30,
+          "interpretable": true
+        },
+        {
+          "decile": 10,
+          "n": 379,
+          "nResolved": 379,
+          "nCensored": 0,
+          "meanR": -0.03957059404266846,
+          "sumR": -14.997255142171346,
+          "hitRate": 0.36939313984168864,
+          "meanWin": 1.6000196061273497,
+          "meanLoss": 1,
+          "wlRatio": 1.6000196061273497,
+          "exits": {
+            "stop": 239,
+            "t1": 140
+          },
+          "ci95": [
+            -0.37602145001306075,
+            0.2937458811433804
+          ],
+          "excludesZero": false,
+          "nBlocks": 29,
+          "interpretable": true
+        }
+      ]
+    }
+  },
+  "reasonStats": [
+    {
+      "reason": "barriera:G8:STOP TROPPO LONTANO",
+      "n": 2039,
+      "nResolved": 1927,
+      "meanR": -0.37394595585010926,
+      "hitRate": 0.24078879086663207,
+      "ci95": [
+        -0.6517011018046927,
+        -0.06419456303094252
+      ]
+    },
+    {
+      "reason": "leva:G4:TRIGGER GIÀ SUPERATO",
+      "n": 1837,
+      "nResolved": 1822,
+      "meanR": 0.8665317099027259,
+      "hitRate": 0.7178924259055982,
+      "ci95": [
+        0.5088455412781928,
+        1.1660236048477188
+      ]
+    },
+    {
+      "reason": "vari:G11:PUNTEGGIO SOTTO SOGLIA",
+      "n": 795,
+      "nResolved": 795,
+      "meanR": -0.3851737598220211,
+      "hitRate": 0.23647798742138365,
+      "ci95": [
+        -0.660210817505224,
+        -0.032722486099677726
+      ]
+    },
+    {
+      "reason": "orario:G7:RANGE ESAURITO",
+      "n": 380,
+      "nResolved": 380,
+      "meanR": -0.9178945558038364,
+      "hitRate": 0.031578947368421054,
+      "ci95": [
+        -1,
+        -0.7407196499068508
+      ]
+    },
+    {
+      "reason": "vari:G10:STOP GIÀ RAGGIUNTO",
+      "n": 302,
+      "nResolved": 302,
+      "meanR": -1,
+      "hitRate": 0,
+      "ci95": [
+        -1,
+        -1
+      ]
+    },
+    {
+      "reason": "struttura:G2:DATI INSUFFICIENTI",
+      "n": 191,
+      "nResolved": 191,
+      "meanR": -0.06074465524051095,
+      "hitRate": 0.3612565445026178,
+      "ci95": [
+        -0.2471818662117284,
+        0.19802555295479496
+      ]
+    },
+    {
+      "reason": "REEMISSIONE",
+      "n": 108,
+      "nResolved": 108,
+      "meanR": -0.49445726817420604,
+      "hitRate": 0.19444444444444445,
+      "ci95": [
+        -0.901269110382451,
+        0.12772369645385043
+      ]
+    },
+    {
+      "reason": "EMESSO",
+      "n": 15,
+      "nResolved": 15,
+      "meanR": -0.47996675278984996,
+      "hitRate": 0.2,
+      "ci95": [
+        -1,
+        0.11441002918514873
+      ]
+    }
+  ],
+  "g4Realizable": {
+    "nG4": 1837,
+    "valutati": 1837,
+    "skippedNoPrice": 0,
+    "skippedZeroRisk": 0,
+    "controlMeanR": 0.8665317099027259,
+    "controlHitRate": 0.7178924259055982,
+    "realMeanR": -0.12673542200935473,
+    "realHitRate": 0.4989023051591657,
+    "realCi95": [
+      -0.29864077511171055,
+      0.032964307444507526
+    ],
+    "slipMean": 1.1928384062897144,
+    "slipMedian": 1.0082964992903765,
+    "slipP90": 2.144972291616419,
+    "slipMax": 5.374874626469732,
+    "shareOver05": 79.25966249319542,
+    "lowSlipMeanR": -0.2792629675261443,
+    "lowSlipN": 47
+  },
+  "crossTab": {
+    "composition": {
+      "decile1": {
+        "n": 675,
+        "nResolved": 670,
+        "shares": {
+          "G4": 248,
+          "G7": 66,
+          "G11": 101,
+          "G10": 32,
+          "G8": 214,
+          "G2": 9
+        },
+        "g4share": 37.014925373134325
+      },
+      "decile2": {
+        "n": 660,
+        "nResolved": 630,
+        "shares": {
+          "G8": 163,
+          "G4": 249,
+          "G2": 7,
+          "G7": 39,
+          "G10": 45,
+          "G11": 127
+        },
+        "g4share": 39.523809523809526
+      },
+      "decile10": {
+        "n": 381,
+        "nResolved": 381,
+        "shares": {
+          "G8": 118,
+          "G2": 45,
+          "G4": 138,
+          "EMESSO": 8,
+          "REEMISSIONE": 39,
+          "G10": 13,
+          "G7": 20
+        },
+        "g4share": 36.22047244094488
+      }
+    },
+    "noG4": {
+      "n": 3830,
+      "rho": -0.3333333333333333,
+      "slope": -0.014070014260261799,
+      "spread": -0.3327580385725167,
+      "decile1": -0.2606670741230053,
+      "decileLast": -0.593425112695522
+    },
+    "onlyG4": {
+      "n": 1837,
+      "rho": -0.5833333333333334,
+      "slope": -0.07939318604859753,
+      "decile1": 1.4846674626861325,
+      "decileLast": 0.7522137733571881
+    }
+  },
+  "selectionCurve": {
+    "tops": [
+      {
+        "frac": 0.1,
+        "n": 567,
+        "nResolved": 567,
+        "meanR": -0.04620055007652108,
+        "hitRate": 0.36684303350970016,
+        "ci95": [
+          -0.3750531409355461,
+          0.29271776925670107
+        ],
+        "excludesZero": false
+      },
+      {
+        "frac": 0.2,
+        "n": 1134,
+        "nResolved": 1126,
+        "meanR": -0.041729454877493834,
+        "hitRate": 0.3685612788632327,
+        "ci95": [
+          -0.3420175664232333,
+          0.285256573180847
+        ],
+        "excludesZero": false
+      },
+      {
+        "frac": 0.3,
+        "n": 1701,
+        "nResolved": 1685,
+        "meanR": -0.16212818955304686,
+        "hitRate": 0.32225519287833826,
+        "ci95": [
+          -0.41504247520971216,
+          0.11687708990826537
+        ],
+        "excludesZero": false
+      },
+      {
+        "frac": 0.5,
+        "n": 2834,
+        "nResolved": 2810,
+        "meanR": -0.13024002546552713,
+        "hitRate": 0.33451957295373663,
+        "ci95": [
+          -0.3931584003319722,
+          0.15541242370280137
+        ],
+        "excludesZero": false
+      }
+    ],
+    "full": {
+      "frac": 1,
+      "n": 5667,
+      "nResolved": 5540,
+      "meanR": -0.03086448865522116,
+      "hitRate": 0.37274368231046934,
+      "ci95": [
+        -0.23201731125134492,
+        0.17844477720794083
+      ],
+      "excludesZero": false
+    }
+  },
+  "monotonicity": {
+    "rho": -0.26666666666666666,
+    "slope": -0.039095134581887306,
+    "spread": -0.4913955530065986,
+    "interpretableDeciles": 9
+  },
+  "verdict": "NON ORDINA — rho=-0.267. La curva e' piatta: il punteggio non separa gli esiti."
+}

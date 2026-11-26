@@ -1,0 +1,311 @@
+{
+  "nRows": 27288,
+  "byDay": {
+    "2026-10-01": {
+      "Nessun titolo presente o analizzato per la sessione.": 298,
+      "missing_input": 292,
+      "barriera": 39,
+      "leva": 28
+    },
+    "2026-10-02": {
+      "Nessun titolo presente o analizzato per la sessione.": 302,
+      "missing_input": 408,
+      "struttura": 4,
+      "vari": 56,
+      "orario": 51,
+      "barriera": 46,
+      "emesso": 1,
+      "REEMISSIONE": 2,
+      "leva": 48
+    },
+    "2026-10-05": {
+      "Nessun titolo presente o analizzato per la sessione.": 323,
+      "missing_input": 408,
+      "struttura": 4,
+      "vari": 93,
+      "barriera": 46,
+      "leva": 17,
+      "emesso": 2,
+      "REEMISSIONE": 25
+    },
+    "2026-10-06": {
+      "Nessun titolo presente o analizzato per la sessione.": 373,
+      "missing_input": 408,
+      "struttura": 2,
+      "barriera": 71,
+      "emesso": 1,
+      "REEMISSIONE": 6,
+      "vari": 43,
+      "leva": 14
+    },
+    "2026-10-07": {
+      "Nessun titolo presente o analizzato per la sessione.": 249,
+      "missing_input": 408,
+      "struttura": 3,
+      "vari": 125,
+      "emesso": 1,
+      "REEMISSIONE": 21,
+      "leva": 96,
+      "barriera": 15
+    },
+    "2026-10-08": {
+      "Nessun titolo presente o analizzato per la sessione.": 307,
+      "missing_input": 408,
+      "struttura": 2,
+      "barriera": 116,
+      "leva": 63,
+      "emesso": 1,
+      "REEMISSIONE": 11,
+      "vari": 10
+    },
+    "2026-10-09": {
+      "Nessun titolo presente o analizzato per la sessione.": 355,
+      "missing_input": 408,
+      "struttura": 4,
+      "barriera": 101,
+      "emesso": 1,
+      "REEMISSIONE": 14,
+      "vari": 19,
+      "leva": 16
+    },
+    "2026-10-12": {
+      "Nessun titolo presente o analizzato per la sessione.": 318,
+      "missing_input": 408,
+      "struttura": 5,
+      "barriera": 67,
+      "leva": 82,
+      "vari": 38
+    },
+    "2026-10-13": {
+      "Nessun titolo presente o analizzato per la sessione.": 382,
+      "missing_input": 408,
+      "struttura": 4,
+      "vari": 100,
+      "emesso": 1,
+      "barriera": 15,
+      "REEMISSIONE": 5,
+      "leva": 3
+    },
+    "2026-10-14": {
+      "Nessun titolo presente o analizzato per la sessione.": 332,
+      "missing_input": 408,
+      "struttura": 1,
+      "barriera": 9,
+      "leva": 60,
+      "emesso": 1,
+      "REEMISSIONE": 11,
+      "vari": 96
+    },
+    "2026-10-15": {
+      "Nessun titolo presente o analizzato per la sessione.": 281,
+      "missing_input": 408,
+      "struttura": 2,
+      "barriera": 83,
+      "orario": 29,
+      "vari": 20,
+      "leva": 95
+    },
+    "2026-10-16": {
+      "Nessun titolo presente o analizzato per la sessione.": 325,
+      "missing_input": 408,
+      "struttura": 6,
+      "vari": 94,
+      "barriera": 2,
+      "emesso": 2,
+      "leva": 78,
+      "REEMISSIONE": 3
+    },
+    "2026-10-19": {
+      "Nessun titolo presente o analizzato per la sessione.": 332,
+      "missing_input": 408,
+      "struttura": 4,
+      "vari": 44,
+      "barriera": 24,
+      "leva": 67,
+      "orario": 39
+    },
+    "2026-10-20": {
+      "Nessun titolo presente o analizzato per la sessione.": 297,
+      "missing_input": 408,
+      "struttura": 2,
+      "barriera": 99,
+      "leva": 92,
+      "vari": 20
+    },
+    "2026-10-21": {
+      "Nessun titolo presente o analizzato per la sessione.": 332,
+      "missing_input": 408,
+      "struttura": 4,
+      "orario": 50,
+      "barriera": 54,
+      "emesso": 1,
+      "REEMISSIONE": 4,
+      "vari": 13,
+      "leva": 52
+    },
+    "2026-10-22": {
+      "Nessun titolo presente o analizzato per la sessione.": 346,
+      "missing_input": 408,
+      "struttura": 2,
+      "barriera": 18,
+      "leva": 99,
+      "orario": 20,
+      "vari": 25
+    },
+    "2026-10-23": {
+      "Nessun titolo presente o analizzato per la sessione.": 310,
+      "missing_input": 408,
+      "struttura": 6,
+      "vari": 22,
+      "barriera": 33,
+      "orario": 54,
+      "leva": 85
+    },
+    "2026-10-26": {
+      "Nessun titolo presente o analizzato per la sessione.": 254,
+      "missing_input": 408,
+      "struttura": 5,
+      "barriera": 81,
+      "leva": 118,
+      "vari": 51,
+      "emesso": 1
+    },
+    "2026-10-27": {
+      "Nessun titolo presente o analizzato per la sessione.": 289,
+      "missing_input": 408,
+      "struttura": 5,
+      "vari": 30,
+      "barriera": 62,
+      "leva": 124
+    },
+    "2026-10-28": {
+      "Nessun titolo presente o analizzato per la sessione.": 317,
+      "missing_input": 408,
+      "struttura": 6,
+      "barriera": 159,
+      "vari": 11,
+      "leva": 11,
+      "emesso": 1,
+      "REEMISSIONE": 5
+    },
+    "2026-10-29": {
+      "Nessun titolo presente o analizzato per la sessione.": 235,
+      "missing_input": 408,
+      "struttura": 3,
+      "orario": 105,
+      "barriera": 74,
+      "vari": 55,
+      "leva": 38
+    },
+    "2026-10-30": {
+      "Nessun titolo presente o analizzato per la sessione.": 368,
+      "missing_input": 408,
+      "struttura": 1,
+      "barriera": 131,
+      "vari": 10
+    },
+    "2026-11-02": {
+      "Nessun titolo presente o analizzato per la sessione.": 327,
+      "missing_input": 408,
+      "struttura": 5,
+      "barriera": 144,
+      "leva": 34
+    },
+    "2026-11-03": {
+      "Nessun titolo presente o analizzato per la sessione.": 302,
+      "missing_input": 408,
+      "struttura": 6,
+      "vari": 51,
+      "leva": 122,
+      "orario": 15,
+      "barriera": 12,
+      "emesso": 1,
+      "REEMISSIONE": 1
+    },
+    "2026-11-04": {
+      "Nessun titolo presente o analizzato per la sessione.": 337,
+      "missing_input": 408,
+      "struttura": 1,
+      "barriera": 26,
+      "leva": 134,
+      "vari": 12
+    },
+    "2026-11-05": {
+      "Nessun titolo presente o analizzato per la sessione.": 374,
+      "missing_input": 408,
+      "struttura": 2,
+      "barriera": 71,
+      "vari": 8,
+      "leva": 38,
+      "orario": 17
+    },
+    "2026-11-06": {
+      "Nessun titolo presente o analizzato per la sessione.": 293,
+      "missing_input": 408,
+      "struttura": 5,
+      "barriera": 132,
+      "leva": 80
+    },
+    "2026-11-09": {
+      "Nessun titolo presente o analizzato per la sessione.": 299,
+      "missing_input": 408,
+      "struttura": 87,
+      "vari": 51,
+      "leva": 55,
+      "barriera": 18
+    },
+    "2026-11-10": {
+      "Nessun titolo presente o analizzato per la sessione.": 280,
+      "missing_input": 408,
+      "struttura": 6,
+      "barriera": 175,
+      "leva": 49
+    },
+    "2026-11-11": {
+      "Nessun titolo presente o analizzato per la sessione.": 356,
+      "missing_input": 412,
+      "struttura": 4,
+      "leva": 39,
+      "barriera": 116
+    }
+  },
+  "causes": [
+    "Nessun titolo presente o analizzato per la sessione.",
+    "REEMISSIONE",
+    "barriera",
+    "emesso",
+    "leva",
+    "missing_input",
+    "orario",
+    "struttura",
+    "vari"
+  ],
+  "before": {
+    "out": {
+      "Nessun titolo presente o analizzato per la sessione.": 6005,
+      "missing_input": 7636,
+      "barriera": 981,
+      "leva": 1237,
+      "struttura": 65,
+      "vari": 899,
+      "orario": 243,
+      "emesso": 13,
+      "REEMISSIONE": 102
+    },
+    "tot": 17181
+  },
+  "after": {
+    "out": {
+      "Nessun titolo presente o analizzato per la sessione.": 3488,
+      "missing_input": 4492,
+      "struttura": 126,
+      "barriera": 1058,
+      "vari": 198,
+      "leva": 600,
+      "emesso": 2,
+      "REEMISSIONE": 6,
+      "orario": 137
+    },
+    "tot": 10107
+  }
+}

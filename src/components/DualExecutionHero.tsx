@@ -104,7 +104,11 @@ export const SingleMarketHeroCard: React.FC<SingleMarketHeroCardProps> = ({
     : TRADING_PARAMS.T2_R;
 
   const [barrierStrike, setBarrierStrike] = useState<number>(barrierFromSetup ?? 0);
-  const [leverage, setLeverage] = useState<number>(setup?.selectedLeverage ?? 10);
+  // Nessun fallback fisso a 10x: se il setup non ha una leva compatibile si parte
+  // dalla leva minima della griglia del mercato (5x USA, 10x EU).
+  const [leverage, setLeverage] = useState<number>(
+    setup?.selectedLeverage ?? (market === 'US' ? TRADING_PARAMS.LEVE_US[0] : TRADING_PARAMS.LEVE[0])
+  );
   const [certPrice, setCertPrice] = useState<number>(2.5);
   const [ratio, setRatio] = useState<number>(market === 'US' ? 0.1 : 1);
   const [fxRateEurUsd, setFxRateEurUsd] = useState<number>(

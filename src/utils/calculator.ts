@@ -1687,7 +1687,10 @@ export function getDualTopCandidates(
       return check.compliant;
     }) || null;
   }
-  // Fallback to highest scored EU candidate if none passes all filters (mai un WARMUP_INCOMPLETE)
+  // Fallback: il candidato con il punteggio piu' alto resta visibile, ma NON e'
+  // un Top Pick operabile: G11 lo blocca con "PUNTEGGIO SOTTO SOGLIA".
+  // Sopprimerlo del tutto (top = null) faceva perdere il motivo del blocco
+  // nell'analisi e nella UI ("nessun titolo" invece di "score insufficiente").
   if (!topEU && recommendableEU.length > 0) {
     topEU = recommendableEU[0];
   }
@@ -1699,7 +1702,7 @@ export function getDualTopCandidates(
       return check.compliant;
     }) || null;
   }
-  // Fallback to highest scored US candidate if none passes all filters (mai un WARMUP_INCOMPLETE)
+  // Fallback USA: stessa regola (il candidato resta visibile, G11 decide).
   if (!topUS && recommendableUS.length > 0) {
     topUS = recommendableUS[0];
   }
@@ -2028,9 +2031,11 @@ export function buildExecutionSetup(
     entryMode?: EntryMode | null;
     currentTime?: Date;
     customLeve?: readonly number[];
+    riskEur?: number;
+    /** false = disattiva il gate costi G14 anche con rischio noto (default: attivo). */
+    costGuard?: boolean;
     macroEvents?: MacroEvent[];
     macroCalendar?: MacroCalendarState;
-    riskEur?: number;
     adrMax?: number;
     minScoreOverride?: number;
     // I2b: override per-esecuzione del flag STALENESS_USE_MARKET_TS. Assente =
@@ -2127,7 +2132,10 @@ export function buildExecutionSetup(
   const stopDistancePct = +(dS * 100).toFixed(4);
 
   // 4. Leverage Selection L_sel = max{ L ∈ LEVE : dS × L ≤ LMAX e 1/L ≥ dS + BUF_BAR }
-  const leveGrid = options?.customLeve ?? TRADING_PARAMS.LEVE;
+  // Griglia per mercato: la griglia KO Trade Republic USA ammette 5x (dS <= 2.00%).
+  // Usare LEVE (min 10x) anche per gli USA rendeva non eseguibile ogni stop oltre 1%.
+  const leveGrid =
+    options?.customLeve ?? (marketType === 'US' ? TRADING_PARAMS.LEVE_US : TRADING_PARAMS.LEVE);
   const eligibleLevers = leveGrid.filter(
     (l) => dS * l <= TRADING_PARAMS.LMAX + eps && 1 / l + eps >= dS + TRADING_PARAMS.BUF_BAR
   );
@@ -2310,8 +2318,12 @@ export function buildExecutionSetup(
     message: g7Pass ? undefined : 'RANGE ESAURITO',
   };
 
-  // G8 Stop distanza: dS > LMAX / min(LEVE) → STOP TROPPO LONTANO
-  const minLeva = Math.min(...TRADING_PARAMS.LEVE, ...leveGrid);
+  // G8 Stop distanza: dS > LMAX / min(griglia del mercato) → STOP TROPPO LONTANO
+  // La griglia e' quella del mercato (EU min 10x -> dS max 1.00%, US min 5x ->
+  // dS max 2.00%). Gli override customLeve non spostano questo limite: G8 dice
+  // se lo stop e' rappresentabile dalla leva minima offerta dal broker.
+  const marketLeveGrid = marketType === 'US' ? TRADING_PARAMS.LEVE_US : TRADING_PARAMS.LEVE;
+  const minLeva = Math.min(...marketLeveGrid);
   const g8Pass = dS <= TRADING_PARAMS.LMAX / minLeva + eps;
   gateResults['G8'] = {
     passed: g8Pass,
@@ -2384,7 +2396,33 @@ export function buildExecutionSetup(
     message: g13Pass ? undefined : staleness.warning ?? 'DATI NON FRESCHI',
   };
 
-  const gateKeys = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'G9', 'G10', 'G11', 'G12', 'G13'];
+  // G14 Costi: con un rischio reale noto, un setup il cui attrito supera il 12% di 1R
+  // non e' piu' un trade a expectancy positiva: la commissione si mangia il target.
+  // Il gate esiste solo se il chiamante passa `riskEur` (capitale reale): senza quel
+  // dato non c'e' modo di calcolare l'incidenza e il gate non si esprime.
+  const costEfficiency = assessCostEfficiency({
+    riskEur: options?.riskEur ?? DEFAULT_RISK_EUR_FALLBACK,
+    target1Multiplier: t1Multiplier,
+  });
+  const costGateActive =
+    options?.costGuard !== false &&
+    options?.riskEur != null &&
+    Number.isFinite(options.riskEur) &&
+    options.riskEur > 0;
+  // Il gate compare solo se e' esprimibile (rischio noto): senza capitale il
+  // verdetto non esiste e non deve comparire come gate fittizio sempre verde.
+  const g14Pass = costEfficiency.status === 'OPTIMAL';
+  if (costGateActive) {
+    gateResults['G14'] = {
+      passed: g14Pass,
+      label: 'Costi',
+      message: g14Pass ? undefined : `COSTI EROSIVI (fee ${(costEfficiency.feeImpactR * 100).toFixed(0)}% di 1R)`,
+    };
+  }
+
+  const gateKeys = [
+    'G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'G9', 'G10', 'G11', 'G12', 'G13', 'G14',
+  ].filter((k) => k in gateResults);
   const firstFailedKey = gateKeys.find((k) => !gateResults[k].passed);
 
   const decision: 'TRADE' | 'NESSUN_TRADE' = firstFailedKey ? 'NESSUN_TRADE' : 'TRADE';
@@ -2481,10 +2519,7 @@ export function buildExecutionSetup(
     overnightWarning,
     orderFlow: quote.orderFlow ?? null,
     earningsWarning,
-    costEfficiency: assessCostEfficiency({
-      riskEur: options?.riskEur ?? DEFAULT_RISK_EUR_FALLBACK,
-      target1Multiplier: t1Multiplier,
-    }),
+    costEfficiency,
   }, options?.macroCalendar, SETUP_SELECTOR_LIVE === 'on');
 }
 

@@ -1,0 +1,352 @@
+{
+  "gates": [
+    {
+      "sigla": "G1",
+      "label": "Liquidita",
+      "condizione": "liqEur20d >= soglia; se liqEur assente o barre complete < 20 PASSA (cade in G2)",
+      "soglia": "LIQ_MIN_EUR 3.000.000 EUR; LIQ_BARS_REQUIRED 20",
+      "ref": "calculator.ts:2153-2162"
+    },
+    {
+      "sigla": "G2",
+      "label": "Dati",
+      "condizione": "ORB high/low, prezzo>0, gap%, ATR14>0, ADR14>0, C_ieri>0, volume medio>0, liqEur>0, barre complete >= 20",
+      "soglia": "nessuna soglia numerica",
+      "ref": "calculator.ts:2164-2186"
+    },
+    {
+      "sigla": "G3",
+      "label": "Orario ORB",
+      "condizione": "non prima della chiusura dell ORB",
+      "soglia": "marketTime.isBeforeOrb",
+      "ref": "calculator.ts:2188-2192"
+    },
+    {
+      "sigla": "G4",
+      "label": "Estensione",
+      "condizione": "estensione oltre il trigger <= EST_MAX",
+      "soglia": "EST_MAX 0.004 (0.40%)",
+      "ref": "calculator.ts:2194-2200"
+    },
+    {
+      "sigla": "G5",
+      "label": "Freschezza",
+      "condizione": "minuti da Tb (prima rottura) <= FRESH_MIN",
+      "soglia": "FRESH_MIN 60 min",
+      "ref": "calculator.ts:2202-2214"
+    },
+    {
+      "sigla": "G6",
+      "label": "Target",
+      "condizione": "T1 non ancora raggiunto in sessione (H_sess < T1 long, L_sess > T1 short)",
+      "soglia": "T1",
+      "ref": "calculator.ts:2216-2225"
+    },
+    {
+      "sigla": "G7",
+      "label": "ADR",
+      "condizione": "consumo ADR14 <= ADR_MAX",
+      "soglia": "ADR_MAX 0.60",
+      "ref": "calculator.ts:2227-2234"
+    },
+    {
+      "sigla": "G8",
+      "label": "Stop distanza",
+      "condizione": "dS <= LMAX / min(LEVE)",
+      "soglia": "LMAX 0.10 / 10 = 0.01 (1.0%)",
+      "ref": "calculator.ts:2236-2243"
+    },
+    {
+      "sigla": "G9",
+      "label": "Leva e barriera",
+      "condizione": "esiste L in LEVE con dS*L <= LMAX e 1/L >= dS+BUF_BAR, e la barriera raccomandata dista >= BUF_BAR*E dallo stop",
+      "soglia": "LEVE [10,15,20,25]; BUF_BAR 0.001 (0.1%)",
+      "ref": "calculator.ts:2245-2268"
+    },
+    {
+      "sigla": "G10",
+      "label": "Stop gia toccato",
+      "condizione": "prezzo corrente non oltre lo stop",
+      "soglia": "eps",
+      "ref": "calculator.ts:2270-2278"
+    },
+    {
+      "sigla": "G11",
+      "label": "Score",
+      "condizione": "score senza liquidita >= minScore",
+      "soglia": "MIN_SCORE_EU 48 / MIN_SCORE_US 58",
+      "ref": "calculator.ts:2280-2288"
+    },
+    {
+      "sigla": "G12",
+      "label": "T1 vs ADR residuo",
+      "condizione": "distanza T1 <= spazio ADR residuo",
+      "soglia": "ADR_MAX + EPSILON",
+      "ref": "calculator.ts:2290-2299"
+    },
+    {
+      "sigla": "G13",
+      "label": "Freshness dati",
+      "condizione": "quote non stantia",
+      "soglia": "soglia minuti di checkQuoteStaleness; flag STALENESS_USE_MARKET_TS",
+      "ref": "calculator.ts:2301-2307"
+    }
+  ],
+  "shifts": {
+    "0": {
+      "emitted": {
+        "n": 123,
+        "nBar": 123,
+        "meanRBarrier": -0.49269013215172364,
+        "meanRMark": -0.35734449164723103,
+        "hitBarrier": 0.1951219512195122,
+        "pctCensored": 0,
+        "sumBarrier": -60.60088625466201
+      },
+      "blocked": {
+        "n": 5544,
+        "nBar": 5543,
+        "meanRBarrier": -0.030708601031551406,
+        "meanRMark": 0.05900821130450414,
+        "hitBarrier": 0.36821215948042574,
+        "pctCensored": 0.022727272727272728,
+        "sumBarrier": -170.21777551788944
+      },
+      "all": {
+        "n": 5667,
+        "nBar": 5666,
+        "meanRBarrier": -0.04073749766546972,
+        "meanRMark": 0.04997144009168189,
+        "hitBarrier": 0.3644546417225556,
+        "pctCensored": 0.02223398623610376,
+        "sumBarrier": -230.81866177255142
+      },
+      "byGate": {
+        "G2": {
+          "n": 191,
+          "nBar": 191,
+          "meanRBarrier": -0.06074465524051095,
+          "meanRMark": -0.17970200095945088,
+          "hitBarrier": 0.3612565445026178,
+          "pctCensored": 0,
+          "sumBarrier": -11.602229150937593
+        },
+        "G4": {
+          "n": 1837,
+          "nBar": 1837,
+          "meanRBarrier": 0.8582232288715348,
+          "meanRMark": 1.2250749729519597,
+          "hitBarrier": 0.7120304844855743,
+          "pctCensored": 0.008165487207403375,
+          "sumBarrier": 1576.5560714370095
+        },
+        "G7": {
+          "n": 380,
+          "nBar": 380,
+          "meanRBarrier": -0.9178945558038364,
+          "meanRMark": -0.5661521604286508,
+          "hitBarrier": 0.031578947368421054,
+          "pctCensored": 0,
+          "sumBarrier": -348.7999312054578
+        },
+        "G8": {
+          "n": 2039,
+          "nBar": 2038,
+          "meanRBarrier": -0.38182460625122416,
+          "meanRMark": -0.4203815944223133,
+          "hitBarrier": 0.22767419038272815,
+          "pctCensored": 0.05443845022069642,
+          "sumBarrier": -778.1585475399949
+        },
+        "G10": {
+          "n": 302,
+          "nBar": 302,
+          "meanRBarrier": -1,
+          "meanRMark": -1.8220578122696116,
+          "hitBarrier": 0,
+          "pctCensored": 0,
+          "sumBarrier": -302
+        },
+        "G11": {
+          "n": 795,
+          "nBar": 795,
+          "meanRBarrier": -0.3851737598220211,
+          "meanRMark": -0.3351456205810339,
+          "hitBarrier": 0.23647798742138365,
+          "pctCensored": 0,
+          "sumBarrier": -306.2131390585068
+        }
+      }
+    },
+    "15": {
+      "emitted": {
+        "n": 131,
+        "nBar": 131,
+        "meanRBarrier": -0.5038233989299924,
+        "meanRMark": -0.43841238072486927,
+        "hitBarrier": 0.19083969465648856,
+        "pctCensored": 0,
+        "sumBarrier": -66.000865259829
+      },
+      "blocked": {
+        "n": 5419,
+        "nBar": 5418,
+        "meanRBarrier": -0.021203299231674078,
+        "meanRMark": 0.05472553850606573,
+        "hitBarrier": 0.3719084533038021,
+        "pctCensored": 0.02251337885218675,
+        "sumBarrier": -114.87947523721014
+      },
+      "all": {
+        "n": 5550,
+        "nBar": 5549,
+        "meanRBarrier": -0.03259692566174791,
+        "meanRMark": 0.04308570653863281,
+        "hitBarrier": 0.3676338078933141,
+        "pctCensored": 0.021981981981981983,
+        "sumBarrier": -180.88034049703916
+      },
+      "byGate": {
+        "G2": {
+          "n": 191,
+          "nBar": 191,
+          "meanRBarrier": 0.17066287671507344,
+          "meanRMark": -0.2152283443471029,
+          "hitBarrier": 0.450261780104712,
+          "pctCensored": 0,
+          "sumBarrier": 32.596609452579024
+        },
+        "G4": {
+          "n": 1775,
+          "nBar": 1775,
+          "meanRBarrier": 0.8425669253188456,
+          "meanRMark": 1.2112664280916994,
+          "hitBarrier": 0.7059154929577465,
+          "pctCensored": 0.008450704225352112,
+          "sumBarrier": 1495.556292440951
+        },
+        "G7": {
+          "n": 374,
+          "nBar": 374,
+          "meanRBarrier": -0.9165773561643258,
+          "meanRMark": -0.5556501304569851,
+          "hitBarrier": 0.03208556149732621,
+          "pctCensored": 0,
+          "sumBarrier": -342.7999312054578
+        },
+        "G8": {
+          "n": 2013,
+          "nBar": 2012,
+          "meanRBarrier": -0.368399211817389,
+          "meanRMark": -0.413284705494389,
+          "hitBarrier": 0.2331013916500994,
+          "pctCensored": 0.053154495777446596,
+          "sumBarrier": -741.2192141765867
+        },
+        "G10": {
+          "n": 278,
+          "nBar": 278,
+          "meanRBarrier": -0.9625927225656564,
+          "meanRMark": -1.814963816383076,
+          "hitBarrier": 0.014388489208633094,
+          "pctCensored": 0,
+          "sumBarrier": -267.60077687325247
+        },
+        "G11": {
+          "n": 788,
+          "nBar": 788,
+          "meanRBarrier": -0.3698127599942086,
+          "meanRMark": -0.34012233632294264,
+          "hitBarrier": 0.24238578680203046,
+          "pctCensored": 0,
+          "sumBarrier": -291.41245487543637
+        }
+      }
+    },
+    "20": {
+      "emitted": {
+        "n": 131,
+        "nBar": 131,
+        "meanRBarrier": -0.5038233989299924,
+        "meanRMark": -0.46218205890417713,
+        "hitBarrier": 0.19083969465648856,
+        "pctCensored": 0,
+        "sumBarrier": -66.000865259829
+      },
+      "blocked": {
+        "n": 5359,
+        "nBar": 5358,
+        "meanRBarrier": -0.02062552566254187,
+        "meanRMark": 0.051967613735176076,
+        "hitBarrier": 0.372153788727137,
+        "pctCensored": 0.02239223735771599,
+        "sumBarrier": -110.51156649989935
+      },
+      "all": {
+        "n": 5490,
+        "nBar": 5489,
+        "meanRBarrier": -0.032157484379618934,
+        "meanRMark": 0.039699197138499336,
+        "hitBarrier": 0.36782656221533977,
+        "pctCensored": 0.02185792349726776,
+        "sumBarrier": -176.51243175972834
+      },
+      "byGate": {
+        "G2": {
+          "n": 191,
+          "nBar": 191,
+          "meanRBarrier": 0.1842658435047846,
+          "meanRMark": -0.2102776672303345,
+          "hitBarrier": 0.45549738219895286,
+          "pctCensored": 0,
+          "sumBarrier": 35.19477610941386
+        },
+        "G4": {
+          "n": 1750,
+          "nBar": 1750,
+          "meanRBarrier": 0.8401519575311246,
+          "meanRMark": 1.2073166987967925,
+          "hitBarrier": 0.7051428571428572,
+          "pctCensored": 0.008,
+          "sumBarrier": 1470.265925679468
+        },
+        "G7": {
+          "n": 370,
+          "nBar": 370,
+          "meanRBarrier": -0.9156754897444807,
+          "meanRMark": -0.55226316619735,
+          "hitBarrier": 0.032432432432432434,
+          "pctCensored": 0,
+          "sumBarrier": -338.7999312054578
+        },
+        "G8": {
+          "n": 1997,
+          "nBar": 1996,
+          "meanRBarrier": -0.3660117114096224,
+          "meanRMark": -0.4153673801541832,
+          "hitBarrier": 0.2339679358717435,
+          "pctCensored": 0.053079619429143715,
+          "sumBarrier": -730.5593759736063
+        },
+        "G10": {
+          "n": 272,
+          "nBar": 272,
+          "meanRBarrier": -0.9617675620340165,
+          "meanRMark": -1.8073595669920797,
+          "hitBarrier": 0.014705882352941176,
+          "pctCensored": 0,
+          "sumBarrier": -261.60077687325247
+        },
+        "G11": {
+          "n": 779,
+          "nBar": 779,
+          "meanRBarrier": -0.36586929940495216,
+          "meanRMark": -0.3449536772321063,
+          "hitBarrier": 0.24390243902439024,
+          "pctCensored": 0,
+          "sumBarrier": -285.01218423645776
+        }
+      }
+    }
+  }
+}

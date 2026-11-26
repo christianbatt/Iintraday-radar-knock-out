@@ -1,0 +1,96 @@
+{
+  "generatedAt": "2026-11-14T16:15:50.708Z",
+  "range": "60d",
+  "symbols": [
+    {
+      "symbol": "ENI.MI",
+      "adr14": 0.6607144219534737,
+      "liqEur20d": 218966437.4514057,
+      "avgVolume20d": 8365911.95,
+      "days": 20,
+      "first": "2026-10-15",
+      "last": "2026-11-11",
+      "source": "Yahoo 1d EUR Europe/Rome"
+    },
+    {
+      "symbol": "UCG.MI",
+      "adr14": 1.9528557913643974,
+      "liqEur20d": 388061618.83225405,
+      "avgVolume20d": 5042037.2,
+      "days": 20,
+      "first": "2026-10-15",
+      "last": "2026-11-11",
+      "source": "Yahoo 1d EUR Europe/Rome"
+    },
+    {
+      "symbol": "BAMI.MI",
+      "adr14": 0.3878570965358189,
+      "liqEur20d": 78228793.08803515,
+      "avgVolume20d": 5664537.3,
+      "days": 20,
+      "first": "2026-10-15",
+      "last": "2026-11-11",
+      "source": "Yahoo 1d EUR Europe/Rome"
+    },
+    {
+      "symbol": "RHM.DE",
+      "adr14": 40.49286324637277,
+      "liqEur20d": 242867289.87307435,
+      "avgVolume20d": 260710.75,
+      "days": 20,
+      "first": "2026-10-15",
+      "last": "2026-11-11",
+      "source": "Yahoo 1d EUR Europe/Berlin"
+    },
+    {
+      "symbol": "SAP.DE",
+      "adr14": 5.3214296613420755,
+      "liqEur20d": 443696221.4759262,
+      "avgVolume20d": 2118156.1,
+      "days": 20,
+      "first": "2026-10-15",
+      "last": "2026-11-11",
+      "source": "Yahoo 1d EUR Europe/Berlin"
+    },
+    {
+      "symbol": "BAYN.DE",
+      "adr14": 1.4807137080601283,
+      "liqEur20d": 145067698.9865799,
+      "avgVolume20d": 2869858.35,
+      "days": 20,
+      "first": "2026-10-15",
+      "last": "2026-11-11",
+      "source": "Yahoo 1d EUR Europe/Berlin"
+    },
+    {
+      "symbol": "LDO.MI",
+      "adr14": 1.5624991825648717,
+      "liqEur20d": 94330496.74452038,
+      "avgVolume20d": 1883348.3,
+      "days": 20,
+      "first": "2026-10-15",
+      "last": "2026-11-11",
+      "source": "Yahoo 1d EUR Europe/Rome"
+    },
+    {
+      "symbol": "SIE.DE",
+      "adr14": 7.303567068917411,
+      "liqEur20d": 295066025.95506895,
+      "avgVolume20d": 1100847.25,
+      "days": 20,
+      "first": "2026-10-15",
+      "last": "2026-11-11",
+      "source": "Yahoo 1d EUR Europe/Berlin"
+    },
+    {
+      "symbol": "STLAM.MI",
+      "adr14": 0.19864284992218018,
+      "liqEur20d": 196375601.25935417,
+      "avgVolume20d": 49590027.7,
+      "days": 20,
+      "first": "2026-10-15",
+      "last": "2026-11-11",
+      "source": "Yahoo 1d EUR Europe/Rome"
+    }
+  ]
+}

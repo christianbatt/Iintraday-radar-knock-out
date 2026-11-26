@@ -1,0 +1,4 @@
+{"kind":"header","startedAt":"2026-11-11T23:13:38.839Z","symbols":["ENI.MI"],"intervalSec":10,"durationSec":20,"endpoint":"yahoo-chart-v8-5m","appBase":"http://127.0.0.1:3000","sessionOpen":false}
+{"ts":"2026-11-11T23:13:38.849Z","symbol":"ENI.MI","httpStatus":200,"quoteTs":1794414971,"ageSec":23847,"lastPrice":25.2,"barTs":1794414600,"barAgeSec":24218,"appStatus":404,"appBytes":0,"appAsOf":null,"err":null}
+{"ts":"2026-11-11T23:13:48.985Z","symbol":"ENI.MI","httpStatus":200,"quoteTs":1794414971,"ageSec":23857,"lastPrice":25.2,"barTs":1794414600,"barAgeSec":24228,"appStatus":404,"appBytes":0,"appAsOf":null,"err":null}
+{"ts":"2026-11-11T23:13:59.001Z","symbol":"ENI.MI","httpStatus":200,"quoteTs":1794414971,"ageSec":23868,"lastPrice":25.2,"barTs":1794414600,"barAgeSec":24239,"appStatus":404,"appBytes":0,"appAsOf":null,"err":null}

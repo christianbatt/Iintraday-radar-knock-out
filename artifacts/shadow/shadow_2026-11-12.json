@@ -1,0 +1,987 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-12T22:56:06.431Z",
+  "sample": {
+    "nDays": 30,
+    "nSetups": 123,
+    "nClusters": 13,
+    "symbols": [
+      "BAMI.MI",
+      "RHM.DE",
+      "SAP.DE"
+    ],
+    "barMinutes": 5,
+    "windowStart": "2026-10-01",
+    "windowEnd": "2026-11-11"
+  },
+  "emissionsByDay": [
+    {
+      "day": "2026-10-01",
+      "candidates": 365,
+      "emitted": 0,
+      "blocked": 365,
+      "firstFailingGate": "G8"
+    },
+    {
+      "day": "2026-10-02",
+      "candidates": 510,
+      "emitted": 3,
+      "blocked": 507,
+      "firstFailingGate": "G7"
+    },
+    {
+      "day": "2026-10-05",
+      "candidates": 510,
+      "emitted": 27,
+      "blocked": 483,
+      "firstFailingGate": "G11"
+    },
+    {
+      "day": "2026-10-06",
+      "candidates": 510,
+      "emitted": 7,
+      "blocked": 503,
+      "firstFailingGate": "G8"
+    },
+    {
+      "day": "2026-10-07",
+      "candidates": 510,
+      "emitted": 22,
+      "blocked": 488,
+      "firstFailingGate": "G4"
+    },
+    {
+      "day": "2026-10-08",
+      "candidates": 510,
+      "emitted": 12,
+      "blocked": 498,
+      "firstFailingGate": "G8"
+    },
+    {
+      "day": "2026-10-09",
+      "candidates": 510,
+      "emitted": 15,
+      "blocked": 495,
+      "firstFailingGate": "G8"
+    },
+    {
+      "day": "2026-10-12",
+      "candidates": 510,
+      "emitted": 0,
+      "blocked": 510,
+      "firstFailingGate": "G4"
+    },
+    {
+      "day": "2026-10-13",
+      "candidates": 510,
+      "emitted": 6,
+      "blocked": 504,
+      "firstFailingGate": "G11"
+    },
+    {
+      "day": "2026-10-14",
+      "candidates": 510,
+      "emitted": 12,
+      "blocked": 498,
+      "firstFailingGate": "G11"
+    },
+    {
+      "day": "2026-10-15",
+      "candidates": 510,
+      "emitted": 0,
+      "blocked": 510,
+      "firstFailingGate": "G4"
+    },
+    {
+      "day": "2026-10-16",
+      "candidates": 510,
+      "emitted": 5,
+      "blocked": 505,
+      "firstFailingGate": "G4"
+    },
+    {
+      "day": "2026-10-19",
+      "candidates": 510,
+      "emitted": 0,
+      "blocked": 510,
+      "firstFailingGate": "G4"
+    },
+    {
+      "day": "2026-10-20",
+      "candidates": 510,
+      "emitted": 0,
+      "blocked": 510,
+      "firstFailingGate": "G8"
+    },
+    {
+      "day": "2026-10-21",
+      "candidates": 510,
+      "emitted": 5,
+      "blocked": 505,
+      "firstFailingGate": "G8"
+    },
+    {
+      "day": "2026-10-22",
+      "candidates": 510,
+      "emitted": 0,
+      "blocked": 510,
+      "firstFailingGate": "G4"
+    },
+    {
+      "day": "2026-10-23",
+      "candidates": 510,
+      "emitted": 0,
+      "blocked": 510,
+      "firstFailingGate": "G4"
+    },
+    {
+      "day": "2026-10-26",
+      "candidates": 510,
+      "emitted": 1,
+      "blocked": 509,
+      "firstFailingGate": "G4"
+    },
+    {
+      "day": "2026-10-27",
+      "candidates": 510,
+      "emitted": 0,
+      "blocked": 510,
+      "firstFailingGate": "G4"
+    },
+    {
+      "day": "2026-10-28",
+      "candidates": 510,
+      "emitted": 6,
+      "blocked": 504,
+      "firstFailingGate": "G8"
+    },
+    {
+      "day": "2026-10-29",
+      "candidates": 510,
+      "emitted": 0,
+      "blocked": 510,
+      "firstFailingGate": "G7"
+    },
+    {
+      "day": "2026-10-30",
+      "candidates": 510,
+      "emitted": 0,
+      "blocked": 510,
+      "firstFailingGate": "G8"
+    },
+    {
+      "day": "2026-11-02",
+      "candidates": 510,
+      "emitted": 0,
+      "blocked": 510,
+      "firstFailingGate": "G8"
+    },
+    {
+      "day": "2026-11-03",
+      "candidates": 510,
+      "emitted": 2,
+      "blocked": 508,
+      "firstFailingGate": "G4"
+    },
+    {
+      "day": "2026-11-04",
+      "candidates": 510,
+      "emitted": 0,
+      "blocked": 510,
+      "firstFailingGate": "G4"
+    },
+    {
+      "day": "2026-11-05",
+      "candidates": 510,
+      "emitted": 0,
+      "blocked": 510,
+      "firstFailingGate": "G8"
+    },
+    {
+      "day": "2026-11-06",
+      "candidates": 510,
+      "emitted": 0,
+      "blocked": 510,
+      "firstFailingGate": "G8"
+    },
+    {
+      "day": "2026-11-09",
+      "candidates": 510,
+      "emitted": 0,
+      "blocked": 510,
+      "firstFailingGate": "G2"
+    },
+    {
+      "day": "2026-11-10",
+      "candidates": 510,
+      "emitted": 0,
+      "blocked": 510,
+      "firstFailingGate": "G8"
+    },
+    {
+      "day": "2026-11-11",
+      "candidates": 515,
+      "emitted": 0,
+      "blocked": 515,
+      "firstFailingGate": "G8"
+    }
+  ],
+  "deathCriterion": {
+    "status": "not_yet_evaluable",
+    "population": "C",
+    "trigger": {
+      "needSetups": 100,
+      "haveSetups": 123,
+      "needDays": 30,
+      "haveDays": 13
+    },
+    "nCells": 40,
+    "nAdmissibleCells": 0,
+    "alphaEffective": 0.0014705882352941176,
+    "alphaBonferroni": null,
+    "bestAdmissibleCell": null,
+    "reason": "trigger non soddisfatto: 13/30 giorni con almeno un setup emesso (123/100 setup). Celle ammissibili (n>=30 e giorni>=10): 0 su 40. Nessun giudizio: il criterio non e valutabile su questo campione."
+  },
+  "rules": [
+    {
+      "id": "S01",
+      "name": "tripleBarrierLabels",
+      "family": "STIMATORE",
+      "status": "computed",
+      "value": 0.17886178861788618,
+      "unit": "share UPPER",
+      "n": 123,
+      "ci95": [
+        null,
+        null
+      ],
+      "inputsRequired": [
+        "barre 5m",
+        "indice evento",
+        "barriere 2%/2%/48 barre"
+      ],
+      "inputsAvailable": [
+        "barre 5m (30d, 5 simboli)",
+        "decisionTs dei 123 setup"
+      ],
+      "note": "barriere a ±2% e 48 barre sono IPOTESI di modulo, non calibrate: il valore misura la regola, non la strategia."
+    },
+    {
+      "id": "S02",
+      "name": "sampleUniquenessWeights",
+      "family": "PROTOCOLLO",
+      "status": "computed",
+      "value": 0.17405010784801728,
+      "unit": "peso medio",
+      "n": 123,
+      "ci95": [
+        null,
+        null
+      ],
+      "inputsRequired": [
+        "finestra [start,end] per campione"
+      ],
+      "inputsAvailable": [
+        "123 finestre da decisionTs + 48 barre"
+      ],
+      "note": "pesi < 1 segnalano sovrapposizione delle etichette: con setup ravvicinati e inevitabile."
+    },
+    {
+      "id": "S03",
+      "name": "purgedKFold",
+      "family": "PROTOCOLLO",
+      "status": "computed",
+      "value": 3,
+      "unit": "fold",
+      "n": 123,
+      "ci95": [
+        null,
+        null
+      ],
+      "inputsRequired": [
+        "finestre campione",
+        "n fold",
+        "embargo barre"
+      ],
+      "inputsAvailable": [
+        "123 finestre",
+        "3 fold, 12 barre embargo (IPOTESI)"
+      ],
+      "note": "la purga e calcolata sulle finestre, non sui giorni: e un protocollo, non una misura."
+    },
+    {
+      "id": "S04",
+      "name": "deflatedSharpeRatio",
+      "family": "CORREZIONE",
+      "status": "computed",
+      "value": 1.2500779855706412e-9,
+      "unit": "DSR (z)",
+      "n": 123,
+      "ci95": [
+        null,
+        null
+      ],
+      "inputsRequired": [
+        "serie di rendimenti",
+        "numero di prove"
+      ],
+      "inputsAvailable": [
+        "123 R a k=1.6",
+        "nTrials=33 dal registro"
+      ],
+      "note": "sharpe=-0.476; p a una coda = 1 - Phi(DSR) = 0.5000. nTrials letto dal registro, non hardcoded."
+    },
+    {
+      "id": "S05",
+      "name": "fractionalKelly",
+      "family": "STIMATORE",
+      "status": "computed",
+      "value": 0,
+      "unit": "frazione di capitale",
+      "n": 123,
+      "ci95": [
+        null,
+        null
+      ],
+      "inputsRequired": [
+        "hit rate",
+        "payoff ratio"
+      ],
+      "inputsAvailable": [
+        "R a k=1.6",
+        "hit e payoff calcolati su 123"
+      ],
+      "note": "hit=0.195, payoff=1.600 -> fullKelly=-0.3079. Con edge negativo la size e 0 per costruzione."
+    },
+    {
+      "id": "S06",
+      "name": "cusumEventIndices",
+      "family": "FILTRO",
+      "status": "computed",
+      "value": 1240,
+      "unit": "eventi CUSUM",
+      "n": 27543,
+      "ci95": [
+        null,
+        null
+      ],
+      "inputsRequired": [
+        "serie di prezzi",
+        "soglia"
+      ],
+      "inputsAvailable": [
+        "close 5m per 9 simboli",
+        "soglia = 10x range mediano (IPOTESI)"
+      ],
+      "note": "la soglia e arbitraria e non calibrata: il conteggio dice quanto spesso il filtro guarderebbe, non se convenga."
+    },
+    {
+      "id": "S07",
+      "name": "corwinSchultzSpreadProxy",
+      "family": "STIMATORE",
+      "status": "computed",
+      "value": 0.018976211771667115,
+      "unit": "% di prezzo (mediana fra simboli)",
+      "n": 9,
+      "ci95": [
+        null,
+        null
+      ],
+      "inputsRequired": [
+        "high/low per barra"
+      ],
+      "inputsAvailable": [
+        "barre 5m, 30 giorni, 9 simboli"
+      ],
+      "note": "stimatore pensato per barre giornaliere: su 5 minuti sovrastima per rumore di microstruttura. Ordine di grandezza, non misura."
+    },
+    {
+      "id": "S08",
+      "name": "amihudIlliquidity",
+      "family": "STIMATORE",
+      "status": "computed",
+      "value": 0.0012277084126958277,
+      "unit": "|r|/volume x 1e6 (mediana)",
+      "n": 27244,
+      "ci95": [
+        null,
+        null
+      ],
+      "inputsRequired": [
+        "close",
+        "volume"
+      ],
+      "inputsAvailable": [
+        "barre 5m con volume"
+      ],
+      "note": "la scala 1e6 e arbitraria (IPOTESI di modulo): confrontabile fra simboli, non in assoluto."
+    },
+    {
+      "id": "S09",
+      "name": "approximateVolumeBars",
+      "family": "STIMATORE",
+      "status": "computed",
+      "value": 533,
+      "unit": "barre di volume approssimate",
+      "n": 27543,
+      "ci95": [
+        null,
+        null
+      ],
+      "inputsRequired": [
+        "volume per barra",
+        "target volume"
+      ],
+      "inputsAvailable": [
+        "volume 5m",
+        "target = volume mediano x 78 (IPOTESI)"
+      ],
+      "note": "ricostruzione dichiarata approssimata (exact:false): l ordine intrabar e ignoto, il confine del bucket non e un clock informativo."
+    },
+    {
+      "id": "S10",
+      "name": "isHighProbabilityWindow",
+      "family": "FILTRO",
+      "status": "computed",
+      "value": 0.25203252032520324,
+      "unit": "share dentro la finestra",
+      "n": 123,
+      "ci95": [
+        null,
+        null
+      ],
+      "inputsRequired": [
+        "timestamp",
+        "mercato"
+      ],
+      "inputsAvailable": [
+        "decisionTs dei 123 setup"
+      ],
+      "note": "finestra EU = 09:00-09:59 (540-599 minuti, IPOTESI di modulo): misura quanto la regola sia coercitiva, non se aiuti."
+    },
+    {
+      "id": "S11",
+      "name": "expectancyBootstrap",
+      "family": "PROTOCOLLO",
+      "status": "computed",
+      "value": 0.0004997501249375312,
+      "unit": "p-value segni alternati",
+      "n": 123,
+      "ci95": [
+        null,
+        null
+      ],
+      "inputsRequired": [
+        "serie di R"
+      ],
+      "inputsAvailable": [
+        "123 R a k=1.6"
+      ],
+      "note": "meanR=-0.4927, significant=true a alpha=0.05. Test di segno, non di profittabilita al netto."
+    }
+  ],
+  "spreadEstimate": {
+    "method": "corwin_schultz",
+    "perSymbol": [
+      {
+        "symbol": "BAMI.MI",
+        "spreadPct": 0,
+        "n": 3058
+      },
+      {
+        "symbol": "BAYN.DE",
+        "spreadPct": 0.00857379744768244,
+        "n": 3059
+      },
+      {
+        "symbol": "ENI.MI",
+        "spreadPct": 0.01804476966861875,
+        "n": 3060
+      },
+      {
+        "symbol": "LDO.MI",
+        "spreadPct": 0.02260771069406721,
+        "n": 3060
+      },
+      {
+        "symbol": "RHM.DE",
+        "spreadPct": 0.03176662979044502,
+        "n": 3059
+      },
+      {
+        "symbol": "SAP.DE",
+        "spreadPct": 0.02268378463560439,
+        "n": 3059
+      },
+      {
+        "symbol": "SIE.DE",
+        "spreadPct": 0.013374062101005469,
+        "n": 3059
+      },
+      {
+        "symbol": "STLAM.MI",
+        "spreadPct": 0.04190370804178599,
+        "n": 3060
+      },
+      {
+        "symbol": "UCG.MI",
+        "spreadPct": 0.018976211771667115,
+        "n": 3060
+      }
+    ],
+    "vsParametricPct": 0.1,
+    "deltaPct": -0.0810237882283329,
+    "caveat": "stimatore pensato per barre giornaliere; su barre a 5 minuti sovrastima per rumore di microstruttura. vsParametricPct e la banda di frizione usata nei passi I/J (percentuale del prezzo), non uno spread quotato."
+  },
+  "deflatedSharpe": {
+    "nTrials": 33,
+    "nTrialsSource": "registry/ai_registry.jsonl",
+    "sharpe": -0.4762153802780404,
+    "dsr": 1.2500779855706412e-9,
+    "pValue": 0.499999999001288,
+    "alphaBonferroni": null,
+    "alphaEffective": 0.0014705882352941176,
+    "note": "nTrials letto dal registro, non hardcoded. pValue = 1 - Phi(DSR) a una coda."
+  },
+  "proposals": [
+    {
+      "hypothesisId": "AI-0001",
+      "status": "inconclusive",
+      "formationDays": "primi 2/3 dei giorni (2026-10-02..2026-10-13)",
+      "holdoutDays": "ultimi 1/3 (2026-10-14..2026-11-03)",
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.004545454545454546,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "inconclusive"
+    },
+    {
+      "hypothesisId": "AI-0002",
+      "status": "accepted",
+      "formationDays": "intero campione (13 giorni): misura descrittiva, nessun holdout",
+      "holdoutDays": "non applicabile (misura analitica sul campione, non selezione)",
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.016666666666666666,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "accepted"
+    },
+    {
+      "hypothesisId": "AI-0005",
+      "status": "superseded",
+      "formationDays": "non applicabile: il criterio e meccanico, non stimato",
+      "holdoutDays": "non applicabile",
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.0035714285714285718,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "superseded"
+    },
+    {
+      "hypothesisId": "AI-0006",
+      "status": "accepted",
+      "formationDays": "non applicabile: stima descrittiva per simbolo",
+      "holdoutDays": "non applicabile",
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.00625,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "accepted"
+    },
+    {
+      "hypothesisId": "AI-0007",
+      "status": "rejected",
+      "formationDays": "2026-10-01..2026-10-28",
+      "holdoutDays": "2026-10-29..2026-11-11",
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.00625,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "rejected"
+    },
+    {
+      "hypothesisId": "AI-0003b",
+      "status": "insufficient_holdout",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": 123,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.00625,
+      "beatsNull": null,
+      "nullReason": "holdout con 123 campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "insufficient_holdout"
+    },
+    {
+      "hypothesisId": "AI-0004b",
+      "status": "insufficient_holdout",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": 0.16,
+      "meanRNullP95": -0.28,
+      "alphaEffective": 0.00625,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "insufficient_holdout"
+    },
+    {
+      "hypothesisId": "AI-0008",
+      "status": "accepted",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.005555555555555556,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "accepted"
+    },
+    {
+      "hypothesisId": "AI-0009",
+      "status": "rejected",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.005,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "rejected"
+    },
+    {
+      "hypothesisId": "AI-0010",
+      "status": "rejected",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.004545454545454546,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "rejected"
+    },
+    {
+      "hypothesisId": "AI-0011",
+      "status": "rejected",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.004166666666666667,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "rejected"
+    },
+    {
+      "hypothesisId": "AI-0012",
+      "status": "accepted",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.0038461538461538464,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "accepted"
+    },
+    {
+      "hypothesisId": "AI-0013",
+      "status": "accepted",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.0035714285714285718,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "accepted"
+    },
+    {
+      "hypothesisId": "AI-0014",
+      "status": "rejected",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.002777777777777778,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "rejected"
+    },
+    {
+      "hypothesisId": "AI-0015",
+      "status": "rejected",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.002777777777777778,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "rejected"
+    },
+    {
+      "hypothesisId": "AI-0016",
+      "status": "accepted",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.002777777777777778,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "accepted"
+    },
+    {
+      "hypothesisId": "AI-0017",
+      "status": "rejected",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.002777777777777778,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "rejected"
+    },
+    {
+      "hypothesisId": "AI-0018",
+      "status": "rejected",
+      "formationDays": "2026-10-01..2026-11-11",
+      "holdoutDays": "non applicabile (misura descrittiva)",
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.002777777777777778,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "rejected"
+    },
+    {
+      "hypothesisId": "AI-0019",
+      "status": "rejected",
+      "formationDays": "intero campione",
+      "holdoutDays": "non applicabile",
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.002631578947368421,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "rejected"
+    },
+    {
+      "hypothesisId": "AI-0020",
+      "status": "rejected",
+      "formationDays": "intero campione",
+      "holdoutDays": "non applicabile",
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.0025,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "rejected"
+    },
+    {
+      "hypothesisId": "AI-0021",
+      "status": "rejected",
+      "formationDays": "intero campione",
+      "holdoutDays": "non applicabile",
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.002380952380952381,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "rejected"
+    },
+    {
+      "hypothesisId": "AI-0022",
+      "status": "closed",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": null,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "accepted"
+    },
+    {
+      "hypothesisId": "AI-0023",
+      "status": "closed",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": null,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "accepted"
+    },
+    {
+      "hypothesisId": "AI-0024",
+      "status": "closed",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": null,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "rejected"
+    },
+    {
+      "hypothesisId": "AI-0025",
+      "status": "closed",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": null,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "rejected"
+    },
+    {
+      "hypothesisId": "AI-0026",
+      "status": "closed",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": null,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "accepted"
+    },
+    {
+      "hypothesisId": "AI-0027",
+      "status": "closed",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": null,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "accepted"
+    },
+    {
+      "hypothesisId": "AI-0028",
+      "status": "closed",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": null,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "accepted"
+    },
+    {
+      "hypothesisId": "AI-0029",
+      "status": "closed",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": null,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "accepted"
+    },
+    {
+      "hypothesisId": "AI-0030",
+      "status": "open",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.0016666666666666668,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "open"
+    },
+    {
+      "hypothesisId": "AI-0031",
+      "status": "open",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.0016666666666666668,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "open"
+    },
+    {
+      "hypothesisId": "AI-0032",
+      "status": "open",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.0016666666666666668,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "open"
+    },
+    {
+      "hypothesisId": "AI-0033",
+      "status": "open",
+      "formationDays": null,
+      "holdoutDays": null,
+      "holdoutN": null,
+      "meanRHoldout": null,
+      "meanRNullP95": null,
+      "alphaEffective": 0.0016666666666666668,
+      "beatsNull": null,
+      "nullReason": "holdout con n/d campioni: sotto 30 il confronto col nullo non e interpretabile",
+      "verdict": "open"
+    }
+  ],
+  "limitations": [
+    "campione: 30 giorni di calendario, 13 giorni con almeno un setup emesso, 123 setup emessi",
+    "barre a 5 minuti: dentro la barra l ordine stop/target non e risolvibile, vale l ipotesi pessimistica (stop per primo)",
+    "solo simboli europei: la sessione USA non e misurata",
+    "frizione parametrica (0.10% del prezzo), non una misura di spread quotato",
+    "G4 non giudicato: con fill onesto -0.129 R, ma 400/1837 irraggiungibili per costruzione",
+    "popolazione A (excludedRecords) non disponibile su disco: vive in localStorage (src/App.tsx:248)",
+    "emissionsByDay: \"blocked\" include le righe senza direzione; firstFailingGate e calcolato solo sulle righe con direzione, altrimenti vale null",
+    "le 11 regole shadow sono eseguite con parametri IPOTESI del modulo, non calibrati: gli stati dicono cosa e calcolabile, non cosa convenga"
+  ]
+}

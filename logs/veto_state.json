@@ -1,0 +1,20 @@
+{
+  "record": {
+    "status": "OPEN",
+    "triggerFilled": false,
+    "fillBarTs": null,
+    "rTrigger": null,
+    "rMarket": null,
+    "exitBarTs": null,
+    "exitPrice": null,
+    "marks": {
+      "15": null,
+      "30": null,
+      "60": null
+    },
+    "mfeR": null,
+    "maeR": null,
+    "barsSeen": 0,
+    "updatedAtMs": 0
+  }
+}

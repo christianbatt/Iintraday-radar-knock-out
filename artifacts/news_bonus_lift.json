@@ -1,0 +1,218 @@
+{
+ "generatedAt": "2026-11-25T22:16:05.079Z",
+ "market": "US",
+ "threshold": 58,
+ "replay": "artifacts/universe_replay.json",
+ "setups": 669,
+ "measurableR": 328,
+ "emittedInReplay": 0,
+ "eligibleAboveThreshold": 0,
+ "scoreGatedOnly": 264,
+ "scoreGatedWithLevels": 264,
+ "scoreGatedWithR": 264,
+ "scoreGatedMeanR": -0.1103125800441241,
+ "curve": [
+  {
+   "bonus": 0,
+   "emitted": 0,
+   "emittedWithR": 0,
+   "meanR": null,
+   "ci": null,
+   "hit": null,
+   "marginal": 0,
+   "marginalWithR": 0,
+   "marginalMeanR": null,
+   "marginalCi": null,
+   "marginalHit": null
+  },
+  {
+   "bonus": 1,
+   "emitted": 1,
+   "emittedWithR": 1,
+   "meanR": -0.4981846198859509,
+   "ci": null,
+   "hit": 0,
+   "marginal": 1,
+   "marginalWithR": 1,
+   "marginalMeanR": -0.4981846198859509,
+   "marginalCi": null,
+   "marginalHit": 0
+  },
+  {
+   "bonus": 2,
+   "emitted": 5,
+   "emittedWithR": 5,
+   "meanR": -0.6103912030798403,
+   "ci": [
+    -0.8574932846110548,
+    -0.36328912154862586
+   ],
+   "hit": 0,
+   "marginal": 5,
+   "marginalWithR": 5,
+   "marginalMeanR": -0.6103912030798403,
+   "marginalCi": [
+    -0.8574932846110548,
+    -0.36328912154862586
+   ],
+   "marginalHit": 0
+  },
+  {
+   "bonus": 3,
+   "emitted": 21,
+   "emittedWithR": 21,
+   "meanR": -0.46027043629555825,
+   "ci": [
+    -0.6861190732303852,
+    -0.2344217993607312
+   ],
+   "hit": 0.23809523809523808,
+   "marginal": 21,
+   "marginalWithR": 21,
+   "marginalMeanR": -0.46027043629555825,
+   "marginalCi": [
+    -0.6861190732303852,
+    -0.2344217993607312
+   ],
+   "marginalHit": 0.23809523809523808
+  },
+  {
+   "bonus": 4,
+   "emitted": 22,
+   "emittedWithR": 22,
+   "meanR": -0.4304863487951039,
+   "ci": [
+    -0.653597092064472,
+    -0.20737560552573578
+   ],
+   "hit": 0.2727272727272727,
+   "marginal": 22,
+   "marginalWithR": 22,
+   "marginalMeanR": -0.4304863487951039,
+   "marginalCi": [
+    -0.653597092064472,
+    -0.20737560552573578
+   ],
+   "marginalHit": 0.2727272727272727
+  },
+  {
+   "bonus": 5,
+   "emitted": 24,
+   "emittedWithR": 24,
+   "meanR": -0.47794581972884526,
+   "ci": [
+    -0.6919567244726895,
+    -0.263934914985001
+   ],
+   "hit": 0.25,
+   "marginal": 24,
+   "marginalWithR": 24,
+   "marginalMeanR": -0.47794581972884526,
+   "marginalCi": [
+    -0.6919567244726895,
+    -0.263934914985001
+   ],
+   "marginalHit": 0.25
+  },
+  {
+   "bonus": 6,
+   "emitted": 42,
+   "emittedWithR": 42,
+   "meanR": -0.23257212173043418,
+   "ci": [
+    -0.4365156906700531,
+    -0.028628552790815276
+   ],
+   "hit": 0.38095238095238093,
+   "marginal": 42,
+   "marginalWithR": 42,
+   "marginalMeanR": -0.23257212173043418,
+   "marginalCi": [
+    -0.4365156906700531,
+    -0.028628552790815276
+   ],
+   "marginalHit": 0.38095238095238093
+  },
+  {
+   "bonus": 7,
+   "emitted": 45,
+   "emittedWithR": 45,
+   "meanR": -0.24128649605626762,
+   "ci": [
+    -0.4349275874397637,
+    -0.047645404672771535
+   ],
+   "hit": 0.37777777777777777,
+   "marginal": 45,
+   "marginalWithR": 45,
+   "marginalMeanR": -0.24128649605626762,
+   "marginalCi": [
+    -0.4349275874397637,
+    -0.047645404672771535
+   ],
+   "marginalHit": 0.37777777777777777
+  },
+  {
+   "bonus": 8,
+   "emitted": 57,
+   "emittedWithR": 57,
+   "meanR": -0.1638455664597142,
+   "ci": [
+    -0.34061550749514324,
+    0.012924374575714853
+   ],
+   "hit": 0.42105263157894735,
+   "marginal": 57,
+   "marginalWithR": 57,
+   "marginalMeanR": -0.1638455664597142,
+   "marginalCi": [
+    -0.34061550749514324,
+    0.012924374575714853
+   ],
+   "marginalHit": 0.42105263157894735
+  },
+  {
+   "bonus": 9,
+   "emitted": 73,
+   "emittedWithR": 73,
+   "meanR": -0.1301962328565733,
+   "ci": [
+    -0.28851106024888173,
+    0.028118594535735092
+   ],
+   "hit": 0.4246575342465753,
+   "marginal": 73,
+   "marginalWithR": 73,
+   "marginalMeanR": -0.1301962328565733,
+   "marginalCi": [
+    -0.28851106024888173,
+    0.028118594535735092
+   ],
+   "marginalHit": 0.4246575342465753
+  },
+  {
+   "bonus": 10,
+   "emitted": 76,
+   "emittedWithR": 76,
+   "meanR": -0.1339834644648679,
+   "ci": [
+    -0.28936207707109524,
+    0.021395148141359455
+   ],
+   "hit": 0.42105263157894735,
+   "marginal": 76,
+   "marginalWithR": 76,
+   "marginalMeanR": -0.1339834644648679,
+   "marginalCi": [
+    -0.28936207707109524,
+    0.021395148141359455
+   ],
+   "marginalHit": 0.42105263157894735
+  }
+ ],
+ "limitations": [
+  "Il replay non contiene catalyst: la direzione del setup e quella del gap.",
+  "Il bonus notizia e modellato come punteggio aggiunto (0-10), non come inversione di direzione.",
+  "Il bonus non modifica i veti ST/ADX/VWAP ne gli altri gate."
+ ]
+}

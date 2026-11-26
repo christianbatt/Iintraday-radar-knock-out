@@ -1,0 +1,7918 @@
+{
+  "generatedAt": "2026-11-14T00:35:15.625Z",
+  "range": "60d",
+  "expectedBars": 102,
+  "symbols": [
+    {
+      "symbol": "ENI.MI",
+      "group": "known",
+      "timezone": "Europe/Rome",
+      "days": [
+        {
+          "date": "2026-10-01",
+          "barsVolume": 4920657,
+          "barsCount": 102,
+          "yahooVolume": 6664093,
+          "yahooClose": 24.030000686645508,
+          "ratio": 0.7383836029899342
+        },
+        {
+          "date": "2026-10-02",
+          "barsVolume": 5199303,
+          "barsCount": 102,
+          "yahooVolume": 6997539,
+          "yahooClose": 24.190000534057617,
+          "ratio": 0.7430187956079988
+        },
+        {
+          "date": "2026-10-05",
+          "barsVolume": 4126010,
+          "barsCount": 102,
+          "yahooVolume": 5930233,
+          "yahooClose": 24.40999984741211,
+          "ratio": 0.6957584971787787
+        },
+        {
+          "date": "2026-10-06",
+          "barsVolume": 5254053,
+          "barsCount": 102,
+          "yahooVolume": 7002572,
+          "yahooClose": 24.135000228881836,
+          "ratio": 0.750303317124051
+        },
+        {
+          "date": "2026-10-07",
+          "barsVolume": 4844286,
+          "barsCount": 102,
+          "yahooVolume": 7337517,
+          "yahooClose": 24.235000610351562,
+          "ratio": 0.660207805992136
+        },
+        {
+          "date": "2026-10-08",
+          "barsVolume": 7843349,
+          "barsCount": 102,
+          "yahooVolume": 10744848,
+          "yahooClose": 24.8799991607666,
+          "ratio": 0.7299636998122263
+        },
+        {
+          "date": "2026-10-09",
+          "barsVolume": 4908651,
+          "barsCount": 102,
+          "yahooVolume": 6510620,
+          "yahooClose": 25.209999084472656,
+          "ratio": 0.753945246382065
+        },
+        {
+          "date": "2026-10-12",
+          "barsVolume": 4911102,
+          "barsCount": 102,
+          "yahooVolume": 6520770,
+          "yahooClose": 25.405000686645508,
+          "ratio": 0.7531475577270782
+        },
+        {
+          "date": "2026-10-13",
+          "barsVolume": 3577838,
+          "barsCount": 102,
+          "yahooVolume": 5077498,
+          "yahooClose": 25.670000076293945,
+          "ratio": 0.7046458708600181
+        },
+        {
+          "date": "2026-10-14",
+          "barsVolume": 4189085,
+          "barsCount": 102,
+          "yahooVolume": 6730135,
+          "yahooClose": 25.735000610351562,
+          "ratio": 0.6224369942059111
+        },
+        {
+          "date": "2026-10-15",
+          "barsVolume": 4389148,
+          "barsCount": 102,
+          "yahooVolume": 6908592,
+          "yahooClose": 25.774999618530273,
+          "ratio": 0.6353172976490723
+        },
+        {
+          "date": "2026-10-16",
+          "barsVolume": 4726783,
+          "barsCount": 102,
+          "yahooVolume": 6528636,
+          "yahooClose": 25.954999923706055,
+          "ratio": 0.7240077406674227
+        },
+        {
+          "date": "2026-10-19",
+          "barsVolume": 4634331,
+          "barsCount": 102,
+          "yahooVolume": 6400938,
+          "yahooClose": 26.135000228881836,
+          "ratio": 0.7240081063119187
+        },
+        {
+          "date": "2026-10-20",
+          "barsVolume": 7337967,
+          "barsCount": 102,
+          "yahooVolume": 8934368,
+          "yahooClose": 25.94499969482422,
+          "ratio": 0.8213190905053385
+        },
+        {
+          "date": "2026-10-21",
+          "barsVolume": 3683216,
+          "barsCount": 102,
+          "yahooVolume": 5329680,
+          "yahooClose": 26.399999618530273,
+          "ratio": 0.6910763873253178
+        },
+        {
+          "date": "2026-10-22",
+          "barsVolume": 5958948,
+          "barsCount": 102,
+          "yahooVolume": 8619214,
+          "yahooClose": 26.1299991607666,
+          "ratio": 0.6913563116079958
+        },
+        {
+          "date": "2026-10-23",
+          "barsVolume": 11249380,
+          "barsCount": 102,
+          "yahooVolume": 15995032,
+          "yahooClose": 27.649999618530273,
+          "ratio": 0.7033046260863999
+        },
+        {
+          "date": "2026-10-26",
+          "barsVolume": 8676351,
+          "barsCount": 102,
+          "yahooVolume": 11615167,
+          "yahooClose": 27.155000686645508,
+          "ratio": 0.7469846107249254
+        },
+        {
+          "date": "2026-10-27",
+          "barsVolume": 6334079,
+          "barsCount": 102,
+          "yahooVolume": 8518942,
+          "yahooClose": 26.454999923706055,
+          "ratio": 0.743528832570993
+        },
+        {
+          "date": "2026-10-28",
+          "barsVolume": 5386799,
+          "barsCount": 102,
+          "yahooVolume": 7378779,
+          "yahooClose": 26.889999389648438,
+          "ratio": 0.7300393466181871
+        },
+        {
+          "date": "2026-10-29",
+          "barsVolume": 4841457,
+          "barsCount": 102,
+          "yahooVolume": 6748176,
+          "yahooClose": 26.889999389648438,
+          "ratio": 0.7174467589464175
+        },
+        {
+          "date": "2026-10-30",
+          "barsVolume": 5121598,
+          "barsCount": 102,
+          "yahooVolume": 8012831,
+          "yahooClose": 27.135000228881836,
+          "ratio": 0.6391745938482916
+        },
+        {
+          "date": "2026-11-02",
+          "barsVolume": 5974954,
+          "barsCount": 102,
+          "yahooVolume": 8447724,
+          "yahooClose": 26.514999389648438,
+          "ratio": 0.7072856546923171
+        },
+        {
+          "date": "2026-11-03",
+          "barsVolume": 5790868,
+          "barsCount": 102,
+          "yahooVolume": 7743416,
+          "yahooClose": 26.03499984741211,
+          "ratio": 0.7478441039458554
+        },
+        {
+          "date": "2026-11-04",
+          "barsVolume": 6633334,
+          "barsCount": 102,
+          "yahooVolume": 9603314,
+          "yahooClose": 25.540000915527344,
+          "ratio": 0.6907338445873997
+        },
+        {
+          "date": "2026-11-05",
+          "barsVolume": 5448198,
+          "barsCount": 102,
+          "yahooVolume": 8689384,
+          "yahooClose": 25.354999542236328,
+          "ratio": 0.6269947328832516
+        },
+        {
+          "date": "2026-11-06",
+          "barsVolume": 8529763,
+          "barsCount": 102,
+          "yahooVolume": 7922675,
+          "yahooClose": 25.049999237060547,
+          "ratio": 1.0766266444098742
+        },
+        {
+          "date": "2026-11-09",
+          "barsVolume": 5314872,
+          "barsCount": 102,
+          "yahooVolume": 7759237,
+          "yahooClose": 24.985000610351562,
+          "ratio": 0.6849735354133403
+        },
+        {
+          "date": "2026-11-10",
+          "barsVolume": 6309775,
+          "barsCount": 102,
+          "yahooVolume": 9646380,
+          "yahooClose": 24.75,
+          "ratio": 0.6541080695556261
+        },
+        {
+          "date": "2026-11-11",
+          "barsVolume": 4568750,
+          "barsCount": 103,
+          "yahooVolume": 6515754,
+          "yahooClose": 25.200000762939453,
+          "ratio": 0.701185158310151
+        }
+      ],
+      "stats": {
+        "nDays": 30,
+        "median": 0.7123662068193672,
+        "min": 0.6224369942059111,
+        "max": 1.0766266444098742,
+        "shareIn060_075": 0.8333333333333334,
+        "meanBars": 102.03333333333333,
+        "expectedBars": 102,
+        "daysBelowExpectedBars": 0
+      },
+      "slots": [
+        {
+          "slot": "09:00",
+          "daysPresent": 30,
+          "volume": 0,
+          "bars": 30
+        },
+        {
+          "slot": "09:05",
+          "daysPresent": 30,
+          "volume": 3489745,
+          "bars": 30
+        },
+        {
+          "slot": "09:10",
+          "daysPresent": 30,
+          "volume": 3157062,
+          "bars": 30
+        },
+        {
+          "slot": "09:15",
+          "daysPresent": 30,
+          "volume": 2578767,
+          "bars": 30
+        },
+        {
+          "slot": "09:20",
+          "daysPresent": 30,
+          "volume": 2223957,
+          "bars": 30
+        },
+        {
+          "slot": "09:25",
+          "daysPresent": 30,
+          "volume": 2330614,
+          "bars": 30
+        },
+        {
+          "slot": "09:30",
+          "daysPresent": 30,
+          "volume": 2079355,
+          "bars": 30
+        },
+        {
+          "slot": "09:35",
+          "daysPresent": 30,
+          "volume": 1828083,
+          "bars": 30
+        },
+        {
+          "slot": "09:40",
+          "daysPresent": 30,
+          "volume": 1734306,
+          "bars": 30
+        },
+        {
+          "slot": "09:45",
+          "daysPresent": 30,
+          "volume": 1594798,
+          "bars": 30
+        },
+        {
+          "slot": "09:50",
+          "daysPresent": 30,
+          "volume": 1515868,
+          "bars": 30
+        },
+        {
+          "slot": "09:55",
+          "daysPresent": 30,
+          "volume": 1664530,
+          "bars": 30
+        },
+        {
+          "slot": "10:00",
+          "daysPresent": 30,
+          "volume": 1652993,
+          "bars": 30
+        },
+        {
+          "slot": "10:05",
+          "daysPresent": 30,
+          "volume": 2018261,
+          "bars": 30
+        },
+        {
+          "slot": "10:10",
+          "daysPresent": 30,
+          "volume": 1572383,
+          "bars": 30
+        },
+        {
+          "slot": "10:15",
+          "daysPresent": 30,
+          "volume": 1762835,
+          "bars": 30
+        },
+        {
+          "slot": "10:20",
+          "daysPresent": 30,
+          "volume": 1717670,
+          "bars": 30
+        },
+        {
+          "slot": "10:25",
+          "daysPresent": 30,
+          "volume": 1733433,
+          "bars": 30
+        },
+        {
+          "slot": "10:30",
+          "daysPresent": 30,
+          "volume": 1493149,
+          "bars": 30
+        },
+        {
+          "slot": "10:35",
+          "daysPresent": 30,
+          "volume": 1557487,
+          "bars": 30
+        },
+        {
+          "slot": "10:40",
+          "daysPresent": 30,
+          "volume": 1506262,
+          "bars": 30
+        },
+        {
+          "slot": "10:45",
+          "daysPresent": 30,
+          "volume": 1176740,
+          "bars": 30
+        },
+        {
+          "slot": "10:50",
+          "daysPresent": 30,
+          "volume": 1344483,
+          "bars": 30
+        },
+        {
+          "slot": "10:55",
+          "daysPresent": 30,
+          "volume": 1427618,
+          "bars": 30
+        },
+        {
+          "slot": "11:00",
+          "daysPresent": 30,
+          "volume": 1694621,
+          "bars": 30
+        },
+        {
+          "slot": "11:05",
+          "daysPresent": 30,
+          "volume": 1409644,
+          "bars": 30
+        },
+        {
+          "slot": "11:10",
+          "daysPresent": 30,
+          "volume": 1356050,
+          "bars": 30
+        },
+        {
+          "slot": "11:15",
+          "daysPresent": 30,
+          "volume": 1368792,
+          "bars": 30
+        },
+        {
+          "slot": "11:20",
+          "daysPresent": 30,
+          "volume": 1131262,
+          "bars": 30
+        },
+        {
+          "slot": "11:25",
+          "daysPresent": 30,
+          "volume": 811489,
+          "bars": 30
+        },
+        {
+          "slot": "11:30",
+          "daysPresent": 30,
+          "volume": 1336162,
+          "bars": 30
+        },
+        {
+          "slot": "11:35",
+          "daysPresent": 30,
+          "volume": 1092642,
+          "bars": 30
+        },
+        {
+          "slot": "11:40",
+          "daysPresent": 30,
+          "volume": 1486718,
+          "bars": 30
+        },
+        {
+          "slot": "11:45",
+          "daysPresent": 30,
+          "volume": 1323738,
+          "bars": 30
+        },
+        {
+          "slot": "11:50",
+          "daysPresent": 30,
+          "volume": 1384794,
+          "bars": 30
+        },
+        {
+          "slot": "11:55",
+          "daysPresent": 30,
+          "volume": 1050360,
+          "bars": 30
+        },
+        {
+          "slot": "12:00",
+          "daysPresent": 30,
+          "volume": 1030518,
+          "bars": 30
+        },
+        {
+          "slot": "12:05",
+          "daysPresent": 30,
+          "volume": 920102,
+          "bars": 30
+        },
+        {
+          "slot": "12:10",
+          "daysPresent": 30,
+          "volume": 1187488,
+          "bars": 30
+        },
+        {
+          "slot": "12:15",
+          "daysPresent": 30,
+          "volume": 1071276,
+          "bars": 30
+        },
+        {
+          "slot": "12:20",
+          "daysPresent": 30,
+          "volume": 881648,
+          "bars": 30
+        },
+        {
+          "slot": "12:25",
+          "daysPresent": 30,
+          "volume": 803438,
+          "bars": 30
+        },
+        {
+          "slot": "12:30",
+          "daysPresent": 30,
+          "volume": 3765141,
+          "bars": 30
+        },
+        {
+          "slot": "12:35",
+          "daysPresent": 30,
+          "volume": 1118259,
+          "bars": 30
+        },
+        {
+          "slot": "12:40",
+          "daysPresent": 30,
+          "volume": 1019197,
+          "bars": 30
+        },
+        {
+          "slot": "12:45",
+          "daysPresent": 30,
+          "volume": 1033722,
+          "bars": 30
+        },
+        {
+          "slot": "12:50",
+          "daysPresent": 30,
+          "volume": 899604,
+          "bars": 30
+        },
+        {
+          "slot": "12:55",
+          "daysPresent": 30,
+          "volume": 844666,
+          "bars": 30
+        },
+        {
+          "slot": "13:00",
+          "daysPresent": 30,
+          "volume": 974964,
+          "bars": 30
+        },
+        {
+          "slot": "13:05",
+          "daysPresent": 30,
+          "volume": 639811,
+          "bars": 30
+        },
+        {
+          "slot": "13:10",
+          "daysPresent": 30,
+          "volume": 895148,
+          "bars": 30
+        },
+        {
+          "slot": "13:15",
+          "daysPresent": 30,
+          "volume": 771841,
+          "bars": 30
+        },
+        {
+          "slot": "13:20",
+          "daysPresent": 30,
+          "volume": 987689,
+          "bars": 30
+        },
+        {
+          "slot": "13:25",
+          "daysPresent": 30,
+          "volume": 942766,
+          "bars": 30
+        },
+        {
+          "slot": "13:30",
+          "daysPresent": 30,
+          "volume": 1005261,
+          "bars": 30
+        },
+        {
+          "slot": "13:35",
+          "daysPresent": 30,
+          "volume": 1051142,
+          "bars": 30
+        },
+        {
+          "slot": "13:40",
+          "daysPresent": 30,
+          "volume": 1021074,
+          "bars": 30
+        },
+        {
+          "slot": "13:45",
+          "daysPresent": 30,
+          "volume": 826003,
+          "bars": 30
+        },
+        {
+          "slot": "13:50",
+          "daysPresent": 30,
+          "volume": 1012723,
+          "bars": 30
+        },
+        {
+          "slot": "13:55",
+          "daysPresent": 30,
+          "volume": 930203,
+          "bars": 30
+        },
+        {
+          "slot": "14:00",
+          "daysPresent": 30,
+          "volume": 1068456,
+          "bars": 30
+        },
+        {
+          "slot": "14:05",
+          "daysPresent": 30,
+          "volume": 1553690,
+          "bars": 30
+        },
+        {
+          "slot": "14:10",
+          "daysPresent": 30,
+          "volume": 1260148,
+          "bars": 30
+        },
+        {
+          "slot": "14:15",
+          "daysPresent": 30,
+          "volume": 1160474,
+          "bars": 30
+        },
+        {
+          "slot": "14:20",
+          "daysPresent": 30,
+          "volume": 970851,
+          "bars": 30
+        },
+        {
+          "slot": "14:25",
+          "daysPresent": 30,
+          "volume": 1236438,
+          "bars": 30
+        },
+        {
+          "slot": "14:30",
+          "daysPresent": 30,
+          "volume": 2275412,
+          "bars": 30
+        },
+        {
+          "slot": "14:35",
+          "daysPresent": 30,
+          "volume": 1912943,
+          "bars": 30
+        },
+        {
+          "slot": "14:40",
+          "daysPresent": 30,
+          "volume": 1602418,
+          "bars": 30
+        },
+        {
+          "slot": "14:45",
+          "daysPresent": 30,
+          "volume": 1766446,
+          "bars": 30
+        },
+        {
+          "slot": "14:50",
+          "daysPresent": 30,
+          "volume": 1522687,
+          "bars": 30
+        },
+        {
+          "slot": "14:55",
+          "daysPresent": 30,
+          "volume": 1597127,
+          "bars": 30
+        },
+        {
+          "slot": "15:00",
+          "daysPresent": 30,
+          "volume": 1593693,
+          "bars": 30
+        },
+        {
+          "slot": "15:05",
+          "daysPresent": 30,
+          "volume": 1584414,
+          "bars": 30
+        },
+        {
+          "slot": "15:10",
+          "daysPresent": 30,
+          "volume": 1673331,
+          "bars": 30
+        },
+        {
+          "slot": "15:15",
+          "daysPresent": 30,
+          "volume": 1384547,
+          "bars": 30
+        },
+        {
+          "slot": "15:20",
+          "daysPresent": 30,
+          "volume": 1363133,
+          "bars": 30
+        },
+        {
+          "slot": "15:25",
+          "daysPresent": 30,
+          "volume": 1916765,
+          "bars": 30
+        },
+        {
+          "slot": "15:30",
+          "daysPresent": 30,
+          "volume": 4465524,
+          "bars": 30
+        },
+        {
+          "slot": "15:35",
+          "daysPresent": 30,
+          "volume": 2934079,
+          "bars": 30
+        },
+        {
+          "slot": "15:40",
+          "daysPresent": 30,
+          "volume": 2540822,
+          "bars": 30
+        },
+        {
+          "slot": "15:45",
+          "daysPresent": 30,
+          "volume": 2281600,
+          "bars": 30
+        },
+        {
+          "slot": "15:50",
+          "daysPresent": 30,
+          "volume": 2428269,
+          "bars": 30
+        },
+        {
+          "slot": "15:55",
+          "daysPresent": 30,
+          "volume": 2122285,
+          "bars": 30
+        },
+        {
+          "slot": "16:00",
+          "daysPresent": 30,
+          "volume": 2380962,
+          "bars": 30
+        },
+        {
+          "slot": "16:05",
+          "daysPresent": 30,
+          "volume": 2036703,
+          "bars": 30
+        },
+        {
+          "slot": "16:10",
+          "daysPresent": 30,
+          "volume": 1755911,
+          "bars": 30
+        },
+        {
+          "slot": "16:15",
+          "daysPresent": 30,
+          "volume": 1732276,
+          "bars": 30
+        },
+        {
+          "slot": "16:20",
+          "daysPresent": 30,
+          "volume": 1797728,
+          "bars": 30
+        },
+        {
+          "slot": "16:25",
+          "daysPresent": 30,
+          "volume": 2167280,
+          "bars": 30
+        },
+        {
+          "slot": "16:30",
+          "daysPresent": 30,
+          "volume": 2112100,
+          "bars": 30
+        },
+        {
+          "slot": "16:35",
+          "daysPresent": 30,
+          "volume": 1939571,
+          "bars": 30
+        },
+        {
+          "slot": "16:40",
+          "daysPresent": 30,
+          "volume": 1756678,
+          "bars": 30
+        },
+        {
+          "slot": "16:45",
+          "daysPresent": 30,
+          "volume": 1780149,
+          "bars": 30
+        },
+        {
+          "slot": "16:50",
+          "daysPresent": 30,
+          "volume": 1917265,
+          "bars": 30
+        },
+        {
+          "slot": "16:55",
+          "daysPresent": 30,
+          "volume": 2933878,
+          "bars": 30
+        },
+        {
+          "slot": "17:00",
+          "daysPresent": 30,
+          "volume": 2288164,
+          "bars": 30
+        },
+        {
+          "slot": "17:05",
+          "daysPresent": 30,
+          "volume": 2024130,
+          "bars": 30
+        },
+        {
+          "slot": "17:10",
+          "daysPresent": 30,
+          "volume": 2933296,
+          "bars": 30
+        },
+        {
+          "slot": "17:15",
+          "daysPresent": 30,
+          "volume": 2998496,
+          "bars": 30
+        },
+        {
+          "slot": "17:20",
+          "daysPresent": 30,
+          "volume": 3771677,
+          "bars": 30
+        },
+        {
+          "slot": "17:25",
+          "daysPresent": 30,
+          "volume": 3902734,
+          "bars": 30
+        },
+        {
+          "slot": "17:30",
+          "daysPresent": 1,
+          "volume": 0,
+          "bars": 1
+        }
+      ],
+      "firstDate": "2026-10-01",
+      "lastDate": "2026-11-11"
+    },
+    {
+      "symbol": "UCG.MI",
+      "group": "known",
+      "timezone": "Europe/Rome",
+      "days": [
+        {
+          "date": "2026-10-01",
+          "barsVolume": 4429904,
+          "barsCount": 102,
+          "yahooVolume": 6560548,
+          "yahooClose": 79.52999877929688,
+          "ratio": 0.675233837173358
+        },
+        {
+          "date": "2026-10-02",
+          "barsVolume": 5616641,
+          "barsCount": 102,
+          "yahooVolume": 7582593,
+          "yahooClose": 78.8499984741211,
+          "ratio": 0.740728270658863
+        },
+        {
+          "date": "2026-10-05",
+          "barsVolume": 2564258,
+          "barsCount": 102,
+          "yahooVolume": 3731164,
+          "yahooClose": 79.80000305175781,
+          "ratio": 0.687254165188129
+        },
+        {
+          "date": "2026-10-06",
+          "barsVolume": 2511283,
+          "barsCount": 102,
+          "yahooVolume": 3923050,
+          "yahooClose": 81.11000061035156,
+          "ratio": 0.6401353538700756
+        },
+        {
+          "date": "2026-10-07",
+          "barsVolume": 4282485,
+          "barsCount": 102,
+          "yahooVolume": 6002372,
+          "yahooClose": 77.72000122070312,
+          "ratio": 0.7134654433280709
+        },
+        {
+          "date": "2026-10-08",
+          "barsVolume": 4080141,
+          "barsCount": 102,
+          "yahooVolume": 6045908,
+          "yahooClose": 75.33000183105469,
+          "ratio": 0.6748599217851148
+        },
+        {
+          "date": "2026-10-09",
+          "barsVolume": 1999335,
+          "barsCount": 102,
+          "yahooVolume": 3892783,
+          "yahooClose": 76.12999725341797,
+          "ratio": 0.5136004241695465
+        },
+        {
+          "date": "2026-10-12",
+          "barsVolume": 1638963,
+          "barsCount": 102,
+          "yahooVolume": 2702144,
+          "yahooClose": 76.25,
+          "ratio": 0.6065416942990455
+        },
+        {
+          "date": "2026-10-13",
+          "barsVolume": 1904545,
+          "barsCount": 102,
+          "yahooVolume": 3044767,
+          "yahooClose": 77,
+          "ratio": 0.6255142019077322
+        },
+        {
+          "date": "2026-10-14",
+          "barsVolume": 1643920,
+          "barsCount": 102,
+          "yahooVolume": 3416715,
+          "yahooClose": 76.77999877929688,
+          "ratio": 0.4811405106952146
+        },
+        {
+          "date": "2026-10-15",
+          "barsVolume": 3288860,
+          "barsCount": 102,
+          "yahooVolume": 6117742,
+          "yahooClose": 75.13999938964844,
+          "ratio": 0.5375937723428023
+        },
+        {
+          "date": "2026-10-16",
+          "barsVolume": 4794664,
+          "barsCount": 102,
+          "yahooVolume": 4451095,
+          "yahooClose": 76.19000244140625,
+          "ratio": 1.0771875235194934
+        },
+        {
+          "date": "2026-10-19",
+          "barsVolume": 2518466,
+          "barsCount": 102,
+          "yahooVolume": 3899326,
+          "yahooClose": 74.55000305175781,
+          "ratio": 0.6458721327737152
+        },
+        {
+          "date": "2026-10-20",
+          "barsVolume": 4947157,
+          "barsCount": 102,
+          "yahooVolume": 5247769,
+          "yahooClose": 74.12000274658203,
+          "ratio": 0.9427162285535053
+        },
+        {
+          "date": "2026-10-21",
+          "barsVolume": 1597582,
+          "barsCount": 102,
+          "yahooVolume": 2799823,
+          "yahooClose": 75.20999908447266,
+          "ratio": 0.5706010701390767
+        },
+        {
+          "date": "2026-10-22",
+          "barsVolume": 2750059,
+          "barsCount": 102,
+          "yahooVolume": 4756102,
+          "yahooClose": 71.6500015258789,
+          "ratio": 0.5782169936641393
+        },
+        {
+          "date": "2026-10-23",
+          "barsVolume": 2468903,
+          "barsCount": 102,
+          "yahooVolume": 4136999,
+          "yahooClose": 72.04000091552734,
+          "ratio": 0.5967859794019771
+        },
+        {
+          "date": "2026-10-26",
+          "barsVolume": 2284892,
+          "barsCount": 102,
+          "yahooVolume": 3870417,
+          "yahooClose": 73.37999725341797,
+          "ratio": 0.5903477583939921
+        },
+        {
+          "date": "2026-10-27",
+          "barsVolume": 2121101,
+          "barsCount": 102,
+          "yahooVolume": 3223545,
+          "yahooClose": 74.33999633789062,
+          "ratio": 0.6580026027246401
+        },
+        {
+          "date": "2026-10-28",
+          "barsVolume": 1407302,
+          "barsCount": 102,
+          "yahooVolume": 2368384,
+          "yahooClose": 74.55999755859375,
+          "ratio": 0.5942034737610117
+        },
+        {
+          "date": "2026-10-29",
+          "barsVolume": 2300920,
+          "barsCount": 102,
+          "yahooVolume": 3432966,
+          "yahooClose": 74.5199966430664,
+          "ratio": 0.6702425832356045
+        },
+        {
+          "date": "2026-10-30",
+          "barsVolume": 2305414,
+          "barsCount": 102,
+          "yahooVolume": 4695749,
+          "yahooClose": 73.05000305175781,
+          "ratio": 0.49095767256725176
+        },
+        {
+          "date": "2026-11-02",
+          "barsVolume": 2200229,
+          "barsCount": 102,
+          "yahooVolume": 3622908,
+          "yahooClose": 74.4000015258789,
+          "ratio": 0.6073102049513815
+        },
+        {
+          "date": "2026-11-03",
+          "barsVolume": 2028949,
+          "barsCount": 102,
+          "yahooVolume": 3558045,
+          "yahooClose": 74.26000213623047,
+          "ratio": 0.5702426472964788
+        },
+        {
+          "date": "2026-11-04",
+          "barsVolume": 5644832,
+          "barsCount": 102,
+          "yahooVolume": 7963565,
+          "yahooClose": 78.31999969482422,
+          "ratio": 0.7088322880518964
+        },
+        {
+          "date": "2026-11-05",
+          "barsVolume": 4119194,
+          "barsCount": 102,
+          "yahooVolume": 6830603,
+          "yahooClose": 77.18000030517578,
+          "ratio": 0.6030498332284866
+        },
+        {
+          "date": "2026-11-06",
+          "barsVolume": 2731124,
+          "barsCount": 102,
+          "yahooVolume": 4552263,
+          "yahooClose": 76.80000305175781,
+          "ratio": 0.5999486409286985
+        },
+        {
+          "date": "2026-11-09",
+          "barsVolume": 7749741,
+          "barsCount": 102,
+          "yahooVolume": 10119849,
+          "yahooClose": 81.62000274658203,
+          "ratio": 0.7657961101988775
+        },
+        {
+          "date": "2026-11-10",
+          "barsVolume": 6166387,
+          "barsCount": 102,
+          "yahooVolume": 8505304,
+          "yahooClose": 83.55000305175781,
+          "ratio": 0.7250048910656222
+        },
+        {
+          "date": "2026-11-11",
+          "barsVolume": 4968455,
+          "barsCount": 103,
+          "yahooVolume": 6688290,
+          "yahooClose": 84.23999786376953,
+          "ratio": 0.7428587875226702
+        }
+      ],
+      "stats": {
+        "nDays": 30,
+        "median": 0.6328247778889039,
+        "min": 0.4811405106952146,
+        "max": 1.0771875235194934,
+        "shareIn060_075": 0.5333333333333333,
+        "meanBars": 102.03333333333333,
+        "expectedBars": 102,
+        "daysBelowExpectedBars": 0
+      },
+      "slots": [
+        {
+          "slot": "09:00",
+          "daysPresent": 30,
+          "volume": 0,
+          "bars": 30
+        },
+        {
+          "slot": "09:05",
+          "daysPresent": 30,
+          "volume": 2174602,
+          "bars": 30
+        },
+        {
+          "slot": "09:10",
+          "daysPresent": 30,
+          "volume": 1866380,
+          "bars": 30
+        },
+        {
+          "slot": "09:15",
+          "daysPresent": 30,
+          "volume": 1736023,
+          "bars": 30
+        },
+        {
+          "slot": "09:20",
+          "daysPresent": 30,
+          "volume": 1552451,
+          "bars": 30
+        },
+        {
+          "slot": "09:25",
+          "daysPresent": 30,
+          "volume": 1613016,
+          "bars": 30
+        },
+        {
+          "slot": "09:30",
+          "daysPresent": 30,
+          "volume": 1484296,
+          "bars": 30
+        },
+        {
+          "slot": "09:35",
+          "daysPresent": 30,
+          "volume": 1318076,
+          "bars": 30
+        },
+        {
+          "slot": "09:40",
+          "daysPresent": 30,
+          "volume": 1349619,
+          "bars": 30
+        },
+        {
+          "slot": "09:45",
+          "daysPresent": 30,
+          "volume": 1176147,
+          "bars": 30
+        },
+        {
+          "slot": "09:50",
+          "daysPresent": 30,
+          "volume": 1197179,
+          "bars": 30
+        },
+        {
+          "slot": "09:55",
+          "daysPresent": 30,
+          "volume": 1548479,
+          "bars": 30
+        },
+        {
+          "slot": "10:00",
+          "daysPresent": 30,
+          "volume": 1057521,
+          "bars": 30
+        },
+        {
+          "slot": "10:05",
+          "daysPresent": 30,
+          "volume": 1210063,
+          "bars": 30
+        },
+        {
+          "slot": "10:10",
+          "daysPresent": 30,
+          "volume": 1354822,
+          "bars": 30
+        },
+        {
+          "slot": "10:15",
+          "daysPresent": 30,
+          "volume": 1453413,
+          "bars": 30
+        },
+        {
+          "slot": "10:20",
+          "daysPresent": 30,
+          "volume": 949372,
+          "bars": 30
+        },
+        {
+          "slot": "10:25",
+          "daysPresent": 30,
+          "volume": 993101,
+          "bars": 30
+        },
+        {
+          "slot": "10:30",
+          "daysPresent": 30,
+          "volume": 1051469,
+          "bars": 30
+        },
+        {
+          "slot": "10:35",
+          "daysPresent": 30,
+          "volume": 706583,
+          "bars": 30
+        },
+        {
+          "slot": "10:40",
+          "daysPresent": 30,
+          "volume": 689516,
+          "bars": 30
+        },
+        {
+          "slot": "10:45",
+          "daysPresent": 30,
+          "volume": 928208,
+          "bars": 30
+        },
+        {
+          "slot": "10:50",
+          "daysPresent": 30,
+          "volume": 787027,
+          "bars": 30
+        },
+        {
+          "slot": "10:55",
+          "daysPresent": 30,
+          "volume": 751072,
+          "bars": 30
+        },
+        {
+          "slot": "11:00",
+          "daysPresent": 30,
+          "volume": 812113,
+          "bars": 30
+        },
+        {
+          "slot": "11:05",
+          "daysPresent": 30,
+          "volume": 700185,
+          "bars": 30
+        },
+        {
+          "slot": "11:10",
+          "daysPresent": 30,
+          "volume": 797066,
+          "bars": 30
+        },
+        {
+          "slot": "11:15",
+          "daysPresent": 30,
+          "volume": 750021,
+          "bars": 30
+        },
+        {
+          "slot": "11:20",
+          "daysPresent": 30,
+          "volume": 679875,
+          "bars": 30
+        },
+        {
+          "slot": "11:25",
+          "daysPresent": 30,
+          "volume": 592052,
+          "bars": 30
+        },
+        {
+          "slot": "11:30",
+          "daysPresent": 30,
+          "volume": 622923,
+          "bars": 30
+        },
+        {
+          "slot": "11:35",
+          "daysPresent": 30,
+          "volume": 595635,
+          "bars": 30
+        },
+        {
+          "slot": "11:40",
+          "daysPresent": 30,
+          "volume": 629845,
+          "bars": 30
+        },
+        {
+          "slot": "11:45",
+          "daysPresent": 30,
+          "volume": 661045,
+          "bars": 30
+        },
+        {
+          "slot": "11:50",
+          "daysPresent": 30,
+          "volume": 720851,
+          "bars": 30
+        },
+        {
+          "slot": "11:55",
+          "daysPresent": 30,
+          "volume": 763755,
+          "bars": 30
+        },
+        {
+          "slot": "12:00",
+          "daysPresent": 30,
+          "volume": 685158,
+          "bars": 30
+        },
+        {
+          "slot": "12:05",
+          "daysPresent": 30,
+          "volume": 1754321,
+          "bars": 30
+        },
+        {
+          "slot": "12:10",
+          "daysPresent": 30,
+          "volume": 603411,
+          "bars": 30
+        },
+        {
+          "slot": "12:15",
+          "daysPresent": 30,
+          "volume": 713151,
+          "bars": 30
+        },
+        {
+          "slot": "12:20",
+          "daysPresent": 30,
+          "volume": 697250,
+          "bars": 30
+        },
+        {
+          "slot": "12:25",
+          "daysPresent": 30,
+          "volume": 556865,
+          "bars": 30
+        },
+        {
+          "slot": "12:30",
+          "daysPresent": 30,
+          "volume": 706007,
+          "bars": 30
+        },
+        {
+          "slot": "12:35",
+          "daysPresent": 30,
+          "volume": 668936,
+          "bars": 30
+        },
+        {
+          "slot": "12:40",
+          "daysPresent": 30,
+          "volume": 709329,
+          "bars": 30
+        },
+        {
+          "slot": "12:45",
+          "daysPresent": 30,
+          "volume": 696875,
+          "bars": 30
+        },
+        {
+          "slot": "12:50",
+          "daysPresent": 30,
+          "volume": 763282,
+          "bars": 30
+        },
+        {
+          "slot": "12:55",
+          "daysPresent": 30,
+          "volume": 574557,
+          "bars": 30
+        },
+        {
+          "slot": "13:00",
+          "daysPresent": 30,
+          "volume": 671609,
+          "bars": 30
+        },
+        {
+          "slot": "13:05",
+          "daysPresent": 30,
+          "volume": 533147,
+          "bars": 30
+        },
+        {
+          "slot": "13:10",
+          "daysPresent": 30,
+          "volume": 520500,
+          "bars": 30
+        },
+        {
+          "slot": "13:15",
+          "daysPresent": 30,
+          "volume": 480145,
+          "bars": 30
+        },
+        {
+          "slot": "13:20",
+          "daysPresent": 30,
+          "volume": 445527,
+          "bars": 30
+        },
+        {
+          "slot": "13:25",
+          "daysPresent": 30,
+          "volume": 444157,
+          "bars": 30
+        },
+        {
+          "slot": "13:30",
+          "daysPresent": 30,
+          "volume": 610189,
+          "bars": 30
+        },
+        {
+          "slot": "13:35",
+          "daysPresent": 30,
+          "volume": 487779,
+          "bars": 30
+        },
+        {
+          "slot": "13:40",
+          "daysPresent": 30,
+          "volume": 450220,
+          "bars": 30
+        },
+        {
+          "slot": "13:45",
+          "daysPresent": 30,
+          "volume": 487789,
+          "bars": 30
+        },
+        {
+          "slot": "13:50",
+          "daysPresent": 30,
+          "volume": 359543,
+          "bars": 30
+        },
+        {
+          "slot": "13:55",
+          "daysPresent": 30,
+          "volume": 525298,
+          "bars": 30
+        },
+        {
+          "slot": "14:00",
+          "daysPresent": 30,
+          "volume": 579606,
+          "bars": 30
+        },
+        {
+          "slot": "14:05",
+          "daysPresent": 30,
+          "volume": 515003,
+          "bars": 30
+        },
+        {
+          "slot": "14:10",
+          "daysPresent": 30,
+          "volume": 557531,
+          "bars": 30
+        },
+        {
+          "slot": "14:15",
+          "daysPresent": 30,
+          "volume": 674641,
+          "bars": 30
+        },
+        {
+          "slot": "14:20",
+          "daysPresent": 30,
+          "volume": 619458,
+          "bars": 30
+        },
+        {
+          "slot": "14:25",
+          "daysPresent": 30,
+          "volume": 691578,
+          "bars": 30
+        },
+        {
+          "slot": "14:30",
+          "daysPresent": 30,
+          "volume": 1178409,
+          "bars": 30
+        },
+        {
+          "slot": "14:35",
+          "daysPresent": 30,
+          "volume": 1078978,
+          "bars": 30
+        },
+        {
+          "slot": "14:40",
+          "daysPresent": 30,
+          "volume": 937975,
+          "bars": 30
+        },
+        {
+          "slot": "14:45",
+          "daysPresent": 30,
+          "volume": 832333,
+          "bars": 30
+        },
+        {
+          "slot": "14:50",
+          "daysPresent": 30,
+          "volume": 632945,
+          "bars": 30
+        },
+        {
+          "slot": "14:55",
+          "daysPresent": 30,
+          "volume": 739333,
+          "bars": 30
+        },
+        {
+          "slot": "15:00",
+          "daysPresent": 30,
+          "volume": 764624,
+          "bars": 30
+        },
+        {
+          "slot": "15:05",
+          "daysPresent": 30,
+          "volume": 833596,
+          "bars": 30
+        },
+        {
+          "slot": "15:10",
+          "daysPresent": 30,
+          "volume": 1118151,
+          "bars": 30
+        },
+        {
+          "slot": "15:15",
+          "daysPresent": 30,
+          "volume": 769550,
+          "bars": 30
+        },
+        {
+          "slot": "15:20",
+          "daysPresent": 30,
+          "volume": 777362,
+          "bars": 30
+        },
+        {
+          "slot": "15:25",
+          "daysPresent": 30,
+          "volume": 2743979,
+          "bars": 30
+        },
+        {
+          "slot": "15:30",
+          "daysPresent": 30,
+          "volume": 982162,
+          "bars": 30
+        },
+        {
+          "slot": "15:35",
+          "daysPresent": 30,
+          "volume": 1258950,
+          "bars": 30
+        },
+        {
+          "slot": "15:40",
+          "daysPresent": 30,
+          "volume": 1018346,
+          "bars": 30
+        },
+        {
+          "slot": "15:45",
+          "daysPresent": 30,
+          "volume": 1041376,
+          "bars": 30
+        },
+        {
+          "slot": "15:50",
+          "daysPresent": 30,
+          "volume": 1038057,
+          "bars": 30
+        },
+        {
+          "slot": "15:55",
+          "daysPresent": 30,
+          "volume": 985459,
+          "bars": 30
+        },
+        {
+          "slot": "16:00",
+          "daysPresent": 30,
+          "volume": 1359885,
+          "bars": 30
+        },
+        {
+          "slot": "16:05",
+          "daysPresent": 30,
+          "volume": 1163622,
+          "bars": 30
+        },
+        {
+          "slot": "16:10",
+          "daysPresent": 30,
+          "volume": 1186401,
+          "bars": 30
+        },
+        {
+          "slot": "16:15",
+          "daysPresent": 30,
+          "volume": 1050077,
+          "bars": 30
+        },
+        {
+          "slot": "16:20",
+          "daysPresent": 30,
+          "volume": 1158891,
+          "bars": 30
+        },
+        {
+          "slot": "16:25",
+          "daysPresent": 30,
+          "volume": 1450968,
+          "bars": 30
+        },
+        {
+          "slot": "16:30",
+          "daysPresent": 30,
+          "volume": 1100423,
+          "bars": 30
+        },
+        {
+          "slot": "16:35",
+          "daysPresent": 30,
+          "volume": 996793,
+          "bars": 30
+        },
+        {
+          "slot": "16:40",
+          "daysPresent": 30,
+          "volume": 1074619,
+          "bars": 30
+        },
+        {
+          "slot": "16:45",
+          "daysPresent": 30,
+          "volume": 1122159,
+          "bars": 30
+        },
+        {
+          "slot": "16:50",
+          "daysPresent": 30,
+          "volume": 1211321,
+          "bars": 30
+        },
+        {
+          "slot": "16:55",
+          "daysPresent": 30,
+          "volume": 1068729,
+          "bars": 30
+        },
+        {
+          "slot": "17:00",
+          "daysPresent": 30,
+          "volume": 1269455,
+          "bars": 30
+        },
+        {
+          "slot": "17:05",
+          "daysPresent": 30,
+          "volume": 1188810,
+          "bars": 30
+        },
+        {
+          "slot": "17:10",
+          "daysPresent": 30,
+          "volume": 1931990,
+          "bars": 30
+        },
+        {
+          "slot": "17:15",
+          "daysPresent": 30,
+          "volume": 1599507,
+          "bars": 30
+        },
+        {
+          "slot": "17:20",
+          "daysPresent": 30,
+          "volume": 2152834,
+          "bars": 30
+        },
+        {
+          "slot": "17:25",
+          "daysPresent": 30,
+          "volume": 2190974,
+          "bars": 30
+        },
+        {
+          "slot": "17:30",
+          "daysPresent": 1,
+          "volume": 0,
+          "bars": 1
+        }
+      ],
+      "firstDate": "2026-10-01",
+      "lastDate": "2026-11-11"
+    },
+    {
+      "symbol": "BAMI.MI",
+      "group": "known",
+      "timezone": "Europe/Rome",
+      "days": [
+        {
+          "date": "2026-10-01",
+          "barsVolume": 4205385,
+          "barsCount": 102,
+          "yahooVolume": 4919245,
+          "yahooClose": 15.34000015258789,
+          "ratio": 0.8548842352840731
+        },
+        {
+          "date": "2026-10-02",
+          "barsVolume": 3560177,
+          "barsCount": 102,
+          "yahooVolume": 5180208,
+          "yahooClose": 15.225000381469727,
+          "ratio": 0.6872652603910886
+        },
+        {
+          "date": "2026-10-05",
+          "barsVolume": 1693067,
+          "barsCount": 102,
+          "yahooVolume": 2639736,
+          "yahooClose": 15.270000457763672,
+          "ratio": 0.6413773953152891
+        },
+        {
+          "date": "2026-10-06",
+          "barsVolume": 1878279,
+          "barsCount": 102,
+          "yahooVolume": 3036134,
+          "yahooClose": 15.28499984741211,
+          "ratio": 0.6186416673308885
+        },
+        {
+          "date": "2026-10-07",
+          "barsVolume": 2704412,
+          "barsCount": 102,
+          "yahooVolume": 3695295,
+          "yahooClose": 14.899999618530273,
+          "ratio": 0.7318528020090412
+        },
+        {
+          "date": "2026-10-08",
+          "barsVolume": 2122969,
+          "barsCount": 102,
+          "yahooVolume": 4013227,
+          "yahooClose": 14.600000381469727,
+          "ratio": 0.528993002389349
+        },
+        {
+          "date": "2026-10-09",
+          "barsVolume": 1939805,
+          "barsCount": 102,
+          "yahooVolume": 3349769,
+          "yahooClose": 14.734999656677246,
+          "ratio": 0.5790861996752612
+        },
+        {
+          "date": "2026-10-12",
+          "barsVolume": 1108818,
+          "barsCount": 102,
+          "yahooVolume": 1841979,
+          "yahooClose": 14.864999771118164,
+          "ratio": 0.6019710322430386
+        },
+        {
+          "date": "2026-10-13",
+          "barsVolume": 1495667,
+          "barsCount": 102,
+          "yahooVolume": 2912621,
+          "yahooClose": 14.649999618530273,
+          "ratio": 0.5135123999998626
+        },
+        {
+          "date": "2026-10-14",
+          "barsVolume": 2008735,
+          "barsCount": 102,
+          "yahooVolume": 3546559,
+          "yahooClose": 14.414999961853027,
+          "ratio": 0.5663898443533577
+        },
+        {
+          "date": "2026-10-15",
+          "barsVolume": 2741482,
+          "barsCount": 102,
+          "yahooVolume": 4997923,
+          "yahooClose": 14.029999732971191,
+          "ratio": 0.548524256976348
+        },
+        {
+          "date": "2026-10-16",
+          "barsVolume": 2752967,
+          "barsCount": 102,
+          "yahooVolume": 4957616,
+          "yahooClose": 13.800000190734863,
+          "ratio": 0.5553005718877784
+        },
+        {
+          "date": "2026-10-19",
+          "barsVolume": 4216008,
+          "barsCount": 102,
+          "yahooVolume": 6857189,
+          "yahooClose": 13.289999961853027,
+          "ratio": 0.6148303627040176
+        },
+        {
+          "date": "2026-10-20",
+          "barsVolume": 5358882,
+          "barsCount": 102,
+          "yahooVolume": 7496935,
+          "yahooClose": 13.104999542236328,
+          "ratio": 0.7148097189051259
+        },
+        {
+          "date": "2026-10-21",
+          "barsVolume": 2917789,
+          "barsCount": 102,
+          "yahooVolume": 5724096,
+          "yahooClose": 13.510000228881836,
+          "ratio": 0.509737956875636
+        },
+        {
+          "date": "2026-10-22",
+          "barsVolume": 4161141,
+          "barsCount": 102,
+          "yahooVolume": 6729844,
+          "yahooClose": 12.944999694824219,
+          "ratio": 0.6183116577442211
+        },
+        {
+          "date": "2026-10-23",
+          "barsVolume": 2680916,
+          "barsCount": 102,
+          "yahooVolume": 4550351,
+          "yahooClose": 13.085000038146973,
+          "ratio": 0.5891668576775726
+        },
+        {
+          "date": "2026-10-26",
+          "barsVolume": 2984186,
+          "barsCount": 102,
+          "yahooVolume": 5180298,
+          "yahooClose": 13.279999732971191,
+          "ratio": 0.5760645430050549
+        },
+        {
+          "date": "2026-10-27",
+          "barsVolume": 2239648,
+          "barsCount": 102,
+          "yahooVolume": 4287209,
+          "yahooClose": 13.630000114440918,
+          "ratio": 0.5224023368116647
+        },
+        {
+          "date": "2026-10-28",
+          "barsVolume": 4016358,
+          "barsCount": 102,
+          "yahooVolume": 4224236,
+          "yahooClose": 13.800000190734863,
+          "ratio": 0.950789207799943
+        },
+        {
+          "date": "2026-10-29",
+          "barsVolume": 2112952,
+          "barsCount": 101,
+          "yahooVolume": 2950761,
+          "yahooClose": 13.75,
+          "ratio": 0.7160701934179013
+        },
+        {
+          "date": "2026-10-30",
+          "barsVolume": 1731961,
+          "barsCount": 102,
+          "yahooVolume": 3049987,
+          "yahooClose": 13.645000457763672,
+          "ratio": 0.5678584859542024
+        },
+        {
+          "date": "2026-11-02",
+          "barsVolume": 1970621,
+          "barsCount": 102,
+          "yahooVolume": 3348924,
+          "yahooClose": 13.539999961853027,
+          "ratio": 0.5884340761390823
+        },
+        {
+          "date": "2026-11-03",
+          "barsVolume": 2178497,
+          "barsCount": 102,
+          "yahooVolume": 3776192,
+          "yahooClose": 13.4350004196167,
+          "ratio": 0.5769031341626697
+        },
+        {
+          "date": "2026-11-04",
+          "barsVolume": 4459535,
+          "barsCount": 102,
+          "yahooVolume": 7273615,
+          "yahooClose": 13.920000076293945,
+          "ratio": 0.6131112246111459
+        },
+        {
+          "date": "2026-11-05",
+          "barsVolume": 2613571,
+          "barsCount": 102,
+          "yahooVolume": 4595526,
+          "yahooClose": 13.885000228881836,
+          "ratio": 0.5687207514439043
+        },
+        {
+          "date": "2026-11-06",
+          "barsVolume": 4368567,
+          "barsCount": 102,
+          "yahooVolume": 6840948,
+          "yahooClose": 13.444999694824219,
+          "ratio": 0.638590879509682
+        },
+        {
+          "date": "2026-11-09",
+          "barsVolume": 9846973,
+          "barsCount": 101,
+          "yahooVolume": 15069632,
+          "yahooClose": 14.880000114440918,
+          "ratio": 0.6534315502860322
+        },
+        {
+          "date": "2026-11-10",
+          "barsVolume": 4572960,
+          "barsCount": 102,
+          "yahooVolume": 7060293,
+          "yahooClose": 14.765000343322754,
+          "ratio": 0.6477011648100157
+        },
+        {
+          "date": "2026-11-11",
+          "barsVolume": 2992646,
+          "barsCount": 103,
+          "yahooVolume": 4319171,
+          "yahooClose": 14.670000076293945,
+          "ratio": 0.6928750910765052
+        }
+      ],
+      "stats": {
+        "nDays": 30,
+        "median": 0.6075411284270922,
+        "min": 0.509737956875636,
+        "max": 0.950789207799943,
+        "shareIn060_075": 0.4666666666666667,
+        "meanBars": 101.96666666666667,
+        "expectedBars": 102,
+        "daysBelowExpectedBars": 2
+      },
+      "slots": [
+        {
+          "slot": "09:00",
+          "daysPresent": 29,
+          "volume": 0,
+          "bars": 29
+        },
+        {
+          "slot": "09:05",
+          "daysPresent": 30,
+          "volume": 1332497,
+          "bars": 30
+        },
+        {
+          "slot": "09:10",
+          "daysPresent": 30,
+          "volume": 2372226,
+          "bars": 30
+        },
+        {
+          "slot": "09:15",
+          "daysPresent": 30,
+          "volume": 2106651,
+          "bars": 30
+        },
+        {
+          "slot": "09:20",
+          "daysPresent": 30,
+          "volume": 1485503,
+          "bars": 30
+        },
+        {
+          "slot": "09:25",
+          "daysPresent": 30,
+          "volume": 2208295,
+          "bars": 30
+        },
+        {
+          "slot": "09:30",
+          "daysPresent": 30,
+          "volume": 1329948,
+          "bars": 30
+        },
+        {
+          "slot": "09:35",
+          "daysPresent": 30,
+          "volume": 995614,
+          "bars": 30
+        },
+        {
+          "slot": "09:40",
+          "daysPresent": 30,
+          "volume": 1241464,
+          "bars": 30
+        },
+        {
+          "slot": "09:45",
+          "daysPresent": 30,
+          "volume": 1120055,
+          "bars": 30
+        },
+        {
+          "slot": "09:50",
+          "daysPresent": 30,
+          "volume": 963751,
+          "bars": 30
+        },
+        {
+          "slot": "09:55",
+          "daysPresent": 30,
+          "volume": 1116400,
+          "bars": 30
+        },
+        {
+          "slot": "10:00",
+          "daysPresent": 30,
+          "volume": 1020669,
+          "bars": 30
+        },
+        {
+          "slot": "10:05",
+          "daysPresent": 30,
+          "volume": 855696,
+          "bars": 30
+        },
+        {
+          "slot": "10:10",
+          "daysPresent": 30,
+          "volume": 856457,
+          "bars": 30
+        },
+        {
+          "slot": "10:15",
+          "daysPresent": 30,
+          "volume": 848272,
+          "bars": 30
+        },
+        {
+          "slot": "10:20",
+          "daysPresent": 30,
+          "volume": 993028,
+          "bars": 30
+        },
+        {
+          "slot": "10:25",
+          "daysPresent": 30,
+          "volume": 869026,
+          "bars": 30
+        },
+        {
+          "slot": "10:30",
+          "daysPresent": 30,
+          "volume": 1030832,
+          "bars": 30
+        },
+        {
+          "slot": "10:35",
+          "daysPresent": 30,
+          "volume": 763818,
+          "bars": 30
+        },
+        {
+          "slot": "10:40",
+          "daysPresent": 30,
+          "volume": 680185,
+          "bars": 30
+        },
+        {
+          "slot": "10:45",
+          "daysPresent": 30,
+          "volume": 1045133,
+          "bars": 30
+        },
+        {
+          "slot": "10:50",
+          "daysPresent": 30,
+          "volume": 813703,
+          "bars": 30
+        },
+        {
+          "slot": "10:55",
+          "daysPresent": 30,
+          "volume": 895958,
+          "bars": 30
+        },
+        {
+          "slot": "11:00",
+          "daysPresent": 30,
+          "volume": 812979,
+          "bars": 30
+        },
+        {
+          "slot": "11:05",
+          "daysPresent": 30,
+          "volume": 739198,
+          "bars": 30
+        },
+        {
+          "slot": "11:10",
+          "daysPresent": 30,
+          "volume": 876651,
+          "bars": 30
+        },
+        {
+          "slot": "11:15",
+          "daysPresent": 30,
+          "volume": 653177,
+          "bars": 30
+        },
+        {
+          "slot": "11:20",
+          "daysPresent": 30,
+          "volume": 956662,
+          "bars": 30
+        },
+        {
+          "slot": "11:25",
+          "daysPresent": 30,
+          "volume": 779858,
+          "bars": 30
+        },
+        {
+          "slot": "11:30",
+          "daysPresent": 30,
+          "volume": 757900,
+          "bars": 30
+        },
+        {
+          "slot": "11:35",
+          "daysPresent": 30,
+          "volume": 820617,
+          "bars": 30
+        },
+        {
+          "slot": "11:40",
+          "daysPresent": 30,
+          "volume": 681280,
+          "bars": 30
+        },
+        {
+          "slot": "11:45",
+          "daysPresent": 30,
+          "volume": 622553,
+          "bars": 30
+        },
+        {
+          "slot": "11:50",
+          "daysPresent": 30,
+          "volume": 567608,
+          "bars": 30
+        },
+        {
+          "slot": "11:55",
+          "daysPresent": 30,
+          "volume": 609813,
+          "bars": 30
+        },
+        {
+          "slot": "12:00",
+          "daysPresent": 30,
+          "volume": 1754006,
+          "bars": 30
+        },
+        {
+          "slot": "12:05",
+          "daysPresent": 30,
+          "volume": 544563,
+          "bars": 30
+        },
+        {
+          "slot": "12:10",
+          "daysPresent": 30,
+          "volume": 468864,
+          "bars": 30
+        },
+        {
+          "slot": "12:15",
+          "daysPresent": 30,
+          "volume": 713606,
+          "bars": 30
+        },
+        {
+          "slot": "12:20",
+          "daysPresent": 30,
+          "volume": 559646,
+          "bars": 30
+        },
+        {
+          "slot": "12:25",
+          "daysPresent": 30,
+          "volume": 454654,
+          "bars": 30
+        },
+        {
+          "slot": "12:30",
+          "daysPresent": 30,
+          "volume": 556702,
+          "bars": 30
+        },
+        {
+          "slot": "12:35",
+          "daysPresent": 30,
+          "volume": 733808,
+          "bars": 30
+        },
+        {
+          "slot": "12:40",
+          "daysPresent": 30,
+          "volume": 565535,
+          "bars": 30
+        },
+        {
+          "slot": "12:45",
+          "daysPresent": 30,
+          "volume": 1074485,
+          "bars": 30
+        },
+        {
+          "slot": "12:50",
+          "daysPresent": 30,
+          "volume": 576037,
+          "bars": 30
+        },
+        {
+          "slot": "12:55",
+          "daysPresent": 30,
+          "volume": 594427,
+          "bars": 30
+        },
+        {
+          "slot": "13:00",
+          "daysPresent": 30,
+          "volume": 684501,
+          "bars": 30
+        },
+        {
+          "slot": "13:05",
+          "daysPresent": 30,
+          "volume": 392968,
+          "bars": 30
+        },
+        {
+          "slot": "13:10",
+          "daysPresent": 30,
+          "volume": 350625,
+          "bars": 30
+        },
+        {
+          "slot": "13:15",
+          "daysPresent": 30,
+          "volume": 479426,
+          "bars": 30
+        },
+        {
+          "slot": "13:20",
+          "daysPresent": 30,
+          "volume": 431634,
+          "bars": 30
+        },
+        {
+          "slot": "13:25",
+          "daysPresent": 30,
+          "volume": 498470,
+          "bars": 30
+        },
+        {
+          "slot": "13:30",
+          "daysPresent": 30,
+          "volume": 669555,
+          "bars": 30
+        },
+        {
+          "slot": "13:35",
+          "daysPresent": 30,
+          "volume": 736404,
+          "bars": 30
+        },
+        {
+          "slot": "13:40",
+          "daysPresent": 30,
+          "volume": 474494,
+          "bars": 30
+        },
+        {
+          "slot": "13:45",
+          "daysPresent": 30,
+          "volume": 589461,
+          "bars": 30
+        },
+        {
+          "slot": "13:50",
+          "daysPresent": 29,
+          "volume": 505644,
+          "bars": 29
+        },
+        {
+          "slot": "13:55",
+          "daysPresent": 30,
+          "volume": 586874,
+          "bars": 30
+        },
+        {
+          "slot": "14:00",
+          "daysPresent": 30,
+          "volume": 511231,
+          "bars": 30
+        },
+        {
+          "slot": "14:05",
+          "daysPresent": 30,
+          "volume": 727820,
+          "bars": 30
+        },
+        {
+          "slot": "14:10",
+          "daysPresent": 30,
+          "volume": 597186,
+          "bars": 30
+        },
+        {
+          "slot": "14:15",
+          "daysPresent": 30,
+          "volume": 751706,
+          "bars": 30
+        },
+        {
+          "slot": "14:20",
+          "daysPresent": 30,
+          "volume": 644710,
+          "bars": 30
+        },
+        {
+          "slot": "14:25",
+          "daysPresent": 30,
+          "volume": 578050,
+          "bars": 30
+        },
+        {
+          "slot": "14:30",
+          "daysPresent": 30,
+          "volume": 1243094,
+          "bars": 30
+        },
+        {
+          "slot": "14:35",
+          "daysPresent": 30,
+          "volume": 637675,
+          "bars": 30
+        },
+        {
+          "slot": "14:40",
+          "daysPresent": 30,
+          "volume": 757874,
+          "bars": 30
+        },
+        {
+          "slot": "14:45",
+          "daysPresent": 30,
+          "volume": 523276,
+          "bars": 30
+        },
+        {
+          "slot": "14:50",
+          "daysPresent": 30,
+          "volume": 717025,
+          "bars": 30
+        },
+        {
+          "slot": "14:55",
+          "daysPresent": 30,
+          "volume": 848169,
+          "bars": 30
+        },
+        {
+          "slot": "15:00",
+          "daysPresent": 30,
+          "volume": 656264,
+          "bars": 30
+        },
+        {
+          "slot": "15:05",
+          "daysPresent": 30,
+          "volume": 728193,
+          "bars": 30
+        },
+        {
+          "slot": "15:10",
+          "daysPresent": 30,
+          "volume": 796274,
+          "bars": 30
+        },
+        {
+          "slot": "15:15",
+          "daysPresent": 30,
+          "volume": 881487,
+          "bars": 30
+        },
+        {
+          "slot": "15:20",
+          "daysPresent": 30,
+          "volume": 732053,
+          "bars": 30
+        },
+        {
+          "slot": "15:25",
+          "daysPresent": 30,
+          "volume": 708956,
+          "bars": 30
+        },
+        {
+          "slot": "15:30",
+          "daysPresent": 30,
+          "volume": 1035453,
+          "bars": 30
+        },
+        {
+          "slot": "15:35",
+          "daysPresent": 30,
+          "volume": 2760038,
+          "bars": 30
+        },
+        {
+          "slot": "15:40",
+          "daysPresent": 30,
+          "volume": 1059110,
+          "bars": 30
+        },
+        {
+          "slot": "15:45",
+          "daysPresent": 30,
+          "volume": 867450,
+          "bars": 30
+        },
+        {
+          "slot": "15:50",
+          "daysPresent": 30,
+          "volume": 873998,
+          "bars": 30
+        },
+        {
+          "slot": "15:55",
+          "daysPresent": 30,
+          "volume": 791168,
+          "bars": 30
+        },
+        {
+          "slot": "16:00",
+          "daysPresent": 30,
+          "volume": 1290074,
+          "bars": 30
+        },
+        {
+          "slot": "16:05",
+          "daysPresent": 30,
+          "volume": 842227,
+          "bars": 30
+        },
+        {
+          "slot": "16:10",
+          "daysPresent": 30,
+          "volume": 955651,
+          "bars": 30
+        },
+        {
+          "slot": "16:15",
+          "daysPresent": 30,
+          "volume": 950741,
+          "bars": 30
+        },
+        {
+          "slot": "16:20",
+          "daysPresent": 30,
+          "volume": 1193503,
+          "bars": 30
+        },
+        {
+          "slot": "16:25",
+          "daysPresent": 30,
+          "volume": 1128875,
+          "bars": 30
+        },
+        {
+          "slot": "16:30",
+          "daysPresent": 30,
+          "volume": 1104535,
+          "bars": 30
+        },
+        {
+          "slot": "16:35",
+          "daysPresent": 30,
+          "volume": 1079821,
+          "bars": 30
+        },
+        {
+          "slot": "16:40",
+          "daysPresent": 30,
+          "volume": 910326,
+          "bars": 30
+        },
+        {
+          "slot": "16:45",
+          "daysPresent": 30,
+          "volume": 948661,
+          "bars": 30
+        },
+        {
+          "slot": "16:50",
+          "daysPresent": 30,
+          "volume": 985058,
+          "bars": 30
+        },
+        {
+          "slot": "16:55",
+          "daysPresent": 30,
+          "volume": 1082195,
+          "bars": 30
+        },
+        {
+          "slot": "17:00",
+          "daysPresent": 30,
+          "volume": 957421,
+          "bars": 30
+        },
+        {
+          "slot": "17:05",
+          "daysPresent": 30,
+          "volume": 1169776,
+          "bars": 30
+        },
+        {
+          "slot": "17:10",
+          "daysPresent": 30,
+          "volume": 1509495,
+          "bars": 30
+        },
+        {
+          "slot": "17:15",
+          "daysPresent": 30,
+          "volume": 1772803,
+          "bars": 30
+        },
+        {
+          "slot": "17:20",
+          "daysPresent": 30,
+          "volume": 2190495,
+          "bars": 30
+        },
+        {
+          "slot": "17:25",
+          "daysPresent": 30,
+          "volume": 2315191,
+          "bars": 30
+        },
+        {
+          "slot": "17:30",
+          "daysPresent": 1,
+          "volume": 0,
+          "bars": 1
+        }
+      ],
+      "firstDate": "2026-10-01",
+      "lastDate": "2026-11-11"
+    },
+    {
+      "symbol": "RHM.DE",
+      "group": "known",
+      "timezone": "Europe/Berlin",
+      "days": [
+        {
+          "date": "2026-10-01",
+          "barsVolume": 97290,
+          "barsCount": 102,
+          "yahooVolume": 155159,
+          "yahooClose": 945.7999877929688,
+          "ratio": 0.6270342036233799
+        },
+        {
+          "date": "2026-10-02",
+          "barsVolume": 151189,
+          "barsCount": 102,
+          "yahooVolume": 207997,
+          "yahooClose": 956.9000244140625,
+          "ratio": 0.7268806761635985
+        },
+        {
+          "date": "2026-10-05",
+          "barsVolume": 135611,
+          "barsCount": 102,
+          "yahooVolume": 199391,
+          "yahooClose": 980.2000122070312,
+          "ratio": 0.6801259836201232
+        },
+        {
+          "date": "2026-10-06",
+          "barsVolume": 246466,
+          "barsCount": 102,
+          "yahooVolume": 331600,
+          "yahooClose": 953,
+          "ratio": 0.7432629674306394
+        },
+        {
+          "date": "2026-10-07",
+          "barsVolume": 158142,
+          "barsCount": 102,
+          "yahooVolume": 217545,
+          "yahooClose": 926.2000122070312,
+          "ratio": 0.7269392539474592
+        },
+        {
+          "date": "2026-10-08",
+          "barsVolume": 100359,
+          "barsCount": 102,
+          "yahooVolume": 151962,
+          "yahooClose": 934.9000244140625,
+          "ratio": 0.6604216843684605
+        },
+        {
+          "date": "2026-10-09",
+          "barsVolume": 119067,
+          "barsCount": 102,
+          "yahooVolume": 160785,
+          "yahooClose": 939.0999755859375,
+          "ratio": 0.740535497714339
+        },
+        {
+          "date": "2026-10-12",
+          "barsVolume": 90310,
+          "barsCount": 102,
+          "yahooVolume": 152079,
+          "yahooClose": 962.2000122070312,
+          "ratio": 0.593836098343624
+        },
+        {
+          "date": "2026-10-13",
+          "barsVolume": 66252,
+          "barsCount": 102,
+          "yahooVolume": 118458,
+          "yahooClose": 953.4000244140625,
+          "ratio": 0.559286835840551
+        },
+        {
+          "date": "2026-10-14",
+          "barsVolume": 111804,
+          "barsCount": 102,
+          "yahooVolume": 197175,
+          "yahooClose": 983.2999877929688,
+          "ratio": 0.5670292887029289
+        },
+        {
+          "date": "2026-10-15",
+          "barsVolume": 330139,
+          "barsCount": 102,
+          "yahooVolume": 283710,
+          "yahooClose": 1026,
+          "ratio": 1.1636495012512778
+        },
+        {
+          "date": "2026-10-16",
+          "barsVolume": 245540,
+          "barsCount": 101,
+          "yahooVolume": 367676,
+          "yahooClose": 1090.199951171875,
+          "ratio": 0.6678162295064133
+        },
+        {
+          "date": "2026-10-19",
+          "barsVolume": 147094,
+          "barsCount": 102,
+          "yahooVolume": 234765,
+          "yahooClose": 1059.800048828125,
+          "ratio": 0.626558473366984
+        },
+        {
+          "date": "2026-10-20",
+          "barsVolume": 93647,
+          "barsCount": 102,
+          "yahooVolume": 152003,
+          "yahooClose": 1054,
+          "ratio": 0.6160865246080669
+        },
+        {
+          "date": "2026-10-21",
+          "barsVolume": 134030,
+          "barsCount": 102,
+          "yahooVolume": 187253,
+          "yahooClose": 1020,
+          "ratio": 0.7157695737851997
+        },
+        {
+          "date": "2026-10-22",
+          "barsVolume": 74292,
+          "barsCount": 102,
+          "yahooVolume": 120992,
+          "yahooClose": 1015,
+          "ratio": 0.6140240677069558
+        },
+        {
+          "date": "2026-10-23",
+          "barsVolume": 66857,
+          "barsCount": 102,
+          "yahooVolume": 104008,
+          "yahooClose": 1019,
+          "ratio": 0.6428063225905699
+        },
+        {
+          "date": "2026-10-26",
+          "barsVolume": 59497,
+          "barsCount": 102,
+          "yahooVolume": 98827,
+          "yahooClose": 1034.199951171875,
+          "ratio": 0.6020318334058506
+        },
+        {
+          "date": "2026-10-27",
+          "barsVolume": 87597,
+          "barsCount": 102,
+          "yahooVolume": 126795,
+          "yahooClose": 1025.199951171875,
+          "ratio": 0.6908553176387081
+        },
+        {
+          "date": "2026-10-28",
+          "barsVolume": 48311,
+          "barsCount": 102,
+          "yahooVolume": 96292,
+          "yahooClose": 1012,
+          "ratio": 0.501713537988618
+        },
+        {
+          "date": "2026-10-29",
+          "barsVolume": 117054,
+          "barsCount": 102,
+          "yahooVolume": 165848,
+          "yahooClose": 1048.199951171875,
+          "ratio": 0.7057908446288167
+        },
+        {
+          "date": "2026-10-30",
+          "barsVolume": 47643,
+          "barsCount": 102,
+          "yahooVolume": 101613,
+          "yahooClose": 1037.5999755859375,
+          "ratio": 0.46886717250745474
+        },
+        {
+          "date": "2026-11-02",
+          "barsVolume": 133796,
+          "barsCount": 102,
+          "yahooVolume": 221111,
+          "yahooClose": 1000,
+          "ratio": 0.6051078417627346
+        },
+        {
+          "date": "2026-11-03",
+          "barsVolume": 120858,
+          "barsCount": 102,
+          "yahooVolume": 121359,
+          "yahooClose": 1004.7999877929688,
+          "ratio": 0.9958717524040244
+        },
+        {
+          "date": "2026-11-04",
+          "barsVolume": 111596,
+          "barsCount": 102,
+          "yahooVolume": 190353,
+          "yahooClose": 1003.4000244140625,
+          "ratio": 0.5862581624665752
+        },
+        {
+          "date": "2026-11-05",
+          "barsVolume": 819726,
+          "barsCount": 102,
+          "yahooVolume": 1102450,
+          "yahooClose": 841.5,
+          "ratio": 0.7435493673182457
+        },
+        {
+          "date": "2026-11-06",
+          "barsVolume": 357335,
+          "barsCount": 102,
+          "yahooVolume": 500264,
+          "yahooClose": 812.7000122070312,
+          "ratio": 0.7142928533734189
+        },
+        {
+          "date": "2026-11-09",
+          "barsVolume": 225350,
+          "barsCount": 102,
+          "yahooVolume": 343766,
+          "yahooClose": 845.4000244140625,
+          "ratio": 0.6555331242763973
+        },
+        {
+          "date": "2026-11-10",
+          "barsVolume": 176107,
+          "barsCount": 102,
+          "yahooVolume": 282824,
+          "yahooClose": 853.2999877929688,
+          "ratio": 0.6226734647696094
+        },
+        {
+          "date": "2026-11-11",
+          "barsVolume": 257513,
+          "barsCount": 103,
+          "yahooVolume": 412306,
+          "yahooClose": 794.0999755859375,
+          "ratio": 0.6245676754643396
+        }
+      ],
+      "stats": {
+        "nDays": 30,
+        "median": 0.6491697234334837,
+        "min": 0.46886717250745474,
+        "max": 1.1636495012512778,
+        "shareIn060_075": 0.7333333333333333,
+        "meanBars": 102,
+        "expectedBars": 102,
+        "daysBelowExpectedBars": 1
+      },
+      "slots": [
+        {
+          "slot": "09:00",
+          "daysPresent": 30,
+          "volume": 0,
+          "bars": 30
+        },
+        {
+          "slot": "09:05",
+          "daysPresent": 30,
+          "volume": 146025,
+          "bars": 30
+        },
+        {
+          "slot": "09:10",
+          "daysPresent": 30,
+          "volume": 110006,
+          "bars": 30
+        },
+        {
+          "slot": "09:15",
+          "daysPresent": 30,
+          "volume": 92871,
+          "bars": 30
+        },
+        {
+          "slot": "09:20",
+          "daysPresent": 30,
+          "volume": 75622,
+          "bars": 30
+        },
+        {
+          "slot": "09:25",
+          "daysPresent": 30,
+          "volume": 94545,
+          "bars": 30
+        },
+        {
+          "slot": "09:30",
+          "daysPresent": 30,
+          "volume": 68563,
+          "bars": 30
+        },
+        {
+          "slot": "09:35",
+          "daysPresent": 30,
+          "volume": 61167,
+          "bars": 30
+        },
+        {
+          "slot": "09:40",
+          "daysPresent": 30,
+          "volume": 57041,
+          "bars": 30
+        },
+        {
+          "slot": "09:45",
+          "daysPresent": 30,
+          "volume": 51920,
+          "bars": 30
+        },
+        {
+          "slot": "09:50",
+          "daysPresent": 30,
+          "volume": 75376,
+          "bars": 30
+        },
+        {
+          "slot": "09:55",
+          "daysPresent": 30,
+          "volume": 59315,
+          "bars": 30
+        },
+        {
+          "slot": "10:00",
+          "daysPresent": 30,
+          "volume": 58587,
+          "bars": 30
+        },
+        {
+          "slot": "10:05",
+          "daysPresent": 30,
+          "volume": 61023,
+          "bars": 30
+        },
+        {
+          "slot": "10:10",
+          "daysPresent": 30,
+          "volume": 79485,
+          "bars": 30
+        },
+        {
+          "slot": "10:15",
+          "daysPresent": 30,
+          "volume": 41569,
+          "bars": 30
+        },
+        {
+          "slot": "10:20",
+          "daysPresent": 30,
+          "volume": 42692,
+          "bars": 30
+        },
+        {
+          "slot": "10:25",
+          "daysPresent": 30,
+          "volume": 45052,
+          "bars": 30
+        },
+        {
+          "slot": "10:30",
+          "daysPresent": 30,
+          "volume": 51187,
+          "bars": 30
+        },
+        {
+          "slot": "10:35",
+          "daysPresent": 30,
+          "volume": 46265,
+          "bars": 30
+        },
+        {
+          "slot": "10:40",
+          "daysPresent": 30,
+          "volume": 37523,
+          "bars": 30
+        },
+        {
+          "slot": "10:45",
+          "daysPresent": 30,
+          "volume": 45621,
+          "bars": 30
+        },
+        {
+          "slot": "10:50",
+          "daysPresent": 30,
+          "volume": 38409,
+          "bars": 30
+        },
+        {
+          "slot": "10:55",
+          "daysPresent": 30,
+          "volume": 35531,
+          "bars": 30
+        },
+        {
+          "slot": "11:00",
+          "daysPresent": 30,
+          "volume": 40734,
+          "bars": 30
+        },
+        {
+          "slot": "11:05",
+          "daysPresent": 30,
+          "volume": 44676,
+          "bars": 30
+        },
+        {
+          "slot": "11:10",
+          "daysPresent": 30,
+          "volume": 46984,
+          "bars": 30
+        },
+        {
+          "slot": "11:15",
+          "daysPresent": 30,
+          "volume": 48235,
+          "bars": 30
+        },
+        {
+          "slot": "11:20",
+          "daysPresent": 30,
+          "volume": 55610,
+          "bars": 30
+        },
+        {
+          "slot": "11:25",
+          "daysPresent": 30,
+          "volume": 53087,
+          "bars": 30
+        },
+        {
+          "slot": "11:30",
+          "daysPresent": 30,
+          "volume": 44876,
+          "bars": 30
+        },
+        {
+          "slot": "11:35",
+          "daysPresent": 30,
+          "volume": 39133,
+          "bars": 30
+        },
+        {
+          "slot": "11:40",
+          "daysPresent": 30,
+          "volume": 31692,
+          "bars": 30
+        },
+        {
+          "slot": "11:45",
+          "daysPresent": 30,
+          "volume": 41509,
+          "bars": 30
+        },
+        {
+          "slot": "11:50",
+          "daysPresent": 30,
+          "volume": 49981,
+          "bars": 30
+        },
+        {
+          "slot": "11:55",
+          "daysPresent": 30,
+          "volume": 37397,
+          "bars": 30
+        },
+        {
+          "slot": "12:00",
+          "daysPresent": 30,
+          "volume": 36005,
+          "bars": 30
+        },
+        {
+          "slot": "12:05",
+          "daysPresent": 30,
+          "volume": 31907,
+          "bars": 30
+        },
+        {
+          "slot": "12:10",
+          "daysPresent": 30,
+          "volume": 29037,
+          "bars": 30
+        },
+        {
+          "slot": "12:15",
+          "daysPresent": 30,
+          "volume": 29362,
+          "bars": 30
+        },
+        {
+          "slot": "12:20",
+          "daysPresent": 30,
+          "volume": 20966,
+          "bars": 30
+        },
+        {
+          "slot": "12:25",
+          "daysPresent": 30,
+          "volume": 20134,
+          "bars": 30
+        },
+        {
+          "slot": "12:30",
+          "daysPresent": 30,
+          "volume": 20964,
+          "bars": 30
+        },
+        {
+          "slot": "12:35",
+          "daysPresent": 30,
+          "volume": 20320,
+          "bars": 30
+        },
+        {
+          "slot": "12:40",
+          "daysPresent": 30,
+          "volume": 19496,
+          "bars": 30
+        },
+        {
+          "slot": "12:45",
+          "daysPresent": 30,
+          "volume": 20112,
+          "bars": 30
+        },
+        {
+          "slot": "12:50",
+          "daysPresent": 30,
+          "volume": 22572,
+          "bars": 30
+        },
+        {
+          "slot": "12:55",
+          "daysPresent": 30,
+          "volume": 20190,
+          "bars": 30
+        },
+        {
+          "slot": "13:00",
+          "daysPresent": 29,
+          "volume": 51128,
+          "bars": 29
+        },
+        {
+          "slot": "13:05",
+          "daysPresent": 30,
+          "volume": 37857,
+          "bars": 30
+        },
+        {
+          "slot": "13:10",
+          "daysPresent": 30,
+          "volume": 28274,
+          "bars": 30
+        },
+        {
+          "slot": "13:15",
+          "daysPresent": 30,
+          "volume": 22054,
+          "bars": 30
+        },
+        {
+          "slot": "13:20",
+          "daysPresent": 30,
+          "volume": 21554,
+          "bars": 30
+        },
+        {
+          "slot": "13:25",
+          "daysPresent": 30,
+          "volume": 22928,
+          "bars": 30
+        },
+        {
+          "slot": "13:30",
+          "daysPresent": 30,
+          "volume": 30174,
+          "bars": 30
+        },
+        {
+          "slot": "13:35",
+          "daysPresent": 30,
+          "volume": 21321,
+          "bars": 30
+        },
+        {
+          "slot": "13:40",
+          "daysPresent": 30,
+          "volume": 24559,
+          "bars": 30
+        },
+        {
+          "slot": "13:45",
+          "daysPresent": 30,
+          "volume": 26886,
+          "bars": 30
+        },
+        {
+          "slot": "13:50",
+          "daysPresent": 30,
+          "volume": 21531,
+          "bars": 30
+        },
+        {
+          "slot": "13:55",
+          "daysPresent": 30,
+          "volume": 25479,
+          "bars": 30
+        },
+        {
+          "slot": "14:00",
+          "daysPresent": 30,
+          "volume": 28783,
+          "bars": 30
+        },
+        {
+          "slot": "14:05",
+          "daysPresent": 30,
+          "volume": 24528,
+          "bars": 30
+        },
+        {
+          "slot": "14:10",
+          "daysPresent": 30,
+          "volume": 22920,
+          "bars": 30
+        },
+        {
+          "slot": "14:15",
+          "daysPresent": 30,
+          "volume": 28503,
+          "bars": 30
+        },
+        {
+          "slot": "14:20",
+          "daysPresent": 30,
+          "volume": 31867,
+          "bars": 30
+        },
+        {
+          "slot": "14:25",
+          "daysPresent": 30,
+          "volume": 31165,
+          "bars": 30
+        },
+        {
+          "slot": "14:30",
+          "daysPresent": 30,
+          "volume": 39113,
+          "bars": 30
+        },
+        {
+          "slot": "14:35",
+          "daysPresent": 30,
+          "volume": 33703,
+          "bars": 30
+        },
+        {
+          "slot": "14:40",
+          "daysPresent": 30,
+          "volume": 38490,
+          "bars": 30
+        },
+        {
+          "slot": "14:45",
+          "daysPresent": 30,
+          "volume": 44427,
+          "bars": 30
+        },
+        {
+          "slot": "14:50",
+          "daysPresent": 30,
+          "volume": 48332,
+          "bars": 30
+        },
+        {
+          "slot": "14:55",
+          "daysPresent": 30,
+          "volume": 47244,
+          "bars": 30
+        },
+        {
+          "slot": "15:00",
+          "daysPresent": 30,
+          "volume": 46229,
+          "bars": 30
+        },
+        {
+          "slot": "15:05",
+          "daysPresent": 30,
+          "volume": 39306,
+          "bars": 30
+        },
+        {
+          "slot": "15:10",
+          "daysPresent": 30,
+          "volume": 172913,
+          "bars": 30
+        },
+        {
+          "slot": "15:15",
+          "daysPresent": 30,
+          "volume": 30788,
+          "bars": 30
+        },
+        {
+          "slot": "15:20",
+          "daysPresent": 30,
+          "volume": 40237,
+          "bars": 30
+        },
+        {
+          "slot": "15:25",
+          "daysPresent": 30,
+          "volume": 91863,
+          "bars": 30
+        },
+        {
+          "slot": "15:30",
+          "daysPresent": 30,
+          "volume": 66206,
+          "bars": 30
+        },
+        {
+          "slot": "15:35",
+          "daysPresent": 30,
+          "volume": 64741,
+          "bars": 30
+        },
+        {
+          "slot": "15:40",
+          "daysPresent": 30,
+          "volume": 59142,
+          "bars": 30
+        },
+        {
+          "slot": "15:45",
+          "daysPresent": 30,
+          "volume": 44240,
+          "bars": 30
+        },
+        {
+          "slot": "15:50",
+          "daysPresent": 30,
+          "volume": 57194,
+          "bars": 30
+        },
+        {
+          "slot": "15:55",
+          "daysPresent": 30,
+          "volume": 58440,
+          "bars": 30
+        },
+        {
+          "slot": "16:00",
+          "daysPresent": 30,
+          "volume": 52277,
+          "bars": 30
+        },
+        {
+          "slot": "16:05",
+          "daysPresent": 30,
+          "volume": 59440,
+          "bars": 30
+        },
+        {
+          "slot": "16:10",
+          "daysPresent": 30,
+          "volume": 57852,
+          "bars": 30
+        },
+        {
+          "slot": "16:15",
+          "daysPresent": 30,
+          "volume": 74778,
+          "bars": 30
+        },
+        {
+          "slot": "16:20",
+          "daysPresent": 30,
+          "volume": 61157,
+          "bars": 30
+        },
+        {
+          "slot": "16:25",
+          "daysPresent": 30,
+          "volume": 52344,
+          "bars": 30
+        },
+        {
+          "slot": "16:30",
+          "daysPresent": 30,
+          "volume": 69694,
+          "bars": 30
+        },
+        {
+          "slot": "16:35",
+          "daysPresent": 30,
+          "volume": 59728,
+          "bars": 30
+        },
+        {
+          "slot": "16:40",
+          "daysPresent": 30,
+          "volume": 55560,
+          "bars": 30
+        },
+        {
+          "slot": "16:45",
+          "daysPresent": 30,
+          "volume": 61397,
+          "bars": 30
+        },
+        {
+          "slot": "16:50",
+          "daysPresent": 30,
+          "volume": 52168,
+          "bars": 30
+        },
+        {
+          "slot": "16:55",
+          "daysPresent": 30,
+          "volume": 61868,
+          "bars": 30
+        },
+        {
+          "slot": "17:00",
+          "daysPresent": 30,
+          "volume": 49808,
+          "bars": 30
+        },
+        {
+          "slot": "17:05",
+          "daysPresent": 30,
+          "volume": 45775,
+          "bars": 30
+        },
+        {
+          "slot": "17:10",
+          "daysPresent": 30,
+          "volume": 59902,
+          "bars": 30
+        },
+        {
+          "slot": "17:15",
+          "daysPresent": 30,
+          "volume": 70879,
+          "bars": 30
+        },
+        {
+          "slot": "17:20",
+          "daysPresent": 30,
+          "volume": 74733,
+          "bars": 30
+        },
+        {
+          "slot": "17:25",
+          "daysPresent": 30,
+          "volume": 86619,
+          "bars": 30
+        },
+        {
+          "slot": "17:30",
+          "daysPresent": 1,
+          "volume": 0,
+          "bars": 1
+        }
+      ],
+      "firstDate": "2026-10-01",
+      "lastDate": "2026-11-11"
+    },
+    {
+      "symbol": "SAP.DE",
+      "group": "known",
+      "timezone": "Europe/Berlin",
+      "days": [
+        {
+          "date": "2026-10-01",
+          "barsVolume": 1495852,
+          "barsCount": 102,
+          "yahooVolume": 2235546,
+          "yahooClose": 186.74000549316406,
+          "ratio": 0.6691215479350459
+        },
+        {
+          "date": "2026-10-02",
+          "barsVolume": 1004252,
+          "barsCount": 102,
+          "yahooVolume": 1469523,
+          "yahooClose": 183.9199981689453,
+          "ratio": 0.6833863777565917
+        },
+        {
+          "date": "2026-10-05",
+          "barsVolume": 772989,
+          "barsCount": 102,
+          "yahooVolume": 1363827,
+          "yahooClose": 185.0399932861328,
+          "ratio": 0.5667793642448785
+        },
+        {
+          "date": "2026-10-06",
+          "barsVolume": 829990,
+          "barsCount": 102,
+          "yahooVolume": 1261950,
+          "yahooClose": 188.60000610351562,
+          "ratio": 0.6577043464479575
+        },
+        {
+          "date": "2026-10-07",
+          "barsVolume": 1114115,
+          "barsCount": 102,
+          "yahooVolume": 1672939,
+          "yahooClose": 187.6199951171875,
+          "ratio": 0.6659627159149257
+        },
+        {
+          "date": "2026-10-08",
+          "barsVolume": 1026285,
+          "barsCount": 102,
+          "yahooVolume": 1543500,
+          "yahooClose": 184.6199951171875,
+          "ratio": 0.6649076773566569
+        },
+        {
+          "date": "2026-10-09",
+          "barsVolume": 1577416,
+          "barsCount": 102,
+          "yahooVolume": 2369793,
+          "yahooClose": 191.4600067138672,
+          "ratio": 0.6656345090056389
+        },
+        {
+          "date": "2026-10-12",
+          "barsVolume": 1389190,
+          "barsCount": 102,
+          "yahooVolume": 1894384,
+          "yahooClose": 194.4600067138672,
+          "ratio": 0.7333201716230712
+        },
+        {
+          "date": "2026-10-13",
+          "barsVolume": 1351195,
+          "barsCount": 102,
+          "yahooVolume": 1961267,
+          "yahooClose": 197.27999877929688,
+          "ratio": 0.6889398536762206
+        },
+        {
+          "date": "2026-10-14",
+          "barsVolume": 1114353,
+          "barsCount": 102,
+          "yahooVolume": 1900721,
+          "yahooClose": 196.94000244140625,
+          "ratio": 0.586279101456763
+        },
+        {
+          "date": "2026-10-15",
+          "barsVolume": 2030481,
+          "barsCount": 102,
+          "yahooVolume": 2846911,
+          "yahooClose": 201.25,
+          "ratio": 0.7132225067801558
+        },
+        {
+          "date": "2026-10-16",
+          "barsVolume": 1790219,
+          "barsCount": 101,
+          "yahooVolume": 2546811,
+          "yahooClose": 199.22000122070312,
+          "ratio": 0.7029257373240496
+        },
+        {
+          "date": "2026-10-19",
+          "barsVolume": 1132915,
+          "barsCount": 102,
+          "yahooVolume": 1749869,
+          "yahooClose": 199.83999633789062,
+          "ratio": 0.6474284646450678
+        },
+        {
+          "date": "2026-10-20",
+          "barsVolume": 1091731,
+          "barsCount": 102,
+          "yahooVolume": 1673840,
+          "yahooClose": 201.5500030517578,
+          "ratio": 0.6522313960713091
+        },
+        {
+          "date": "2026-10-21",
+          "barsVolume": 1803564,
+          "barsCount": 102,
+          "yahooVolume": 2738671,
+          "yahooClose": 208.64999389648438,
+          "ratio": 0.658554459444015
+        },
+        {
+          "date": "2026-10-22",
+          "barsVolume": 2253810,
+          "barsCount": 102,
+          "yahooVolume": 3403741,
+          "yahooClose": 215.35000610351562,
+          "ratio": 0.6621567269660059
+        },
+        {
+          "date": "2026-10-23",
+          "barsVolume": 1297725,
+          "barsCount": 102,
+          "yahooVolume": 2056249,
+          "yahooClose": 214.39999389648438,
+          "ratio": 0.631112768930222
+        },
+        {
+          "date": "2026-10-26",
+          "barsVolume": 1101560,
+          "barsCount": 102,
+          "yahooVolume": 1672274,
+          "yahooClose": 212.25,
+          "ratio": 0.658719803094469
+        },
+        {
+          "date": "2026-10-27",
+          "barsVolume": 923228,
+          "barsCount": 102,
+          "yahooVolume": 1577179,
+          "yahooClose": 213.14999389648438,
+          "ratio": 0.5853666578111932
+        },
+        {
+          "date": "2026-10-28",
+          "barsVolume": 821021,
+          "barsCount": 102,
+          "yahooVolume": 1449807,
+          "yahooClose": 211.1999969482422,
+          "ratio": 0.5662967553612308
+        },
+        {
+          "date": "2026-10-29",
+          "barsVolume": 1440539,
+          "barsCount": 102,
+          "yahooVolume": 2266622,
+          "yahooClose": 208.89999389648438,
+          "ratio": 0.6355444357285864
+        },
+        {
+          "date": "2026-10-30",
+          "barsVolume": 1127606,
+          "barsCount": 102,
+          "yahooVolume": 2032568,
+          "yahooClose": 211.25,
+          "ratio": 0.5547691393350678
+        },
+        {
+          "date": "2026-11-02",
+          "barsVolume": 943113,
+          "barsCount": 102,
+          "yahooVolume": 1476327,
+          "yahooClose": 210.5,
+          "ratio": 0.6388239190910957
+        },
+        {
+          "date": "2026-11-03",
+          "barsVolume": 1458707,
+          "barsCount": 102,
+          "yahooVolume": 1988509,
+          "yahooClose": 206.64999389648438,
+          "ratio": 0.7335682161860972
+        },
+        {
+          "date": "2026-11-04",
+          "barsVolume": 1533380,
+          "barsCount": 102,
+          "yahooVolume": 2827599,
+          "yahooClose": 214.3000030517578,
+          "ratio": 0.5422904732955416
+        },
+        {
+          "date": "2026-11-05",
+          "barsVolume": 1771115,
+          "barsCount": 102,
+          "yahooVolume": 2804322,
+          "yahooClose": 215.75,
+          "ratio": 0.6315662038810094
+        },
+        {
+          "date": "2026-11-06",
+          "barsVolume": 1461558,
+          "barsCount": 102,
+          "yahooVolume": 2191876,
+          "yahooClose": 210.75,
+          "ratio": 0.6668068814111747
+        },
+        {
+          "date": "2026-11-09",
+          "barsVolume": 777065,
+          "barsCount": 102,
+          "yahooVolume": 1587477,
+          "yahooClose": 211.64999389648438,
+          "ratio": 0.4894968557024763
+        },
+        {
+          "date": "2026-11-10",
+          "barsVolume": 1176706,
+          "barsCount": 102,
+          "yahooVolume": 2043926,
+          "yahooClose": 209.9499969482422,
+          "ratio": 0.5757087096108177
+        },
+        {
+          "date": "2026-11-11",
+          "barsVolume": 807698,
+          "barsCount": 103,
+          "yahooVolume": 1428544,
+          "yahooClose": 210.9499969482422,
+          "ratio": 0.5653994556695489
+        }
+      ],
+      "stats": {
+        "nDays": 30,
+        "median": 0.6549678712596333,
+        "min": 0.4894968557024763,
+        "max": 0.7335682161860972,
+        "shareIn060_075": 0.7,
+        "meanBars": 102,
+        "expectedBars": 102,
+        "daysBelowExpectedBars": 1
+      },
+      "slots": [
+        {
+          "slot": "09:00",
+          "daysPresent": 30,
+          "volume": 0,
+          "bars": 30
+        },
+        {
+          "slot": "09:05",
+          "daysPresent": 30,
+          "volume": 592529,
+          "bars": 30
+        },
+        {
+          "slot": "09:10",
+          "daysPresent": 30,
+          "volume": 453932,
+          "bars": 30
+        },
+        {
+          "slot": "09:15",
+          "daysPresent": 30,
+          "volume": 419389,
+          "bars": 30
+        },
+        {
+          "slot": "09:20",
+          "daysPresent": 30,
+          "volume": 384920,
+          "bars": 30
+        },
+        {
+          "slot": "09:25",
+          "daysPresent": 30,
+          "volume": 238323,
+          "bars": 30
+        },
+        {
+          "slot": "09:30",
+          "daysPresent": 30,
+          "volume": 312835,
+          "bars": 30
+        },
+        {
+          "slot": "09:35",
+          "daysPresent": 30,
+          "volume": 231415,
+          "bars": 30
+        },
+        {
+          "slot": "09:40",
+          "daysPresent": 30,
+          "volume": 292756,
+          "bars": 30
+        },
+        {
+          "slot": "09:45",
+          "daysPresent": 30,
+          "volume": 194249,
+          "bars": 30
+        },
+        {
+          "slot": "09:50",
+          "daysPresent": 30,
+          "volume": 285642,
+          "bars": 30
+        },
+        {
+          "slot": "09:55",
+          "daysPresent": 30,
+          "volume": 233063,
+          "bars": 30
+        },
+        {
+          "slot": "10:00",
+          "daysPresent": 30,
+          "volume": 278671,
+          "bars": 30
+        },
+        {
+          "slot": "10:05",
+          "daysPresent": 30,
+          "volume": 247994,
+          "bars": 30
+        },
+        {
+          "slot": "10:10",
+          "daysPresent": 30,
+          "volume": 266826,
+          "bars": 30
+        },
+        {
+          "slot": "10:15",
+          "daysPresent": 30,
+          "volume": 211842,
+          "bars": 30
+        },
+        {
+          "slot": "10:20",
+          "daysPresent": 30,
+          "volume": 199845,
+          "bars": 30
+        },
+        {
+          "slot": "10:25",
+          "daysPresent": 30,
+          "volume": 230996,
+          "bars": 30
+        },
+        {
+          "slot": "10:30",
+          "daysPresent": 30,
+          "volume": 202555,
+          "bars": 30
+        },
+        {
+          "slot": "10:35",
+          "daysPresent": 30,
+          "volume": 222914,
+          "bars": 30
+        },
+        {
+          "slot": "10:40",
+          "daysPresent": 30,
+          "volume": 254601,
+          "bars": 30
+        },
+        {
+          "slot": "10:45",
+          "daysPresent": 30,
+          "volume": 190307,
+          "bars": 30
+        },
+        {
+          "slot": "10:50",
+          "daysPresent": 30,
+          "volume": 216571,
+          "bars": 30
+        },
+        {
+          "slot": "10:55",
+          "daysPresent": 30,
+          "volume": 192438,
+          "bars": 30
+        },
+        {
+          "slot": "11:00",
+          "daysPresent": 30,
+          "volume": 219154,
+          "bars": 30
+        },
+        {
+          "slot": "11:05",
+          "daysPresent": 30,
+          "volume": 217979,
+          "bars": 30
+        },
+        {
+          "slot": "11:10",
+          "daysPresent": 30,
+          "volume": 184788,
+          "bars": 30
+        },
+        {
+          "slot": "11:15",
+          "daysPresent": 30,
+          "volume": 178966,
+          "bars": 30
+        },
+        {
+          "slot": "11:20",
+          "daysPresent": 30,
+          "volume": 157584,
+          "bars": 30
+        },
+        {
+          "slot": "11:25",
+          "daysPresent": 30,
+          "volume": 239155,
+          "bars": 30
+        },
+        {
+          "slot": "11:30",
+          "daysPresent": 30,
+          "volume": 196973,
+          "bars": 30
+        },
+        {
+          "slot": "11:35",
+          "daysPresent": 30,
+          "volume": 201451,
+          "bars": 30
+        },
+        {
+          "slot": "11:40",
+          "daysPresent": 30,
+          "volume": 168966,
+          "bars": 30
+        },
+        {
+          "slot": "11:45",
+          "daysPresent": 30,
+          "volume": 250206,
+          "bars": 30
+        },
+        {
+          "slot": "11:50",
+          "daysPresent": 30,
+          "volume": 236190,
+          "bars": 30
+        },
+        {
+          "slot": "11:55",
+          "daysPresent": 30,
+          "volume": 262558,
+          "bars": 30
+        },
+        {
+          "slot": "12:00",
+          "daysPresent": 30,
+          "volume": 259322,
+          "bars": 30
+        },
+        {
+          "slot": "12:05",
+          "daysPresent": 30,
+          "volume": 217883,
+          "bars": 30
+        },
+        {
+          "slot": "12:10",
+          "daysPresent": 30,
+          "volume": 168299,
+          "bars": 30
+        },
+        {
+          "slot": "12:15",
+          "daysPresent": 30,
+          "volume": 161120,
+          "bars": 30
+        },
+        {
+          "slot": "12:20",
+          "daysPresent": 30,
+          "volume": 142257,
+          "bars": 30
+        },
+        {
+          "slot": "12:25",
+          "daysPresent": 30,
+          "volume": 163347,
+          "bars": 30
+        },
+        {
+          "slot": "12:30",
+          "daysPresent": 30,
+          "volume": 270971,
+          "bars": 30
+        },
+        {
+          "slot": "12:35",
+          "daysPresent": 30,
+          "volume": 205547,
+          "bars": 30
+        },
+        {
+          "slot": "12:40",
+          "daysPresent": 30,
+          "volume": 170314,
+          "bars": 30
+        },
+        {
+          "slot": "12:45",
+          "daysPresent": 30,
+          "volume": 179742,
+          "bars": 30
+        },
+        {
+          "slot": "12:50",
+          "daysPresent": 30,
+          "volume": 185066,
+          "bars": 30
+        },
+        {
+          "slot": "12:55",
+          "daysPresent": 30,
+          "volume": 171650,
+          "bars": 30
+        },
+        {
+          "slot": "13:00",
+          "daysPresent": 29,
+          "volume": 612523,
+          "bars": 29
+        },
+        {
+          "slot": "13:05",
+          "daysPresent": 30,
+          "volume": 365934,
+          "bars": 30
+        },
+        {
+          "slot": "13:10",
+          "daysPresent": 30,
+          "volume": 163682,
+          "bars": 30
+        },
+        {
+          "slot": "13:15",
+          "daysPresent": 30,
+          "volume": 190524,
+          "bars": 30
+        },
+        {
+          "slot": "13:20",
+          "daysPresent": 30,
+          "volume": 234599,
+          "bars": 30
+        },
+        {
+          "slot": "13:25",
+          "daysPresent": 30,
+          "volume": 168904,
+          "bars": 30
+        },
+        {
+          "slot": "13:30",
+          "daysPresent": 30,
+          "volume": 186350,
+          "bars": 30
+        },
+        {
+          "slot": "13:35",
+          "daysPresent": 30,
+          "volume": 154797,
+          "bars": 30
+        },
+        {
+          "slot": "13:40",
+          "daysPresent": 30,
+          "volume": 185311,
+          "bars": 30
+        },
+        {
+          "slot": "13:45",
+          "daysPresent": 30,
+          "volume": 164360,
+          "bars": 30
+        },
+        {
+          "slot": "13:50",
+          "daysPresent": 30,
+          "volume": 202593,
+          "bars": 30
+        },
+        {
+          "slot": "13:55",
+          "daysPresent": 30,
+          "volume": 179831,
+          "bars": 30
+        },
+        {
+          "slot": "14:00",
+          "daysPresent": 30,
+          "volume": 241109,
+          "bars": 30
+        },
+        {
+          "slot": "14:05",
+          "daysPresent": 30,
+          "volume": 200453,
+          "bars": 30
+        },
+        {
+          "slot": "14:10",
+          "daysPresent": 30,
+          "volume": 212726,
+          "bars": 30
+        },
+        {
+          "slot": "14:15",
+          "daysPresent": 30,
+          "volume": 209315,
+          "bars": 30
+        },
+        {
+          "slot": "14:20",
+          "daysPresent": 30,
+          "volume": 213706,
+          "bars": 30
+        },
+        {
+          "slot": "14:25",
+          "daysPresent": 30,
+          "volume": 319207,
+          "bars": 30
+        },
+        {
+          "slot": "14:30",
+          "daysPresent": 30,
+          "volume": 546643,
+          "bars": 30
+        },
+        {
+          "slot": "14:35",
+          "daysPresent": 30,
+          "volume": 449820,
+          "bars": 30
+        },
+        {
+          "slot": "14:40",
+          "daysPresent": 30,
+          "volume": 382882,
+          "bars": 30
+        },
+        {
+          "slot": "14:45",
+          "daysPresent": 30,
+          "volume": 344012,
+          "bars": 30
+        },
+        {
+          "slot": "14:50",
+          "daysPresent": 30,
+          "volume": 261927,
+          "bars": 30
+        },
+        {
+          "slot": "14:55",
+          "daysPresent": 30,
+          "volume": 255224,
+          "bars": 30
+        },
+        {
+          "slot": "15:00",
+          "daysPresent": 30,
+          "volume": 321839,
+          "bars": 30
+        },
+        {
+          "slot": "15:05",
+          "daysPresent": 30,
+          "volume": 273451,
+          "bars": 30
+        },
+        {
+          "slot": "15:10",
+          "daysPresent": 30,
+          "volume": 261215,
+          "bars": 30
+        },
+        {
+          "slot": "15:15",
+          "daysPresent": 30,
+          "volume": 268790,
+          "bars": 30
+        },
+        {
+          "slot": "15:20",
+          "daysPresent": 30,
+          "volume": 426220,
+          "bars": 30
+        },
+        {
+          "slot": "15:25",
+          "daysPresent": 30,
+          "volume": 549401,
+          "bars": 30
+        },
+        {
+          "slot": "15:30",
+          "daysPresent": 30,
+          "volume": 2132661,
+          "bars": 30
+        },
+        {
+          "slot": "15:35",
+          "daysPresent": 30,
+          "volume": 1294347,
+          "bars": 30
+        },
+        {
+          "slot": "15:40",
+          "daysPresent": 30,
+          "volume": 1024644,
+          "bars": 30
+        },
+        {
+          "slot": "15:45",
+          "daysPresent": 30,
+          "volume": 936387,
+          "bars": 30
+        },
+        {
+          "slot": "15:50",
+          "daysPresent": 30,
+          "volume": 822887,
+          "bars": 30
+        },
+        {
+          "slot": "15:55",
+          "daysPresent": 30,
+          "volume": 641428,
+          "bars": 30
+        },
+        {
+          "slot": "16:00",
+          "daysPresent": 30,
+          "volume": 706553,
+          "bars": 30
+        },
+        {
+          "slot": "16:05",
+          "daysPresent": 30,
+          "volume": 706331,
+          "bars": 30
+        },
+        {
+          "slot": "16:10",
+          "daysPresent": 30,
+          "volume": 597105,
+          "bars": 30
+        },
+        {
+          "slot": "16:15",
+          "daysPresent": 30,
+          "volume": 599680,
+          "bars": 30
+        },
+        {
+          "slot": "16:20",
+          "daysPresent": 30,
+          "volume": 627862,
+          "bars": 30
+        },
+        {
+          "slot": "16:25",
+          "daysPresent": 30,
+          "volume": 555383,
+          "bars": 30
+        },
+        {
+          "slot": "16:30",
+          "daysPresent": 30,
+          "volume": 638661,
+          "bars": 30
+        },
+        {
+          "slot": "16:35",
+          "daysPresent": 30,
+          "volume": 492148,
+          "bars": 30
+        },
+        {
+          "slot": "16:40",
+          "daysPresent": 30,
+          "volume": 453606,
+          "bars": 30
+        },
+        {
+          "slot": "16:45",
+          "daysPresent": 30,
+          "volume": 477804,
+          "bars": 30
+        },
+        {
+          "slot": "16:50",
+          "daysPresent": 30,
+          "volume": 539574,
+          "bars": 30
+        },
+        {
+          "slot": "16:55",
+          "daysPresent": 30,
+          "volume": 525301,
+          "bars": 30
+        },
+        {
+          "slot": "17:00",
+          "daysPresent": 30,
+          "volume": 540852,
+          "bars": 30
+        },
+        {
+          "slot": "17:05",
+          "daysPresent": 30,
+          "volume": 700095,
+          "bars": 30
+        },
+        {
+          "slot": "17:10",
+          "daysPresent": 30,
+          "volume": 729435,
+          "bars": 30
+        },
+        {
+          "slot": "17:15",
+          "daysPresent": 30,
+          "volume": 882042,
+          "bars": 30
+        },
+        {
+          "slot": "17:20",
+          "daysPresent": 30,
+          "volume": 899937,
+          "bars": 30
+        },
+        {
+          "slot": "17:25",
+          "daysPresent": 30,
+          "volume": 1183206,
+          "bars": 30
+        },
+        {
+          "slot": "17:30",
+          "daysPresent": 1,
+          "volume": 0,
+          "bars": 1
+        }
+      ],
+      "firstDate": "2026-10-01",
+      "lastDate": "2026-11-11"
+    },
+    {
+      "symbol": "BAYN.DE",
+      "group": "added",
+      "timezone": "Europe/Berlin",
+      "days": [
+        {
+          "date": "2026-10-01",
+          "barsVolume": 1840426,
+          "barsCount": 102,
+          "yahooVolume": 3003509,
+          "yahooClose": 45.400001525878906,
+          "ratio": 0.6127586100124888
+        },
+        {
+          "date": "2026-10-02",
+          "barsVolume": 1779731,
+          "barsCount": 102,
+          "yahooVolume": 2695698,
+          "yahooClose": 44.939998626708984,
+          "ratio": 0.6602115667259463
+        },
+        {
+          "date": "2026-10-05",
+          "barsVolume": 1498222,
+          "barsCount": 102,
+          "yahooVolume": 2355278,
+          "yahooClose": 43.959999084472656,
+          "ratio": 0.6361125947764977
+        },
+        {
+          "date": "2026-10-06",
+          "barsVolume": 1084041,
+          "barsCount": 102,
+          "yahooVolume": 1710036,
+          "yahooClose": 44.439998626708984,
+          "ratio": 0.6339287593945391
+        },
+        {
+          "date": "2026-10-07",
+          "barsVolume": 1140284,
+          "barsCount": 102,
+          "yahooVolume": 2113161,
+          "yahooClose": 43.970001220703125,
+          "ratio": 0.5396105644577011
+        },
+        {
+          "date": "2026-10-08",
+          "barsVolume": 1173474,
+          "barsCount": 102,
+          "yahooVolume": 2460670,
+          "yahooClose": 42.59000015258789,
+          "ratio": 0.47689206598202927
+        },
+        {
+          "date": "2026-10-09",
+          "barsVolume": 1151673,
+          "barsCount": 102,
+          "yahooVolume": 2268794,
+          "yahooClose": 43.77000045776367,
+          "ratio": 0.5076146181627772
+        },
+        {
+          "date": "2026-10-12",
+          "barsVolume": 510744,
+          "barsCount": 102,
+          "yahooVolume": 1221003,
+          "yahooClose": 43.83000183105469,
+          "ratio": 0.41829872653875544
+        },
+        {
+          "date": "2026-10-13",
+          "barsVolume": 1026632,
+          "barsCount": 102,
+          "yahooVolume": 1860703,
+          "yahooClose": 44.150001525878906,
+          "ratio": 0.5517441526132865
+        },
+        {
+          "date": "2026-10-14",
+          "barsVolume": 1054132,
+          "barsCount": 102,
+          "yahooVolume": 2402228,
+          "yahooClose": 45.06999969482422,
+          "ratio": 0.43881430072416105
+        },
+        {
+          "date": "2026-10-15",
+          "barsVolume": 1814040,
+          "barsCount": 102,
+          "yahooVolume": 2909833,
+          "yahooClose": 44.40999984741211,
+          "ratio": 0.6234172201634939
+        },
+        {
+          "date": "2026-10-16",
+          "barsVolume": 1326453,
+          "barsCount": 101,
+          "yahooVolume": 2273179,
+          "yahooClose": 44.459999084472656,
+          "ratio": 0.58352333890116
+        },
+        {
+          "date": "2026-10-19",
+          "barsVolume": 877636,
+          "barsCount": 102,
+          "yahooVolume": 1852870,
+          "yahooClose": 43.400001525878906,
+          "ratio": 0.47366302007156463
+        },
+        {
+          "date": "2026-10-20",
+          "barsVolume": 762597,
+          "barsCount": 102,
+          "yahooVolume": 1429405,
+          "yahooClose": 43.47999954223633,
+          "ratio": 0.5335065988995421
+        },
+        {
+          "date": "2026-10-21",
+          "barsVolume": 1175250,
+          "barsCount": 102,
+          "yahooVolume": 2315997,
+          "yahooClose": 44.630001068115234,
+          "ratio": 0.5074488438456527
+        },
+        {
+          "date": "2026-10-22",
+          "barsVolume": 741610,
+          "barsCount": 102,
+          "yahooVolume": 1609840,
+          "yahooClose": 44.209999084472656,
+          "ratio": 0.460673110371217
+        },
+        {
+          "date": "2026-10-23",
+          "barsVolume": 683391,
+          "barsCount": 102,
+          "yahooVolume": 1183898,
+          "yahooClose": 43.97999954223633,
+          "ratio": 0.5772380728745213
+        },
+        {
+          "date": "2026-10-26",
+          "barsVolume": 1470361,
+          "barsCount": 102,
+          "yahooVolume": 1966010,
+          "yahooClose": 45.560001373291016,
+          "ratio": 0.7478909059465618
+        },
+        {
+          "date": "2026-10-27",
+          "barsVolume": 779792,
+          "barsCount": 102,
+          "yahooVolume": 1801510,
+          "yahooClose": 46.150001525878906,
+          "ratio": 0.43285466081231855
+        },
+        {
+          "date": "2026-10-28",
+          "barsVolume": 875118,
+          "barsCount": 102,
+          "yahooVolume": 1787322,
+          "yahooClose": 46.029998779296875,
+          "ratio": 0.48962526058538974
+        },
+        {
+          "date": "2026-10-29",
+          "barsVolume": 1451137,
+          "barsCount": 102,
+          "yahooVolume": 2663942,
+          "yahooClose": 47.959999084472656,
+          "ratio": 0.5447329558976884
+        },
+        {
+          "date": "2026-10-30",
+          "barsVolume": 2998023,
+          "barsCount": 102,
+          "yahooVolume": 5109338,
+          "yahooClose": 50.58000183105469,
+          "ratio": 0.5867732766945541
+        },
+        {
+          "date": "2026-11-02",
+          "barsVolume": 1060131,
+          "barsCount": 102,
+          "yahooVolume": 2043286,
+          "yahooClose": 50.02000045776367,
+          "ratio": 0.5188363254091694
+        },
+        {
+          "date": "2026-11-03",
+          "barsVolume": 5269465,
+          "barsCount": 102,
+          "yahooVolume": 7670110,
+          "yahooClose": 51.84000015258789,
+          "ratio": 0.6870129633082185
+        },
+        {
+          "date": "2026-11-04",
+          "barsVolume": 2481068,
+          "barsCount": 102,
+          "yahooVolume": 4505083,
+          "yahooClose": 54.2400016784668,
+          "ratio": 0.5507263684154099
+        },
+        {
+          "date": "2026-11-05",
+          "barsVolume": 2811573,
+          "barsCount": 102,
+          "yahooVolume": 4903641,
+          "yahooClose": 56.220001220703125,
+          "ratio": 0.5733643633373651
+        },
+        {
+          "date": "2026-11-06",
+          "barsVolume": 2215982,
+          "barsCount": 102,
+          "yahooVolume": 4311987,
+          "yahooClose": 55.58000183105469,
+          "ratio": 0.5139120317385001
+        },
+        {
+          "date": "2026-11-09",
+          "barsVolume": 1286406,
+          "barsCount": 102,
+          "yahooVolume": 2618665,
+          "yahooClose": 56.619998931884766,
+          "ratio": 0.49124496642373117
+        },
+        {
+          "date": "2026-11-10",
+          "barsVolume": 1308123,
+          "barsCount": 102,
+          "yahooVolume": 2639998,
+          "yahooClose": 57.08000183105469,
+          "ratio": 0.4955015117435695
+        },
+        {
+          "date": "2026-11-11",
+          "barsVolume": 1366250,
+          "barsCount": 103,
+          "yahooVolume": 1801253,
+          "yahooClose": 56.7599983215332,
+          "ratio": 0.7584997776547769
+        }
+      ],
+      "stats": {
+        "nDays": 30,
+        "median": 0.5421717601776948,
+        "min": 0.41829872653875544,
+        "max": 0.7584997776547769,
+        "shareIn060_075": 0.23333333333333334,
+        "meanBars": 102,
+        "expectedBars": 102,
+        "daysBelowExpectedBars": 1
+      },
+      "slots": [
+        {
+          "slot": "09:00",
+          "daysPresent": 30,
+          "volume": 0,
+          "bars": 30
+        },
+        {
+          "slot": "09:05",
+          "daysPresent": 30,
+          "volume": 1242026,
+          "bars": 30
+        },
+        {
+          "slot": "09:10",
+          "daysPresent": 30,
+          "volume": 676814,
+          "bars": 30
+        },
+        {
+          "slot": "09:15",
+          "daysPresent": 30,
+          "volume": 604238,
+          "bars": 30
+        },
+        {
+          "slot": "09:20",
+          "daysPresent": 30,
+          "volume": 766244,
+          "bars": 30
+        },
+        {
+          "slot": "09:25",
+          "daysPresent": 30,
+          "volume": 610162,
+          "bars": 30
+        },
+        {
+          "slot": "09:30",
+          "daysPresent": 30,
+          "volume": 479660,
+          "bars": 30
+        },
+        {
+          "slot": "09:35",
+          "daysPresent": 30,
+          "volume": 474146,
+          "bars": 30
+        },
+        {
+          "slot": "09:40",
+          "daysPresent": 30,
+          "volume": 447628,
+          "bars": 30
+        },
+        {
+          "slot": "09:45",
+          "daysPresent": 30,
+          "volume": 326837,
+          "bars": 30
+        },
+        {
+          "slot": "09:50",
+          "daysPresent": 30,
+          "volume": 316364,
+          "bars": 30
+        },
+        {
+          "slot": "09:55",
+          "daysPresent": 30,
+          "volume": 305463,
+          "bars": 30
+        },
+        {
+          "slot": "10:00",
+          "daysPresent": 30,
+          "volume": 438021,
+          "bars": 30
+        },
+        {
+          "slot": "10:05",
+          "daysPresent": 30,
+          "volume": 459530,
+          "bars": 30
+        },
+        {
+          "slot": "10:10",
+          "daysPresent": 30,
+          "volume": 332407,
+          "bars": 30
+        },
+        {
+          "slot": "10:15",
+          "daysPresent": 30,
+          "volume": 271031,
+          "bars": 30
+        },
+        {
+          "slot": "10:20",
+          "daysPresent": 30,
+          "volume": 210591,
+          "bars": 30
+        },
+        {
+          "slot": "10:25",
+          "daysPresent": 30,
+          "volume": 1369539,
+          "bars": 30
+        },
+        {
+          "slot": "10:30",
+          "daysPresent": 30,
+          "volume": 393230,
+          "bars": 30
+        },
+        {
+          "slot": "10:35",
+          "daysPresent": 30,
+          "volume": 245934,
+          "bars": 30
+        },
+        {
+          "slot": "10:40",
+          "daysPresent": 30,
+          "volume": 259904,
+          "bars": 30
+        },
+        {
+          "slot": "10:45",
+          "daysPresent": 30,
+          "volume": 318132,
+          "bars": 30
+        },
+        {
+          "slot": "10:50",
+          "daysPresent": 30,
+          "volume": 354120,
+          "bars": 30
+        },
+        {
+          "slot": "10:55",
+          "daysPresent": 30,
+          "volume": 251859,
+          "bars": 30
+        },
+        {
+          "slot": "11:00",
+          "daysPresent": 30,
+          "volume": 281439,
+          "bars": 30
+        },
+        {
+          "slot": "11:05",
+          "daysPresent": 30,
+          "volume": 301785,
+          "bars": 30
+        },
+        {
+          "slot": "11:10",
+          "daysPresent": 30,
+          "volume": 290046,
+          "bars": 30
+        },
+        {
+          "slot": "11:15",
+          "daysPresent": 30,
+          "volume": 340439,
+          "bars": 30
+        },
+        {
+          "slot": "11:20",
+          "daysPresent": 30,
+          "volume": 277748,
+          "bars": 30
+        },
+        {
+          "slot": "11:25",
+          "daysPresent": 30,
+          "volume": 249184,
+          "bars": 30
+        },
+        {
+          "slot": "11:30",
+          "daysPresent": 30,
+          "volume": 313817,
+          "bars": 30
+        },
+        {
+          "slot": "11:35",
+          "daysPresent": 30,
+          "volume": 196694,
+          "bars": 30
+        },
+        {
+          "slot": "11:40",
+          "daysPresent": 30,
+          "volume": 358942,
+          "bars": 30
+        },
+        {
+          "slot": "11:45",
+          "daysPresent": 30,
+          "volume": 258256,
+          "bars": 30
+        },
+        {
+          "slot": "11:50",
+          "daysPresent": 30,
+          "volume": 288222,
+          "bars": 30
+        },
+        {
+          "slot": "11:55",
+          "daysPresent": 30,
+          "volume": 339471,
+          "bars": 30
+        },
+        {
+          "slot": "12:00",
+          "daysPresent": 30,
+          "volume": 243721,
+          "bars": 30
+        },
+        {
+          "slot": "12:05",
+          "daysPresent": 30,
+          "volume": 237421,
+          "bars": 30
+        },
+        {
+          "slot": "12:10",
+          "daysPresent": 30,
+          "volume": 177350,
+          "bars": 30
+        },
+        {
+          "slot": "12:15",
+          "daysPresent": 30,
+          "volume": 155538,
+          "bars": 30
+        },
+        {
+          "slot": "12:20",
+          "daysPresent": 30,
+          "volume": 235759,
+          "bars": 30
+        },
+        {
+          "slot": "12:25",
+          "daysPresent": 30,
+          "volume": 210595,
+          "bars": 30
+        },
+        {
+          "slot": "12:30",
+          "daysPresent": 30,
+          "volume": 266644,
+          "bars": 30
+        },
+        {
+          "slot": "12:35",
+          "daysPresent": 30,
+          "volume": 182002,
+          "bars": 30
+        },
+        {
+          "slot": "12:40",
+          "daysPresent": 30,
+          "volume": 770635,
+          "bars": 30
+        },
+        {
+          "slot": "12:45",
+          "daysPresent": 30,
+          "volume": 263016,
+          "bars": 30
+        },
+        {
+          "slot": "12:50",
+          "daysPresent": 30,
+          "volume": 176953,
+          "bars": 30
+        },
+        {
+          "slot": "12:55",
+          "daysPresent": 30,
+          "volume": 242685,
+          "bars": 30
+        },
+        {
+          "slot": "13:00",
+          "daysPresent": 29,
+          "volume": 591002,
+          "bars": 29
+        },
+        {
+          "slot": "13:05",
+          "daysPresent": 30,
+          "volume": 455308,
+          "bars": 30
+        },
+        {
+          "slot": "13:10",
+          "daysPresent": 30,
+          "volume": 194839,
+          "bars": 30
+        },
+        {
+          "slot": "13:15",
+          "daysPresent": 30,
+          "volume": 240763,
+          "bars": 30
+        },
+        {
+          "slot": "13:20",
+          "daysPresent": 30,
+          "volume": 217812,
+          "bars": 30
+        },
+        {
+          "slot": "13:25",
+          "daysPresent": 30,
+          "volume": 205415,
+          "bars": 30
+        },
+        {
+          "slot": "13:30",
+          "daysPresent": 30,
+          "volume": 390943,
+          "bars": 30
+        },
+        {
+          "slot": "13:35",
+          "daysPresent": 30,
+          "volume": 272142,
+          "bars": 30
+        },
+        {
+          "slot": "13:40",
+          "daysPresent": 30,
+          "volume": 245846,
+          "bars": 30
+        },
+        {
+          "slot": "13:45",
+          "daysPresent": 30,
+          "volume": 360519,
+          "bars": 30
+        },
+        {
+          "slot": "13:50",
+          "daysPresent": 30,
+          "volume": 390410,
+          "bars": 30
+        },
+        {
+          "slot": "13:55",
+          "daysPresent": 30,
+          "volume": 208652,
+          "bars": 30
+        },
+        {
+          "slot": "14:00",
+          "daysPresent": 30,
+          "volume": 251552,
+          "bars": 30
+        },
+        {
+          "slot": "14:05",
+          "daysPresent": 30,
+          "volume": 223302,
+          "bars": 30
+        },
+        {
+          "slot": "14:10",
+          "daysPresent": 30,
+          "volume": 310363,
+          "bars": 30
+        },
+        {
+          "slot": "14:15",
+          "daysPresent": 30,
+          "volume": 354382,
+          "bars": 30
+        },
+        {
+          "slot": "14:20",
+          "daysPresent": 30,
+          "volume": 315204,
+          "bars": 30
+        },
+        {
+          "slot": "14:25",
+          "daysPresent": 30,
+          "volume": 490871,
+          "bars": 30
+        },
+        {
+          "slot": "14:30",
+          "daysPresent": 30,
+          "volume": 611254,
+          "bars": 30
+        },
+        {
+          "slot": "14:35",
+          "daysPresent": 30,
+          "volume": 408512,
+          "bars": 30
+        },
+        {
+          "slot": "14:40",
+          "daysPresent": 30,
+          "volume": 466562,
+          "bars": 30
+        },
+        {
+          "slot": "14:45",
+          "daysPresent": 30,
+          "volume": 393598,
+          "bars": 30
+        },
+        {
+          "slot": "14:50",
+          "daysPresent": 30,
+          "volume": 498290,
+          "bars": 30
+        },
+        {
+          "slot": "14:55",
+          "daysPresent": 30,
+          "volume": 425693,
+          "bars": 30
+        },
+        {
+          "slot": "15:00",
+          "daysPresent": 30,
+          "volume": 450205,
+          "bars": 30
+        },
+        {
+          "slot": "15:05",
+          "daysPresent": 30,
+          "volume": 374690,
+          "bars": 30
+        },
+        {
+          "slot": "15:10",
+          "daysPresent": 30,
+          "volume": 371335,
+          "bars": 30
+        },
+        {
+          "slot": "15:15",
+          "daysPresent": 30,
+          "volume": 317602,
+          "bars": 30
+        },
+        {
+          "slot": "15:20",
+          "daysPresent": 30,
+          "volume": 333970,
+          "bars": 30
+        },
+        {
+          "slot": "15:25",
+          "daysPresent": 30,
+          "volume": 364461,
+          "bars": 30
+        },
+        {
+          "slot": "15:30",
+          "daysPresent": 30,
+          "volume": 679568,
+          "bars": 30
+        },
+        {
+          "slot": "15:35",
+          "daysPresent": 30,
+          "volume": 536686,
+          "bars": 30
+        },
+        {
+          "slot": "15:40",
+          "daysPresent": 30,
+          "volume": 545328,
+          "bars": 30
+        },
+        {
+          "slot": "15:45",
+          "daysPresent": 30,
+          "volume": 591003,
+          "bars": 30
+        },
+        {
+          "slot": "15:50",
+          "daysPresent": 30,
+          "volume": 566927,
+          "bars": 30
+        },
+        {
+          "slot": "15:55",
+          "daysPresent": 30,
+          "volume": 618567,
+          "bars": 30
+        },
+        {
+          "slot": "16:00",
+          "daysPresent": 30,
+          "volume": 622449,
+          "bars": 30
+        },
+        {
+          "slot": "16:05",
+          "daysPresent": 30,
+          "volume": 531219,
+          "bars": 30
+        },
+        {
+          "slot": "16:10",
+          "daysPresent": 30,
+          "volume": 637454,
+          "bars": 30
+        },
+        {
+          "slot": "16:15",
+          "daysPresent": 30,
+          "volume": 727982,
+          "bars": 30
+        },
+        {
+          "slot": "16:20",
+          "daysPresent": 30,
+          "volume": 690153,
+          "bars": 30
+        },
+        {
+          "slot": "16:25",
+          "daysPresent": 30,
+          "volume": 594880,
+          "bars": 30
+        },
+        {
+          "slot": "16:30",
+          "daysPresent": 30,
+          "volume": 686964,
+          "bars": 30
+        },
+        {
+          "slot": "16:35",
+          "daysPresent": 30,
+          "volume": 426303,
+          "bars": 30
+        },
+        {
+          "slot": "16:40",
+          "daysPresent": 30,
+          "volume": 1224077,
+          "bars": 30
+        },
+        {
+          "slot": "16:45",
+          "daysPresent": 30,
+          "volume": 518674,
+          "bars": 30
+        },
+        {
+          "slot": "16:50",
+          "daysPresent": 30,
+          "volume": 567535,
+          "bars": 30
+        },
+        {
+          "slot": "16:55",
+          "daysPresent": 30,
+          "volume": 679084,
+          "bars": 30
+        },
+        {
+          "slot": "17:00",
+          "daysPresent": 30,
+          "volume": 706137,
+          "bars": 30
+        },
+        {
+          "slot": "17:05",
+          "daysPresent": 30,
+          "volume": 650953,
+          "bars": 30
+        },
+        {
+          "slot": "17:10",
+          "daysPresent": 30,
+          "volume": 731241,
+          "bars": 30
+        },
+        {
+          "slot": "17:15",
+          "daysPresent": 30,
+          "volume": 781765,
+          "bars": 30
+        },
+        {
+          "slot": "17:20",
+          "daysPresent": 30,
+          "volume": 781904,
+          "bars": 30
+        },
+        {
+          "slot": "17:25",
+          "daysPresent": 30,
+          "volume": 1369173,
+          "bars": 30
+        },
+        {
+          "slot": "17:30",
+          "daysPresent": 1,
+          "volume": 0,
+          "bars": 1
+        }
+      ],
+      "firstDate": "2026-10-01",
+      "lastDate": "2026-11-11"
+    },
+    {
+      "symbol": "LDO.MI",
+      "group": "added",
+      "timezone": "Europe/Rome",
+      "days": [
+        {
+          "date": "2026-10-01",
+          "barsVolume": 1156626,
+          "barsCount": 102,
+          "yahooVolume": 1724139,
+          "yahooClose": 47.79999923706055,
+          "ratio": 0.6708426640775482
+        },
+        {
+          "date": "2026-10-02",
+          "barsVolume": 1339307,
+          "barsCount": 102,
+          "yahooVolume": 1970825,
+          "yahooClose": 47.38999938964844,
+          "ratio": 0.679566678928875
+        },
+        {
+          "date": "2026-10-05",
+          "barsVolume": 1047278,
+          "barsCount": 102,
+          "yahooVolume": 1415733,
+          "yahooClose": 48.29999923706055,
+          "ratio": 0.7397425927063931
+        },
+        {
+          "date": "2026-10-06",
+          "barsVolume": 2036957,
+          "barsCount": 102,
+          "yahooVolume": 2613517,
+          "yahooClose": 47.220001220703125,
+          "ratio": 0.7793930554115394
+        },
+        {
+          "date": "2026-10-07",
+          "barsVolume": 1088754,
+          "barsCount": 102,
+          "yahooVolume": 1644628,
+          "yahooClose": 46.005001068115234,
+          "ratio": 0.6620062409249995
+        },
+        {
+          "date": "2026-10-08",
+          "barsVolume": 965664,
+          "barsCount": 102,
+          "yahooVolume": 1623920,
+          "yahooClose": 45.79999923706055,
+          "ratio": 0.5946499827577714
+        },
+        {
+          "date": "2026-10-09",
+          "barsVolume": 972437,
+          "barsCount": 102,
+          "yahooVolume": 1521411,
+          "yahooClose": 46.810001373291016,
+          "ratio": 0.6391678514221338
+        },
+        {
+          "date": "2026-10-12",
+          "barsVolume": 857648,
+          "barsCount": 102,
+          "yahooVolume": 1278971,
+          "yahooClose": 47.63999938964844,
+          "ratio": 0.6705765807043318
+        },
+        {
+          "date": "2026-10-13",
+          "barsVolume": 812674,
+          "barsCount": 102,
+          "yahooVolume": 1309956,
+          "yahooClose": 46.974998474121094,
+          "ratio": 0.6203826693415657
+        },
+        {
+          "date": "2026-10-14",
+          "barsVolume": 851135,
+          "barsCount": 102,
+          "yahooVolume": 1425217,
+          "yahooClose": 47.2599983215332,
+          "ratio": 0.5971967777538438
+        },
+        {
+          "date": "2026-10-15",
+          "barsVolume": 1094096,
+          "barsCount": 102,
+          "yahooVolume": 1956519,
+          "yahooClose": 48.14500045776367,
+          "ratio": 0.5592054051097893
+        },
+        {
+          "date": "2026-10-16",
+          "barsVolume": 2075307,
+          "barsCount": 102,
+          "yahooVolume": 2886057,
+          "yahooClose": 50.41999816894531,
+          "ratio": 0.7190803923831026
+        },
+        {
+          "date": "2026-10-19",
+          "barsVolume": 901179,
+          "barsCount": 102,
+          "yahooVolume": 1583482,
+          "yahooClose": 49.29999923706055,
+          "ratio": 0.5691122475658075
+        },
+        {
+          "date": "2026-10-20",
+          "barsVolume": 730756,
+          "barsCount": 102,
+          "yahooVolume": 1109347,
+          "yahooClose": 49.185001373291016,
+          "ratio": 0.6587262596824979
+        },
+        {
+          "date": "2026-10-21",
+          "barsVolume": 1258324,
+          "barsCount": 102,
+          "yahooVolume": 1887237,
+          "yahooClose": 48.20000076293945,
+          "ratio": 0.6667546259425816
+        },
+        {
+          "date": "2026-10-22",
+          "barsVolume": 699339,
+          "barsCount": 102,
+          "yahooVolume": 1176801,
+          "yahooClose": 48.32500076293945,
+          "ratio": 0.5942712489197409
+        },
+        {
+          "date": "2026-10-23",
+          "barsVolume": 513361,
+          "barsCount": 102,
+          "yahooVolume": 1019677,
+          "yahooClose": 48.459999084472656,
+          "ratio": 0.5034545253055625
+        },
+        {
+          "date": "2026-10-26",
+          "barsVolume": 865728,
+          "barsCount": 102,
+          "yahooVolume": 1312991,
+          "yahooClose": 49.3650016784668,
+          "ratio": 0.6593556239151678
+        },
+        {
+          "date": "2026-10-27",
+          "barsVolume": 685105,
+          "barsCount": 102,
+          "yahooVolume": 1053947,
+          "yahooClose": 49.95500183105469,
+          "ratio": 0.6500374307246949
+        },
+        {
+          "date": "2026-10-28",
+          "barsVolume": 464821,
+          "barsCount": 102,
+          "yahooVolume": 764088,
+          "yahooClose": 49.85499954223633,
+          "ratio": 0.6083343803331553
+        },
+        {
+          "date": "2026-10-29",
+          "barsVolume": 1783219,
+          "barsCount": 102,
+          "yahooVolume": 2528639,
+          "yahooClose": 51.810001373291016,
+          "ratio": 0.7052090076914894
+        },
+        {
+          "date": "2026-10-30",
+          "barsVolume": 942504,
+          "barsCount": 102,
+          "yahooVolume": 1780668,
+          "yahooClose": 51.7599983215332,
+          "ratio": 0.5292979937866015
+        },
+        {
+          "date": "2026-11-02",
+          "barsVolume": 1107684,
+          "barsCount": 102,
+          "yahooVolume": 1793287,
+          "yahooClose": 52.04999923706055,
+          "ratio": 0.6176836167328487
+        },
+        {
+          "date": "2026-11-03",
+          "barsVolume": 790522,
+          "barsCount": 102,
+          "yahooVolume": 1405132,
+          "yahooClose": 51.650001525878906,
+          "ratio": 0.5625962543020869
+        },
+        {
+          "date": "2026-11-04",
+          "barsVolume": 1866067,
+          "barsCount": 102,
+          "yahooVolume": 2840592,
+          "yahooClose": 51.119998931884766,
+          "ratio": 0.6569289077769704
+        },
+        {
+          "date": "2026-11-05",
+          "barsVolume": 2473179,
+          "barsCount": 102,
+          "yahooVolume": 3578229,
+          "yahooClose": 49.35499954223633,
+          "ratio": 0.6911740416837492
+        },
+        {
+          "date": "2026-11-06",
+          "barsVolume": 1656132,
+          "barsCount": 102,
+          "yahooVolume": 2529637,
+          "yahooClose": 48.06999969482422,
+          "ratio": 0.6546915624652865
+        },
+        {
+          "date": "2026-11-09",
+          "barsVolume": 1350173,
+          "barsCount": 102,
+          "yahooVolume": 2138321,
+          "yahooClose": 50.43000030517578,
+          "ratio": 0.631417359694826
+        },
+        {
+          "date": "2026-11-10",
+          "barsVolume": 1695226,
+          "barsCount": 102,
+          "yahooVolume": 2527928,
+          "yahooClose": 51.540000915527344,
+          "ratio": 0.6705990044020241
+        },
+        {
+          "date": "2026-11-11",
+          "barsVolume": 1152033,
+          "barsCount": 103,
+          "yahooVolume": 1794387,
+          "yahooClose": 50.619998931884766,
+          "ratio": 0.6420203668439417
+        }
+      ],
+      "stats": {
+        "nDays": 30,
+        "median": 0.6523644965949906,
+        "min": 0.5034545253055625,
+        "max": 0.7793930554115394,
+        "shareIn060_075": 0.7,
+        "meanBars": 102.03333333333333,
+        "expectedBars": 102,
+        "daysBelowExpectedBars": 0
+      },
+      "slots": [
+        {
+          "slot": "09:00",
+          "daysPresent": 30,
+          "volume": 0,
+          "bars": 30
+        },
+        {
+          "slot": "09:05",
+          "daysPresent": 30,
+          "volume": 724072,
+          "bars": 30
+        },
+        {
+          "slot": "09:10",
+          "daysPresent": 30,
+          "volume": 632884,
+          "bars": 30
+        },
+        {
+          "slot": "09:15",
+          "daysPresent": 30,
+          "volume": 651756,
+          "bars": 30
+        },
+        {
+          "slot": "09:20",
+          "daysPresent": 30,
+          "volume": 503753,
+          "bars": 30
+        },
+        {
+          "slot": "09:25",
+          "daysPresent": 30,
+          "volume": 614691,
+          "bars": 30
+        },
+        {
+          "slot": "09:30",
+          "daysPresent": 30,
+          "volume": 612581,
+          "bars": 30
+        },
+        {
+          "slot": "09:35",
+          "daysPresent": 30,
+          "volume": 534521,
+          "bars": 30
+        },
+        {
+          "slot": "09:40",
+          "daysPresent": 30,
+          "volume": 517033,
+          "bars": 30
+        },
+        {
+          "slot": "09:45",
+          "daysPresent": 30,
+          "volume": 403862,
+          "bars": 30
+        },
+        {
+          "slot": "09:50",
+          "daysPresent": 30,
+          "volume": 440739,
+          "bars": 30
+        },
+        {
+          "slot": "09:55",
+          "daysPresent": 30,
+          "volume": 416115,
+          "bars": 30
+        },
+        {
+          "slot": "10:00",
+          "daysPresent": 30,
+          "volume": 454900,
+          "bars": 30
+        },
+        {
+          "slot": "10:05",
+          "daysPresent": 30,
+          "volume": 527931,
+          "bars": 30
+        },
+        {
+          "slot": "10:10",
+          "daysPresent": 30,
+          "volume": 426177,
+          "bars": 30
+        },
+        {
+          "slot": "10:15",
+          "daysPresent": 30,
+          "volume": 415665,
+          "bars": 30
+        },
+        {
+          "slot": "10:20",
+          "daysPresent": 30,
+          "volume": 382867,
+          "bars": 30
+        },
+        {
+          "slot": "10:25",
+          "daysPresent": 30,
+          "volume": 361274,
+          "bars": 30
+        },
+        {
+          "slot": "10:30",
+          "daysPresent": 30,
+          "volume": 464237,
+          "bars": 30
+        },
+        {
+          "slot": "10:35",
+          "daysPresent": 30,
+          "volume": 401551,
+          "bars": 30
+        },
+        {
+          "slot": "10:40",
+          "daysPresent": 30,
+          "volume": 349677,
+          "bars": 30
+        },
+        {
+          "slot": "10:45",
+          "daysPresent": 30,
+          "volume": 473168,
+          "bars": 30
+        },
+        {
+          "slot": "10:50",
+          "daysPresent": 30,
+          "volume": 336558,
+          "bars": 30
+        },
+        {
+          "slot": "10:55",
+          "daysPresent": 30,
+          "volume": 351329,
+          "bars": 30
+        },
+        {
+          "slot": "11:00",
+          "daysPresent": 30,
+          "volume": 294510,
+          "bars": 30
+        },
+        {
+          "slot": "11:05",
+          "daysPresent": 30,
+          "volume": 295090,
+          "bars": 30
+        },
+        {
+          "slot": "11:10",
+          "daysPresent": 30,
+          "volume": 340482,
+          "bars": 30
+        },
+        {
+          "slot": "11:15",
+          "daysPresent": 30,
+          "volume": 301631,
+          "bars": 30
+        },
+        {
+          "slot": "11:20",
+          "daysPresent": 30,
+          "volume": 292315,
+          "bars": 30
+        },
+        {
+          "slot": "11:25",
+          "daysPresent": 30,
+          "volume": 307401,
+          "bars": 30
+        },
+        {
+          "slot": "11:30",
+          "daysPresent": 30,
+          "volume": 267973,
+          "bars": 30
+        },
+        {
+          "slot": "11:35",
+          "daysPresent": 30,
+          "volume": 177463,
+          "bars": 30
+        },
+        {
+          "slot": "11:40",
+          "daysPresent": 30,
+          "volume": 196754,
+          "bars": 30
+        },
+        {
+          "slot": "11:45",
+          "daysPresent": 30,
+          "volume": 240464,
+          "bars": 30
+        },
+        {
+          "slot": "11:50",
+          "daysPresent": 30,
+          "volume": 247842,
+          "bars": 30
+        },
+        {
+          "slot": "11:55",
+          "daysPresent": 30,
+          "volume": 181821,
+          "bars": 30
+        },
+        {
+          "slot": "12:00",
+          "daysPresent": 30,
+          "volume": 302108,
+          "bars": 30
+        },
+        {
+          "slot": "12:05",
+          "daysPresent": 30,
+          "volume": 267376,
+          "bars": 30
+        },
+        {
+          "slot": "12:10",
+          "daysPresent": 30,
+          "volume": 282968,
+          "bars": 30
+        },
+        {
+          "slot": "12:15",
+          "daysPresent": 30,
+          "volume": 225951,
+          "bars": 30
+        },
+        {
+          "slot": "12:20",
+          "daysPresent": 30,
+          "volume": 248266,
+          "bars": 30
+        },
+        {
+          "slot": "12:25",
+          "daysPresent": 30,
+          "volume": 204082,
+          "bars": 30
+        },
+        {
+          "slot": "12:30",
+          "daysPresent": 30,
+          "volume": 207360,
+          "bars": 30
+        },
+        {
+          "slot": "12:35",
+          "daysPresent": 30,
+          "volume": 227091,
+          "bars": 30
+        },
+        {
+          "slot": "12:40",
+          "daysPresent": 30,
+          "volume": 147665,
+          "bars": 30
+        },
+        {
+          "slot": "12:45",
+          "daysPresent": 30,
+          "volume": 267995,
+          "bars": 30
+        },
+        {
+          "slot": "12:50",
+          "daysPresent": 30,
+          "volume": 165662,
+          "bars": 30
+        },
+        {
+          "slot": "12:55",
+          "daysPresent": 30,
+          "volume": 164303,
+          "bars": 30
+        },
+        {
+          "slot": "13:00",
+          "daysPresent": 30,
+          "volume": 232941,
+          "bars": 30
+        },
+        {
+          "slot": "13:05",
+          "daysPresent": 30,
+          "volume": 174558,
+          "bars": 30
+        },
+        {
+          "slot": "13:10",
+          "daysPresent": 30,
+          "volume": 157936,
+          "bars": 30
+        },
+        {
+          "slot": "13:15",
+          "daysPresent": 30,
+          "volume": 210789,
+          "bars": 30
+        },
+        {
+          "slot": "13:20",
+          "daysPresent": 30,
+          "volume": 155314,
+          "bars": 30
+        },
+        {
+          "slot": "13:25",
+          "daysPresent": 30,
+          "volume": 174066,
+          "bars": 30
+        },
+        {
+          "slot": "13:30",
+          "daysPresent": 30,
+          "volume": 247865,
+          "bars": 30
+        },
+        {
+          "slot": "13:35",
+          "daysPresent": 30,
+          "volume": 152851,
+          "bars": 30
+        },
+        {
+          "slot": "13:40",
+          "daysPresent": 30,
+          "volume": 194219,
+          "bars": 30
+        },
+        {
+          "slot": "13:45",
+          "daysPresent": 30,
+          "volume": 223166,
+          "bars": 30
+        },
+        {
+          "slot": "13:50",
+          "daysPresent": 30,
+          "volume": 232801,
+          "bars": 30
+        },
+        {
+          "slot": "13:55",
+          "daysPresent": 30,
+          "volume": 223104,
+          "bars": 30
+        },
+        {
+          "slot": "14:00",
+          "daysPresent": 30,
+          "volume": 292280,
+          "bars": 30
+        },
+        {
+          "slot": "14:05",
+          "daysPresent": 30,
+          "volume": 268588,
+          "bars": 30
+        },
+        {
+          "slot": "14:10",
+          "daysPresent": 30,
+          "volume": 254652,
+          "bars": 30
+        },
+        {
+          "slot": "14:15",
+          "daysPresent": 30,
+          "volume": 207627,
+          "bars": 30
+        },
+        {
+          "slot": "14:20",
+          "daysPresent": 30,
+          "volume": 183895,
+          "bars": 30
+        },
+        {
+          "slot": "14:25",
+          "daysPresent": 30,
+          "volume": 256907,
+          "bars": 30
+        },
+        {
+          "slot": "14:30",
+          "daysPresent": 30,
+          "volume": 334263,
+          "bars": 30
+        },
+        {
+          "slot": "14:35",
+          "daysPresent": 30,
+          "volume": 350742,
+          "bars": 30
+        },
+        {
+          "slot": "14:40",
+          "daysPresent": 30,
+          "volume": 232069,
+          "bars": 30
+        },
+        {
+          "slot": "14:45",
+          "daysPresent": 30,
+          "volume": 277589,
+          "bars": 30
+        },
+        {
+          "slot": "14:50",
+          "daysPresent": 30,
+          "volume": 239661,
+          "bars": 30
+        },
+        {
+          "slot": "14:55",
+          "daysPresent": 30,
+          "volume": 304135,
+          "bars": 30
+        },
+        {
+          "slot": "15:00",
+          "daysPresent": 30,
+          "volume": 308561,
+          "bars": 30
+        },
+        {
+          "slot": "15:05",
+          "daysPresent": 30,
+          "volume": 235872,
+          "bars": 30
+        },
+        {
+          "slot": "15:10",
+          "daysPresent": 30,
+          "volume": 252096,
+          "bars": 30
+        },
+        {
+          "slot": "15:15",
+          "daysPresent": 30,
+          "volume": 287070,
+          "bars": 30
+        },
+        {
+          "slot": "15:20",
+          "daysPresent": 30,
+          "volume": 279063,
+          "bars": 30
+        },
+        {
+          "slot": "15:25",
+          "daysPresent": 30,
+          "volume": 356092,
+          "bars": 30
+        },
+        {
+          "slot": "15:30",
+          "daysPresent": 30,
+          "volume": 488898,
+          "bars": 30
+        },
+        {
+          "slot": "15:35",
+          "daysPresent": 30,
+          "volume": 389130,
+          "bars": 30
+        },
+        {
+          "slot": "15:40",
+          "daysPresent": 30,
+          "volume": 438596,
+          "bars": 30
+        },
+        {
+          "slot": "15:45",
+          "daysPresent": 30,
+          "volume": 460679,
+          "bars": 30
+        },
+        {
+          "slot": "15:50",
+          "daysPresent": 30,
+          "volume": 370866,
+          "bars": 30
+        },
+        {
+          "slot": "15:55",
+          "daysPresent": 30,
+          "volume": 375320,
+          "bars": 30
+        },
+        {
+          "slot": "16:00",
+          "daysPresent": 30,
+          "volume": 455466,
+          "bars": 30
+        },
+        {
+          "slot": "16:05",
+          "daysPresent": 30,
+          "volume": 444714,
+          "bars": 30
+        },
+        {
+          "slot": "16:10",
+          "daysPresent": 30,
+          "volume": 351401,
+          "bars": 30
+        },
+        {
+          "slot": "16:15",
+          "daysPresent": 30,
+          "volume": 354165,
+          "bars": 30
+        },
+        {
+          "slot": "16:20",
+          "daysPresent": 30,
+          "volume": 335280,
+          "bars": 30
+        },
+        {
+          "slot": "16:25",
+          "daysPresent": 30,
+          "volume": 381063,
+          "bars": 30
+        },
+        {
+          "slot": "16:30",
+          "daysPresent": 30,
+          "volume": 299830,
+          "bars": 30
+        },
+        {
+          "slot": "16:35",
+          "daysPresent": 30,
+          "volume": 404725,
+          "bars": 30
+        },
+        {
+          "slot": "16:40",
+          "daysPresent": 30,
+          "volume": 449439,
+          "bars": 30
+        },
+        {
+          "slot": "16:45",
+          "daysPresent": 30,
+          "volume": 324651,
+          "bars": 30
+        },
+        {
+          "slot": "16:50",
+          "daysPresent": 30,
+          "volume": 516401,
+          "bars": 30
+        },
+        {
+          "slot": "16:55",
+          "daysPresent": 30,
+          "volume": 456076,
+          "bars": 30
+        },
+        {
+          "slot": "17:00",
+          "daysPresent": 30,
+          "volume": 406061,
+          "bars": 30
+        },
+        {
+          "slot": "17:05",
+          "daysPresent": 30,
+          "volume": 437647,
+          "bars": 30
+        },
+        {
+          "slot": "17:10",
+          "daysPresent": 30,
+          "volume": 553109,
+          "bars": 30
+        },
+        {
+          "slot": "17:15",
+          "daysPresent": 30,
+          "volume": 727685,
+          "bars": 30
+        },
+        {
+          "slot": "17:20",
+          "daysPresent": 30,
+          "volume": 750050,
+          "bars": 30
+        },
+        {
+          "slot": "17:25",
+          "daysPresent": 30,
+          "volume": 909297,
+          "bars": 30
+        },
+        {
+          "slot": "17:30",
+          "daysPresent": 1,
+          "volume": 0,
+          "bars": 1
+        }
+      ],
+      "firstDate": "2026-10-01",
+      "lastDate": "2026-11-11"
+    },
+    {
+      "symbol": "SIE.DE",
+      "group": "added",
+      "timezone": "Europe/Berlin",
+      "days": [
+        {
+          "date": "2026-10-01",
+          "barsVolume": 946957,
+          "barsCount": 102,
+          "yahooVolume": 976619,
+          "yahooClose": 271.8999938964844,
+          "ratio": 0.969627869209999
+        },
+        {
+          "date": "2026-10-02",
+          "barsVolume": 705102,
+          "barsCount": 102,
+          "yahooVolume": 1298968,
+          "yahooClose": 276.1000061035156,
+          "ratio": 0.542817067087103
+        },
+        {
+          "date": "2026-10-05",
+          "barsVolume": 351701,
+          "barsCount": 102,
+          "yahooVolume": 735136,
+          "yahooClose": 275,
+          "ratio": 0.47841623862795457
+        },
+        {
+          "date": "2026-10-06",
+          "barsVolume": 301658,
+          "barsCount": 102,
+          "yahooVolume": 632980,
+          "yahooClose": 279,
+          "ratio": 0.4765679800309646
+        },
+        {
+          "date": "2026-10-07",
+          "barsVolume": 394406,
+          "barsCount": 102,
+          "yahooVolume": 892964,
+          "yahooClose": 271.20001220703125,
+          "ratio": 0.44168185951505323
+        },
+        {
+          "date": "2026-10-08",
+          "barsVolume": 439105,
+          "barsCount": 102,
+          "yahooVolume": 923046,
+          "yahooClose": 264.25,
+          "ratio": 0.4757130197194939
+        },
+        {
+          "date": "2026-10-09",
+          "barsVolume": 502515,
+          "barsCount": 102,
+          "yahooVolume": 820920,
+          "yahooClose": 272.1000061035156,
+          "ratio": 0.6121363835696536
+        },
+        {
+          "date": "2026-10-12",
+          "barsVolume": 288717,
+          "barsCount": 102,
+          "yahooVolume": 573554,
+          "yahooClose": 275.75,
+          "ratio": 0.5033824190921866
+        },
+        {
+          "date": "2026-10-13",
+          "barsVolume": 346500,
+          "barsCount": 102,
+          "yahooVolume": 696224,
+          "yahooClose": 274.5,
+          "ratio": 0.4976846532150572
+        },
+        {
+          "date": "2026-10-14",
+          "barsVolume": 324898,
+          "barsCount": 102,
+          "yahooVolume": 889562,
+          "yahooClose": 275.04998779296875,
+          "ratio": 0.36523367679824453
+        },
+        {
+          "date": "2026-10-15",
+          "barsVolume": 710290,
+          "barsCount": 102,
+          "yahooVolume": 1481239,
+          "yahooClose": 270.6499938964844,
+          "ratio": 0.47952423612934847
+        },
+        {
+          "date": "2026-10-16",
+          "barsVolume": 717589,
+          "barsCount": 101,
+          "yahooVolume": 1178398,
+          "yahooClose": 270.6499938964844,
+          "ratio": 0.6089530022963379
+        },
+        {
+          "date": "2026-10-19",
+          "barsVolume": 428878,
+          "barsCount": 102,
+          "yahooVolume": 846352,
+          "yahooClose": 266.20001220703125,
+          "ratio": 0.5067371495547952
+        },
+        {
+          "date": "2026-10-20",
+          "barsVolume": 1132743,
+          "barsCount": 102,
+          "yahooVolume": 1776498,
+          "yahooClose": 260.25,
+          "ratio": 0.6376269492000554
+        },
+        {
+          "date": "2026-10-21",
+          "barsVolume": 491571,
+          "barsCount": 102,
+          "yahooVolume": 929247,
+          "yahooClose": 266.75,
+          "ratio": 0.5289992865190848
+        },
+        {
+          "date": "2026-10-22",
+          "barsVolume": 439392,
+          "barsCount": 102,
+          "yahooVolume": 999822,
+          "yahooClose": 255.6999969482422,
+          "ratio": 0.43947022570017463
+        },
+        {
+          "date": "2026-10-23",
+          "barsVolume": 451113,
+          "barsCount": 102,
+          "yahooVolume": 912256,
+          "yahooClose": 256.79998779296875,
+          "ratio": 0.49450263960993407
+        },
+        {
+          "date": "2026-10-26",
+          "barsVolume": 456508,
+          "barsCount": 102,
+          "yahooVolume": 893236,
+          "yahooClose": 261.3999938964844,
+          "ratio": 0.5110721018857278
+        },
+        {
+          "date": "2026-10-27",
+          "barsVolume": 437281,
+          "barsCount": 102,
+          "yahooVolume": 822072,
+          "yahooClose": 266.20001220703125,
+          "ratio": 0.5319254274564759
+        },
+        {
+          "date": "2026-10-28",
+          "barsVolume": 290892,
+          "barsCount": 102,
+          "yahooVolume": 648778,
+          "yahooClose": 270.04998779296875,
+          "ratio": 0.4483690877310883
+        },
+        {
+          "date": "2026-10-29",
+          "barsVolume": 430919,
+          "barsCount": 102,
+          "yahooVolume": 778869,
+          "yahooClose": 273.75,
+          "ratio": 0.5532624870164302
+        },
+        {
+          "date": "2026-10-30",
+          "barsVolume": 439152,
+          "barsCount": 102,
+          "yahooVolume": 988244,
+          "yahooClose": 265.6499938964844,
+          "ratio": 0.4443760852582965
+        },
+        {
+          "date": "2026-11-02",
+          "barsVolume": 454023,
+          "barsCount": 102,
+          "yahooVolume": 783249,
+          "yahooClose": 270.3500061035156,
+          "ratio": 0.5796662364075792
+        },
+        {
+          "date": "2026-11-03",
+          "barsVolume": 419719,
+          "barsCount": 102,
+          "yahooVolume": 749834,
+          "yahooClose": 269.75,
+          "ratio": 0.5597492244950215
+        },
+        {
+          "date": "2026-11-04",
+          "barsVolume": 940538,
+          "barsCount": 102,
+          "yahooVolume": 1609427,
+          "yahooClose": 275.6499938964844,
+          "ratio": 0.5843930790275048
+        },
+        {
+          "date": "2026-11-05",
+          "barsVolume": 983503,
+          "barsCount": 102,
+          "yahooVolume": 1805546,
+          "yahooClose": 273.25,
+          "ratio": 0.5447122366309138
+        },
+        {
+          "date": "2026-11-06",
+          "barsVolume": 853261,
+          "barsCount": 102,
+          "yahooVolume": 1379246,
+          "yahooClose": 263.6499938964844,
+          "ratio": 0.6186430846999013
+        },
+        {
+          "date": "2026-11-09",
+          "barsVolume": 368241,
+          "barsCount": 102,
+          "yahooVolume": 970089,
+          "yahooClose": 271,
+          "ratio": 0.3795950680813822
+        },
+        {
+          "date": "2026-11-10",
+          "barsVolume": 546927,
+          "barsCount": 102,
+          "yahooVolume": 1366483,
+          "yahooClose": 271.54998779296875,
+          "ratio": 0.40024427673084845
+        },
+        {
+          "date": "2026-11-11",
+          "barsVolume": 602066,
+          "barsCount": 103,
+          "yahooVolume": 1098060,
+          "yahooClose": 277,
+          "ratio": 0.5482997286122798
+        }
+      ],
+      "stats": {
+        "nDays": 30,
+        "median": 0.5089046257202615,
+        "min": 0.36523367679824453,
+        "max": 0.969627869209999,
+        "shareIn060_075": 0.13333333333333333,
+        "meanBars": 102,
+        "expectedBars": 102,
+        "daysBelowExpectedBars": 1
+      },
+      "slots": [
+        {
+          "slot": "09:00",
+          "daysPresent": 30,
+          "volume": 0,
+          "bars": 30
+        },
+        {
+          "slot": "09:05",
+          "daysPresent": 30,
+          "volume": 303666,
+          "bars": 30
+        },
+        {
+          "slot": "09:10",
+          "daysPresent": 30,
+          "volume": 217851,
+          "bars": 30
+        },
+        {
+          "slot": "09:15",
+          "daysPresent": 30,
+          "volume": 223563,
+          "bars": 30
+        },
+        {
+          "slot": "09:20",
+          "daysPresent": 30,
+          "volume": 210444,
+          "bars": 30
+        },
+        {
+          "slot": "09:25",
+          "daysPresent": 30,
+          "volume": 143824,
+          "bars": 30
+        },
+        {
+          "slot": "09:30",
+          "daysPresent": 30,
+          "volume": 161493,
+          "bars": 30
+        },
+        {
+          "slot": "09:35",
+          "daysPresent": 30,
+          "volume": 128542,
+          "bars": 30
+        },
+        {
+          "slot": "09:40",
+          "daysPresent": 30,
+          "volume": 127831,
+          "bars": 30
+        },
+        {
+          "slot": "09:45",
+          "daysPresent": 30,
+          "volume": 139077,
+          "bars": 30
+        },
+        {
+          "slot": "09:50",
+          "daysPresent": 30,
+          "volume": 141229,
+          "bars": 30
+        },
+        {
+          "slot": "09:55",
+          "daysPresent": 30,
+          "volume": 169418,
+          "bars": 30
+        },
+        {
+          "slot": "10:00",
+          "daysPresent": 30,
+          "volume": 133208,
+          "bars": 30
+        },
+        {
+          "slot": "10:05",
+          "daysPresent": 30,
+          "volume": 112245,
+          "bars": 30
+        },
+        {
+          "slot": "10:10",
+          "daysPresent": 30,
+          "volume": 122133,
+          "bars": 30
+        },
+        {
+          "slot": "10:15",
+          "daysPresent": 30,
+          "volume": 113755,
+          "bars": 30
+        },
+        {
+          "slot": "10:20",
+          "daysPresent": 30,
+          "volume": 107765,
+          "bars": 30
+        },
+        {
+          "slot": "10:25",
+          "daysPresent": 30,
+          "volume": 110586,
+          "bars": 30
+        },
+        {
+          "slot": "10:30",
+          "daysPresent": 30,
+          "volume": 106954,
+          "bars": 30
+        },
+        {
+          "slot": "10:35",
+          "daysPresent": 30,
+          "volume": 111276,
+          "bars": 30
+        },
+        {
+          "slot": "10:40",
+          "daysPresent": 30,
+          "volume": 103228,
+          "bars": 30
+        },
+        {
+          "slot": "10:45",
+          "daysPresent": 30,
+          "volume": 118111,
+          "bars": 30
+        },
+        {
+          "slot": "10:50",
+          "daysPresent": 30,
+          "volume": 107305,
+          "bars": 30
+        },
+        {
+          "slot": "10:55",
+          "daysPresent": 30,
+          "volume": 109732,
+          "bars": 30
+        },
+        {
+          "slot": "11:00",
+          "daysPresent": 30,
+          "volume": 94073,
+          "bars": 30
+        },
+        {
+          "slot": "11:05",
+          "daysPresent": 30,
+          "volume": 125440,
+          "bars": 30
+        },
+        {
+          "slot": "11:10",
+          "daysPresent": 30,
+          "volume": 97372,
+          "bars": 30
+        },
+        {
+          "slot": "11:15",
+          "daysPresent": 30,
+          "volume": 89572,
+          "bars": 30
+        },
+        {
+          "slot": "11:20",
+          "daysPresent": 30,
+          "volume": 83562,
+          "bars": 30
+        },
+        {
+          "slot": "11:25",
+          "daysPresent": 30,
+          "volume": 87752,
+          "bars": 30
+        },
+        {
+          "slot": "11:30",
+          "daysPresent": 30,
+          "volume": 108242,
+          "bars": 30
+        },
+        {
+          "slot": "11:35",
+          "daysPresent": 30,
+          "volume": 107660,
+          "bars": 30
+        },
+        {
+          "slot": "11:40",
+          "daysPresent": 30,
+          "volume": 83059,
+          "bars": 30
+        },
+        {
+          "slot": "11:45",
+          "daysPresent": 30,
+          "volume": 101387,
+          "bars": 30
+        },
+        {
+          "slot": "11:50",
+          "daysPresent": 30,
+          "volume": 133483,
+          "bars": 30
+        },
+        {
+          "slot": "11:55",
+          "daysPresent": 30,
+          "volume": 143588,
+          "bars": 30
+        },
+        {
+          "slot": "12:00",
+          "daysPresent": 30,
+          "volume": 90702,
+          "bars": 30
+        },
+        {
+          "slot": "12:05",
+          "daysPresent": 30,
+          "volume": 93740,
+          "bars": 30
+        },
+        {
+          "slot": "12:10",
+          "daysPresent": 30,
+          "volume": 79029,
+          "bars": 30
+        },
+        {
+          "slot": "12:15",
+          "daysPresent": 30,
+          "volume": 79131,
+          "bars": 30
+        },
+        {
+          "slot": "12:20",
+          "daysPresent": 30,
+          "volume": 70372,
+          "bars": 30
+        },
+        {
+          "slot": "12:25",
+          "daysPresent": 30,
+          "volume": 104820,
+          "bars": 30
+        },
+        {
+          "slot": "12:30",
+          "daysPresent": 30,
+          "volume": 113682,
+          "bars": 30
+        },
+        {
+          "slot": "12:35",
+          "daysPresent": 30,
+          "volume": 75647,
+          "bars": 30
+        },
+        {
+          "slot": "12:40",
+          "daysPresent": 30,
+          "volume": 76569,
+          "bars": 30
+        },
+        {
+          "slot": "12:45",
+          "daysPresent": 30,
+          "volume": 95939,
+          "bars": 30
+        },
+        {
+          "slot": "12:50",
+          "daysPresent": 30,
+          "volume": 78180,
+          "bars": 30
+        },
+        {
+          "slot": "12:55",
+          "daysPresent": 30,
+          "volume": 63037,
+          "bars": 30
+        },
+        {
+          "slot": "13:00",
+          "daysPresent": 29,
+          "volume": 657515,
+          "bars": 29
+        },
+        {
+          "slot": "13:05",
+          "daysPresent": 30,
+          "volume": 197357,
+          "bars": 30
+        },
+        {
+          "slot": "13:10",
+          "daysPresent": 30,
+          "volume": 73680,
+          "bars": 30
+        },
+        {
+          "slot": "13:15",
+          "daysPresent": 30,
+          "volume": 69922,
+          "bars": 30
+        },
+        {
+          "slot": "13:20",
+          "daysPresent": 30,
+          "volume": 98407,
+          "bars": 30
+        },
+        {
+          "slot": "13:25",
+          "daysPresent": 30,
+          "volume": 94888,
+          "bars": 30
+        },
+        {
+          "slot": "13:30",
+          "daysPresent": 30,
+          "volume": 98443,
+          "bars": 30
+        },
+        {
+          "slot": "13:35",
+          "daysPresent": 30,
+          "volume": 99996,
+          "bars": 30
+        },
+        {
+          "slot": "13:40",
+          "daysPresent": 30,
+          "volume": 116194,
+          "bars": 30
+        },
+        {
+          "slot": "13:45",
+          "daysPresent": 30,
+          "volume": 115840,
+          "bars": 30
+        },
+        {
+          "slot": "13:50",
+          "daysPresent": 30,
+          "volume": 84173,
+          "bars": 30
+        },
+        {
+          "slot": "13:55",
+          "daysPresent": 30,
+          "volume": 95552,
+          "bars": 30
+        },
+        {
+          "slot": "14:00",
+          "daysPresent": 30,
+          "volume": 122004,
+          "bars": 30
+        },
+        {
+          "slot": "14:05",
+          "daysPresent": 30,
+          "volume": 84367,
+          "bars": 30
+        },
+        {
+          "slot": "14:10",
+          "daysPresent": 30,
+          "volume": 92337,
+          "bars": 30
+        },
+        {
+          "slot": "14:15",
+          "daysPresent": 30,
+          "volume": 95453,
+          "bars": 30
+        },
+        {
+          "slot": "14:20",
+          "daysPresent": 30,
+          "volume": 98967,
+          "bars": 30
+        },
+        {
+          "slot": "14:25",
+          "daysPresent": 30,
+          "volume": 386475,
+          "bars": 30
+        },
+        {
+          "slot": "14:30",
+          "daysPresent": 30,
+          "volume": 177264,
+          "bars": 30
+        },
+        {
+          "slot": "14:35",
+          "daysPresent": 30,
+          "volume": 181402,
+          "bars": 30
+        },
+        {
+          "slot": "14:40",
+          "daysPresent": 30,
+          "volume": 139035,
+          "bars": 30
+        },
+        {
+          "slot": "14:45",
+          "daysPresent": 30,
+          "volume": 151517,
+          "bars": 30
+        },
+        {
+          "slot": "14:50",
+          "daysPresent": 30,
+          "volume": 122673,
+          "bars": 30
+        },
+        {
+          "slot": "14:55",
+          "daysPresent": 30,
+          "volume": 151151,
+          "bars": 30
+        },
+        {
+          "slot": "15:00",
+          "daysPresent": 30,
+          "volume": 203788,
+          "bars": 30
+        },
+        {
+          "slot": "15:05",
+          "daysPresent": 30,
+          "volume": 155048,
+          "bars": 30
+        },
+        {
+          "slot": "15:10",
+          "daysPresent": 30,
+          "volume": 140651,
+          "bars": 30
+        },
+        {
+          "slot": "15:15",
+          "daysPresent": 30,
+          "volume": 211092,
+          "bars": 30
+        },
+        {
+          "slot": "15:20",
+          "daysPresent": 30,
+          "volume": 152996,
+          "bars": 30
+        },
+        {
+          "slot": "15:25",
+          "daysPresent": 30,
+          "volume": 154123,
+          "bars": 30
+        },
+        {
+          "slot": "15:30",
+          "daysPresent": 30,
+          "volume": 246863,
+          "bars": 30
+        },
+        {
+          "slot": "15:35",
+          "daysPresent": 30,
+          "volume": 212613,
+          "bars": 30
+        },
+        {
+          "slot": "15:40",
+          "daysPresent": 30,
+          "volume": 223301,
+          "bars": 30
+        },
+        {
+          "slot": "15:45",
+          "daysPresent": 30,
+          "volume": 230969,
+          "bars": 30
+        },
+        {
+          "slot": "15:50",
+          "daysPresent": 30,
+          "volume": 212930,
+          "bars": 30
+        },
+        {
+          "slot": "15:55",
+          "daysPresent": 30,
+          "volume": 190396,
+          "bars": 30
+        },
+        {
+          "slot": "16:00",
+          "daysPresent": 30,
+          "volume": 262856,
+          "bars": 30
+        },
+        {
+          "slot": "16:05",
+          "daysPresent": 30,
+          "volume": 243666,
+          "bars": 30
+        },
+        {
+          "slot": "16:10",
+          "daysPresent": 30,
+          "volume": 194075,
+          "bars": 30
+        },
+        {
+          "slot": "16:15",
+          "daysPresent": 30,
+          "volume": 235121,
+          "bars": 30
+        },
+        {
+          "slot": "16:20",
+          "daysPresent": 30,
+          "volume": 326190,
+          "bars": 30
+        },
+        {
+          "slot": "16:25",
+          "daysPresent": 30,
+          "volume": 211169,
+          "bars": 30
+        },
+        {
+          "slot": "16:30",
+          "daysPresent": 30,
+          "volume": 261384,
+          "bars": 30
+        },
+        {
+          "slot": "16:35",
+          "daysPresent": 30,
+          "volume": 188879,
+          "bars": 30
+        },
+        {
+          "slot": "16:40",
+          "daysPresent": 30,
+          "volume": 218966,
+          "bars": 30
+        },
+        {
+          "slot": "16:45",
+          "daysPresent": 30,
+          "volume": 246563,
+          "bars": 30
+        },
+        {
+          "slot": "16:50",
+          "daysPresent": 30,
+          "volume": 238934,
+          "bars": 30
+        },
+        {
+          "slot": "16:55",
+          "daysPresent": 30,
+          "volume": 237342,
+          "bars": 30
+        },
+        {
+          "slot": "17:00",
+          "daysPresent": 30,
+          "volume": 251611,
+          "bars": 30
+        },
+        {
+          "slot": "17:05",
+          "daysPresent": 30,
+          "volume": 260294,
+          "bars": 30
+        },
+        {
+          "slot": "17:10",
+          "daysPresent": 30,
+          "volume": 260497,
+          "bars": 30
+        },
+        {
+          "slot": "17:15",
+          "daysPresent": 30,
+          "volume": 333786,
+          "bars": 30
+        },
+        {
+          "slot": "17:20",
+          "daysPresent": 30,
+          "volume": 309990,
+          "bars": 30
+        },
+        {
+          "slot": "17:25",
+          "daysPresent": 30,
+          "volume": 376186,
+          "bars": 30
+        },
+        {
+          "slot": "17:30",
+          "daysPresent": 1,
+          "volume": 0,
+          "bars": 1
+        }
+      ],
+      "firstDate": "2026-10-01",
+      "lastDate": "2026-11-11"
+    },
+    {
+      "symbol": "STLAM.MI",
+      "group": "added",
+      "timezone": "Europe/Rome",
+      "days": [
+        {
+          "date": "2026-10-01",
+          "barsVolume": 39705556,
+          "barsCount": 102,
+          "yahooVolume": 46592145,
+          "yahooClose": 3.8485000133514404,
+          "ratio": 0.8521942056971191
+        },
+        {
+          "date": "2026-10-02",
+          "barsVolume": 56754567,
+          "barsCount": 102,
+          "yahooVolume": 66363456,
+          "yahooClose": 3.882499933242798,
+          "ratio": 0.8552081284012695
+        },
+        {
+          "date": "2026-10-05",
+          "barsVolume": 35918744,
+          "barsCount": 102,
+          "yahooVolume": 41567104,
+          "yahooClose": 3.984499931335449,
+          "ratio": 0.8641146614399694
+        },
+        {
+          "date": "2026-10-06",
+          "barsVolume": 47818679,
+          "barsCount": 102,
+          "yahooVolume": 56006333,
+          "yahooClose": 4.068999767303467,
+          "ratio": 0.853808425557874
+        },
+        {
+          "date": "2026-10-07",
+          "barsVolume": 57443711,
+          "barsCount": 102,
+          "yahooVolume": 61217545,
+          "yahooClose": 4.124499797821045,
+          "ratio": 0.9383537186929009
+        },
+        {
+          "date": "2026-10-08",
+          "barsVolume": 61005934,
+          "barsCount": 102,
+          "yahooVolume": 46155128,
+          "yahooClose": 4.001500129699707,
+          "ratio": 1.3217585270265093
+        },
+        {
+          "date": "2026-10-09",
+          "barsVolume": 28153375,
+          "barsCount": 102,
+          "yahooVolume": 33989216,
+          "yahooClose": 4.002999782562256,
+          "ratio": 0.8283031594491618
+        },
+        {
+          "date": "2026-10-12",
+          "barsVolume": 33634270,
+          "barsCount": 102,
+          "yahooVolume": 40189190,
+          "yahooClose": 3.9695000648498535,
+          "ratio": 0.8368984296523518
+        },
+        {
+          "date": "2026-10-13",
+          "barsVolume": 27441709,
+          "barsCount": 102,
+          "yahooVolume": 31807249,
+          "yahooClose": 3.927999973297119,
+          "ratio": 0.8627501548467772
+        },
+        {
+          "date": "2026-10-14",
+          "barsVolume": 50354467,
+          "barsCount": 102,
+          "yahooVolume": 33933842,
+          "yahooClose": 3.8380000591278076,
+          "ratio": 1.4839011450574915
+        },
+        {
+          "date": "2026-10-15",
+          "barsVolume": 29706184,
+          "barsCount": 102,
+          "yahooVolume": 35635457,
+          "yahooClose": 3.878000020980835,
+          "ratio": 0.8336131061824182
+        },
+        {
+          "date": "2026-10-16",
+          "barsVolume": 31970562,
+          "barsCount": 102,
+          "yahooVolume": 40152001,
+          "yahooClose": 3.9865000247955322,
+          "ratio": 0.7962383244610898
+        },
+        {
+          "date": "2026-10-19",
+          "barsVolume": 48601070,
+          "barsCount": 102,
+          "yahooVolume": 56317836,
+          "yahooClose": 3.8575000762939453,
+          "ratio": 0.8629782934131205
+        },
+        {
+          "date": "2026-10-20",
+          "barsVolume": 39074961,
+          "barsCount": 102,
+          "yahooVolume": 44583244,
+          "yahooClose": 3.8320000171661377,
+          "ratio": 0.8764494795398917
+        },
+        {
+          "date": "2026-10-21",
+          "barsVolume": 28818355,
+          "barsCount": 102,
+          "yahooVolume": 32878714,
+          "yahooClose": 3.815000057220459,
+          "ratio": 0.8765049326442634
+        },
+        {
+          "date": "2026-10-22",
+          "barsVolume": 34002599,
+          "barsCount": 102,
+          "yahooVolume": 44215200,
+          "yahooClose": 3.7934999465942383,
+          "ratio": 0.7690251090122854
+        },
+        {
+          "date": "2026-10-23",
+          "barsVolume": 55976408,
+          "barsCount": 102,
+          "yahooVolume": 73172503,
+          "yahooClose": 3.555000066757202,
+          "ratio": 0.7649923906525379
+        },
+        {
+          "date": "2026-10-26",
+          "barsVolume": 35323924,
+          "barsCount": 102,
+          "yahooVolume": 44376828,
+          "yahooClose": 3.690999984741211,
+          "ratio": 0.7959992994542107
+        },
+        {
+          "date": "2026-10-27",
+          "barsVolume": 44052848,
+          "barsCount": 102,
+          "yahooVolume": 52353096,
+          "yahooClose": 3.7100000381469727,
+          "ratio": 0.8414564059401568
+        },
+        {
+          "date": "2026-10-28",
+          "barsVolume": 169267557,
+          "barsCount": 102,
+          "yahooVolume": 134472067,
+          "yahooClose": 4.2804999351501465,
+          "ratio": 1.2587562664594127
+        },
+        {
+          "date": "2026-10-29",
+          "barsVolume": 49666066,
+          "barsCount": 102,
+          "yahooVolume": 57662689,
+          "yahooClose": 4.21999979019165,
+          "ratio": 0.8613206713269996
+        },
+        {
+          "date": "2026-10-30",
+          "barsVolume": 34436952,
+          "barsCount": 102,
+          "yahooVolume": 44187337,
+          "yahooClose": 4.141499996185303,
+          "ratio": 0.7793398366595389
+        },
+        {
+          "date": "2026-11-02",
+          "barsVolume": 33620571,
+          "barsCount": 102,
+          "yahooVolume": 34506705,
+          "yahooClose": 4.239500045776367,
+          "ratio": 0.9743199473841389
+        },
+        {
+          "date": "2026-11-03",
+          "barsVolume": 32700055,
+          "barsCount": 102,
+          "yahooVolume": 40980223,
+          "yahooClose": 4.074999809265137,
+          "ratio": 0.7979472195649107
+        },
+        {
+          "date": "2026-11-04",
+          "barsVolume": 48514357,
+          "barsCount": 102,
+          "yahooVolume": 58508077,
+          "yahooClose": 4.15500020980835,
+          "ratio": 0.8291907628411714
+        },
+        {
+          "date": "2026-11-05",
+          "barsVolume": 39840991,
+          "barsCount": 102,
+          "yahooVolume": 51693793,
+          "yahooClose": 3.9684998989105225,
+          "ratio": 0.7707113115108423
+        },
+        {
+          "date": "2026-11-06",
+          "barsVolume": 58278303,
+          "barsCount": 102,
+          "yahooVolume": 39321770,
+          "yahooClose": 4.019999980926514,
+          "ratio": 1.4820874797853707
+        },
+        {
+          "date": "2026-11-09",
+          "barsVolume": 20431806,
+          "barsCount": 102,
+          "yahooVolume": 29534183,
+          "yahooClose": 3.9574999809265137,
+          "ratio": 0.6918019706182493
+        },
+        {
+          "date": "2026-11-10",
+          "barsVolume": 31101691,
+          "barsCount": 102,
+          "yahooVolume": 37520866,
+          "yahooClose": 3.8304998874664307,
+          "ratio": 0.8289171950348907
+        },
+        {
+          "date": "2026-11-11",
+          "barsVolume": 30219283,
+          "barsCount": 103,
+          "yahooVolume": 39727965,
+          "yahooClose": 3.7174999713897705,
+          "ratio": 0.7606551959054535
+        }
+      ],
+      "stats": {
+        "nDays": 30,
+        "median": 0.8468253058186379,
+        "min": 0.6918019706182493,
+        "max": 1.4839011450574915,
+        "shareIn060_075": 0.03333333333333333,
+        "meanBars": 102.03333333333333,
+        "expectedBars": 102,
+        "daysBelowExpectedBars": 0
+      },
+      "slots": [
+        {
+          "slot": "09:00",
+          "daysPresent": 30,
+          "volume": 0,
+          "bars": 30
+        },
+        {
+          "slot": "09:05",
+          "daysPresent": 30,
+          "volume": 24133342,
+          "bars": 30
+        },
+        {
+          "slot": "09:10",
+          "daysPresent": 30,
+          "volume": 20571518,
+          "bars": 30
+        },
+        {
+          "slot": "09:15",
+          "daysPresent": 30,
+          "volume": 16587433,
+          "bars": 30
+        },
+        {
+          "slot": "09:20",
+          "daysPresent": 30,
+          "volume": 20059691,
+          "bars": 30
+        },
+        {
+          "slot": "09:25",
+          "daysPresent": 30,
+          "volume": 13166430,
+          "bars": 30
+        },
+        {
+          "slot": "09:30",
+          "daysPresent": 30,
+          "volume": 12900810,
+          "bars": 30
+        },
+        {
+          "slot": "09:35",
+          "daysPresent": 30,
+          "volume": 11926608,
+          "bars": 30
+        },
+        {
+          "slot": "09:40",
+          "daysPresent": 30,
+          "volume": 11394484,
+          "bars": 30
+        },
+        {
+          "slot": "09:45",
+          "daysPresent": 30,
+          "volume": 9736955,
+          "bars": 30
+        },
+        {
+          "slot": "09:50",
+          "daysPresent": 30,
+          "volume": 9275561,
+          "bars": 30
+        },
+        {
+          "slot": "09:55",
+          "daysPresent": 30,
+          "volume": 9890751,
+          "bars": 30
+        },
+        {
+          "slot": "10:00",
+          "daysPresent": 30,
+          "volume": 12659263,
+          "bars": 30
+        },
+        {
+          "slot": "10:05",
+          "daysPresent": 30,
+          "volume": 11007004,
+          "bars": 30
+        },
+        {
+          "slot": "10:10",
+          "daysPresent": 30,
+          "volume": 12552596,
+          "bars": 30
+        },
+        {
+          "slot": "10:15",
+          "daysPresent": 30,
+          "volume": 20347281,
+          "bars": 30
+        },
+        {
+          "slot": "10:20",
+          "daysPresent": 30,
+          "volume": 11864838,
+          "bars": 30
+        },
+        {
+          "slot": "10:25",
+          "daysPresent": 30,
+          "volume": 11180105,
+          "bars": 30
+        },
+        {
+          "slot": "10:30",
+          "daysPresent": 30,
+          "volume": 9270617,
+          "bars": 30
+        },
+        {
+          "slot": "10:35",
+          "daysPresent": 30,
+          "volume": 10964006,
+          "bars": 30
+        },
+        {
+          "slot": "10:40",
+          "daysPresent": 30,
+          "volume": 9261931,
+          "bars": 30
+        },
+        {
+          "slot": "10:45",
+          "daysPresent": 30,
+          "volume": 7870092,
+          "bars": 30
+        },
+        {
+          "slot": "10:50",
+          "daysPresent": 30,
+          "volume": 7476264,
+          "bars": 30
+        },
+        {
+          "slot": "10:55",
+          "daysPresent": 30,
+          "volume": 8074973,
+          "bars": 30
+        },
+        {
+          "slot": "11:00",
+          "daysPresent": 30,
+          "volume": 8287137,
+          "bars": 30
+        },
+        {
+          "slot": "11:05",
+          "daysPresent": 30,
+          "volume": 6730403,
+          "bars": 30
+        },
+        {
+          "slot": "11:10",
+          "daysPresent": 30,
+          "volume": 6951579,
+          "bars": 30
+        },
+        {
+          "slot": "11:15",
+          "daysPresent": 30,
+          "volume": 9579769,
+          "bars": 30
+        },
+        {
+          "slot": "11:20",
+          "daysPresent": 30,
+          "volume": 7896020,
+          "bars": 30
+        },
+        {
+          "slot": "11:25",
+          "daysPresent": 30,
+          "volume": 7511213,
+          "bars": 30
+        },
+        {
+          "slot": "11:30",
+          "daysPresent": 30,
+          "volume": 7903248,
+          "bars": 30
+        },
+        {
+          "slot": "11:35",
+          "daysPresent": 30,
+          "volume": 8225301,
+          "bars": 30
+        },
+        {
+          "slot": "11:40",
+          "daysPresent": 30,
+          "volume": 7995024,
+          "bars": 30
+        },
+        {
+          "slot": "11:45",
+          "daysPresent": 30,
+          "volume": 5859730,
+          "bars": 30
+        },
+        {
+          "slot": "11:50",
+          "daysPresent": 30,
+          "volume": 5855559,
+          "bars": 30
+        },
+        {
+          "slot": "11:55",
+          "daysPresent": 30,
+          "volume": 6154524,
+          "bars": 30
+        },
+        {
+          "slot": "12:00",
+          "daysPresent": 30,
+          "volume": 7123574,
+          "bars": 30
+        },
+        {
+          "slot": "12:05",
+          "daysPresent": 30,
+          "volume": 9053589,
+          "bars": 30
+        },
+        {
+          "slot": "12:10",
+          "daysPresent": 30,
+          "volume": 7500329,
+          "bars": 30
+        },
+        {
+          "slot": "12:15",
+          "daysPresent": 30,
+          "volume": 6832845,
+          "bars": 30
+        },
+        {
+          "slot": "12:20",
+          "daysPresent": 30,
+          "volume": 6380613,
+          "bars": 30
+        },
+        {
+          "slot": "12:25",
+          "daysPresent": 30,
+          "volume": 5145848,
+          "bars": 30
+        },
+        {
+          "slot": "12:30",
+          "daysPresent": 30,
+          "volume": 10943409,
+          "bars": 30
+        },
+        {
+          "slot": "12:35",
+          "daysPresent": 30,
+          "volume": 7621799,
+          "bars": 30
+        },
+        {
+          "slot": "12:40",
+          "daysPresent": 30,
+          "volume": 7148557,
+          "bars": 30
+        },
+        {
+          "slot": "12:45",
+          "daysPresent": 30,
+          "volume": 5238389,
+          "bars": 30
+        },
+        {
+          "slot": "12:50",
+          "daysPresent": 30,
+          "volume": 5394826,
+          "bars": 30
+        },
+        {
+          "slot": "12:55",
+          "daysPresent": 30,
+          "volume": 5208814,
+          "bars": 30
+        },
+        {
+          "slot": "13:00",
+          "daysPresent": 30,
+          "volume": 7327151,
+          "bars": 30
+        },
+        {
+          "slot": "13:05",
+          "daysPresent": 30,
+          "volume": 5094914,
+          "bars": 30
+        },
+        {
+          "slot": "13:10",
+          "daysPresent": 30,
+          "volume": 5593394,
+          "bars": 30
+        },
+        {
+          "slot": "13:15",
+          "daysPresent": 30,
+          "volume": 5907021,
+          "bars": 30
+        },
+        {
+          "slot": "13:20",
+          "daysPresent": 30,
+          "volume": 6135899,
+          "bars": 30
+        },
+        {
+          "slot": "13:25",
+          "daysPresent": 30,
+          "volume": 5949915,
+          "bars": 30
+        },
+        {
+          "slot": "13:30",
+          "daysPresent": 30,
+          "volume": 5805169,
+          "bars": 30
+        },
+        {
+          "slot": "13:35",
+          "daysPresent": 30,
+          "volume": 5404009,
+          "bars": 30
+        },
+        {
+          "slot": "13:40",
+          "daysPresent": 30,
+          "volume": 4845305,
+          "bars": 30
+        },
+        {
+          "slot": "13:45",
+          "daysPresent": 30,
+          "volume": 5922212,
+          "bars": 30
+        },
+        {
+          "slot": "13:50",
+          "daysPresent": 30,
+          "volume": 5230335,
+          "bars": 30
+        },
+        {
+          "slot": "13:55",
+          "daysPresent": 30,
+          "volume": 5478166,
+          "bars": 30
+        },
+        {
+          "slot": "14:00",
+          "daysPresent": 30,
+          "volume": 6189114,
+          "bars": 30
+        },
+        {
+          "slot": "14:05",
+          "daysPresent": 30,
+          "volume": 4799590,
+          "bars": 30
+        },
+        {
+          "slot": "14:10",
+          "daysPresent": 30,
+          "volume": 5899087,
+          "bars": 30
+        },
+        {
+          "slot": "14:15",
+          "daysPresent": 30,
+          "volume": 6199021,
+          "bars": 30
+        },
+        {
+          "slot": "14:20",
+          "daysPresent": 30,
+          "volume": 7617432,
+          "bars": 30
+        },
+        {
+          "slot": "14:25",
+          "daysPresent": 30,
+          "volume": 28653878,
+          "bars": 30
+        },
+        {
+          "slot": "14:30",
+          "daysPresent": 30,
+          "volume": 74880019,
+          "bars": 30
+        },
+        {
+          "slot": "14:35",
+          "daysPresent": 30,
+          "volume": 12080685,
+          "bars": 30
+        },
+        {
+          "slot": "14:40",
+          "daysPresent": 30,
+          "volume": 13740815,
+          "bars": 30
+        },
+        {
+          "slot": "14:45",
+          "daysPresent": 30,
+          "volume": 13994157,
+          "bars": 30
+        },
+        {
+          "slot": "14:50",
+          "daysPresent": 30,
+          "volume": 14919249,
+          "bars": 30
+        },
+        {
+          "slot": "14:55",
+          "daysPresent": 30,
+          "volume": 12465949,
+          "bars": 30
+        },
+        {
+          "slot": "15:00",
+          "daysPresent": 30,
+          "volume": 12389247,
+          "bars": 30
+        },
+        {
+          "slot": "15:05",
+          "daysPresent": 30,
+          "volume": 11561990,
+          "bars": 30
+        },
+        {
+          "slot": "15:10",
+          "daysPresent": 30,
+          "volume": 10228183,
+          "bars": 30
+        },
+        {
+          "slot": "15:15",
+          "daysPresent": 30,
+          "volume": 12691860,
+          "bars": 30
+        },
+        {
+          "slot": "15:20",
+          "daysPresent": 30,
+          "volume": 13268839,
+          "bars": 30
+        },
+        {
+          "slot": "15:25",
+          "daysPresent": 30,
+          "volume": 13015270,
+          "bars": 30
+        },
+        {
+          "slot": "15:30",
+          "daysPresent": 30,
+          "volume": 39860081,
+          "bars": 30
+        },
+        {
+          "slot": "15:35",
+          "daysPresent": 30,
+          "volume": 23425276,
+          "bars": 30
+        },
+        {
+          "slot": "15:40",
+          "daysPresent": 30,
+          "volume": 21555135,
+          "bars": 30
+        },
+        {
+          "slot": "15:45",
+          "daysPresent": 30,
+          "volume": 24659902,
+          "bars": 30
+        },
+        {
+          "slot": "15:50",
+          "daysPresent": 30,
+          "volume": 20859358,
+          "bars": 30
+        },
+        {
+          "slot": "15:55",
+          "daysPresent": 30,
+          "volume": 20397753,
+          "bars": 30
+        },
+        {
+          "slot": "16:00",
+          "daysPresent": 30,
+          "volume": 25448309,
+          "bars": 30
+        },
+        {
+          "slot": "16:05",
+          "daysPresent": 30,
+          "volume": 23793523,
+          "bars": 30
+        },
+        {
+          "slot": "16:10",
+          "daysPresent": 30,
+          "volume": 19594016,
+          "bars": 30
+        },
+        {
+          "slot": "16:15",
+          "daysPresent": 30,
+          "volume": 18948547,
+          "bars": 30
+        },
+        {
+          "slot": "16:20",
+          "daysPresent": 30,
+          "volume": 17364250,
+          "bars": 30
+        },
+        {
+          "slot": "16:25",
+          "daysPresent": 30,
+          "volume": 17506580,
+          "bars": 30
+        },
+        {
+          "slot": "16:30",
+          "daysPresent": 30,
+          "volume": 16353247,
+          "bars": 30
+        },
+        {
+          "slot": "16:35",
+          "daysPresent": 30,
+          "volume": 37635049,
+          "bars": 30
+        },
+        {
+          "slot": "16:40",
+          "daysPresent": 30,
+          "volume": 40145242,
+          "bars": 30
+        },
+        {
+          "slot": "16:45",
+          "daysPresent": 30,
+          "volume": 13079140,
+          "bars": 30
+        },
+        {
+          "slot": "16:50",
+          "daysPresent": 30,
+          "volume": 15365212,
+          "bars": 30
+        },
+        {
+          "slot": "16:55",
+          "daysPresent": 30,
+          "volume": 14790216,
+          "bars": 30
+        },
+        {
+          "slot": "17:00",
+          "daysPresent": 30,
+          "volume": 17024677,
+          "bars": 30
+        },
+        {
+          "slot": "17:05",
+          "daysPresent": 30,
+          "volume": 17253258,
+          "bars": 30
+        },
+        {
+          "slot": "17:10",
+          "daysPresent": 30,
+          "volume": 15731438,
+          "bars": 30
+        },
+        {
+          "slot": "17:15",
+          "daysPresent": 30,
+          "volume": 17848827,
+          "bars": 30
+        },
+        {
+          "slot": "17:20",
+          "daysPresent": 30,
+          "volume": 20668433,
+          "bars": 30
+        },
+        {
+          "slot": "17:25",
+          "daysPresent": 30,
+          "volume": 26525559,
+          "bars": 30
+        },
+        {
+          "slot": "17:30",
+          "daysPresent": 1,
+          "volume": 0,
+          "bars": 1
+        }
+      ],
+      "firstDate": "2026-10-01",
+      "lastDate": "2026-11-11"
+    }
+  ]
+}

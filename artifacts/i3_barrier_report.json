@@ -1,0 +1,473 @@
+{
+  "generatedAt": "2026-11-14T16:49:44.103Z",
+  "params": {
+    "horizon": 3600,
+    "horizonMode": "fixed",
+    "markHorizon": 3600,
+    "beTrigger": null,
+    "boot": 10000,
+    "pairKey": "ts-norm|dir",
+    "validatedVariant": "markRReplay"
+  },
+  "gates": [
+    {
+      "sigla": "G1",
+      "label": "Liquidita",
+      "condizione": "liqEur20d >= soglia; se liqEur assente o barre complete < 20 PASSA (cade in G2)",
+      "soglia": "LIQ_MIN_EUR 3.000.000 EUR; LIQ_BARS_REQUIRED 20",
+      "ref": "calculator.ts:2153-2162"
+    },
+    {
+      "sigla": "G2",
+      "label": "Dati",
+      "condizione": "ORB high/low, prezzo>0, gap%, ATR14>0, ADR14>0, C_ieri>0, volume medio>0, liqEur>0, barre complete >= 20",
+      "soglia": "nessuna soglia numerica",
+      "ref": "calculator.ts:2164-2186"
+    },
+    {
+      "sigla": "G3",
+      "label": "Orario ORB",
+      "condizione": "non prima della chiusura dell ORB",
+      "soglia": "marketTime.isBeforeOrb",
+      "ref": "calculator.ts:2188-2192"
+    },
+    {
+      "sigla": "G4",
+      "label": "Estensione",
+      "condizione": "estensione oltre il trigger <= EST_MAX",
+      "soglia": "EST_MAX 0.004 (0.40%)",
+      "ref": "calculator.ts:2194-2200"
+    },
+    {
+      "sigla": "G5",
+      "label": "Freschezza",
+      "condizione": "minuti da Tb (prima rottura) <= FRESH_MIN",
+      "soglia": "FRESH_MIN 60 min",
+      "ref": "calculator.ts:2202-2214"
+    },
+    {
+      "sigla": "G6",
+      "label": "Target",
+      "condizione": "T1 non ancora raggiunto in sessione (H_sess < T1 long, L_sess > T1 short)",
+      "soglia": "T1",
+      "ref": "calculator.ts:2216-2225"
+    },
+    {
+      "sigla": "G7",
+      "label": "ADR",
+      "condizione": "consumo ADR14 <= ADR_MAX",
+      "soglia": "ADR_MAX 0.60",
+      "ref": "calculator.ts:2227-2234"
+    },
+    {
+      "sigla": "G8",
+      "label": "Stop distanza",
+      "condizione": "dS <= LMAX / min(LEVE)",
+      "soglia": "LMAX 0.10 / 10 = 0.01 (1.0%)",
+      "ref": "calculator.ts:2236-2243"
+    },
+    {
+      "sigla": "G9",
+      "label": "Leva e barriera",
+      "condizione": "esiste L in LEVE con dS*L <= LMAX e 1/L >= dS+BUF_BAR, e la barriera raccomandata dista >= BUF_BAR*E dallo stop",
+      "soglia": "LEVE [10,15,20,25]; BUF_BAR 0.001 (0.1%)",
+      "ref": "calculator.ts:2245-2268"
+    },
+    {
+      "sigla": "G10",
+      "label": "Stop gia toccato",
+      "condizione": "prezzo corrente non oltre lo stop",
+      "soglia": "eps",
+      "ref": "calculator.ts:2270-2278"
+    },
+    {
+      "sigla": "G11",
+      "label": "Score",
+      "condizione": "score senza liquidita >= minScore",
+      "soglia": "MIN_SCORE_EU 48 / MIN_SCORE_US 58",
+      "ref": "calculator.ts:2280-2288"
+    },
+    {
+      "sigla": "G12",
+      "label": "T1 vs ADR residuo",
+      "condizione": "distanza T1 <= spazio ADR residuo",
+      "soglia": "ADR_MAX + EPSILON",
+      "ref": "calculator.ts:2290-2299"
+    },
+    {
+      "sigla": "G13",
+      "label": "Freshness dati",
+      "condizione": "quote non stantia",
+      "soglia": "soglia minuti di checkQuoteStaleness; flag STALENESS_USE_MARKET_TS",
+      "ref": "calculator.ts:2301-2307"
+    }
+  ],
+  "validation": {
+    "expectedSumR": {
+      "0": -43.953,
+      "15": -57.432,
+      "20": -60.546
+    },
+    "reproducedSumR": {
+      "0": -43.953372472609416,
+      "15": -57.432021874957876,
+      "20": -60.5458497164472
+    },
+    "tolerance": 0.1
+  },
+  "i3ter": {
+    "BE off": {
+      "0": {
+        "n": 123,
+        "nResolved": 123,
+        "nCensored": 0,
+        "pctCensored": 0,
+        "meanR": -0.3254169289930209,
+        "sdR": 0.6325669895109437,
+        "hitRate": 0.24390243902439024,
+        "meanWin": 0.49629736093056326,
+        "meanLoss": 0.5904860547748223,
+        "wlRatio": 0.8404895541857,
+        "wlRequired": 3.1,
+        "ci95": [
+          -0.5330059728929409,
+          -0.08698040106851039
+        ],
+        "excludesZero": true,
+        "nBlocks": 13,
+        "exits": {
+          "time": 85,
+          "stop": 32,
+          "t1": 6
+        },
+        "holdingMedianMin": 60,
+        "holdingP75Min": 60,
+        "holdingP90Min": 60,
+        "sameBarAmbiguous": 0,
+        "meanMarkR": -0.35734449164723103,
+        "deltaVsMark": 0.03192756265421015
+      },
+      "15": {
+        "n": 131,
+        "nResolved": 131,
+        "nCensored": 0,
+        "pctCensored": 0,
+        "meanR": -0.38905798666242103,
+        "sdR": 0.6549786110139095,
+        "hitRate": 0.1984732824427481,
+        "meanWin": 0.5981652297243089,
+        "meanLoss": 0.6335132592915161,
+        "wlRatio": 0.9442031732583807,
+        "wlRequired": 4.038461538461538,
+        "ci95": [
+          -0.6006194552423745,
+          -0.13561310733873091
+        ],
+        "excludesZero": true,
+        "nBlocks": 13,
+        "exits": {
+          "time": 83,
+          "stop": 41,
+          "t1": 7
+        },
+        "holdingMedianMin": 60,
+        "holdingP75Min": 60,
+        "holdingP90Min": 60,
+        "sameBarAmbiguous": 0,
+        "meanMarkR": -0.43841238072486927,
+        "deltaVsMark": 0.04935439406244824
+      },
+      "20": {
+        "n": 131,
+        "nResolved": 131,
+        "nCensored": 0,
+        "pctCensored": 0,
+        "meanR": -0.4116229588111308,
+        "sdR": 0.6659001941021,
+        "hitRate": 0.183206106870229,
+        "meanWin": 0.6675927944320835,
+        "meanLoss": 0.6536900436507302,
+        "wlRatio": 1.0212681085116566,
+        "wlRequired": 4.458333333333333,
+        "ci95": [
+          -0.6162645750863649,
+          -0.14883945629018425
+        ],
+        "excludesZero": true,
+        "nBlocks": 13,
+        "exits": {
+          "time": 82,
+          "stop": 42,
+          "t1": 7
+        },
+        "holdingMedianMin": 60,
+        "holdingP75Min": 60,
+        "holdingP90Min": 60,
+        "sameBarAmbiguous": 0,
+        "meanMarkR": -0.46218205890417713,
+        "deltaVsMark": 0.050559100093046316
+      }
+    },
+    "BE 0.5": {
+      "0": {
+        "n": 123,
+        "nResolved": 123,
+        "nCensored": 0,
+        "pctCensored": 0,
+        "meanR": -0.31826290858869294,
+        "sdR": 0.6321870444377194,
+        "hitRate": 0.18699186991869918,
+        "meanWin": 0.6119344490742311,
+        "meanLoss": 0.6490345132331287,
+        "wlRatio": 0.9428380719322834,
+        "wlRequired": 4.3478260869565215,
+        "ci95": [
+          -0.5267319669701604,
+          -0.08098584469653942
+        ],
+        "excludesZero": true,
+        "nBlocks": 13,
+        "exits": {
+          "be": 18,
+          "time": 67,
+          "stop": 32,
+          "t1": 6
+        },
+        "holdingMedianMin": 60,
+        "holdingP75Min": 60,
+        "holdingP90Min": 60,
+        "sameBarAmbiguous": 0,
+        "meanMarkR": -0.35734449164723103,
+        "deltaVsMark": 0.039081583058538094
+      },
+      "15": {
+        "n": 131,
+        "nResolved": 131,
+        "nCensored": 0,
+        "pctCensored": 0,
+        "meanR": -0.38648951212555194,
+        "sdR": 0.6535423134005565,
+        "hitRate": 0.16030534351145037,
+        "meanWin": 0.7045768476223495,
+        "meanLoss": 0.6886972619843857,
+        "wlRatio": 1.0230574252498246,
+        "wlRequired": 5.238095238095238,
+        "ci95": [
+          -0.5997285100030749,
+          -0.13372937952239167
+        ],
+        "excludesZero": true,
+        "nBlocks": 13,
+        "exits": {
+          "be": 15,
+          "time": 68,
+          "stop": 41,
+          "t1": 7
+        },
+        "holdingMedianMin": 55,
+        "holdingP75Min": 60,
+        "holdingP90Min": 60,
+        "sameBarAmbiguous": 0,
+        "meanMarkR": -0.43841238072486927,
+        "deltaVsMark": 0.05192286859931733
+      },
+      "20": {
+        "n": 131,
+        "nResolved": 131,
+        "nCensored": 0,
+        "pctCensored": 0,
+        "meanR": -0.4063021054352476,
+        "sdR": 0.6654118082198012,
+        "hitRate": 0.15267175572519084,
+        "meanWin": 0.7654688823000533,
+        "meanLoss": 0.6993362597756992,
+        "wlRatio": 1.0945648414477536,
+        "wlRequired": 5.55,
+        "ci95": [
+          -0.61323962566526,
+          -0.14745869222696192
+        ],
+        "excludesZero": true,
+        "nBlocks": 13,
+        "exits": {
+          "time": 69,
+          "be": 13,
+          "stop": 42,
+          "t1": 7
+        },
+        "holdingMedianMin": 55,
+        "holdingP75Min": 60,
+        "holdingP90Min": 60,
+        "sameBarAmbiguous": 0,
+        "meanMarkR": -0.46218205890417713,
+        "deltaVsMark": 0.055879953468929544
+      }
+    }
+  },
+  "i3quater": {
+    "shift15": {
+      "nPaired": 86,
+      "nOnlyNew": 45,
+      "nOnlyOld": 37,
+      "meanDiffMark": -0.09294477258819091,
+      "ci95DiffMark": [
+        -0.16045145771909777,
+        0.001291081923549927
+      ],
+      "excludesZeroMark": false,
+      "meanDiffBarrier": -0.06985849454547091,
+      "ci95DiffBarrier": [
+        -0.11883899805303184,
+        -0.0020931123638582546
+      ],
+      "excludesZeroBarrier": true,
+      "nBlocks": 12,
+      "meanRNewBarrier": -0.339465296981959,
+      "meanRNewMark": -0.379201594745822,
+      "newBySymbol": {
+        "SAP.DE": 25,
+        "BAMI.MI": 18,
+        "RHM.DE": 2
+      },
+      "newByDate": {
+        "2026-10-02": 1,
+        "2026-10-05": 10,
+        "2026-10-06": 2,
+        "2026-10-07": 6,
+        "2026-10-08": 4,
+        "2026-10-09": 4,
+        "2026-10-13": 3,
+        "2026-10-14": 4,
+        "2026-10-16": 5,
+        "2026-10-21": 2,
+        "2026-10-26": 1,
+        "2026-10-28": 2,
+        "2026-11-03": 1
+      }
+    },
+    "shift20": {
+      "nPaired": 86,
+      "nOnlyNew": 45,
+      "nOnlyOld": 37,
+      "meanDiffMark": -0.11610774174325635,
+      "ci95DiffMark": [
+        -0.18602624233353013,
+        -0.01176266481704698
+      ],
+      "excludesZeroMark": true,
+      "meanDiffBarrier": -0.09934456923194467,
+      "ci95DiffBarrier": [
+        -0.15996156835355815,
+        -0.012676072920079776
+      ],
+      "excludesZeroBarrier": true,
+      "nBlocks": 12,
+      "meanRNewBarrier": -0.3488032731696088,
+      "meanRNewMark": -0.40413076128257047,
+      "newBySymbol": {
+        "SAP.DE": 25,
+        "BAMI.MI": 18,
+        "RHM.DE": 2
+      },
+      "newByDate": {
+        "2026-10-02": 1,
+        "2026-10-05": 10,
+        "2026-10-06": 2,
+        "2026-10-07": 6,
+        "2026-10-08": 4,
+        "2026-10-09": 4,
+        "2026-10-13": 3,
+        "2026-10-14": 4,
+        "2026-10-16": 5,
+        "2026-10-21": 2,
+        "2026-10-26": 1,
+        "2026-10-28": 2,
+        "2026-11-03": 1
+      }
+    }
+  },
+  "i3quinquies": {
+    "shifts": {
+      "0": {
+        "tInterval": {
+          "nDays": 13,
+          "df": 12,
+          "meanDaily": -0.231043217137217,
+          "sdDaily": 0.7234458268278453,
+          "se": 0.20064777104986448,
+          "tCrit": 2.179,
+          "lo": -0.6682547102548717,
+          "hi": 0.20616827598043766,
+          "excludesZero": false
+        },
+        "bootstrap": {
+          "lo": -0.5330059728929409,
+          "hi": -0.08698040106851039
+        },
+        "cambiaVerdetto": true
+      },
+      "15": {
+        "tInterval": {
+          "nDays": 13,
+          "df": 12,
+          "meanDaily": -0.24866829880671487,
+          "sdDaily": 0.7413882936580249,
+          "se": 0.20562411598559713,
+          "tCrit": 2.179,
+          "lo": -0.696723247539331,
+          "hi": 0.19938664992590122,
+          "excludesZero": false
+        },
+        "bootstrap": {
+          "lo": -0.6006194552423745,
+          "hi": -0.13561310733873091
+        },
+        "cambiaVerdetto": true
+      },
+      "20": {
+        "tInterval": {
+          "nDays": 13,
+          "df": 12,
+          "meanDaily": -0.2450182789796459,
+          "sdDaily": 0.7582483107219816,
+          "se": 0.21030024337246586,
+          "tCrit": 2.179,
+          "lo": -0.703262509288249,
+          "hi": 0.21322595132895716,
+          "excludesZero": false
+        },
+        "bootstrap": {
+          "lo": -0.6162645750863649,
+          "hi": -0.14883945629018425
+        },
+        "cambiaVerdetto": true
+      }
+    },
+    "perSymbol": {
+      "SAP.DE": {
+        "n": 65,
+        "meanR": -0.4444997432535472,
+        "sdR": 0.6357354530331141,
+        "hitRate": 0.12307692307692308,
+        "stopPctMedian": 0.9109482174620366,
+        "move1hPctMean": 0.6281256641830707
+      },
+      "BAMI.MI": {
+        "n": 52,
+        "meanR": -0.09872690297425003,
+        "sdR": 0.5709756642594664,
+        "hitRate": 0.4230769230769231,
+        "stopPctMedian": 0.7859099804305322,
+        "move1hPctMean": 0.2779237173892708
+      },
+      "RHM.DE": {
+        "n": 6,
+        "meanR": -1,
+        "sdR": 0,
+        "hitRate": 0,
+        "stopPctMedian": 0.9796875000000038,
+        "move1hPctMean": 1.067707935969035
+      }
+    }
+  }
+}

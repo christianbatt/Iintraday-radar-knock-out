@@ -1,0 +1,113 @@
+{
+  "frictionPct": 0.1,
+  "A": {
+    "label": "A",
+    "n": 0,
+    "meanRGross": null,
+    "meanRNet": null,
+    "hit": null,
+    "fMed": null,
+    "days": 0
+  },
+  "B": {
+    "n": 5543,
+    "meanRGross": -0.03070860103154478,
+    "meanRNet": -0.13204906321734466,
+    "hit": 0.36821215948042574,
+    "fMed": 0.08398556349806968,
+    "days": 30
+  },
+  "C": {
+    "n": 123,
+    "meanRGross": -0.49269013215172364,
+    "meanRNet": -0.6118320081856418,
+    "hit": 0.1951219512195122,
+    "fMed": 0.11893086816720293,
+    "days": 13
+  },
+  "D": {
+    "n": 5666,
+    "meanRGross": -0.04073749766546355,
+    "meanRNet": -0.14246440070959718,
+    "hit": 0.3644546417225556,
+    "fMed": 0.08681331751015893,
+    "days": 30
+  },
+  "gates": [
+    {
+      "gate": "G2",
+      "nTrain": 71,
+      "deltaNetTrain": 0.049887031248950664,
+      "deltaGrossTrain": 0.19080201834356042,
+      "nHold": 120,
+      "deltaNetHold": -2.024612479290635,
+      "poolHoldId": null
+    },
+    {
+      "gate": "G4",
+      "nTrain": 1248,
+      "deltaNetTrain": 1.555183154015943,
+      "deltaGrossTrain": 1.5309382488354895,
+      "nHold": 589,
+      "deltaNetHold": -1.3087192714229996,
+      "poolHoldId": null
+    },
+    {
+      "gate": "G7",
+      "nTrain": 243,
+      "deltaNetTrain": -0.18241108021921837,
+      "deltaGrossTrain": -0.2298641825400174,
+      "nHold": 137,
+      "deltaNetHold": -2.4653628183502567,
+      "poolHoldId": null
+    },
+    {
+      "gate": "G8",
+      "nTrain": 1140,
+      "deltaNetTrain": 0.20739026913126168,
+      "deltaGrossTrain": 0.16645630861855248,
+      "nHold": 899,
+      "deltaNetHold": -1.9708294696050186,
+      "poolHoldId": null
+    },
+    {
+      "gate": "G10",
+      "nTrain": 268,
+      "deltaNetTrain": -0.327250684602269,
+      "deltaGrossTrain": -0.32567762831869296,
+      "nHold": 34,
+      "deltaNetHold": -2.441950910267665,
+      "poolHoldId": null
+    },
+    {
+      "gate": "G11",
+      "nTrain": 642,
+      "deltaNetTrain": 0.1261067954615085,
+      "deltaGrossTrain": 0.1304059630722837,
+      "nHold": 153,
+      "deltaNetHold": -2.0070485544625436,
+      "poolHoldId": null
+    }
+  ],
+  "split": {
+    "cut": 20,
+    "dates": 30,
+    "holdoutFirst": "2026-10-29"
+  },
+  "bestGate": {
+    "gate": "G4",
+    "deltaTrain": 1.555183154015943
+  },
+  "holdout": {
+    "meanRNet": 0.15964325563858953,
+    "baseline": 1.4683625270615892,
+    "baselineN": 2,
+    "trainN": 121,
+    "held": false,
+    "nullP95": -0.28004777319999125,
+    "nullMean": -0.36287256584208405,
+    "pValue": 0.000999000999000999,
+    "beatsNull": true
+  },
+  "verdict": "rejected"
+}

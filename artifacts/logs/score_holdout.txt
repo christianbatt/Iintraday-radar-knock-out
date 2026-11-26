@@ -1,0 +1,213 @@
+score_deciles — inizio 2026-11-16T21:30:39.419Z (Europe/Rome: 2026-11-16 22:30:39)
+parametri: horizon=resolution be-trigger=off decili=10 min-n=15 boot=2000 shift-primario=0 include-blocked
+
+  (shift 0: 25443 righe, 0 non emesse, 15762 scartate per campi mancanti, 0 senza punteggio, 9681 valide)
+  (shift 15: 25416 righe, 0 non emesse, 15902 scartate per campi mancanti, 0 senza punteggio, 9514 valide)
+  (shift 20: 25407 righe, 0 non emesse, 15980 scartate per campi mancanti, 0 senza punteggio, 9427 valide)
+
+campo punteggio: 'score'  (28622/28622 setup con punteggio)
+
+=== FASE 0 — validazione (riproduzione dei sumR pubblicati, sempre sui soli emessi) ===
+  direct       sumR: 0=0.000 (n=22)  15=0.000 (n=22)  20=0.000 (n=22)  
+  markRReplay  sumR: 0=-3.498 (n=22)  15=-4.671 (n=22)  20=-4.216 (n=22)  <<< MATCH
+  lastBefore   sumR: 0=-3.498 (n=22)  15=-4.671 (n=22)  20=-4.216 (n=22)  <<< MATCH
+  firstAfter   sumR: 0=-3.498 (n=22)  15=-4.671 (n=22)  20=-4.216 (n=22)  <<< MATCH
+  nearest      sumR: 0=-3.498 (n=22)  15=-4.671 (n=22)  20=-4.216 (n=22)  <<< MATCH
+[COPERTURA] completa: 0: 9681/n/a  15: 9514/n/a  20: 9427/n/a
+
+  variante validata: markRReplay
+  sumR riprodotti: 0=-3.498, 15=-4.671, 20=-4.216
+
+=== FASE 4 — divergenza fra mark (fisso) e barriera (path-dependent) ===
+  shift 0   n=9477 segno diverso=2380 (25.1%)  |mark-barriera| medio=0.872  meanMark=-0.041  meanBarriera=-0.184
+  shift 15  n=9311 segno diverso=2312 (24.8%)  |mark-barriera| medio=0.870  meanMark=-0.044  meanBarriera=-0.186
+  shift 20  n=9225 segno diverso=2282 (24.7%)  |mark-barriera| medio=0.871  meanMark=-0.044  meanBarriera=-0.187
+
+=== FASE 5 — R per motivo (shift 0) ===
+  motivo                                                 n     ris   meanR     hit%    CI95
+  orario:G7:RANGE ESAURITO                               3393  3392  -0.657    13.2    [-0.803, -0.481]
+  leva:G4:TRIGGER GIÀ SUPERATO                           2655  2555  0.690     65.0    [0.394, 0.941]
+  barriera:G8:STOP TROPPO LONTANO                        1747  1673  -0.542    17.6    [-0.774, -0.279]
+  vari:G11:PUNTEGGIO SOTTO SOGLIA                        1316  1287  -0.097    34.7    [-0.503, 0.304]
+  REEMISSIONE                                            221   221   -0.576    16.3    [-0.973, -0.057]
+  struttura:G2:DATI INSUFFICIENTI                        201   201   0.138     43.8    [-0.046, 0.346]
+  vari:G10:STOP GIÀ RAGGIUNTO                            126   126   -1.000    0.0     [-1.000, -1.000]
+  EMESSO                                                 22    22    -0.764    9.1     [-1.000, -0.381]
+
+=== FASE 8 — R condizionato al fill (shift 0) ===
+  [--exclude-g4] setup leva:G4 esclusi: 2655
+  setup: 7026   con fill: 6359 (90.5%)   noFill: 667 (9.5%)
+  barre al fill: mediana=7.0  p90=206.2
+  distR (trigger davanti al mercato): media=0.362  mediana=0.261  p10=-0.211  p90=1.033
+  --- per motivo ---
+  motivo                                         n      fill%   distR med  meanR fill  hit%    CI95
+  orario:G7:RANGE ESAURITO                       3393   88.3    0.323      -0.458      20.8    [-0.676, -0.192]
+  barriera:G8:STOP TROPPO LONTANO                1747   89.6    0.278      -0.230      29.6    [-0.527, 0.109]
+  vari:G11:PUNTEGGIO SOTTO SOGLIA                1316   96.7    0.136      0.298       49.9    [-0.148, 0.737]
+  REEMISSIONE                                    221    88.2    0.147      -0.160      32.3    [-0.719, 0.489]
+  struttura:G2:DATI INSUFFICIENTI                201    100.0   0.000      0.229       47.3    [0.019, 0.453]
+  vari:G10:STOP GIÀ RAGGIUNTO                    126    87.3    1.285      0.276       49.1    [-0.200, 0.913]
+  EMESSO                                         22     90.9    0.196      -0.480      20.0    [-0.882, 0.095]
+  --- confronto ---
+  meanR "come se" (tutti):        -0.506
+  meanR con fill (solo fillati):  -0.209
+  meanR dei noFill "come se":     -1.000   (n=655)
+
+=== FASE 20 — placebo time-matched (shift 0, non-G4) ===
+  orizzonte   n      meanR     placebo   diff     CI95 diff
+  1h          6359   -0.035    0.037     -0.072   [-0.136, -0.007]
+  [1h] orizzonte intero disponibile: 6359/6359  placebo senza draw valida: 0  risk nullo: 0
+  2h          6358   -0.030    0.071     -0.101   [-0.179, -0.023]
+  [2h] orizzonte intero disponibile: 6358/6359  placebo senza draw valida: 0  risk nullo: 0
+  4h          6317   -0.050    0.099     -0.149   [-0.233, -0.060]
+  [4h] orizzonte intero disponibile: 6317/6359  placebo senza draw valida: 0  risk nullo: 0
+  1d          6136   -0.143    0.021     -0.164   [-0.246, -0.081]
+  [1d] orizzonte intero disponibile: 6136/6359  placebo senza draw valida: 0  risk nullo: 0
+  2d          5947   -0.357    -0.222    -0.135   [-0.238, -0.033]
+  [2d] orizzonte intero disponibile: 5947/6359  placebo senza draw valida: 0  risk nullo: 0
+  3d          5623   -0.473    -0.294    -0.179   [-0.275, -0.069]
+  [3d] orizzonte intero disponibile: 5623/6359  placebo senza draw valida: 0  risk nullo: 0
+  5d          5623   -0.645    -0.438    -0.207   [-0.293, -0.127]
+  [5d] orizzonte intero disponibile: 5623/6359  placebo senza draw valida: 0  risk nullo: 0
+  10d         4327   -0.832    -0.677    -0.155   [-0.229, -0.073]
+  [10d] orizzonte intero disponibile: 4327/6359  placebo senza draw valida: 0  risk nullo: 0
+  --- diagnostica drift di sessione ---
+  sessione     n setup  4h drift (bp)  meanR reale  placebo
+  2026-08-24   21       -35.0          0.738        0.807
+  2026-08-25   263      -27.6          -0.121       0.013
+  2026-08-26   246      59.6           -0.240       -0.122
+  2026-08-27   191      20.6           0.185        0.380
+  2026-08-28   184      -11.6          0.257        -0.001
+  2026-08-31   192      -5.8           -0.274       0.136
+  2026-09-01   252      -16.5          0.052        0.162
+  2026-09-02   128      39.9           0.240        0.233
+  2026-09-03   202      44.3           0.065        0.426
+  2026-09-04   275      -30.1          0.517        0.331
+  2026-09-07   336      -10.5          -0.386       -0.141
+  2026-09-08   313      32.4           -0.032       0.317
+  2026-09-09   116      -43.2          0.000        -0.129
+  2026-09-10   242      -9.6           -0.181       0.089
+  2026-09-11   198      2.5            0.066        -0.032
+  2026-09-14   229      -28.2          0.075        -0.136
+  2026-09-15   181      20.3           -0.641       0.012
+  2026-09-16   181      3.5            -0.016       0.078
+  2026-09-17   336      8.9            -0.113       0.123
+  2026-09-18   241      -84.6          0.416        0.376
+  2026-09-21   291      28.4           0.404        0.379
+  2026-09-22   271      8.1            0.091        0.044
+  2026-09-23   244      11.4           -0.299       0.288
+  2026-09-24   261      16.7           -0.292       -0.044
+  2026-09-25   229      -9.8           -0.191       -0.073
+  2026-09-28   324      5.5            -0.437       0.026
+  2026-09-29   189      -22.8          0.099        0.103
+  2026-09-30   181      -62.3          -0.477       -0.405
+  correlazione n setup vs drift: 0.203  (n sessioni=28)
+
+=== FASE 21 — fill conservativo (shift 0, non-G4) ===
+  variante   n      meanR     hit%    CI95
+  R2         6190   -0.277    30.2    [-0.471, -0.064]
+  R4         6190   -0.300    30.2    [-0.493, -0.087]
+  --- differenze appaiate ---
+  coppia     meanΔ    n      CI95
+  R2-R4      0.022    6190   [0.019, 0.026]
+  --- split ---
+  gruppo             n      meanR R2   meanR R4   meanΔ
+  barsToFill > 0     6190   -0.277     -0.300     0.022
+  distR < 0          1725   -0.258     -0.302     0.043
+  distR >= 0         4465   -0.284     -0.299     0.014
+  barsToFill: ==0 0  ==1 2332   (bucket 0-1: 2332)
+  distR < 0: n=1725  meanR fill-conditional=-0.069   (distR da close della barra di decisione)
+
+=== FASE 22 — ingresso immediato (shift 0, non-G4) ===
+  n=5329  meanR=-0.270  hit%=23.7  CI95=[-0.470, -0.039]
+  scarti: oltre target 20  oltre stop 535  riskNow < 0.2R 383  riskNow nullo 0
+
+=== FASE 17 — decomposizione del R fill-conditional (shift 0, non-G4) ===
+  variante   n      meanR     hit%    CI95
+  R0         6190   -0.209    30.4    [-0.403, 0.008]
+  R1         6190   -0.205    30.6    [-0.401, 0.012]
+  R2         6190   -0.276    30.4    [-0.469, -0.063]
+  R3         6190   -0.272    30.6    [-0.466, -0.062]
+  --- differenze appaiate ---
+  coppia     meanΔ    n      CI95
+  R0-R1      -0.004   6190   [-0.014, 0.003]
+  R0-R2      0.067    6190   [0.053, 0.083]
+  R0-R3      0.063    6190   [0.045, 0.081]
+  --- diagnostica ---
+  gap-through: 33.8%   gap medio: 0.197R
+  barra di fill tocca: stop 1.3%  target 0.7%  entrambi 0.0%
+  fill gia' oltre una barriera: 0.0%
+
+=== FASE 18 — term structure con censura vera (shift 0, non-G4) ===
+  orizzonte   n      meanR     CI95               placebo   diff     CI95 diff
+  1h          6359   -0.035    [-0.100, 0.031] -0.026    -0.009   [-0.073, 0.055]
+  2h          6358   -0.030    [-0.112, 0.053] -0.045    0.015    [-0.065, 0.096]
+  4h          6317   -0.050    [-0.146, 0.059] -0.064    0.014    [-0.080, 0.121]
+  1d          6136   -0.143    [-0.366, 0.054] -0.130    -0.014   [-0.237, 0.179]
+  2d          5947   -0.357    [-0.626, -0.088] -0.307    -0.050   [-0.325, 0.233]
+  3d          5623   -0.473    [-0.739, -0.198] -0.306    -0.167   [-0.449, 0.115]
+  5d          5623   -0.645    [-1.000, -0.258] -0.357    -0.289   [-0.631, 0.089]
+  10d         4327   -0.832    [-1.269, -0.325] -1.089    0.258    [-0.238, 0.789]
+
+=== FASE 1 — decili di punteggio, shift 0 (9681 setup) ===
+  tagli: 29.0 | 35.0 | 38.0 | 38.0 | 41.0 | 43.0 | 44.0 | 47.0 | 49.0
+  --- shift 0 ---
+  dec  n     ris   meanR     sumR      hit%    win     loss    W/L    stop  t1   time  cens  CI95
+  1    993   951   0.151     143.60    44.3    1.60    1.00    1.60   530   421  0     42    [-0.343, 0.623]
+  2    1075  1059  -0.195    -206.20   31.0    1.60    1.00    1.60   731   328  0     15    [-0.481, 0.095]
+  3    2098  2069  -0.200    -412.82   30.8    1.60    1.00    1.60   1432  637  0     29    [-0.409, -0.011]
+  4    0
+  5    1313  1294  -0.261    -337.22   28.4    1.60    1.00    1.60   926   368  0     19    [-0.458, -0.070]
+  6    636   615   -0.188    -115.80   31.2    1.60    1.00    1.60   423   192  0     20    [-0.573, 0.225]
+  7    818   804   -0.285    -229.41   27.5    1.60    1.00    1.60   583   221  0     14    [-0.558, -0.024]
+  8    1596  1553  -0.168    -260.81   32.0    1.60    1.00    1.60   1056  497  0     43    [-0.396, 0.056]
+  9    195   191   -0.142    -27.20    33.0    1.60    1.00    1.60   128   63   0     4     [-0.612, 0.287]
+  10   957   941   -0.312    -293.59   26.5    1.60    1.00    1.60   692   249  0     16    [-0.613, 0.008]
+
+  monotonicita': rho=-0.300 su 9 decili interpretabili  pendenza=-0.0243 R/decile  spread(top-bottom)=-0.463
+
+=== FASE 2 — curva di selezione, shift 0 ===
+  top     n     meanR     hit%    CI95
+  10%     969   -0.299    27.0    [-0.589, 0.013] esclude0=false
+  20%     1937  -0.246    29.0    [-0.512, 0.015] esclude0=false
+  30%     2905  -0.180    31.5    [-0.427, 0.045] esclude0=false
+  50%     4841  -0.231    29.6    [-0.433, -0.033] esclude0=true
+  100%    9681  -0.184    31.4    [-0.360, -0.008]  <- popolazione intera
+
+=== FASE 3 — stabilita' dell'ordinamento sotto ritardo ===
+  --- shift 15 (stessi tagli) ---
+  dec  n     ris   meanR     sumR      hit%    win     loss    W/L    stop  t1   time  cens  CI95
+  1    972   930   0.152     141.20    44.3    1.60    1.00    1.60   518   412  0     42    [-0.339, 0.619]
+  2    1049  1033  -0.192    -198.40   31.1    1.60    1.00    1.60   712   321  0     15    [-0.477, 0.097]
+  3    2067  2039  -0.203    -414.01   30.7    1.60    1.00    1.60   1414  625  0     28    [-0.412, -0.017]
+  4    0
+  5    1275  1256  -0.261    -327.82   28.4    1.60    1.00    1.60   899   357  0     19    [-0.462, -0.064]
+  6    621   600   -0.198    -119.00   30.8    1.60    1.00    1.60   415   185  0     20    [-0.586, 0.217]
+  7    813   799   -0.294    -234.81   27.2    1.60    1.00    1.60   582   217  0     14    [-0.567, -0.032]
+  8    1576  1533  -0.169    -259.02   32.0    1.60    1.00    1.60   1043  490  0     43    [-0.402, 0.058]
+  9    193   189   -0.120    -22.60    33.9    1.60    1.00    1.60   125   64   0     4     [-0.589, 0.324]
+  10   948   932   -0.317    -295.00   26.3    1.60    1.00    1.60   687   245  0     16    [-0.618, 0.005]
+  rho fra i decili di shift 0 e shift 15: 0.983
+
+  --- shift 20 (stessi tagli) ---
+  dec  n     ris   meanR     sumR      hit%    win     loss    W/L    stop  t1   time  cens  CI95
+  1    963   921   0.149     137.20    44.2    1.60    1.00    1.60   514   407  0     42    [-0.338, 0.621]
+  2    1037  1022  -0.199    -203.00   30.8    1.60    1.00    1.60   707   315  0     15    [-0.483, 0.089]
+  3    2054  2026  -0.206    -416.62   30.6    1.60    1.00    1.60   1407  619  0     27    [-0.412, -0.017]
+  4    0
+  5    1250  1230  -0.258    -317.42   28.5    1.60    1.00    1.60   879   351  0     19    [-0.462, -0.060]
+  6    614   594   -0.203    -120.80   30.6    1.60    1.00    1.60   412   182  0     20    [-0.595, 0.217]
+  7    808   794   -0.289    -229.81   27.3    1.60    1.00    1.60   577   217  0     14    [-0.566, -0.025]
+  8    1565  1522  -0.173    -263.62   31.8    1.60    1.00    1.60   1038  484  0     43    [-0.406, 0.056]
+  9    190   186   -0.091    -17.00    34.9    1.60    1.00    1.60   121   65   0     4     [-0.564, 0.363]
+  10   946   930   -0.318    -295.60   26.2    1.60    1.00    1.60   686   244  0     16    [-0.628, 0.011]
+  rho fra i decili di shift 0 e shift 20: 0.983
+
+=== VERDETTO ===
+  DEBOLE — rho=-0.300. Ordinamento parziale, non sfruttabile come selezione.
+  ATTENZIONE: il decile piu' alto ha meanR=-0.312 <= 0.
+  Anche se l'ordinamento esiste, non c'e' un decile positivo da selezionare:
+  il problema e' la popolazione emessa, non il filtro.
+
+report scritto in artifacts/score_deciles_holdout.json
+score_deciles — fine 2026-11-16T21:30:44.381Z (Europe/Rome: 2026-11-16 22:30:44)

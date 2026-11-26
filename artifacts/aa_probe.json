@@ -1,0 +1,16 @@
+{
+  "generatedAt": "2026-11-14T16:14:20.897Z",
+  "range": "60d",
+  "symbols": [
+    {
+      "symbol": "SAP.DE",
+      "adr14": 5.3214296613420755,
+      "liqEur20d": 443696221.4759262,
+      "avgVolume20d": 2118156.1,
+      "days": 20,
+      "first": "2026-10-15",
+      "last": "2026-11-11",
+      "source": "Yahoo 1d EUR Europe/Berlin"
+    }
+  ]
+}

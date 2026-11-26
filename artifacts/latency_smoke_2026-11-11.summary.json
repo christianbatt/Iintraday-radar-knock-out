@@ -1,0 +1,13 @@
+{
+  "kind": "summary",
+  "finishedAt": "2026-11-11T23:57:38.035Z",
+  "intervalSec": 30,
+  "staleThresholdSec": 300,
+  "minInSession": 20,
+  "inSessionSamples": 0,
+  "outSessionSamples": 48,
+  "inSessionWorstMedianSec": null,
+  "inSessionFrozen": [],
+  "pairs": [],
+  "pairSamples": 0
+}

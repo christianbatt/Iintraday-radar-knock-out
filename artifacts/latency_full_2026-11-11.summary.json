@@ -1,0 +1,186 @@
+{
+  "kind": "summary",
+  "finishedAt": "2026-11-11T23:13:32.307Z",
+  "intervalSec": 30,
+  "staleThresholdSec": 300,
+  "rows": [
+    {
+      "symbol": "STMMI.MI",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23841,
+      "quoteP90": 23871,
+      "quoteMax": 23871,
+      "pctOver300": 100,
+      "barMedian": 24182,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "LDO.MI",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23877,
+      "quoteP90": 23907,
+      "quoteMax": 23907,
+      "pctOver300": 100,
+      "barMedian": 24182,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "ENI.MI",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23811,
+      "quoteP90": 23841,
+      "quoteMax": 23841,
+      "pctOver300": 100,
+      "barMedian": 24182,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "ENEL.MI",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23838,
+      "quoteP90": 23868,
+      "quoteMax": 23868,
+      "pctOver300": 100,
+      "barMedian": 24182,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "ISP.MI",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23661,
+      "quoteP90": 23691,
+      "quoteMax": 23691,
+      "pctOver300": 100,
+      "barMedian": 24182,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "RACE.MI",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23699,
+      "quoteP90": 23729,
+      "quoteMax": 23729,
+      "pctOver300": 100,
+      "barMedian": 24182,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "UCG.MI",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23724,
+      "quoteP90": 23754,
+      "quoteMax": 23754,
+      "pctOver300": 100,
+      "barMedian": 24182,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "STLAM.MI",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23626,
+      "quoteP90": 23656,
+      "quoteMax": 23656,
+      "pctOver300": 100,
+      "barMedian": 24182,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "BAMI.MI",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23790,
+      "quoteP90": 23820,
+      "quoteMax": 23820,
+      "pctOver300": 100,
+      "barMedian": 24182,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "SAP.DE",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23692,
+      "quoteP90": 23722,
+      "quoteMax": 23722,
+      "pctOver300": 100,
+      "barMedian": 24182,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "RHM.DE",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23687,
+      "quoteP90": 23717,
+      "quoteMax": 23717,
+      "pctOver300": 100,
+      "barMedian": 24182,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "SIE.DE",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23869,
+      "quoteP90": 23899,
+      "quoteMax": 23899,
+      "pctOver300": 100,
+      "barMedian": 24182,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "MBG.DE",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23876,
+      "quoteP90": 23906,
+      "quoteMax": 23906,
+      "pctOver300": 100,
+      "barMedian": 24182,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "ALV.DE",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23853,
+      "quoteP90": 23883,
+      "quoteMax": 23883,
+      "pctOver300": 100,
+      "barMedian": 24182,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "NOV.DE",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23839,
+      "quoteP90": 23869,
+      "quoteMax": 23869,
+      "pctOver300": 100,
+      "barMedian": 24182,
+      "distinctPrices": 1
+    },
+    {
+      "symbol": "BAYN.DE",
+      "n": 3,
+      "nErr": 0,
+      "quoteMedian": 23858,
+      "quoteP90": 23888,
+      "quoteMax": 23888,
+      "pctOver300": 100,
+      "barMedian": 24182,
+      "distinctPrices": 1
+    }
+  ],
+  "worstMedianSec": 23877,
+  "frozenSymbols": []
+}

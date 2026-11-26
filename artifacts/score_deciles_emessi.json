@@ -1,0 +1,799 @@
+{
+  "generatedAt": "2026-11-15T23:01:18.248Z",
+  "params": {
+    "horizon": "resolution",
+    "markHorizon": 3600,
+    "beTrigger": null,
+    "boot": 10000,
+    "deciles": 10,
+    "minN": 15,
+    "primaryShift": 0,
+    "includeBlocked": false,
+    "scoreField": "score",
+    "validatedVariant": "markRReplay"
+  },
+  "validation": {
+    "expectedSumR": {
+      "0": -4.909,
+      "15": -8.371,
+      "20": -7.955
+    },
+    "reproducedSumR": {
+      "0": -4.908762914893194,
+      "15": -8.371201357532264,
+      "20": -7.954827336472461
+    },
+    "tolerance": 0.1
+  },
+  "labelDivergence": {
+    "0": {
+      "n": 15,
+      "signDiff": 2,
+      "meanAbsDiff": 0.6313758914376807,
+      "meanMark": -0.32725086099287964,
+      "meanBarrier": -0.47996675278984996
+    },
+    "15": {
+      "n": 15,
+      "signDiff": 1,
+      "meanAbsDiff": 0.5906235756151805,
+      "meanMark": -0.5580800905021509,
+      "meanBarrier": -0.47996675278984996
+    },
+    "20": {
+      "n": 15,
+      "signDiff": 0,
+      "meanAbsDiff": 0.5044580472250831,
+      "meanMark": -0.5303218224314974,
+      "meanBarrier": -0.47996675278984996
+    }
+  },
+  "deciles": {
+    "cuts": [
+      49,
+      49,
+      50,
+      50,
+      51,
+      52,
+      52,
+      53,
+      53
+    ],
+    "primary": [
+      {
+        "decile": 1,
+        "n": 4,
+        "nResolved": 4,
+        "nCensored": 0,
+        "meanR": -0.3499984791637119,
+        "sumR": -1.3999939166548476,
+        "hitRate": 0.25,
+        "meanWin": 1.6000060833451524,
+        "meanLoss": 1,
+        "wlRatio": 1.6000060833451524,
+        "exits": {
+          "t1": 1,
+          "stop": 3
+        },
+        "ci95": [
+          -1,
+          0.9500045625088642
+        ],
+        "excludesZero": false,
+        "nBlocks": 4,
+        "interpretable": false
+      },
+      {
+        "decile": 2,
+        "n": 0,
+        "nResolved": 0,
+        "nCensored": 0,
+        "meanR": null,
+        "sumR": 0,
+        "hitRate": null,
+        "meanWin": null,
+        "meanLoss": null,
+        "wlRatio": null,
+        "exits": {},
+        "ci95": [
+          null,
+          null
+        ],
+        "excludesZero": null,
+        "nBlocks": 0,
+        "interpretable": false
+      },
+      {
+        "decile": 3,
+        "n": 3,
+        "nResolved": 3,
+        "nCensored": 0,
+        "meanR": -0.13319536661779643,
+        "sumR": -0.39958609985338933,
+        "hitRate": 0.3333333333333333,
+        "meanWin": 1.6004139001466107,
+        "meanLoss": 1,
+        "wlRatio": 1.6004139001466107,
+        "exits": {
+          "stop": 2,
+          "t1": 1
+        },
+        "ci95": [
+          -1,
+          1.6004139001466104
+        ],
+        "excludesZero": false,
+        "nBlocks": 3,
+        "interpretable": false
+      },
+      {
+        "decile": 4,
+        "n": 0,
+        "nResolved": 0,
+        "nCensored": 0,
+        "meanR": null,
+        "sumR": 0,
+        "hitRate": null,
+        "meanWin": null,
+        "meanLoss": null,
+        "wlRatio": null,
+        "exits": {},
+        "ci95": [
+          null,
+          null
+        ],
+        "excludesZero": null,
+        "nBlocks": 0,
+        "interpretable": false
+      },
+      {
+        "decile": 5,
+        "n": 1,
+        "nResolved": 1,
+        "nCensored": 0,
+        "meanR": -1,
+        "sumR": -1,
+        "hitRate": 0,
+        "meanWin": null,
+        "meanLoss": 1,
+        "wlRatio": null,
+        "exits": {
+          "stop": 1
+        },
+        "ci95": [
+          null,
+          null
+        ],
+        "excludesZero": null,
+        "nBlocks": 1,
+        "interpretable": false
+      },
+      {
+        "decile": 6,
+        "n": 3,
+        "nResolved": 3,
+        "nCensored": 0,
+        "meanR": -1,
+        "sumR": -3,
+        "hitRate": 0,
+        "meanWin": null,
+        "meanLoss": 1,
+        "wlRatio": null,
+        "exits": {
+          "stop": 3
+        },
+        "ci95": [
+          -1,
+          -1
+        ],
+        "excludesZero": true,
+        "nBlocks": 3,
+        "interpretable": false
+      },
+      {
+        "decile": 7,
+        "n": 0,
+        "nResolved": 0,
+        "nCensored": 0,
+        "meanR": null,
+        "sumR": 0,
+        "hitRate": null,
+        "meanWin": null,
+        "meanLoss": null,
+        "wlRatio": null,
+        "exits": {},
+        "ci95": [
+          null,
+          null
+        ],
+        "excludesZero": null,
+        "nBlocks": 0,
+        "interpretable": false
+      },
+      {
+        "decile": 8,
+        "n": 4,
+        "nResolved": 4,
+        "nCensored": 0,
+        "meanR": -0.3499803188348784,
+        "sumR": -1.3999212753395136,
+        "hitRate": 0.25,
+        "meanWin": 1.6000787246604864,
+        "meanLoss": 1,
+        "wlRatio": 1.6000787246604864,
+        "exits": {
+          "stop": 3,
+          "t1": 1
+        },
+        "ci95": [
+          -1,
+          0.9500590434953649
+        ],
+        "excludesZero": false,
+        "nBlocks": 4,
+        "interpretable": false
+      },
+      {
+        "decile": 9,
+        "n": 0,
+        "nResolved": 0,
+        "nCensored": 0,
+        "meanR": null,
+        "sumR": 0,
+        "hitRate": null,
+        "meanWin": null,
+        "meanLoss": null,
+        "wlRatio": null,
+        "exits": {},
+        "ci95": [
+          null,
+          null
+        ],
+        "excludesZero": null,
+        "nBlocks": 0,
+        "interpretable": false
+      },
+      {
+        "decile": 10,
+        "n": 0,
+        "nResolved": 0,
+        "nCensored": 0,
+        "meanR": null,
+        "sumR": 0,
+        "hitRate": null,
+        "meanWin": null,
+        "meanLoss": null,
+        "wlRatio": null,
+        "exits": {},
+        "ci95": [
+          null,
+          null
+        ],
+        "excludesZero": null,
+        "nBlocks": 0,
+        "interpretable": false
+      }
+    ],
+    "shift15": {
+      "rho": 1,
+      "rows": [
+        {
+          "decile": 1,
+          "n": 4,
+          "nResolved": 4,
+          "nCensored": 0,
+          "meanR": -0.3499984791637119,
+          "sumR": -1.3999939166548476,
+          "hitRate": 0.25,
+          "meanWin": 1.6000060833451524,
+          "meanLoss": 1,
+          "wlRatio": 1.6000060833451524,
+          "exits": {
+            "t1": 1,
+            "stop": 3
+          },
+          "ci95": [
+            -1,
+            0.9500045625088642
+          ],
+          "excludesZero": false,
+          "nBlocks": 4,
+          "interpretable": false
+        },
+        {
+          "decile": 2,
+          "n": 0,
+          "nResolved": 0,
+          "nCensored": 0,
+          "meanR": null,
+          "sumR": 0,
+          "hitRate": null,
+          "meanWin": null,
+          "meanLoss": null,
+          "wlRatio": null,
+          "exits": {},
+          "ci95": [
+            null,
+            null
+          ],
+          "excludesZero": null,
+          "nBlocks": 0,
+          "interpretable": false
+        },
+        {
+          "decile": 3,
+          "n": 3,
+          "nResolved": 3,
+          "nCensored": 0,
+          "meanR": -0.13319536661779643,
+          "sumR": -0.39958609985338933,
+          "hitRate": 0.3333333333333333,
+          "meanWin": 1.6004139001466107,
+          "meanLoss": 1,
+          "wlRatio": 1.6004139001466107,
+          "exits": {
+            "stop": 2,
+            "t1": 1
+          },
+          "ci95": [
+            -1,
+            1.6004139001466104
+          ],
+          "excludesZero": false,
+          "nBlocks": 3,
+          "interpretable": false
+        },
+        {
+          "decile": 4,
+          "n": 0,
+          "nResolved": 0,
+          "nCensored": 0,
+          "meanR": null,
+          "sumR": 0,
+          "hitRate": null,
+          "meanWin": null,
+          "meanLoss": null,
+          "wlRatio": null,
+          "exits": {},
+          "ci95": [
+            null,
+            null
+          ],
+          "excludesZero": null,
+          "nBlocks": 0,
+          "interpretable": false
+        },
+        {
+          "decile": 5,
+          "n": 1,
+          "nResolved": 1,
+          "nCensored": 0,
+          "meanR": -1,
+          "sumR": -1,
+          "hitRate": 0,
+          "meanWin": null,
+          "meanLoss": 1,
+          "wlRatio": null,
+          "exits": {
+            "stop": 1
+          },
+          "ci95": [
+            null,
+            null
+          ],
+          "excludesZero": null,
+          "nBlocks": 1,
+          "interpretable": false
+        },
+        {
+          "decile": 6,
+          "n": 3,
+          "nResolved": 3,
+          "nCensored": 0,
+          "meanR": -1,
+          "sumR": -3,
+          "hitRate": 0,
+          "meanWin": null,
+          "meanLoss": 1,
+          "wlRatio": null,
+          "exits": {
+            "stop": 3
+          },
+          "ci95": [
+            -1,
+            -1
+          ],
+          "excludesZero": true,
+          "nBlocks": 3,
+          "interpretable": false
+        },
+        {
+          "decile": 7,
+          "n": 0,
+          "nResolved": 0,
+          "nCensored": 0,
+          "meanR": null,
+          "sumR": 0,
+          "hitRate": null,
+          "meanWin": null,
+          "meanLoss": null,
+          "wlRatio": null,
+          "exits": {},
+          "ci95": [
+            null,
+            null
+          ],
+          "excludesZero": null,
+          "nBlocks": 0,
+          "interpretable": false
+        },
+        {
+          "decile": 8,
+          "n": 4,
+          "nResolved": 4,
+          "nCensored": 0,
+          "meanR": -0.3499803188348784,
+          "sumR": -1.3999212753395136,
+          "hitRate": 0.25,
+          "meanWin": 1.6000787246604864,
+          "meanLoss": 1,
+          "wlRatio": 1.6000787246604864,
+          "exits": {
+            "stop": 3,
+            "t1": 1
+          },
+          "ci95": [
+            -1,
+            0.9500590434953649
+          ],
+          "excludesZero": false,
+          "nBlocks": 4,
+          "interpretable": false
+        },
+        {
+          "decile": 9,
+          "n": 0,
+          "nResolved": 0,
+          "nCensored": 0,
+          "meanR": null,
+          "sumR": 0,
+          "hitRate": null,
+          "meanWin": null,
+          "meanLoss": null,
+          "wlRatio": null,
+          "exits": {},
+          "ci95": [
+            null,
+            null
+          ],
+          "excludesZero": null,
+          "nBlocks": 0,
+          "interpretable": false
+        },
+        {
+          "decile": 10,
+          "n": 0,
+          "nResolved": 0,
+          "nCensored": 0,
+          "meanR": null,
+          "sumR": 0,
+          "hitRate": null,
+          "meanWin": null,
+          "meanLoss": null,
+          "wlRatio": null,
+          "exits": {},
+          "ci95": [
+            null,
+            null
+          ],
+          "excludesZero": null,
+          "nBlocks": 0,
+          "interpretable": false
+        }
+      ]
+    },
+    "shift20": {
+      "rho": 1,
+      "rows": [
+        {
+          "decile": 1,
+          "n": 4,
+          "nResolved": 4,
+          "nCensored": 0,
+          "meanR": -0.3499984791637119,
+          "sumR": -1.3999939166548476,
+          "hitRate": 0.25,
+          "meanWin": 1.6000060833451524,
+          "meanLoss": 1,
+          "wlRatio": 1.6000060833451524,
+          "exits": {
+            "t1": 1,
+            "stop": 3
+          },
+          "ci95": [
+            -1,
+            0.9500045625088642
+          ],
+          "excludesZero": false,
+          "nBlocks": 4,
+          "interpretable": false
+        },
+        {
+          "decile": 2,
+          "n": 0,
+          "nResolved": 0,
+          "nCensored": 0,
+          "meanR": null,
+          "sumR": 0,
+          "hitRate": null,
+          "meanWin": null,
+          "meanLoss": null,
+          "wlRatio": null,
+          "exits": {},
+          "ci95": [
+            null,
+            null
+          ],
+          "excludesZero": null,
+          "nBlocks": 0,
+          "interpretable": false
+        },
+        {
+          "decile": 3,
+          "n": 3,
+          "nResolved": 3,
+          "nCensored": 0,
+          "meanR": -0.13319536661779643,
+          "sumR": -0.39958609985338933,
+          "hitRate": 0.3333333333333333,
+          "meanWin": 1.6004139001466107,
+          "meanLoss": 1,
+          "wlRatio": 1.6004139001466107,
+          "exits": {
+            "stop": 2,
+            "t1": 1
+          },
+          "ci95": [
+            -1,
+            1.6004139001466104
+          ],
+          "excludesZero": false,
+          "nBlocks": 3,
+          "interpretable": false
+        },
+        {
+          "decile": 4,
+          "n": 0,
+          "nResolved": 0,
+          "nCensored": 0,
+          "meanR": null,
+          "sumR": 0,
+          "hitRate": null,
+          "meanWin": null,
+          "meanLoss": null,
+          "wlRatio": null,
+          "exits": {},
+          "ci95": [
+            null,
+            null
+          ],
+          "excludesZero": null,
+          "nBlocks": 0,
+          "interpretable": false
+        },
+        {
+          "decile": 5,
+          "n": 1,
+          "nResolved": 1,
+          "nCensored": 0,
+          "meanR": -1,
+          "sumR": -1,
+          "hitRate": 0,
+          "meanWin": null,
+          "meanLoss": 1,
+          "wlRatio": null,
+          "exits": {
+            "stop": 1
+          },
+          "ci95": [
+            null,
+            null
+          ],
+          "excludesZero": null,
+          "nBlocks": 1,
+          "interpretable": false
+        },
+        {
+          "decile": 6,
+          "n": 3,
+          "nResolved": 3,
+          "nCensored": 0,
+          "meanR": -1,
+          "sumR": -3,
+          "hitRate": 0,
+          "meanWin": null,
+          "meanLoss": 1,
+          "wlRatio": null,
+          "exits": {
+            "stop": 3
+          },
+          "ci95": [
+            -1,
+            -1
+          ],
+          "excludesZero": true,
+          "nBlocks": 3,
+          "interpretable": false
+        },
+        {
+          "decile": 7,
+          "n": 0,
+          "nResolved": 0,
+          "nCensored": 0,
+          "meanR": null,
+          "sumR": 0,
+          "hitRate": null,
+          "meanWin": null,
+          "meanLoss": null,
+          "wlRatio": null,
+          "exits": {},
+          "ci95": [
+            null,
+            null
+          ],
+          "excludesZero": null,
+          "nBlocks": 0,
+          "interpretable": false
+        },
+        {
+          "decile": 8,
+          "n": 4,
+          "nResolved": 4,
+          "nCensored": 0,
+          "meanR": -0.3499803188348784,
+          "sumR": -1.3999212753395136,
+          "hitRate": 0.25,
+          "meanWin": 1.6000787246604864,
+          "meanLoss": 1,
+          "wlRatio": 1.6000787246604864,
+          "exits": {
+            "stop": 3,
+            "t1": 1
+          },
+          "ci95": [
+            -1,
+            0.9500590434953649
+          ],
+          "excludesZero": false,
+          "nBlocks": 4,
+          "interpretable": false
+        },
+        {
+          "decile": 9,
+          "n": 0,
+          "nResolved": 0,
+          "nCensored": 0,
+          "meanR": null,
+          "sumR": 0,
+          "hitRate": null,
+          "meanWin": null,
+          "meanLoss": null,
+          "wlRatio": null,
+          "exits": {},
+          "ci95": [
+            null,
+            null
+          ],
+          "excludesZero": null,
+          "nBlocks": 0,
+          "interpretable": false
+        },
+        {
+          "decile": 10,
+          "n": 0,
+          "nResolved": 0,
+          "nCensored": 0,
+          "meanR": null,
+          "sumR": 0,
+          "hitRate": null,
+          "meanWin": null,
+          "meanLoss": null,
+          "wlRatio": null,
+          "exits": {},
+          "ci95": [
+            null,
+            null
+          ],
+          "excludesZero": null,
+          "nBlocks": 0,
+          "interpretable": false
+        }
+      ]
+    }
+  },
+  "reasonStats": [
+    {
+      "reason": "EMESSO",
+      "n": 15,
+      "nResolved": 15,
+      "meanR": -0.47996675278984996,
+      "hitRate": 0.2,
+      "ci95": [
+        -1,
+        0.11441002918514871
+      ]
+    }
+  ],
+  "selectionCurve": {
+    "tops": [
+      {
+        "frac": 0.1,
+        "n": 2,
+        "nResolved": 2,
+        "meanR": -1,
+        "hitRate": 0,
+        "ci95": [
+          -1,
+          -1
+        ],
+        "excludesZero": true
+      },
+      {
+        "frac": 0.2,
+        "n": 3,
+        "nResolved": 3,
+        "meanR": -1,
+        "hitRate": 0,
+        "ci95": [
+          -1,
+          -1
+        ],
+        "excludesZero": true
+      },
+      {
+        "frac": 0.3,
+        "n": 5,
+        "nResolved": 5,
+        "meanR": -0.47998425506790277,
+        "hitRate": 0.2,
+        "ci95": [
+          -1,
+          0.9500590434953649
+        ],
+        "excludesZero": false
+      },
+      {
+        "frac": 0.5,
+        "n": 8,
+        "nResolved": 8,
+        "meanR": -0.6749901594174392,
+        "hitRate": 0.125,
+        "ci95": [
+          -1,
+          0.11431945342592274
+        ],
+        "excludesZero": false
+      }
+    ],
+    "full": {
+      "frac": 1,
+      "n": 15,
+      "nResolved": 15,
+      "meanR": -0.47996675278985,
+      "hitRate": 0.2,
+      "ci95": [
+        -1,
+        0.11441002918514871
+      ],
+      "excludesZero": false
+    }
+  },
+  "monotonicity": {
+    "rho": null,
+    "slope": null,
+    "spread": 0.000018160328833505268,
+    "interpretableDeciles": 0
+  },
+  "verdict": "INDETERMINATO — solo 0 decili con n>=15. Aumenta la popolazione o riduci --deciles."
+}
