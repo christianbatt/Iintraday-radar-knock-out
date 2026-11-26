@@ -254,6 +254,8 @@ export function buildAiCalibration(input: {
   generatedAt: string;
   windowMs?: number;
   minSample?: number;
+  /** Etichetta della fonte del log, per dichiarare se c'e' stato il fallback. */
+  aiLogSource?: string;
 }): AiCalibrationResponse {
   const windowMs = input.windowMs ?? AI_CALIBRATION_MATCH_WINDOW_MS;
   const minSample = input.minSample ?? AI_CALIBRATION_MIN_SAMPLE;
@@ -365,7 +367,7 @@ export function buildAiCalibration(input: {
     windowMs,
     minSample,
     sources: {
-      aiLog: 'shadow_ai_log.jsonl',
+      aiLog: input.aiLogSource ?? 'shadow_ai_log.jsonl',
       forward: 'artifacts/shadow_v1_live/signals.jsonl',
     },
     counts: {
@@ -399,8 +401,11 @@ export function buildAiCalibration(input: {
 }
 
 export interface AiCalibrationRegistrationDeps {
-  readEntries: () => AiCalibrationEntry[];
-  readForward: () => AiCalibrationForwardPoint[];
+  /** Puo' essere asincrona: il log arriva da file + fallback Firestore. */
+  readEntries: () => AiCalibrationEntry[] | Promise<AiCalibrationEntry[]>;
+  readForward: () => AiCalibrationForwardPoint[] | Promise<AiCalibrationForwardPoint[]>;
+  /** Etichetta della fonte effettiva, esposta in `sources.aiLog`. */
+  aiLogSource?: string;
   env?: Record<string, string | undefined>;
   now?: () => number;
 }
@@ -412,49 +417,55 @@ type MinimalResponse = { status: (code: number) => { json: (body: unknown) => vo
  * Handler con dipendenze iniettate: a flag OFF nessuna lettura; ogni errore
  * diventa `available: false`, mai una 500.
  */
-export function createAiCalibrationHandler(
+export async function createAiCalibrationHandler(
   deps: AiCalibrationRegistrationDeps
-): () => { status: number; body: Record<string, unknown> | AiCalibrationResponse } {
+): Promise<{ status: number; body: Record<string, unknown> | AiCalibrationResponse }> {
   const env = deps.env ?? process.env;
   const now = deps.now ?? (() => Date.now());
-  return function handle() {
-    if (!isAiCalibrationEnabled(env)) {
-      return { status: 404, body: { status: 'disabled', flag: AI_CALIBRATION_ENV } };
-    }
-    const nowMs = now();
-    try {
-      return {
-        status: 200,
-        body: buildAiCalibration({
-          entries: deps.readEntries(),
-          forward: deps.readForward(),
-          nowMs,
-          generatedAt: new Date(nowMs).toISOString(),
-        }),
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn(`[AI Calibration] lettura non riuscita: ${message}`);
-      return {
-        status: 200,
-        body: buildAiCalibration({
-          entries: [],
-          forward: [],
-          nowMs,
-          generatedAt: new Date(nowMs).toISOString(),
-        }),
-      };
-    }
-  };
+  if (!isAiCalibrationEnabled(env)) {
+    // Flag off: nessuna lettura, nemmeno del fallback remoto.
+    return { status: 404, body: { status: 'disabled', flag: AI_CALIBRATION_ENV } };
+  }
+  const nowMs = now();
+  try {
+    return {
+      status: 200,
+      body: buildAiCalibration({
+        entries: await deps.readEntries(),
+        forward: await deps.readForward(),
+        nowMs,
+        generatedAt: new Date(nowMs).toISOString(),
+        aiLogSource: deps.aiLogSource,
+      }),
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[AI Calibration] lettura non riuscita: ${message}`);
+    return {
+      status: 200,
+      body: buildAiCalibration({
+        entries: [],
+        forward: [],
+        nowMs,
+        generatedAt: new Date(nowMs).toISOString(),
+        aiLogSource: deps.aiLogSource,
+      }),
+    };
+  }
 }
 
 export function registerAiCalibrationRoute(
   app: MinimalApp,
   deps: AiCalibrationRegistrationDeps
 ): void {
-  const handler = createAiCalibrationHandler(deps);
   app.get(AI_CALIBRATION_PATH, (_req, res) => {
-    const out = handler();
-    (res as MinimalResponse).status(out.status).json(out.body);
+    void createAiCalibrationHandler(deps)
+      .then((out) => {
+        (res as MinimalResponse).status(out.status).json(out.body);
+      })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        (res as MinimalResponse).status(500).json({ available: false, error: message });
+      });
   });
 }

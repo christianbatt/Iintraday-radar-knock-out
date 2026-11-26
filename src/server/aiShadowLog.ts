@@ -18,6 +18,7 @@ import {
   isAiShadowLogFirestoreEnabled,
   readAiShadowLogFromFirestore,
   syncAiShadowLogToFirestore,
+  type AiShadowLogFirestoreReadItem,
 } from './aiShadowLogFirestore';
 
 export type AiShadowLogSource = 'scan' | 'specialize' | 'desk';
@@ -410,6 +411,85 @@ function summarizeAiShadowLogEntries(
 export interface AiShadowLogReadOptions {
   /** Se true include anche le righe placeholder `source: 'scan'` non valutate dall'LLM. Default false. */
   includeScan?: boolean;
+}
+
+/**
+ * Tetto della lettura estesa (calibrazione): piu' alto del clamp HTTP, perche'
+ * l'aggregato ha bisogno di tutte le voci recenti, non delle ultime 200.
+ */
+export const AI_SHADOW_LOG_FALLBACK_MAX_LIMIT = 2000;
+
+export interface AiShadowLogFallbackReadOptions {
+  filePath: string;
+  /** Default: `AI_SHADOW_LOG_FALLBACK_MAX_LIMIT`. */
+  limit?: number;
+  includeScan?: boolean;
+  env?: Record<string, string | undefined>;
+  /** Iniettabile nei test; default: `readAiShadowLogFromFirestore`. */
+  readRemote?: (limit: number) => Promise<AiShadowLogFirestoreReadItem[]>;
+}
+
+function clampFallbackLimit(raw: number | undefined): number {
+  if (!Number.isFinite(raw as number) || (raw as number) <= 0) {
+    return AI_SHADOW_LOG_FALLBACK_MAX_LIMIT;
+  }
+  return Math.min(AI_SHADOW_LOG_FALLBACK_MAX_LIMIT, Math.floor(raw as number));
+}
+
+/**
+ * Le stesse voci del pannello Shadow AI (file locale + fallback Firestore), con
+ * un tetto piu' alto e senza il clamp di `buildAiShadowLogResponseWithFallback`.
+ *
+ * Serve alla calibrazione: su un disco effimero il file locale puo' essere
+ * vuoto, mentre i documenti restano su Firestore. Dedup per doc id, ordine dal
+ * piu' vecchio al piu' recente (come `readAiShadowLog`), nessuna scrittura.
+ *
+ * Il fallback remoto viene interrogato solo se il flag `SHADOW_AI_LOG_FIRESTORE`
+ * e' acceso e il file locale non ha gia' raggiunto il limite.
+ */
+export async function readAiShadowLogWithFallback(
+  options: AiShadowLogFallbackReadOptions
+): Promise<AiShadowLogEntry[]> {
+  const limit = clampFallbackLimit(options.limit);
+  const includeScan = options.includeScan === true;
+  const merged = new Map<string, { entry: AiShadowLogEntry; atMs: number }>();
+
+  for (const entry of readAiShadowLog(undefined, options.filePath)) {
+    if (!includeScan && isUnprocessedScanEntry(entry)) continue;
+    const docId = aiShadowLogEntryDocId(entry) ?? entry.id;
+    if (merged.has(docId)) continue;
+    merged.set(docId, { entry, atMs: Date.parse(entry.timestamp) || 0 });
+  }
+
+  const localCount = merged.size;
+  const env = options.env ?? process.env;
+  if (localCount < limit && isAiShadowLogFirestoreEnabled(env)) {
+    const readRemote =
+      options.readRemote ?? ((remoteLimit: number) => readAiShadowLogFromFirestore(remoteLimit, { env }));
+    let remote: AiShadowLogFirestoreReadItem[] = [];
+    try {
+      remote = await readRemote(limit);
+    } catch (err) {
+      // Stessa semantica del pannello: il remoto non disponibile non cancella il
+      // file locale, e nessuna eccezione arriva al chiamante.
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn('[AI Shadow Log] fallback Firestore non disponibile:', message);
+      remote = [];
+    }
+    for (const item of remote) {
+      if (merged.has(item.docId)) continue;
+      const normalized = normalizeEntries(item.entry)[0];
+      if (!normalized) continue;
+      if (!includeScan && isUnprocessedScanEntry(normalized)) continue;
+      merged.set(item.docId, { entry: normalized, atMs: Date.parse(normalized.timestamp) || 0 });
+    }
+  }
+
+  return [...merged.values()]
+    .sort((a, b) => b.atMs - a.atMs)
+    .slice(0, limit)
+    .map((item) => item.entry)
+    .reverse();
 }
 
 /** Corpo di `GET /api/shadow/ai-log`: sola lettura, nessuna eccezione. */

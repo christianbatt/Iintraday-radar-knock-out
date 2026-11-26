@@ -50,8 +50,9 @@ import {
   AI_SHADOW_LOG_RELATIVE_PATH,
   AI_SHADOW_SCAN_LOG_RELATIVE_PATH,
   buildAiShadowLogResponseWithFallback,
-  readAiShadowLog,
+  readAiShadowLogWithFallback,
 } from './src/server/aiShadowLog';
+import { isAiShadowLogFirestoreEnabled } from './src/server/aiShadowLogFirestore';
 import {
   setLastScanCandidates,
   getLastScanCandidates,
@@ -89,6 +90,7 @@ import { registerShadowV1LiveViewRoute } from './src/server/shadowV1LiveView';
 import { loadRecords, SHADOW_V1_LIVE_SIGNALS_PATH } from './src/server/shadowV1LiveStore';
 import { listArchivePaths, mergeRecordFiles } from './src/server/shadowV1LiveRetention';
 import {
+  AI_CALIBRATION_MAX_ENTRIES,
   registerAiCalibrationRoute,
   type AiCalibrationEntry,
   type AiCalibrationForwardPoint,
@@ -4281,11 +4283,17 @@ async function startServer() {
   // Nessuna scrittura, nessun cambio di memoria o gate: legge il log AI shadow
   // e gli esiti gia' persistiti da Shadow V1-live e li abbina per ticker + tempo.
   registerAiCalibrationRoute(app, {
+    // Stesse voci del pannello: file locale + fallback Firestore quando il flag
+    // SHADOW_AI_LOG_FIRESTORE e' acceso. Su disco effimero il file puo' essere
+    // vuoto mentre i documenti restano su Firestore.
     readEntries: () =>
-      readAiShadowLog(
-        undefined,
-        path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
-      ) as AiCalibrationEntry[],
+      readAiShadowLogWithFallback({
+        filePath: path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH),
+        limit: AI_CALIBRATION_MAX_ENTRIES,
+      }) as Promise<AiCalibrationEntry[]>,
+    aiLogSource: isAiShadowLogFirestoreEnabled()
+      ? 'shadow_ai_log.jsonl + Firestore (fallback)'
+      : 'shadow_ai_log.jsonl',
     readForward: () => {
       const signalsPath = path.join(process.cwd(), SHADOW_V1_LIVE_SIGNALS_PATH);
       const files = [signalsPath, ...listArchivePaths(signalsPath)].filter((file) =>

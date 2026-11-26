@@ -2,12 +2,14 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   AI_CALIBRATION_MATCH_WINDOW_MS,
+  AI_CALIBRATION_PATH,
   AI_CALIBRATION_VERSION,
   buildAiCalibration,
   classifyAiOutcome,
   classifyEntryDecision,
   createAiCalibrationHandler,
   isAiCalibrationEnabled,
+  registerAiCalibrationRoute,
   type AiCalibrationEntry,
   type AiCalibrationForwardPoint,
 } from '../../server/aiCalibration';
@@ -428,9 +430,9 @@ describe('aiCalibration — flag e handler', () => {
     assert.equal(isAiCalibrationEnabled({ SHADOW_AI_CALIBRATION: ' 0 ' }), false);
   });
 
-  it('a flag OFF non legge nulla e risponde 404', () => {
+  it('a flag OFF non legge nulla e risponde 404', async () => {
     let reads = 0;
-    const handler = createAiCalibrationHandler({
+    const out = await createAiCalibrationHandler({
       env: { SHADOW_AI_CALIBRATION: '0' },
       readEntries: () => {
         reads += 1;
@@ -441,23 +443,36 @@ describe('aiCalibration — flag e handler', () => {
         return [];
       },
     });
-    const out = handler();
     assert.equal(out.status, 404);
     assert.equal(reads, 0);
   });
 
-  it('a flag ON restituisce la calibrazione e non lancia in caso di errore', () => {
-    const ok = createAiCalibrationHandler({
+  it('a flag ON attende letture asincrone (file + fallback Firestore)', async () => {
+    const out = await createAiCalibrationHandler({
+      env: {},
+      now: () => NOW,
+      aiLogSource: 'shadow_ai_log.jsonl + Firestore (fallback)',
+      readEntries: async () => baseInput().entries,
+      readForward: async () => baseInput().forward,
+    });
+    assert.equal(out.status, 200);
+    const body = out.body as any;
+    assert.equal(body.counts.matched, 3);
+    assert.equal(body.sources.aiLog, 'shadow_ai_log.jsonl + Firestore (fallback)');
+  });
+
+  it('senza aiLogSource la fonte resta il file locale', async () => {
+    const out = await createAiCalibrationHandler({
       env: {},
       now: () => NOW,
       readEntries: () => baseInput().entries,
       readForward: () => baseInput().forward,
     });
-    const out = ok();
-    assert.equal(out.status, 200);
-    assert.equal((out.body as any).counts.matched, 3);
+    assert.equal((out.body as any).sources.aiLog, 'shadow_ai_log.jsonl');
+  });
 
-    const broken = createAiCalibrationHandler({
+  it('non lancia: lettura sincrona che esplode o promise rifiutata producono available:false', async () => {
+    const syncError = await createAiCalibrationHandler({
       env: {},
       now: () => NOW,
       readEntries: () => {
@@ -465,8 +480,40 @@ describe('aiCalibration — flag e handler', () => {
       },
       readForward: () => [],
     });
-    const failed = broken();
-    assert.equal(failed.status, 200);
-    assert.equal((failed.body as any).available, false);
+    assert.equal(syncError.status, 200);
+    assert.equal((syncError.body as any).available, false);
+
+    const asyncError = await createAiCalibrationHandler({
+      env: {},
+      now: () => NOW,
+      readEntries: () => Promise.reject(new Error('firestore down')),
+      readForward: () => [],
+    });
+    assert.equal(asyncError.status, 200);
+    assert.equal((asyncError.body as any).available, false);
+  });
+
+  it('la route risponde con il corpo della calibrazione', async () => {
+    const routes = new Map<string, (req: unknown, res: unknown) => void>();
+    registerAiCalibrationRoute(
+      { get: (routePath, handler) => void routes.set(routePath, handler) },
+      {
+        env: {},
+        now: () => NOW,
+        readEntries: async () => baseInput().entries,
+        readForward: async () => baseInput().forward,
+      }
+    );
+    const handler = routes.get(AI_CALIBRATION_PATH);
+    assert.ok(handler, 'route registrata');
+    const captured = await new Promise<{ code: number; body: any }>((resolve) => {
+      handler?.({}, {
+        status: (code: number) => ({
+          json: (body: unknown) => resolve({ code, body }),
+        }),
+      });
+    });
+    assert.equal(captured.code, 200);
+    assert.equal(captured.body.counts.matched, 3);
   });
 });

@@ -14,6 +14,21 @@ registra la decisione (`shadow_ai_log.jsonl`, `status: NON_VALIDATO`,
 misura lo scarto di rendimento fra ciò che l'AI ha approvato e ciò che ha
 scartato.
 
+## Fonte dati
+
+La calibrazione legge le **stesse voci del pannello Shadow AI**
+(`readAiShadowLogWithFallback`): file locale `shadow_ai_log.jsonl` **più** i
+documenti Firestore quando `SHADOW_AI_LOG_FIRESTORE=1`, deduplicati per doc id e
+ordinati per istante. Il tetto è `AI_CALIBRATION_MAX_ENTRIES` (2000), non il
+clamp HTTP di 200: l'aggregato ha bisogno di tutte le voci recenti.
+
+Motivo: in produzione il disco può essere effimero. Senza fallback il file
+locale sarebbe vuoto e la calibrazione riporterebbe zero valutazioni su dati che
+esistono. Il campo `sources.aiLog` dichiara quale fonte ha risposto
+(`shadow_ai_log.jsonl` oppure `shadow_ai_log.jsonl + Firestore (fallback)`).
+
+Se Firestore non risponde, resta il file locale e la route non fallisce.
+
 ## Join
 
 - **Unità**: la valutazione di un candidato, identificata da `runId:ticker`
