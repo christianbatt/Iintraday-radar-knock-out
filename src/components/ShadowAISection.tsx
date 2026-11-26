@@ -65,6 +65,20 @@ export function summarizeShadowLogEntries(
   };
 }
 
+/**
+ * Vista di calibrazione (PR-C): solo aggregati, nessun ricalcolo nel client.
+ * Dichiarata qui invece di importare il modulo server, che resta fuori dal bundle.
+ */
+interface AiCalibrationView {
+  available?: boolean;
+  verdict?: 'insufficient' | 'evidence';
+  edgeR?: number | null;
+  minSample?: number;
+  counts?: { matched?: number };
+  buckets?: { decision: string; n: number }[];
+  skippedWinners?: unknown[];
+}
+
 export interface ShadowAISectionProps {
   entries?: AiShadowLogEntry[] | null;
   loading?: boolean;
@@ -89,6 +103,7 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
   const [netError, setNetError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(live && enabled);
   const [tick, setTick] = useState(0);
+  const [calibration, setCalibration] = useState<AiCalibrationView | null>(null);
   const prevRefreshSignalRef = useRef(refreshSignal);
 
   const refresh = useCallback(() => setTick((n) => n + 1), []);
@@ -121,6 +136,26 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
         if (!alive) return;
         setNetError('errore di rete: impossibile leggere il log AI shadow');
         setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [enabled, live, fetchImpl, tick]);
+
+  useEffect(() => {
+    if (!enabled || !live) return;
+    let alive = true;
+    const doFetch = fetchImpl ?? fetch;
+    doFetch('/api/shadow/ai-calibration')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: AiCalibrationView | null) => {
+        if (!alive) return;
+        // Nessun placeholder: si mostra solo quando c'e' qualcosa di reale.
+        setCalibration(d && d.available === true ? d : null);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setCalibration(null);
       });
     return () => {
       alive = false;
@@ -181,6 +216,34 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
           <p className="text-[10px] text-slate-500" data-testid="shadow-ai-not-evaluated-count">
             non valutate: {notEvaluatedCount}
           </p>
+          {calibration && (
+            <div
+              data-testid="shadow-ai-calibration"
+              className="border-t border-slate-700 pt-2 space-y-1"
+            >
+              <p className="text-[10px] font-bold text-slate-300">
+                Calibrazione AI (esplorativa) —{' '}
+                {calibration.verdict === 'evidence' ? 'campione sufficiente' : 'campione insufficiente'}
+              </p>
+              <p className="text-[10px] text-slate-400" data-testid="shadow-ai-calibration-matched">
+                abbinate: {calibration.counts?.matched ?? 0} / min {calibration.minSample ?? 0}
+              </p>
+              <p className="text-[10px] text-slate-400">
+                {calibration.buckets?.map((b) => `${b.decision} ${b.n}`).join(' · ')}
+              </p>
+              <p className="text-[10px] text-slate-400" data-testid="shadow-ai-calibration-edge">
+                edgeR: {calibration.edgeR === null || calibration.edgeR === undefined
+                  ? 'non calcolabile'
+                  : calibration.edgeR}
+                {calibration.verdict === 'evidence' ? '' : ' (non un risultato)'}
+              </p>
+              {(calibration.skippedWinners?.length ?? 0) > 0 && (
+                <p className="text-[10px] text-amber-300">
+                  scarti andati in positivo: {calibration.skippedWinners?.length}
+                </p>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>

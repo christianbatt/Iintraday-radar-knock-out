@@ -50,6 +50,7 @@ import {
   AI_SHADOW_LOG_RELATIVE_PATH,
   AI_SHADOW_SCAN_LOG_RELATIVE_PATH,
   buildAiShadowLogResponseWithFallback,
+  readAiShadowLog,
 } from './src/server/aiShadowLog';
 import {
   setLastScanCandidates,
@@ -85,6 +86,14 @@ import {
   setShadowFirestoreAdapter,
 } from './src/server/shadowFirestoreSync';
 import { registerShadowV1LiveViewRoute } from './src/server/shadowV1LiveView';
+import { loadRecords, SHADOW_V1_LIVE_SIGNALS_PATH } from './src/server/shadowV1LiveStore';
+import { listArchivePaths, mergeRecordFiles } from './src/server/shadowV1LiveRetention';
+import {
+  registerAiCalibrationRoute,
+  type AiCalibrationEntry,
+  type AiCalibrationForwardPoint,
+} from './src/server/aiCalibration';
+import { existsSync } from 'node:fs';
 import { logVetoOutcomes, VETO_LOG_RELATIVE_PATH } from './src/server/vetoOutcomeLog';
 import {
   analyzeDeskEvidencePack,
@@ -4267,6 +4276,37 @@ async function startServer() {
     } catch (err: any) {
       return res.status(500).json({ entries: [], count: 0, error: err?.message || String(err) });
     }
+  });
+  // ADDITIVO (PR-C): calibrazione read-only decisione AI -> esito forward.
+  // Nessuna scrittura, nessun cambio di memoria o gate: legge il log AI shadow
+  // e gli esiti gia' persistiti da Shadow V1-live e li abbina per ticker + tempo.
+  registerAiCalibrationRoute(app, {
+    readEntries: () =>
+      readAiShadowLog(
+        undefined,
+        path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+      ) as AiCalibrationEntry[],
+    readForward: () => {
+      const signalsPath = path.join(process.cwd(), SHADOW_V1_LIVE_SIGNALS_PATH);
+      const files = [signalsPath, ...listArchivePaths(signalsPath)].filter((file) =>
+        existsSync(file)
+      );
+      if (files.length === 0) return [];
+      const merged = mergeRecordFiles(files, loadRecords);
+      const points: AiCalibrationForwardPoint[] = [];
+      for (const record of merged.records) {
+        if (record.status !== 'STOP' && record.status !== 'TARGET' && record.status !== 'EXPIRED') continue;
+        if (typeof record.r !== 'number' || !Number.isFinite(record.r)) continue;
+        points.push({
+          key: record.key,
+          ticker: record.ticker,
+          decidedAtMs: record.decidedAtMs,
+          r: record.r,
+          status: record.status,
+        });
+      }
+      return points;
+    },
   });
   app.post('/api/shadow/v1-live/observe', requireApiAuth);
   const v1CollectorReg = registerShadowV1LiveCollector(app, { deferInitialCycle: true });
