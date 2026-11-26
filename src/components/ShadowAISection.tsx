@@ -69,7 +69,7 @@ export function summarizeShadowLogEntries(
  * Vista di calibrazione (PR-C): solo aggregati, nessun ricalcolo nel client.
  * Dichiarata qui invece di importare il modulo server, che resta fuori dal bundle.
  */
-interface AiCalibrationView {
+export interface ShadowAiCalibrationView {
   available?: boolean;
   verdict?: 'insufficient' | 'evidence';
   edgeR?: number | null;
@@ -79,6 +79,38 @@ interface AiCalibrationView {
   skippedWinners?: unknown[];
 }
 
+/**
+ * Blocco di calibrazione (PR-C), separato dal componente con fetch per poter
+ * essere reso e verificato con `renderToStaticMarkup`, senza effetti.
+ */
+export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrationView }> = ({
+  calibration,
+}) => (
+  <div data-testid="shadow-ai-calibration" className="border-t border-slate-700 pt-2 space-y-1">
+    <p className="text-[10px] font-bold text-slate-300">
+      Calibrazione AI (esplorativa) —{' '}
+      {calibration.verdict === 'evidence' ? 'campione sufficiente' : 'campione insufficiente'}
+    </p>
+    <p className="text-[10px] text-slate-400" data-testid="shadow-ai-calibration-matched">
+      abbinate: {calibration.counts?.matched ?? 0} / min {calibration.minSample ?? 0}
+    </p>
+    <p className="text-[10px] text-slate-400">
+      {calibration.buckets?.map((b) => `${b.decision} ${b.n}`).join(' · ')}
+    </p>
+    <p className="text-[10px] text-slate-400" data-testid="shadow-ai-calibration-edge">
+      edgeR: {calibration.edgeR === null || calibration.edgeR === undefined
+        ? 'non calcolabile'
+        : calibration.edgeR}
+      {calibration.verdict === 'evidence' ? '' : ' (non un risultato)'}
+    </p>
+    {(calibration.skippedWinners?.length ?? 0) > 0 && (
+      <p className="text-[10px] text-amber-300">
+        scarti andati in positivo: {calibration.skippedWinners?.length}
+      </p>
+    )}
+  </div>
+);
+
 export interface ShadowAISectionProps {
   entries?: AiShadowLogEntry[] | null;
   loading?: boolean;
@@ -86,6 +118,8 @@ export interface ShadowAISectionProps {
   refreshSignal?: string | null;
   fetchImpl?: typeof fetch;
   flag?: ShadowAiSectionFlag;
+  /** Iniettabile: vince sul fetch (usato nei test di render server-side). */
+  calibration?: ShadowAiCalibrationView | null;
 }
 
 export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
@@ -95,6 +129,7 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
   refreshSignal = null,
   fetchImpl,
   flag,
+  calibration: calibrationProp,
 }) => {
   const enabled = isShadowAiSectionEnabled(flag ?? SHADOW_AI_SECTION);
   const live = entriesProp === undefined;
@@ -103,7 +138,7 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
   const [netError, setNetError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(live && enabled);
   const [tick, setTick] = useState(0);
-  const [calibration, setCalibration] = useState<AiCalibrationView | null>(null);
+  const [fetchedCalibration, setFetchedCalibration] = useState<ShadowAiCalibrationView | null>(null);
   const prevRefreshSignalRef = useRef(refreshSignal);
 
   const refresh = useCallback(() => setTick((n) => n + 1), []);
@@ -148,14 +183,14 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
     const doFetch = fetchImpl ?? fetch;
     doFetch('/api/shadow/ai-calibration')
       .then((r) => (r.ok ? r.json() : null))
-      .then((d: AiCalibrationView | null) => {
+      .then((d: ShadowAiCalibrationView | null) => {
         if (!alive) return;
         // Nessun placeholder: si mostra solo quando c'e' qualcosa di reale.
-        setCalibration(d && d.available === true ? d : null);
+        setFetchedCalibration(d && d.available === true ? d : null);
       })
       .catch(() => {
         if (!alive) return;
-        setCalibration(null);
+        setFetchedCalibration(null);
       });
     return () => {
       alive = false;
@@ -167,6 +202,13 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
   const entries = live ? fetched : (entriesProp ?? null);
   const shownError = errorProp ?? netError;
   const shownLoading = loadingProp !== undefined ? loadingProp : loading;
+
+  // La prop vince sullo stato: permette il render server-side nei test.
+  const calibrationValue =
+    calibrationProp !== undefined ? calibrationProp : fetchedCalibration;
+  // Solo dati reali: nessuna sezione vuota o dichiarata tale.
+  const shownCalibration =
+    calibrationValue && calibrationValue.available === true ? calibrationValue : null;
 
   const summary = summarizeShadowLogEntries(entries);
   const knownOutcomeCount = summary.knownOutcomeCount;
@@ -216,34 +258,7 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
           <p className="text-[10px] text-slate-500" data-testid="shadow-ai-not-evaluated-count">
             non valutate: {notEvaluatedCount}
           </p>
-          {calibration && (
-            <div
-              data-testid="shadow-ai-calibration"
-              className="border-t border-slate-700 pt-2 space-y-1"
-            >
-              <p className="text-[10px] font-bold text-slate-300">
-                Calibrazione AI (esplorativa) —{' '}
-                {calibration.verdict === 'evidence' ? 'campione sufficiente' : 'campione insufficiente'}
-              </p>
-              <p className="text-[10px] text-slate-400" data-testid="shadow-ai-calibration-matched">
-                abbinate: {calibration.counts?.matched ?? 0} / min {calibration.minSample ?? 0}
-              </p>
-              <p className="text-[10px] text-slate-400">
-                {calibration.buckets?.map((b) => `${b.decision} ${b.n}`).join(' · ')}
-              </p>
-              <p className="text-[10px] text-slate-400" data-testid="shadow-ai-calibration-edge">
-                edgeR: {calibration.edgeR === null || calibration.edgeR === undefined
-                  ? 'non calcolabile'
-                  : calibration.edgeR}
-                {calibration.verdict === 'evidence' ? '' : ' (non un risultato)'}
-              </p>
-              {(calibration.skippedWinners?.length ?? 0) > 0 && (
-                <p className="text-[10px] text-amber-300">
-                  scarti andati in positivo: {calibration.skippedWinners?.length}
-                </p>
-              )}
-            </div>
-          )}
+          {shownCalibration && <ShadowAiCalibrationBlock calibration={shownCalibration} />}
         </>
       )}
     </div>

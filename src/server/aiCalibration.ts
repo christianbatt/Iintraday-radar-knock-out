@@ -10,9 +10,16 @@
  * - dedup delle valutazioni per `candidateKey` (vince la piu' recente), come fa
  *   gia' il pannello Shadow AI, cosi' una riga `source: 'scan'` non conta due
  *   volte lo stesso candidato;
- * - join per ticker con la distanza temporale minima entro una finestra fissa
+ * - join UNO-A-UNO per ticker entro una finestra fissa
  *   (`AI_CALIBRATION_MATCH_WINDOW_MS`): l'esito di un altro giorno sullo stesso
- *   titolo non e' l'esito di questa decisione;
+ *   titolo non e' l'esito di questa decisione, e una stessa osservazione forward
+ *   non puo' essere attribuita a due decisioni (ne' una decisione a due esiti).
+ *   Assegnazione greedy sulle coppie ordinate per distanza crescente, con
+ *   spareggio deterministico;
+ * - solo le VALUTAZIONI DI CANDIDATO entrano nei bucket: le direttive in prosa
+ *   (`source: 'specialize'|'desk'` senza `candidateKey`) finiscono in
+ *   `SCONOSCIUTO` e sono contate in `counts.directivesIgnored`. Anche un testo
+ *   come "non comprare contro il trend" e' prosa, non un esito;
  * - bucket per decisione (`AZIONE` / `ATTESA` / `SCARTO`) con `n`, `meanR`,
  *   `winRatePct`;
  * - `edgeR` = meanR(AZIONE) − meanR(SCARTO): il numero che dice se il desk
@@ -60,6 +67,22 @@ export function classifyAiOutcome(raw: string | null | undefined): AiDecisionCla
   if (/(WAIT|ATTEND|MONITOR|OSSERVA|SOSPEND)/.test(text)) return 'ATTESA';
   if (/(BUY|SELL|LONG|SHORT|TRADE|APPROV|CONFERM|VALID|AZIONE|ENTRA)/.test(text)) return 'AZIONE';
   return 'SCONOSCIUTO';
+}
+
+/**
+ * Classifica una RIGA del log, non un testo qualsiasi.
+ *
+ * Solo una valutazione di candidato (riga di scansione o riga con
+ * `candidateKey`) descrive una decisione su un setup. Le direttive prodotte da
+ * `specialize`/`desk` sono prosa: anche se contengono "non comprare" o "attendi"
+ * NON sono un esito e restano `SCONOSCIUTO`.
+ */
+export function classifyEntryDecision(entry: AiCalibrationEntry): AiDecisionClass {
+  const hasCandidateKey =
+    typeof entry.candidateKey === 'string' && entry.candidateKey.length > 0;
+  const isCandidateEvaluation = hasCandidateKey || entry.source === 'scan';
+  if (!isCandidateEvaluation) return 'SCONOSCIUTO';
+  return classifyAiOutcome(entry.aiOutcome);
 }
 
 export interface AiCalibrationEntry {
@@ -117,6 +140,8 @@ export interface AiCalibrationResponse {
     unmatchedAiEntries: number;
     forwardWithoutDecision: number;
     skippedAiEntries: number;
+    /** Righe in prosa (direttive senza `candidateKey`): mai classificate. */
+    directivesIgnored: number;
   };
   buckets: AiCalibrationBucket[];
   /** meanR(AZIONE) − meanR(SCARTO); `null` se manca uno dei due campioni. */
@@ -195,22 +220,10 @@ function indexForward(
   return byTicker;
 }
 
-function nearestWithin(
-  points: readonly AiCalibrationForwardPoint[],
-  atMs: number,
-  windowMs: number
-): AiCalibrationForwardPoint | null {
-  let best: AiCalibrationForwardPoint | null = null;
-  let bestDelta = Number.POSITIVE_INFINITY;
-  for (const point of points) {
-    const delta = Math.abs(point.decidedAtMs - atMs);
-    if (delta > windowMs) continue;
-    if (delta < bestDelta) {
-      best = point;
-      bestDelta = delta;
-    }
-  }
-  return best;
+/** Una riga rappresenta una decisione su un setup? (scansione o candidateKey) */
+function isCandidateRow(entry: AiCalibrationEntry): boolean {
+  if (typeof entry.candidateKey === 'string' && entry.candidateKey.length > 0) return true;
+  return entry.source === 'scan';
 }
 
 /**
@@ -231,37 +244,75 @@ export function buildAiCalibration(input: {
   const deduped = dedupeEntries(cappedEntries);
   const forwardIndex = indexForward(Array.isArray(input.forward) ? input.forward : []);
 
-  const joined: AiCalibrationJoin[] = [];
-  let unmatchedAiEntries = 0;
+  // Solo valutazioni di candidato; la prosa resta fuori e viene dichiarata.
+  interface Candidate {
+    entry: AiCalibrationEntry;
+    ticker: string;
+    atMs: number;
+    order: number;
+  }
+  const candidates: Candidate[] = [];
   let skippedAiEntries = 0;
-  const usedForwardKeys = new Set<string>();
-
-  for (const entry of deduped) {
+  let directivesIgnored = 0;
+  deduped.forEach((entry, order) => {
+    if (!isCandidateRow(entry)) {
+      directivesIgnored += 1;
+      return;
+    }
     const ticker = typeof entry.ticker === 'string' ? entry.ticker.trim() : '';
     const atMs = Date.parse(entry.timestamp);
     if (ticker.length === 0 || !Number.isFinite(atMs)) {
       skippedAiEntries += 1;
-      continue;
+      return;
     }
-    const point = nearestWithin(forwardIndex.get(ticker) ?? [], atMs, windowMs);
-    if (!point) {
-      unmatchedAiEntries += 1;
-      continue;
+    candidates.push({ entry, ticker, atMs, order });
+  });
+
+  // Coppie possibili entro la finestra, ordinate per distanza crescente: cosi'
+  // l'abbinamento e' uno-a-uno e vince sempre la coppia piu' vicina.
+  interface Pair {
+    candidate: Candidate;
+    point: AiCalibrationForwardPoint;
+    delta: number;
+  }
+  const pairs: Pair[] = [];
+  for (const candidate of candidates) {
+    for (const point of forwardIndex.get(candidate.ticker) ?? []) {
+      const delta = Math.abs(point.decidedAtMs - candidate.atMs);
+      if (delta > windowMs) continue;
+      pairs.push({ candidate, point, delta });
     }
-    usedForwardKeys.add(point.key);
+  }
+  pairs.sort((a, b) => {
+    if (a.delta !== b.delta) return a.delta - b.delta;
+    if (a.candidate.atMs !== b.candidate.atMs) return a.candidate.atMs - b.candidate.atMs;
+    if (a.candidate.order !== b.candidate.order) return a.candidate.order - b.candidate.order;
+    return a.point.key < b.point.key ? -1 : a.point.key > b.point.key ? 1 : 0;
+  });
+
+  const matchedOrders = new Set<number>();
+  const usedPointKeys = new Set<string>();
+  const joined: AiCalibrationJoin[] = [];
+  for (const pair of pairs) {
+    if (matchedOrders.has(pair.candidate.order)) continue;
+    if (usedPointKeys.has(pair.point.key)) continue;
+    matchedOrders.add(pair.candidate.order);
+    usedPointKeys.add(pair.point.key);
+    const { entry, ticker, atMs } = pair.candidate;
     joined.push({
       candidateKey:
         typeof entry.candidateKey === 'string' && entry.candidateKey.length > 0
           ? entry.candidateKey
           : null,
       ticker,
-      decision: classifyAiOutcome(entry.aiOutcome),
+      decision: classifyEntryDecision(entry),
       aiOutcome: entry.aiOutcome ?? null,
-      r: point.r,
-      forwardStatus: point.status,
-      deltaMs: Math.round(point.decidedAtMs - atMs),
+      r: pair.point.r,
+      forwardStatus: pair.point.status,
+      deltaMs: Math.round(pair.point.decidedAtMs - atMs),
     });
   }
+  const unmatchedAiEntries = candidates.length - joined.length;
 
   const buckets = bucketOf(joined);
   const action = buckets.find((b) => b.decision === 'AZIONE');
@@ -299,8 +350,9 @@ export function buildAiCalibration(input: {
       forwardPoints,
       matched,
       unmatchedAiEntries,
-      forwardWithoutDecision: Math.max(0, forwardPoints - usedForwardKeys.size),
+      forwardWithoutDecision: Math.max(0, forwardPoints - usedPointKeys.size),
       skippedAiEntries,
+      directivesIgnored,
     },
     buckets,
     edgeR,

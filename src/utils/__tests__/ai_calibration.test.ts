@@ -5,6 +5,7 @@ import {
   AI_CALIBRATION_VERSION,
   buildAiCalibration,
   classifyAiOutcome,
+  classifyEntryDecision,
   createAiCalibrationHandler,
   isAiCalibrationEnabled,
   type AiCalibrationEntry,
@@ -191,6 +192,120 @@ describe('aiCalibration — join decisione -> esito forward', () => {
     });
     assert.equal(out.counts.forwardPoints, 0);
     assert.equal(out.counts.matched, 0);
+  });
+});
+
+describe('aiCalibration — abbinamento uno-a-uno', () => {
+  it("un solo esito forward non viene attribuito a due decisioni", () => {
+    const entries: AiCalibrationEntry[] = [
+      entry({ id: 'x1', timestamp: iso(0), candidateKey: 'r1:ENI', aiOutcome: 'BUY' }),
+      entry({ id: 'x2', timestamp: iso(5), candidateKey: 'r2:ENI', aiOutcome: 'BUY' }),
+    ];
+    const forward = [point({ key: 'single', decidedAtMs: NOW + 4 * 60_000, r: 1.2 })];
+    const out = buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0) });
+
+    assert.equal(out.counts.matched, 1, 'il punto forward vale per una sola decisione');
+    assert.equal(out.counts.unmatchedAiEntries, 1);
+    assert.equal(out.counts.forwardWithoutDecision, 0);
+    assert.equal(out.buckets.find((b) => b.decision === 'AZIONE')?.n, 1);
+    assert.equal(out.buckets.find((b) => b.decision === 'AZIONE')?.meanR, 1.2);
+  });
+
+  it("vince la coppia piu' vicina, non l'ordine del log", () => {
+    const entries: AiCalibrationEntry[] = [
+      entry({ id: 'y1', timestamp: iso(0), candidateKey: 'r1:ENI', aiOutcome: 'BUY' }),
+      entry({ id: 'y2', timestamp: iso(5), candidateKey: 'r2:ENI', aiOutcome: 'SKIP' }),
+    ];
+    // il punto e' a +4 minuti: piu' vicino a y2 (1 min) che a y1 (4 min)
+    const forward = [point({ key: 'near', decidedAtMs: NOW + 4 * 60_000, r: 0.8 })];
+    const out = buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0) });
+
+    assert.equal(out.counts.matched, 1);
+    assert.equal(out.buckets.find((b) => b.decision === 'SCARTO')?.n, 1);
+    assert.equal(out.buckets.find((b) => b.decision === 'AZIONE')?.n, 0);
+    assert.equal(out.counts.unmatchedAiEntries, 1);
+  });
+
+  it('una decisione non consuma due esiti diversi', () => {
+    const entries: AiCalibrationEntry[] = [
+      entry({ id: 'z1', timestamp: iso(0), candidateKey: 'r1:ENI', aiOutcome: 'BUY' }),
+    ];
+    const forward = [
+      point({ key: 'first', decidedAtMs: NOW + 60_000, r: 2 }),
+      point({ key: 'second', decidedAtMs: NOW + 2 * 60_000, r: -1, status: 'STOP' }),
+    ];
+    const out = buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0) });
+
+    assert.equal(out.counts.matched, 1);
+    assert.equal(out.counts.forwardWithoutDecision, 1, "il secondo esito resta senza decisione");
+    assert.equal(out.buckets.find((b) => b.decision === 'AZIONE')?.sumR, 2);
+  });
+});
+
+describe('aiCalibration — le direttive in prosa non sono esiti', () => {
+  it('una direttiva desk/specialize finisce in SCONOSCIUTO e fuori dai bucket', () => {
+    const entries: AiCalibrationEntry[] = [
+      {
+        id: 'd1',
+        timestamp: iso(0),
+        ticker: 'ENI.MI',
+        market: 'EU',
+        direction: null,
+        source: 'desk',
+        aiOutcome: 'Non comprare contro il SuperTrend',
+        candidateKey: null,
+      },
+      {
+        id: 'd2',
+        timestamp: iso(0),
+        ticker: 'ISP.MI',
+        market: 'EU',
+        direction: null,
+        source: 'specialize',
+        aiOutcome: 'Attendere la conferma del volume',
+        candidateKey: null,
+      },
+    ];
+    const forward = [
+      point({ key: 'p1', ticker: 'ENI.MI', decidedAtMs: NOW, r: 2 }),
+      point({ key: 'p2', ticker: 'ISP.MI', decidedAtMs: NOW, r: 1 }),
+    ];
+    const out = buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0) });
+
+    assert.equal(out.counts.directivesIgnored, 2);
+    assert.equal(out.counts.matched, 0, 'la prosa non si abbina');
+    assert.equal(out.counts.unmatchedAiEntries, 0);
+    assert.equal(out.counts.forwardWithoutDecision, 2);
+    assert.deepEqual(
+      out.buckets.map((b) => b.n),
+      [0, 0, 0]
+    );
+    assert.equal(out.edgeR, null);
+    assert.equal(out.skippedWinners.length, 0);
+  });
+
+  it('classifyEntryDecision ignora la prosa anche con verbi di decisione', () => {
+    assert.equal(
+      classifyEntryDecision({
+        id: 'p',
+        timestamp: iso(0),
+        ticker: 'ENI.MI',
+        market: 'EU',
+        direction: null,
+        source: 'desk',
+        aiOutcome: 'BUY',
+        candidateKey: null,
+      }),
+      'SCONOSCIUTO'
+    );
+    assert.equal(
+      classifyEntryDecision(entry({ id: 'q', candidateKey: 'r:ENI', aiOutcome: 'BUY' })),
+      'AZIONE'
+    );
+    assert.equal(
+      classifyEntryDecision({ ...entry({ id: 's' }), source: 'scan', candidateKey: null, aiOutcome: 'SKIP' }),
+      'SCARTO'
+    );
   });
 });
 
