@@ -27,6 +27,7 @@ import {
   shadowV1LiveBodyLimitParser,
   SHADOW_V1_LIVE_ALLOWED_ORIGINS_ENV,
   SHADOW_V1_LIVE_BAR_MS,
+  SHADOW_V1_LIVE_AUTH_FAILURE_WINDOW_MS,
   SHADOW_V1_LIVE_BARS_PATH,
   SHADOW_V1_LIVE_RATE_MAP_MAX_ENTRIES,
   SHADOW_V1_LIVE_RATE_WINDOW_MS,
@@ -1644,13 +1645,14 @@ test('P10 provenienza: la route HTTP persiste source client', async () => {
 
 function callRoute(
   route: (req: unknown, res: unknown) => void,
-  body: unknown
+  body: unknown,
+  ip = '7.7.7.7'
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   return new Promise((resolve) => {
     route(
       {
         body,
-        ip: '7.7.7.7',
+        ip,
         headers: { host: 'app.example.tld', origin: 'https://app.example.tld' },
       },
       {
@@ -1773,6 +1775,121 @@ test('P15 concorrenza: due POST sulla route registrata non perdono aggiornamenti
   const records = loadRecords(signals).records;
   assert.equal(records.length, 2, 'nessun upsert sovrascritto dall altra richiesta');
   assert.equal(new Set(records.map((r) => r.key)).size, 2);
+});
+
+// --- P16: limite dei 401 falliti per IP ---------------------------------------
+
+function authLimitedSetup(options: {
+  authorize: () => string | null;
+  limit?: number;
+  clock: { ms: number };
+}): {
+  route: (req: unknown, res: unknown) => void;
+  signals: string;
+  stop: () => void;
+} {
+  const { root, signals } = freshRoot('v1livep16-');
+  const app = { post: (_p: string, _h: (req: unknown, res: unknown) => void) => {} };
+  const captured = captureObserveRoute(app);
+  const registration = registerShadowV1LiveCollector(app, {
+    root,
+    env: ON,
+    now: () => options.clock.ms,
+    fetchMissingBars: null,
+    timers: fakeTimers,
+    authorize: options.authorize,
+    ...(options.limit === undefined ? {} : { authFailureLimitPerMinute: options.limit }),
+  });
+  return {
+    route: captured.route as (req: unknown, res: unknown) => void,
+    signals,
+    stop: () => registration.stop?.(),
+  };
+}
+
+test('P16 auth failures: oltre il tetto per IP la route risponde 429 senza autorizzare', async () => {
+  const clock = { ms: D0 + 30 * 60 * 1000 };
+  let authorizeCalls = 0;
+  const setup = authLimitedSetup({
+    limit: 2,
+    clock,
+    authorize: () => {
+      authorizeCalls += 1;
+      return null;
+    },
+  });
+  try {
+    const first = await callRoute(setup.route, validBody());
+    const second = await callRoute(setup.route, validBody());
+    const third = await callRoute(setup.route, validBody());
+    assert.equal(first.status, 401);
+    assert.equal(second.status, 401);
+    assert.equal(third.status, 429);
+    assert.equal(third.body.status, 'rate_limited');
+    assert.equal(third.body.limit, 2);
+    assert.equal(authorizeCalls, 2, 'la richiesta bloccata non arriva a verificare le credenziali');
+    assert.equal(fs.existsSync(setup.signals), false, 'nessuna scrittura sui 401/429');
+  } finally {
+    setup.stop();
+  }
+});
+
+test('P16 auth failures: il blocco e\u2019 per IP (anche dietro ::ffff:) e non globale', async () => {
+  const clock = { ms: D0 + 30 * 60 * 1000 };
+  const setup = authLimitedSetup({ limit: 1, clock, authorize: () => null });
+  try {
+    assert.equal((await callRoute(setup.route, validBody(), '1.1.1.1')).status, 401);
+    assert.equal((await callRoute(setup.route, validBody(), '1.1.1.1')).status, 429);
+    // Stesso IP in forma IPv4-mapped: condivide il budget, non lo aggira.
+    assert.equal((await callRoute(setup.route, validBody(), '::ffff:1.1.1.1')).status, 429);
+    // IP diverso: nessun blocco.
+    assert.equal((await callRoute(setup.route, validBody(), '2.2.2.2')).status, 401);
+  } finally {
+    setup.stop();
+  }
+});
+
+test('P16 auth failures: le richieste autenticate non consumano il budget', async () => {
+  const clock = { ms: D0 + 30 * 60 * 1000 };
+  let calls = 0;
+  const setup = authLimitedSetup({
+    limit: 1,
+    clock,
+    authorize: () => {
+      calls += 1;
+      return calls <= 2 ? 'uid-1' : null;
+    },
+  });
+  try {
+    assert.equal((await callRoute(setup.route, validBody())).status, 200);
+    assert.equal((await callRoute(setup.route, validBody())).status, 200);
+    assert.equal((await callRoute(setup.route, validBody())).status, 401);
+    assert.equal((await callRoute(setup.route, validBody())).status, 429);
+  } finally {
+    setup.stop();
+  }
+});
+
+test('P16 auth failures: dopo la finestra il client torna a poter tentare', async () => {
+  const clock = { ms: D0 + 30 * 60 * 1000 };
+  let calls = 0;
+  const setup = authLimitedSetup({
+    limit: 1,
+    clock,
+    authorize: () => {
+      calls += 1;
+      return null;
+    },
+  });
+  try {
+    assert.equal((await callRoute(setup.route, validBody())).status, 401);
+    assert.equal((await callRoute(setup.route, validBody())).status, 429);
+    clock.ms += SHADOW_V1_LIVE_AUTH_FAILURE_WINDOW_MS + 1;
+    assert.equal((await callRoute(setup.route, validBody())).status, 401);
+    assert.equal(calls, 2, 'il tentativo dopo la finestra verifica di nuovo le credenziali');
+  } finally {
+    setup.stop();
+  }
 });
 
 test('P10 provenienza: lo scanner server-side persiste source server-scanner', async () => {

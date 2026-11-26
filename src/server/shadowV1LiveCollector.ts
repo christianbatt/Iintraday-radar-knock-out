@@ -77,6 +77,20 @@ export const SHADOW_V1_LIVE_MAX_BODY_BYTES = 8192;
 /** Limite proprio della route, piu' stretto di `apiLimiter` (60/min globale). */
 export const SHADOW_V1_LIVE_RATE_LIMIT_PER_MINUTE = 10;
 
+/**
+ * Tetto dei tentativi di autenticazione FALLITI per IP sulla route observe:
+ * il gate auth precede il rate limit delle osservazioni, quindi senza questo
+ * un client non autenticato potrebbe martellare la route (e la verifica dei
+ * token) senza alcun limite. Le richieste autenticate non consumano il budget.
+ */
+export const SHADOW_V1_LIVE_AUTH_FAILURE_LIMIT_PER_MINUTE = 10;
+
+/** Finestra del limite sui fallimenti di auth (stessa del rate limit). */
+export const SHADOW_V1_LIVE_AUTH_FAILURE_WINDOW_MS = 60_000;
+
+/** Tetto voci della mappa dei fallimenti: evita crescita illimitata per IP spoofati. */
+const SHADOW_V1_LIVE_AUTH_FAILURE_MAP_MAX_ENTRIES = 5_000;
+
 export const SHADOW_V1_LIVE_RATE_WINDOW_MS = 60_000;
 
 /**
@@ -1537,6 +1551,8 @@ export interface RegistrationOptions {
    * controllo (test, chiamate interne).
    */
   authorize?: ObserveAuthorizer;
+  /** Override del tetto di fallimenti auth per IP al minuto (test e diagnostica). */
+  authFailureLimitPerMinute?: number;
 }
 
 export type ObserveAuthorizer = (req: unknown) => MaybePromise<string | null>;
@@ -1600,6 +1616,49 @@ export function registerShadowV1LiveCollector(
   const handler = createObserveHandler(deps);
   activeObserveHandler = enabled ? handler : null;
 
+  // Limite dei 401 falliti per IP: solo i fallimenti contano, il budget non si
+  // resetta al successo (un attaccante non puo' azzerarlo autenticandosi).
+  const authFailureLimit = Math.max(
+    1,
+    options.authFailureLimitPerMinute ?? SHADOW_V1_LIVE_AUTH_FAILURE_LIMIT_PER_MINUTE
+  );
+  const authFailures = new Map<string, { windowStart: number; count: number }>();
+
+  function authFailureBlockedMs(key: string, nowMs: number): number | null {
+    const entry = authFailures.get(key);
+    if (!entry) return null;
+    const elapsed = nowMs - entry.windowStart;
+    if (elapsed >= SHADOW_V1_LIVE_AUTH_FAILURE_WINDOW_MS) {
+      authFailures.delete(key);
+      return null;
+    }
+    if (entry.count < authFailureLimit) return null;
+    return SHADOW_V1_LIVE_AUTH_FAILURE_WINDOW_MS - elapsed;
+  }
+
+  function noteAuthFailure(key: string, nowMs: number): void {
+    if (authFailures.size >= SHADOW_V1_LIVE_AUTH_FAILURE_MAP_MAX_ENTRIES) {
+      for (const [k, v] of authFailures.entries()) {
+        if (nowMs - v.windowStart >= SHADOW_V1_LIVE_AUTH_FAILURE_WINDOW_MS) authFailures.delete(k);
+      }
+      if (authFailures.size >= SHADOW_V1_LIVE_AUTH_FAILURE_MAP_MAX_ENTRIES) {
+        const excess = authFailures.size - SHADOW_V1_LIVE_AUTH_FAILURE_MAP_MAX_ENTRIES + 1;
+        let removed = 0;
+        for (const k of authFailures.keys()) {
+          authFailures.delete(k);
+          removed += 1;
+          if (removed >= excess) break;
+        }
+      }
+    }
+    const entry = authFailures.get(key);
+    if (!entry || nowMs - entry.windowStart >= SHADOW_V1_LIVE_AUTH_FAILURE_WINDOW_MS) {
+      authFailures.set(key, { windowStart: nowMs, count: 1 });
+      return;
+    }
+    entry.count += 1;
+  }
+
   app.post(SHADOW_V1_LIVE_OBSERVE_PATH, (req, res) => {
     const request = req as ObserveRequest & {
       headers?: Record<string, string | string[] | undefined>;
@@ -1607,10 +1666,26 @@ export function registerShadowV1LiveCollector(
     const response = res as MinimalResponse;
 
     void (async () => {
+      const rawIp = typeof request.ip === 'string' ? request.ip.trim().replace(/^::ffff:/, '') : '';
+      const authIpKey = rawIp || 'unknown';
       // Auth PRIMA di qualunque I/O: senza uid la richiesta non tocca lo store
       // e non consuma il rate limit.
       let uid = response.locals?.authenticatedUid;
       if (options.authorize) {
+        const authNowMs = deps.now();
+        const retryAfterMs = authFailureBlockedMs(authIpKey, authNowMs);
+        if (retryAfterMs !== null) {
+          // Bloccata PRIMA di autorizzare: niente verifica token ne' I/O.
+          response.status(429).json({
+            status: 'rate_limited',
+            error: 'Too Many Requests',
+            message: 'Too many failed authentication attempts',
+            limit: authFailureLimit,
+            windowMs: SHADOW_V1_LIVE_AUTH_FAILURE_WINDOW_MS,
+            retryAfterMs,
+          });
+          return;
+        }
         let resolved: string | null = null;
         try {
           resolved = await options.authorize(request);
@@ -1620,6 +1695,7 @@ export function registerShadowV1LiveCollector(
           resolved = null;
         }
         if (typeof resolved !== 'string' || resolved.length === 0) {
+          noteAuthFailure(authIpKey, authNowMs);
           response.status(401).json({
             status: 'unauthorized',
             error: 'Unauthorized',
@@ -1632,7 +1708,6 @@ export function registerShadowV1LiveCollector(
       }
 
       const contentLength = request.contentLength ?? request.headers?.['content-length'];
-      const rawIp = typeof request.ip === 'string' ? request.ip.trim().replace(/^::ffff:/, '') : '';
       const clientKey = uid && uid !== 'legacy' ? `uid:${uid}` : rawIp || undefined;
       const origin = request.headers?.['origin'];
       const host = request.headers?.['x-forwarded-host'] ?? request.headers?.['host'];
