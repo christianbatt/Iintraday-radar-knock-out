@@ -380,7 +380,9 @@ test('weekend: 200 no_session, nessuna valutazione e nessuna scrittura', async (
   const file = tmpPath();
   const spies = ioSpies();
   const res = await post(
-    deps(file, { readRecords: spies.readRecords, writeRecords: spies.writeRecords }),
+    // L'istante della decisione e' del server: il sabato va dichiarato qui, non
+    // nel `calculatedAt` inviato dal client (ormai non autorevole).
+    deps(file, { readRecords: spies.readRecords, writeRecords: spies.writeRecords }, Date.parse('2026-03-14T14:00:00.000Z')),
     validBody({ calculatedAt: '2026-03-14T14:00:00.000Z' })
   );
   assert.equal(res.status, 200);
@@ -393,7 +395,7 @@ test('weekend: 200 no_session, nessuna valutazione e nessuna scrittura', async (
 test('domenica EU: no_session anche con livelli validi', async () => {
   const file = tmpPath();
   const res = await post(
-    deps(file),
+    deps(file, {}, Date.parse('2026-03-15T10:00:00.000Z')),
     validBody({ market: 'EU', calculatedAt: '2026-03-15T10:00:00.000Z' })
   );
   assert.equal(res.body.status, 'no_session');
@@ -410,8 +412,10 @@ test('setup valido: PENDING_FILL persistito, una riga nel file', async () => {
   const lines = fs.readFileSync(file, 'utf8').trim().split('\n');
   assert.equal(lines.length, 1);
   const rec = JSON.parse(lines[0]) as PersistedShadowV1LiveRecord;
-  assert.equal(rec.key, shadowV1LiveKeyOf('AAPL', 100, 95, D0));
-  assert.equal(rec.decidedAtMs, D0);
+  const serverNow = D0 + 30 * 60 * 1000;
+  assert.equal(rec.key, shadowV1LiveKeyOf('AAPL', 100, 95, serverNow));
+  // Timestamp deciso dal server (deps.now), non dal `calculatedAt` del client.
+  assert.equal(rec.decidedAtMs, serverNow);
   assert.equal(rec.sessionCloseMs, CLOSE);
 });
 
@@ -488,17 +492,21 @@ test('richieste concorrenti su chiavi diverse: nessun aggiornamento perso', asyn
  * Stato iniziale realistico: il record nasce dalla route, come in produzione,
  * cosi' `reason` e campi derivati sono quelli che il nucleo produce davvero.
  */
-async function seedPending(file: string, nowMs = D0 + 5 * 60_000): Promise<void> {
+// Il timestamp del record e' quello del server al POST (`deps.now`): il seme
+// dichiara l'istante della decisione, non piu' un `calculatedAt` del client.
+async function seedPending(file: string, nowMs = D0): Promise<void> {
   const handler = createObserveHandler(deps(file, {}, nowMs));
   const res = await handler({ body: validBody(), ip: 'seed' });
   assert.equal(res.body.outcome, 'PENDING_FILL');
   assert.equal(res.body.persisted, true);
 }
 
-async function seedOpen(file: string, nowMs = D0 + 5 * 60_000): Promise<void> {
+async function seedOpen(file: string, nowMs = D0): Promise<void> {
   await seedPending(file, nowMs);
+  // La barra che tocca l'entry deve essere CHIUSA al momento del ciclo
+  // (t + 300000 <= now), quindi il ciclo sta due barre dopo la decisione.
   await runShadowV1LiveRevaluationCycle(
-    deps(file, { bars: () => [bar(D0 + BAR_MS, 100, 101, 99, 100.5)] }, nowMs + BAR_MS)
+    deps(file, { bars: () => [bar(D0 + BAR_MS, 100, 101, 99, 100.5)] }, nowMs + 2 * BAR_MS)
   );
   assert.equal(loadRecords(file).records[0].status, 'OPEN');
 }
@@ -885,15 +893,18 @@ test('route: insufficient_bars con HTTP 200, nessuna scrittura e log limitato', 
   assert.equal(fs.existsSync(file), false);
 });
 
-test('route: osservazione tardiva con serie completa persiste EXPIRED', async () => {
+test('route: il timestamp del server impedisce di datare il setup nel passato', async () => {
+  // Serie completa disponibile, ma la richiesta arriva a sessione chiusa: con
+  // l'istante deciso dal server il setup non puo' rivendicare D0 e "guardare"
+  // barre future. L'esito e' insufficient_bars e nulla viene persistito.
   const file = tmpPath();
   const res = await createObserveHandler(
     deps(file, { bars: () => fullSessionOpen() }, CLOSE + BAR_MS)
   )({ body: validBody(), ip: '6.6.6.6' });
   assert.equal(res.status, 200);
-  assert.equal(res.body.outcome, 'EXPIRED');
-  assert.equal(res.body.persisted, true);
-  assert.equal(loadRecords(file).records[0].status, 'EXPIRED');
+  assert.equal(res.body.outcome, 'insufficient_bars');
+  assert.equal(res.body.persisted, false);
+  assert.equal(fs.existsSync(file), false, 'nessun record scritto con timestamp retrodatato');
 });
 
 test('route: la guardia e\\u2019 iniettabile (stub con copertura piena applica l\\u2019esito)', async () => {
@@ -1063,9 +1074,21 @@ test('server.ts: una sola alimentazione barre e una sola registrazione', () => {
   // subito a flag OFF (test dedicato sopra).
   assert.ok(source.includes('recordBarsForShadowV1Live(ticker, market, barsForShadow'));
   assert.ok(source.includes('flushShadowV1LiveBarsToDisk();'));
-  assert.ok(
+  // Auth della route observe: viaggia con la registrazione del collector, non
+  // come middleware separato la cui efficacia dipende dall'ordine di mounting.
+  assert.equal(
     source.includes("app.post('/api/shadow/v1-live/observe', requireApiAuth);"),
-    'route POST protegge /api/shadow/v1-live/observe con requireApiAuth'
+    false,
+    'nessun middleware di auth registrato a parte per observe'
+  );
+  assert.match(
+    source,
+    /registerShadowV1LiveCollector\(app,\s*\{[\s\S]*?authorize:/,
+    'la registrazione del collector riceve il gate di autenticazione'
+  );
+  assert.ok(
+    source.includes('resolveApiAuth'),
+    'middleware e route observe riusano la stessa implementazione di auth'
   );
   // SIC-2: il parser dedicato deve restare limitato al solo path della route e
   // deve precedere il parser globale (altrimenti il body e' gia' materializzato).
@@ -1358,7 +1381,9 @@ test('P9 coda unica: ciclo e POST concorrenti non perdono aggiornamenti', async 
   const file = tmpPath();
   const { state, io } = sharedStore();
   const queue = createShadowV1LiveStoreQueue();
-  const nowMs = D0 + 30 * 60_000;
+  // Il POST sancisce l'istante della decisione (D0); il ciclo gira dopo, con la
+  // barra di fill ormai chiusa.
+  let nowMs = D0;
   let barsOn = false;
   const depsValue = deps(file, {
     queue,
@@ -1373,6 +1398,7 @@ test('P9 coda unica: ciclo e POST concorrenti non perdono aggiornamenti', async 
   assert.equal(state.stored.length, 1);
 
   barsOn = true;
+  nowMs = D0 + 2 * BAR_MS;
   state.slowReads = true;
   const cycle = runShadowV1LiveRevaluationCycle(depsValue);
   await new Promise((resolve) => setTimeout(resolve, 1)); // il ciclo ha iniziato a leggere
@@ -1612,6 +1638,141 @@ test('P10 provenienza: la route HTTP persiste source client', async () => {
   } finally {
     registration.stop?.();
   }
+});
+
+// --- P15: auth della route e timestamp deciso dal server ----------------------
+
+function callRoute(
+  route: (req: unknown, res: unknown) => void,
+  body: unknown
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  return new Promise((resolve) => {
+    route(
+      {
+        body,
+        ip: '7.7.7.7',
+        headers: { host: 'app.example.tld', origin: 'https://app.example.tld' },
+      },
+      {
+        locals: {},
+        status: (code: number) => ({
+          json: (payload: Record<string, unknown>) => resolve({ status: code, body: payload }),
+        }),
+      }
+    );
+  });
+}
+
+function captureObserveRoute(app: {
+  post: (p: string, h: (req: unknown, res: unknown) => void) => void;
+}): { route?: (req: unknown, res: unknown) => void } {
+  const captured: { route?: (req: unknown, res: unknown) => void } = {};
+  const post = app.post;
+  app.post = (p: string, h: (req: unknown, res: unknown) => void) => {
+    if (p === SHADOW_V1_LIVE_OBSERVE_PATH) captured.route = h;
+    else post(p, h);
+  };
+  return captured;
+}
+
+test('P15 auth: senza uid la route observe risponde 401 e non tocca lo store', async () => {
+  const { root, signals } = freshRoot('v1livep15auth-');
+  const app = { post: (_p: string, _h: (req: unknown, res: unknown) => void) => {} };
+  const captured = captureObserveRoute(app);
+  const registration = registerShadowV1LiveCollector(app, {
+    root,
+    env: ON,
+    now: () => D0 + 30 * 60 * 1000,
+    fetchMissingBars: null,
+    timers: fakeTimers,
+    authorize: () => null,
+  });
+  try {
+    assert.ok(captured.route, 'route registrata');
+    const out = await callRoute(captured.route as (req: unknown, res: unknown) => void, validBody());
+    assert.equal(out.status, 401);
+    assert.equal(out.body.status, 'unauthorized');
+    assert.equal(fs.existsSync(signals), false, 'nessuna scrittura senza autenticazione');
+  } finally {
+    registration.stop?.();
+  }
+});
+
+test('P15 auth: con uid autenticato la route persiste il setup', async () => {
+  const { root, signals } = freshRoot('v1livep15uid-');
+  const app = { post: (_p: string, _h: (req: unknown, res: unknown) => void) => {} };
+  const captured = captureObserveRoute(app);
+  const registration = registerShadowV1LiveCollector(app, {
+    root,
+    env: ON,
+    now: () => D0 + 30 * 60 * 1000,
+    fetchMissingBars: null,
+    timers: fakeTimers,
+    authorize: () => 'uid-42',
+  });
+  try {
+    const out = await callRoute(captured.route as (req: unknown, res: unknown) => void, validBody());
+    assert.equal(out.status, 200);
+    const records = loadRecords(signals).records;
+    assert.equal(records.length, 1);
+    assert.equal(records[0].source, SHADOW_V1_LIVE_SOURCE_CLIENT);
+  } finally {
+    registration.stop?.();
+  }
+});
+
+test('P15 timestamp: parseObservePayload ignora il timestamp del client', () => {
+  const serverNow = D0 + 30 * 60 * 1000;
+  const parsed = parseObservePayload(
+    validBody({ calculatedAt: '2020-01-02T03:04:05.000Z' }),
+    serverNow
+  );
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.value.decidedAtMs, serverNow);
+  assert.equal(parsed.value.calculatedAt, new Date(serverNow).toISOString());
+});
+
+test('P15 timestamp: un calculatedAt vecchio non sposta la decisione nel passato', async () => {
+  const file = tmpPath();
+  const serverNow = D0 + 30 * 60 * 1000;
+  const res = await post(
+    deps(file, {}, serverNow),
+    validBody({ calculatedAt: '2020-01-02T03:04:05.000Z' })
+  );
+  assert.equal(res.status, 200);
+  assert.equal(res.body.persisted, true);
+  const records = loadRecords(file).records;
+  assert.equal(records.length, 1);
+  assert.equal(records[0].decidedAtMs, serverNow);
+});
+
+test('P15 concorrenza: due POST sulla route registrata non perdono aggiornamenti', async () => {
+  const { root, signals } = freshRoot('v1livep15race-');
+  const app = { post: (_p: string, _h: (req: unknown, res: unknown) => void) => {} };
+  const captured = captureObserveRoute(app);
+  const registration = registerShadowV1LiveCollector(app, {
+    root,
+    env: ON,
+    now: () => D0 + 30 * 60 * 1000,
+    fetchMissingBars: null,
+    timers: fakeTimers,
+    authorize: () => 'uid-7',
+  });
+  try {
+    const route = captured.route as (req: unknown, res: unknown) => void;
+    const [first, second] = await Promise.all([
+      callRoute(route, validBody()),
+      callRoute(route, validBody({ entry: 101 })),
+    ]);
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+  } finally {
+    registration.stop?.();
+  }
+  const records = loadRecords(signals).records;
+  assert.equal(records.length, 2, 'nessun upsert sovrascritto dall altra richiesta');
+  assert.equal(new Set(records.map((r) => r.key)).size, 2);
 });
 
 test('P10 provenienza: lo scanner server-side persiste source server-scanner', async () => {

@@ -26,6 +26,7 @@ import path from 'node:path';
 import type { ErrorRequestHandler, RequestHandler } from 'express';
 import {
   evaluateShadowV1Live,
+  shadowV1LiveKeyOf,
   type ShadowV1LiveBar,
 } from '../knowledge/shadowV1Live';
 import { sessionCloseMsFor, sessionDateFor } from '../utils/sessionClose';
@@ -717,10 +718,15 @@ function isFinitePositive(v: unknown): v is number {
 
 /**
  * Schema rigoroso: soli i sette campi attesi, nessun campo extra, nessun
- * fallback. `calculatedAt` deve essere una stringa ISO parsabile: se manca o non
- * e' valida il chiamante risponde 400 (il server non inventa l'istante).
+ * fallback. `calculatedAt` resta obbligatorio e deve essere una stringa ISO
+ * parsabile (schema del payload invariato), ma **non e' autorevole**: l'istante
+ * della decisione e' quello del server (`nowMs`). Un client non puo' datare a
+ * piacere un setup per farlo cadere in una sessione o in un'altra.
  */
-export function parseObservePayload(body: unknown): ParseObservePayloadResult {
+export function parseObservePayload(
+  body: unknown,
+  nowMs: number = Date.now()
+): ParseObservePayloadResult {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
     return { ok: false, reason: 'body non e\u2019 un oggetto' };
   }
@@ -760,10 +766,13 @@ export function parseObservePayload(body: unknown): ParseObservePayloadResult {
   }
   if (calculatedAt.length === 0) return { ok: false, reason: 'calculatedAt vuoto' };
   if (!ISO_RE.test(calculatedAt)) return { ok: false, reason: 'calculatedAt non ISO 8601' };
-  const decidedAtMs = Date.parse(calculatedAt);
-  if (!Number.isFinite(decidedAtMs)) {
+  if (!Number.isFinite(Date.parse(calculatedAt))) {
     return { ok: false, reason: 'calculatedAt non parsabile' };
   }
+
+  // Timestamp deciso dal server: il valore del client e' validato per
+  // compatibilita' di schema ma non usato per datare la decisione.
+  const serverNowMs = Number.isFinite(nowMs) ? nowMs : Date.now();
 
   return {
     ok: true,
@@ -774,8 +783,8 @@ export function parseObservePayload(body: unknown): ParseObservePayloadResult {
       entry: raw.entry,
       stop: raw.stop,
       target: raw.target,
-      calculatedAt,
-      decidedAtMs,
+      calculatedAt: new Date(serverNowMs).toISOString(),
+      decidedAtMs: serverNowMs,
     },
   };
 }
@@ -1141,7 +1150,7 @@ export function createObserveHandler(deps: CollectorDeps): ObserveHandler {
       };
     }
 
-    const parsed = parseObservePayload(req.body);
+    const parsed = parseObservePayload(req.body, nowMs);
     if (!parsed.ok) {
       return { status: 400, body: { status: 'invalid_payload', reason: parsed.reason } };
     }
@@ -1165,6 +1174,16 @@ export function createObserveHandler(deps: CollectorDeps): ObserveHandler {
       return await queue.run(async (): Promise<ObserveResponse> => {
         const loaded = await readRecords(deps.signalsPath);
         const records = loaded.records;
+        // La chiave del setup e' indipendente dall'istante esatto (giorno UTC):
+        // se il record esiste, il suo `decidedAtMs` vince su quello del server.
+        const setupKey = shadowV1LiveKeyOf(
+          setup.ticker,
+          setup.entry,
+          setup.stop,
+          setup.decidedAtMs
+        );
+        const decidedAtMs =
+          records.find((record) => record.key === setupKey)?.decidedAtMs ?? setup.decidedAtMs;
         const context: ShadowV1LiveObservationContext = {
           ticker: setup.ticker,
           market: setup.market,
@@ -1172,7 +1191,11 @@ export function createObserveHandler(deps: CollectorDeps): ObserveHandler {
           entry: setup.entry,
           stop: setup.stop,
           target: setup.target,
-          decidedAtMs: setup.decidedAtMs,
+          // L'istante lo decide il server, ma per lo STESSO setup (stessa chiave)
+          // resta quello della prima osservazione: senza questo, un reinvio
+          // ripartirebbe da un altro punto della sessione e riporterebbe il
+          // record a PENDING_FILL sovrascrivendo lo stato avanzato dal ciclo.
+          decidedAtMs,
           sessionCloseMs,
           ...(req.source ? { source: req.source } : {}),
         };
@@ -1506,7 +1529,17 @@ export interface RegistrationOptions {
   queue?: ShadowV1LiveStoreQueue;
   /** Se true, salta il ciclo immediato all'avvio e lascia al caller l'invocazione di `triggerCycle` post-idratazione. */
   deferInitialCycle?: boolean;
+  /**
+   * Autenticazione della route observe: riceve la richiesta e ritorna l'uid
+   * autenticato, oppure `null` per rispondere 401. In `server.ts` e' lo stesso
+   * controllo usato dalle altre route protette, passato qui perche' la garanzia
+   * non dipenda dall'ordine di registrazione dei middleware. Assente = nessun
+   * controllo (test, chiamate interne).
+   */
+  authorize?: ObserveAuthorizer;
 }
+
+export type ObserveAuthorizer = (req: unknown) => MaybePromise<string | null>;
 
 export interface RegistrationResult {
   enabled: boolean;
@@ -1572,28 +1605,53 @@ export function registerShadowV1LiveCollector(
       headers?: Record<string, string | string[] | undefined>;
     };
     const response = res as MinimalResponse;
-    const contentLength = request.contentLength ?? request.headers?.['content-length'];
-    const uid = response.locals?.authenticatedUid;
-    const rawIp = typeof request.ip === 'string' ? request.ip.trim().replace(/^::ffff:/, '') : '';
-    const clientKey = uid && uid !== 'legacy' ? `uid:${uid}` : rawIp || undefined;
-    const origin = request.headers?.['origin'];
-    const host = request.headers?.['x-forwarded-host'] ?? request.headers?.['host'];
 
-    void handler({
-      body: request.body,
-      contentLength,
-      ip: request.ip,
-      clientKey,
-      origin,
-      host,
-      source: SHADOW_V1_LIVE_SOURCE_CLIENT,
-    })
-      .then((out) => response.status(out.status).json(out.body))
-      .catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn(`${WARN_PREFIX} handler: ${message}`);
-        response.status(500).json({ status: 'internal_error' });
+    void (async () => {
+      // Auth PRIMA di qualunque I/O: senza uid la richiesta non tocca lo store
+      // e non consuma il rate limit.
+      let uid = response.locals?.authenticatedUid;
+      if (options.authorize) {
+        let resolved: string | null = null;
+        try {
+          resolved = await options.authorize(request);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`${WARN_PREFIX} authorize: ${message}`);
+          resolved = null;
+        }
+        if (typeof resolved !== 'string' || resolved.length === 0) {
+          response.status(401).json({
+            status: 'unauthorized',
+            error: 'Unauthorized',
+            message: 'Valid x-api-key or Bearer token required',
+          });
+          return;
+        }
+        uid = resolved;
+        response.locals = { ...(response.locals ?? {}), authenticatedUid: resolved };
+      }
+
+      const contentLength = request.contentLength ?? request.headers?.['content-length'];
+      const rawIp = typeof request.ip === 'string' ? request.ip.trim().replace(/^::ffff:/, '') : '';
+      const clientKey = uid && uid !== 'legacy' ? `uid:${uid}` : rawIp || undefined;
+      const origin = request.headers?.['origin'];
+      const host = request.headers?.['x-forwarded-host'] ?? request.headers?.['host'];
+
+      const out = await handler({
+        body: request.body,
+        contentLength,
+        ip: request.ip,
+        clientKey,
+        origin,
+        host,
+        source: SHADOW_V1_LIVE_SOURCE_CLIENT,
       });
+      response.status(out.status).json(out.body);
+    })().catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`${WARN_PREFIX} handler: ${message}`);
+      response.status(500).json({ status: 'internal_error' });
+    });
   });
 
   if (!enabled) return { enabled: false, stop: null, triggerCycle: null };
