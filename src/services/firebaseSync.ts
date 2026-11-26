@@ -40,15 +40,24 @@ const firebaseConfigModules = typeof import.meta.glob === 'function'
 const firebaseConfig = Object.values(firebaseConfigModules)[0] as Record<string, any> | undefined;
 const rawConfig = firebaseConfig || {};
 const metaEnv = typeof import.meta !== 'undefined' ? (import.meta as any).env : undefined;
+/**
+ * `process` esiste solo in Node (test, script): nel bundle browser non e'
+ * definito e leggerlo senza guardia fa fallire l'eval del modulo (pagina
+ * bianca con `process is not defined`). Nel client la fonte resta
+ * `import.meta.env` (Vite); il ripiego su `process.env` vale solo fuori dal
+ * browser, dove la variabile esiste davvero.
+ */
+const processEnv: Record<string, string | undefined> =
+  typeof process !== 'undefined' && process && process.env ? process.env : {};
 const apiKey =
   metaEnv?.VITE_FIREBASE_API_KEY ||
-  process.env.VITE_FIREBASE_API_KEY ||
+  processEnv.VITE_FIREBASE_API_KEY ||
   (rawConfig.apiKey && rawConfig.apiKey !== 'YOUR_FIREBASE_API_KEY'
     ? rawConfig.apiKey
     : '');
 const projectId =
   metaEnv?.VITE_FIREBASE_PROJECT_ID ||
-  process.env.VITE_FIREBASE_PROJECT_ID ||
+  processEnv.VITE_FIREBASE_PROJECT_ID ||
   (rawConfig.projectId && rawConfig.projectId !== 'YOUR_FIREBASE_PROJECT_ID'
     ? rawConfig.projectId
     : '');
@@ -71,7 +80,7 @@ if (isFirebaseConfigured) {
 
     const databaseId =
       metaEnv?.VITE_FIRESTORE_DATABASE_ID ||
-      process.env.VITE_FIRESTORE_DATABASE_ID ||
+      processEnv.VITE_FIRESTORE_DATABASE_ID ||
       (resolvedFirebaseConfig.firestoreDatabaseId && resolvedFirebaseConfig.firestoreDatabaseId !== '(default)'
         ? resolvedFirebaseConfig.firestoreDatabaseId
         : 'ai-studio-intradayradar-eb2063c2-bea2-4167-bbfc-dfc1368980c0');
