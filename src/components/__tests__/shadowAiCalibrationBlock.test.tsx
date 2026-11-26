@@ -187,6 +187,35 @@ describe('ShadowAiCalibrationBlock — classificati vs esclusi', () => {
   });
 });
 
+describe('ShadowAiCalibrationBlock — validatore deterministico', () => {
+  it('mostra verdetto, stato del desk e riga di dettaglio', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, {
+        calibration: {
+          ...EVIDENCE,
+          validation: {
+            version: 'ai-desk-validation@1',
+            verdict: 'NON_CONFERMATO',
+            deskStatus: 'NON_VALIDATO',
+            headline: 'NON CONFERMATO: edgeR 0.05 R (soglia +0.2 R).',
+          },
+        },
+      })
+    );
+    assert.ok(out.includes('data-testid="shadow-ai-calibration-validator"'));
+    assert.ok(out.includes('validatore ai-desk-validation@1: NON_CONFERMATO'));
+    assert.ok(out.includes('desk NON_VALIDATO'));
+    assert.ok(out.includes('NON CONFERMATO: edgeR 0.05 R'));
+  });
+
+  it('senza validation nel payload non aggiunge righe', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, { calibration: EVIDENCE })
+    );
+    assert.ok(!out.includes('shadow-ai-calibration-validator'));
+  });
+});
+
 describe('ShadowAISection — calibrazione nel pannello', () => {
   it('renderizza il blocco quando i dati sono disponibili', () => {
     const out = renderToStaticMarkup(

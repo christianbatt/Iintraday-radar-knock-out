@@ -36,6 +36,11 @@
  */
 
 import { isAiShadowDecision } from './aiShadowLog';
+import {
+  AI_DESK_VALIDATION_VERSION,
+  validateAiDeskSample,
+  type AiDeskValidation,
+} from './aiDeskValidator';
 
 export const AI_CALIBRATION_VERSION = 'ai-calibration@1';
 export const AI_CALIBRATION_PATH = '/api/shadow/ai-calibration';
@@ -278,6 +283,11 @@ export interface AiCalibrationResponse {
   /** Allarmi di formato: vuoto quando la quota e' sotto soglia. */
   alerts: AiCalibrationAlert[];
   verdict: 'insufficient' | 'evidence';
+  /**
+   * Verdetto del validatore deterministico (`ai-desk-validation@1`): soglie
+   * fisse applicate al campione aggregato, nessun effetto su gate o selezione.
+   */
+  validation: AiDeskValidation;
   note: string;
   limitations: string[];
 }
@@ -542,6 +552,9 @@ export function buildAiCalibration(input: {
   const available = deduped.length > 0 && forwardPoints > 0;
   const verdict: AiCalibrationResponse['verdict'] =
     classified >= minSample ? 'evidence' : 'insufficient';
+  // Il validatore lavora sull'aggregato gia' calcolato: stesse regole per tutti,
+  // nessuna soglia adattiva e nessun accesso ai dati grezzi.
+  const validation = validateAiDeskSample({ classified, buckets, edgeR, alerts });
 
   return {
     version: AI_CALIBRATION_VERSION,
@@ -587,10 +600,12 @@ export function buildAiCalibration(input: {
     skippedWinners,
     alerts,
     verdict,
+    validation,
     note:
-      verdict === 'evidence'
+      (verdict === 'evidence'
         ? `Campione classificato ${classified} >= ${minSample} (${matched} abbinati, ${matched - classified} in SCONOSCIUTO): edgeR calcolato.`
-        : `Campione classificato ${classified} < ${minSample} (${matched} abbinati, ${matched - classified} in SCONOSCIUTO): nessuna conclusione, edgeR non e' un risultato.`,
+        : `Campione classificato ${classified} < ${minSample} (${matched} abbinati, ${matched - classified} in SCONOSCIUTO): nessuna conclusione, edgeR non e' un risultato.`) +
+      ` Validatore ${AI_DESK_VALIDATION_VERSION}: ${validation.verdict}.`,
     limitations: [
       'Sola lettura: nessuna scrittura, nessun cambio di memoria AI, gate o selezione setup.',
       'Il join e\' per ticker e prossimita\' temporale (finestra fissa); non dimostra che la decisione AI abbia causato l\'esito.',
@@ -607,7 +622,12 @@ export function buildAiCalibration(input: {
         : []),
       `Righe AI senza esito entro ${Math.round(windowMs / 60000)} minuti sono contate come non abbinate, non come zero.`,
       '`counts.matched` e\' sempre la somma dei `buckets`: le valutazioni abbinate con esito illeggibile stanno in `SCONOSCIUTO`, non spariscono.',
-      'Il desk resta NON_VALIDATO finche\' il validatore deterministico non conferma: questa vista e\' esplorativa.',
+      validation.verdict === 'CONFERMATO'
+        ? `Validatore ${AI_DESK_VALIDATION_VERSION}: CONFERMATO (${validation.checks
+            .filter((check) => check.status === 'pass')
+            .map((check) => check.code)
+            .join(', ')}). Resta una vista di sola lettura: le righe del log non vengono promosse.`
+        : `Il desk resta NON_VALIDATO: validatore ${AI_DESK_VALIDATION_VERSION} => ${validation.verdict}. ${validation.headline}`,
       ...(input.truncated === true
         ? [
             `Lettura troncata al tetto di ${input.readLimit ?? 0} valutazioni: il campione puo' essere incompleto (truncated: true).`,

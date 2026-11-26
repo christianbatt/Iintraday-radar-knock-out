@@ -1,0 +1,266 @@
+/**
+ * VALIDATORE DETERMINISTICO DEL DESK AI (`ai-desk-validation@1`).
+ *
+ * La calibrazione (PR-C, `src/server/aiCalibration.ts`) misura lo scarto di
+ * rendimento fra cio' che il desk AI ha approvato (`AZIONE`) e cio' che ha
+ * scartato (`SCARTO`). Fin qui il desk resta `NON_VALIDATO`: la vista e'
+ * esplorativa e nessun numero viene presentato come validazione.
+ *
+ * Questo modulo applica regole FISSE, dichiarate PRIMA di guardare i dati, e
+ * risponde con un verdetto:
+ *
+ *   INSUFFICIENTE   il campione non permette di pronunciarsi
+ *   NON_CONFERMATO  il campione e' adeguato ma le regole non sono rispettate
+ *   CONFERMATO      tutte le regole sono rispettate: il desk e' VALIDATO
+ *
+ * Regole (tutte inclusive sul bordo, nessuna adattiva):
+ *
+ * | Codice             | Regola                                              |
+ * |--------------------|-----------------------------------------------------|
+ * | `sample_classified`| casi classificati (AZIONE+ATTESA+SCARTO) >= 30       |
+ * | `sample_per_bucket`| almeno 10 AZIONE e 10 SCARTO (le medie servono)      |
+ * | `sample_integrity` | SCONOSCIUTO <= 30% degli abbinamenti                 |
+ * | `edge_r`           | edgeR >= +0.2 R                                      |
+ * | `win_rate_gap`     | successo AZIONE - successo SCARTO >= 10 punti        |
+ *
+ * Puro e deterministico: nessun I/O, nessuna LLM, nessun orologio, nessuna
+ * scrittura. Stesso input => stesso verdetto. Non tocca gate, memoria AI o
+ * selezione dei setup, e non riscrive lo `status: NON_VALIDATO` delle righe del
+ * log storico: pubblica solo il verdetto su questa vista.
+ */
+
+export const AI_DESK_VALIDATION_VERSION = 'ai-desk-validation@1';
+
+/** Soglia di campione classificato (la stessa della calibrazione). */
+export const AI_DESK_VALIDATION_MIN_CLASSIFIED = 30;
+/**
+ * Minimo per bucket: una media su meno di 10 casi e' troppo rumorosa per
+ * sostenere una differenza. Vale per entrambi i lati del confronto.
+ */
+export const AI_DESK_VALIDATION_MIN_PER_BUCKET = 10;
+/** Edge minimo per parlare di discriminazione: 0.2 R di differenza fra medie. */
+export const AI_DESK_VALIDATION_MIN_EDGE_R = 0.2;
+/** Divario minimo di successo fra AZIONE e SCARTO, in punti percentuali. */
+export const AI_DESK_VALIDATION_MIN_WIN_RATE_GAP_PCT = 10;
+/** Quota massima di abbinamenti in SCONOSCIUTO: oltre, il campione e' sporco. */
+export const AI_DESK_VALIDATION_MAX_UNKNOWN_SHARE = 0.3;
+
+export type AiDeskValidationVerdict = 'CONFERMATO' | 'NON_CONFERMATO' | 'INSUFFICIENTE';
+export type AiDeskValidationCheckCode =
+  | 'sample_classified'
+  | 'sample_per_bucket'
+  | 'sample_integrity'
+  | 'edge_r'
+  | 'win_rate_gap';
+/**
+ * `insufficient` non e' un fallimento del desk: e' l'impossibilita' di
+ * misurare (campione corto, bucket vuoto, quoziente non calcolabile).
+ */
+export type AiDeskValidationCheckStatus = 'pass' | 'fail' | 'insufficient';
+
+export interface AiDeskValidationCheck {
+  code: AiDeskValidationCheckCode;
+  label: string;
+  status: AiDeskValidationCheckStatus;
+  /** Valore osservato (null quando non calcolabile). */
+  observed: number | null;
+  /** Soglia applicata, sempre positiva e dichiarata. */
+  threshold: number;
+  unit: 'count' | 'R' | 'pct' | 'share';
+  detail: string;
+}
+
+export interface AiDeskValidation {
+  version: typeof AI_DESK_VALIDATION_VERSION;
+  verdict: AiDeskValidationVerdict;
+  /** Stato del desk derivato dal verdetto: VALIDATO solo se CONFERMATO. */
+  deskStatus: 'VALIDATO' | 'NON_VALIDATO';
+  /** Frase breve con i numeri che hanno deciso il verdetto. */
+  headline: string;
+  minClassified: number;
+  minPerBucket: number;
+  minEdgeR: number;
+  minWinRateGapPct: number;
+  maxUnknownShare: number;
+  checks: AiDeskValidationCheck[];
+  limitations: string[];
+}
+
+/** Forma strutturale del bucket di calibrazione (nessun import: niente cicli). */
+export interface AiDeskValidationBucket {
+  decision: string;
+  n: number;
+  meanR?: number | null;
+  winRatePct?: number | null;
+}
+
+export interface AiDeskValidationAlertLike {
+  code: string;
+}
+
+export interface AiDeskValidationInput {
+  /** Casi classificati dichiarati dalla calibrazione (fallback: dai bucket). */
+  classified?: number;
+  buckets?: readonly AiDeskValidationBucket[];
+  edgeR?: number | null;
+  alerts?: readonly AiDeskValidationAlertLike[];
+}
+
+function finite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function round(value: number, decimals: number): number {
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
+}
+
+function bucketOf(buckets: readonly AiDeskValidationBucket[], decision: string): AiDeskValidationBucket | null {
+  for (const bucket of buckets) {
+    if (bucket && bucket.decision === decision) return bucket;
+  }
+  return null;
+}
+
+function nOf(buckets: readonly AiDeskValidationBucket[], decision: string): number {
+  const bucket = bucketOf(buckets, decision);
+  if (!bucket || !finite(bucket.n)) return 0;
+  return Math.max(0, Math.floor(bucket.n));
+}
+
+/**
+ * Applica le regole al campione gia' aggregato. Pura: non lancia, non legge,
+ * non scrive; input incompleto => `INSUFFICIENTE`, mai un verdetto inventato.
+ */
+export function validateAiDeskSample(input: AiDeskValidationInput): AiDeskValidation {
+  const buckets = Array.isArray(input.buckets) ? input.buckets.filter(Boolean) : [];
+  const actionN = nOf(buckets, 'AZIONE');
+  const skipN = nOf(buckets, 'SCARTO');
+  const unknownN = nOf(buckets, 'SCONOSCIUTO');
+  const matched = buckets.reduce((total, bucket) => total + Math.max(0, Math.floor(finite(bucket.n) ? bucket.n : 0)), 0);
+  const classifiedFromBuckets = actionN + skipN + nOf(buckets, 'ATTESA');
+  const classified = finite(input.classified)
+    ? Math.max(0, Math.floor(input.classified))
+    : classifiedFromBuckets;
+  const unknownShare = matched > 0 ? unknownN / matched : null;
+  const edgeR = finite(input.edgeR) ? input.edgeR : null;
+
+  const action = bucketOf(buckets, 'AZIONE');
+  const skip = bucketOf(buckets, 'SCARTO');
+  const actionWin = action && finite(action.winRatePct) ? action.winRatePct : null;
+  const skipWin = skip && finite(skip.winRatePct) ? skip.winRatePct : null;
+  const winRateGap =
+    actionWin !== null && skipWin !== null ? round(actionWin - skipWin, 2) : null;
+
+  const checks: AiDeskValidationCheck[] = [];
+
+  checks.push({
+    code: 'sample_classified',
+    label: 'campione classificato',
+    status: classified >= AI_DESK_VALIDATION_MIN_CLASSIFIED ? 'pass' : 'insufficient',
+    observed: classified,
+    threshold: AI_DESK_VALIDATION_MIN_CLASSIFIED,
+    unit: 'count',
+    detail: `${classified} casi classificati (soglia ${AI_DESK_VALIDATION_MIN_CLASSIFIED}).`,
+  });
+
+  const smallestBucket = Math.min(actionN, skipN);
+  checks.push({
+    code: 'sample_per_bucket',
+    label: 'numerosita per bucket',
+    status: smallestBucket >= AI_DESK_VALIDATION_MIN_PER_BUCKET ? 'pass' : 'insufficient',
+    observed: smallestBucket,
+    threshold: AI_DESK_VALIDATION_MIN_PER_BUCKET,
+    unit: 'count',
+    detail:
+      `AZIONE ${actionN}, SCARTO ${skipN}: il lato piu' piccolo ha ${smallestBucket} casi ` +
+      `(soglia ${AI_DESK_VALIDATION_MIN_PER_BUCKET}).`,
+  });
+
+  const degradingAlert = (Array.isArray(input.alerts) ? input.alerts : []).some(
+    (alert) => alert && (alert.code === 'UNKNOWN_SHARE_HIGH' || alert.code === 'DIRECTIVES_SHARE_HIGH')
+  );
+  checks.push({
+    code: 'sample_integrity',
+    label: 'integrita del campione',
+    status:
+      unknownShare === null
+        ? 'insufficient'
+        : unknownShare <= AI_DESK_VALIDATION_MAX_UNKNOWN_SHARE && !degradingAlert
+          ? 'pass'
+          : 'insufficient',
+    observed: unknownShare === null ? null : round(unknownShare, 4),
+    threshold: AI_DESK_VALIDATION_MAX_UNKNOWN_SHARE,
+    unit: 'share',
+    detail:
+      unknownShare === null
+        ? 'nessun abbinamento: quota SCONOSCIUTO non calcolabile.'
+        : `${unknownN}/${matched} abbinamenti in SCONOSCIUTO (` +
+          `${round(unknownShare * 100, 1)}%, soglia ${round(AI_DESK_VALIDATION_MAX_UNKNOWN_SHARE * 100, 0)}%)` +
+          (degradingAlert ? ' con allarme di formato attivo.' : '.'),
+  });
+
+  checks.push({
+    code: 'edge_r',
+    label: 'edgeR',
+    status: edgeR === null ? 'insufficient' : edgeR >= AI_DESK_VALIDATION_MIN_EDGE_R ? 'pass' : 'fail',
+    observed: edgeR,
+    threshold: AI_DESK_VALIDATION_MIN_EDGE_R,
+    unit: 'R',
+    detail:
+      edgeR === null
+        ? 'edgeR non calcolabile: manca AZIONE o SCARTO con esiti.'
+        : `edgeR ${edgeR} R (soglia +${AI_DESK_VALIDATION_MIN_EDGE_R} R).`,
+  });
+
+  checks.push({
+    code: 'win_rate_gap',
+    label: 'divario di successo',
+    status:
+      winRateGap === null
+        ? 'insufficient'
+        : winRateGap >= AI_DESK_VALIDATION_MIN_WIN_RATE_GAP_PCT
+          ? 'pass'
+          : 'fail',
+    observed: winRateGap,
+    threshold: AI_DESK_VALIDATION_MIN_WIN_RATE_GAP_PCT,
+    unit: 'pct',
+    detail:
+      winRateGap === null
+        ? 'divario non calcolabile: manca il successo di AZIONE o di SCARTO.'
+        : `successo AZIONE ${actionWin}% - SCARTO ${skipWin}% = ${winRateGap} punti ` +
+          `(soglia ${AI_DESK_VALIDATION_MIN_WIN_RATE_GAP_PCT}).`,
+  });
+
+  const insufficient = checks.filter((check) => check.status === 'insufficient');
+  const failed = checks.filter((check) => check.status === 'fail');
+  const verdict: AiDeskValidationVerdict =
+    insufficient.length > 0 ? 'INSUFFICIENTE' : failed.length > 0 ? 'NON_CONFERMATO' : 'CONFERMATO';
+
+  const headline =
+    verdict === 'CONFERMATO'
+      ? `CONFERMATO: ${classified} casi classificati, edgeR ${edgeR} R, ` +
+        `divario di successo ${winRateGap} punti.`
+      : verdict === 'NON_CONFERMATO'
+        ? `NON CONFERMATO: ${failed.map((check) => check.detail).join(' ')}`
+        : `INSUFFICIENTE: ${insufficient.map((check) => check.detail).join(' ')}`;
+
+  return {
+    version: AI_DESK_VALIDATION_VERSION,
+    verdict,
+    deskStatus: verdict === 'CONFERMATO' ? 'VALIDATO' : 'NON_VALIDATO',
+    headline,
+    minClassified: AI_DESK_VALIDATION_MIN_CLASSIFIED,
+    minPerBucket: AI_DESK_VALIDATION_MIN_PER_BUCKET,
+    minEdgeR: AI_DESK_VALIDATION_MIN_EDGE_R,
+    minWinRateGapPct: AI_DESK_VALIDATION_MIN_WIN_RATE_GAP_PCT,
+    maxUnknownShare: AI_DESK_VALIDATION_MAX_UNKNOWN_SHARE,
+    checks,
+    limitations: [
+      'Deterministico e in sola lettura: nessun I/O, nessuna LLM, nessuna scrittura; lo stesso campione produce sempre lo stesso verdetto.',
+      'Conferma solo questa vista: non riscrive lo status NON_VALIDATO delle righe del log, non cambia memoria AI, gate o selezione dei setup.',
+      'edgeR e il divario di successo sono misure di prezzo su esiti abbinati: non dimostrano che la decisione AI abbia causato l esito.',
+      'Le soglie sono dichiarate prima dei dati e inclusive sul bordo; un campione troncato o sporco resta INSUFFICIENTE.',
+    ],
+  };
+}

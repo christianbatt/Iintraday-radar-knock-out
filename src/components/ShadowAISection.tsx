@@ -92,6 +92,13 @@ export interface ShadowAiCalibrationView {
   readLimit?: number;
   /** Allarmi di formato calcolati dal server (vuoto = nessun degrado). */
   alerts?: { code: string; message: string }[];
+  /** Verdetto del validatore deterministico (`ai-desk-validation@1`). */
+  validation?: {
+    version?: string;
+    verdict?: string;
+    deskStatus?: string;
+    headline?: string;
+  };
 }
 
 /**
@@ -143,6 +150,22 @@ export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrati
     <p className="text-[10px] text-slate-400" data-testid="shadow-ai-calibration-classified">
       classificati: {classified} / min {calibration.minSample ?? 0}
     </p>
+    {calibration.validation?.verdict && (
+      <p
+        data-testid="shadow-ai-calibration-validator"
+        className={`text-[10px] font-bold ${
+          calibration.validation.verdict === 'CONFERMATO' ? 'text-emerald-300' : 'text-slate-400'
+        }`}
+      >
+        validatore {calibration.validation.version ?? 'ai-desk-validation@1'}:{' '}
+        {calibration.validation.verdict} · desk {calibration.validation.deskStatus ?? 'NON_VALIDATO'}
+      </p>
+    )}
+    {calibration.validation?.headline && (
+      <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-validator-detail">
+        {calibration.validation.headline}
+      </p>
+    )}
     <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-source">
       fonte: {calibration.sources?.aiLog ?? 'shadow_ai_log.jsonl'}
       {remoteEntries > 0 ? ` · fallback attivo (${remoteEntries} voci)` : ''}

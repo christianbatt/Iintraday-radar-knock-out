@@ -243,11 +243,46 @@ dalla riga near-miss.
 Limite: il registro non copre i candidati senza livelli coerenti (non hanno un
 esito calcolabile) e, oltre il tetto di 400 record, tiene solo i piu' recenti.
 
+## Validatore deterministico (`ai-desk-validation@1`)
+
+La calibrazione misura, il validatore decide se il desk puo' uscire da
+`NON_VALIDATO`. Modulo: `src/server/aiDeskValidator.ts`, puro e senza I/O
+(stesso campione => stesso verdetto). Lavora sull'aggregato gia' calcolato
+dalla calibrazione, non sui dati grezzi.
+
+Regole fisse, dichiarate prima dei dati e inclusive sul bordo:
+
+| Codice | Regola | Se non rispettata |
+|---|---|---|
+| `sample_classified` | classificati (`AZIONE`+`ATTESA`+`SCARTO`) >= 30 | `INSUFFICIENTE` |
+| `sample_per_bucket` | almeno 10 `AZIONE` e 10 `SCARTO` | `INSUFFICIENTE` |
+| `sample_integrity` | `SCONOSCIUTO` <= 30% degli abbinamenti, nessun allarme di formato attivo | `INSUFFICIENTE` |
+| `edge_r` | `edgeR` >= +0.2 R | `NON_CONFERMATO` |
+| `win_rate_gap` | successo `AZIONE` - successo `SCARTO` >= 10 punti | `NON_CONFERMATO` |
+
+Verdetto: qualunque regola `INSUFFICIENTE` blocca (`INSUFFICIENTE`, campione non
+misurabile); altrimenti qualunque regola fallita da `NON_CONFERMATO`; solo con
+tutte le regole rispettate il verdetto e' `CONFERMATO` e `deskStatus` diventa
+`VALIDATO`. `edgeR` non calcolabile (manca un lato) e' `INSUFFICIENTE`, mai un
+fallimento del desk.
+
+La risposta di calibrazione porta `validation` (`version`, `verdict`,
+`deskStatus`, `headline`, soglie, `checks[]` con `observed`/`threshold`/`detail`)
+e la `note` chiude con il verdetto. Il pannello mostra
+`validatore ai-desk-validation@1: <VERDETTO> · desk <STATO>` e la riga di
+dettaglio con i numeri che hanno deciso.
+
+Cosa il validatore **non** fa: non riscrive lo `status: NON_VALIDATO` delle
+righe storiche del log, non promuove la memoria AI, non cambia gate ne'
+selezione dei setup. Un `CONFERMATO` vale per questa vista; la promozione delle
+righe resta un processo esplicito e separato. Se il campione e' troncato o
+sporco il verdetto resta `INSUFFICIENTE`.
+
 ## Come verificare
 
 ```bash
 npx tsc --noEmit
-npm run -s test:ai-calibration      # calibrazione + render del blocco
+npm run -s test:ai-calibration      # calibrazione + validatore + render del blocco
 npm run -s test:shadowv1liverejected # registro controfattuale degli altri scarti
 npm run -s test:ai-forward         # entrambe le suite sopra, in un comando
 npm run -s test:ai-desk && npm run -s test:ai-shadow && npm run -s test:shadow-panel
