@@ -176,7 +176,11 @@ describe('aiCalibration — join decisione -> esito forward', () => {
     assert.equal(out.edgeR, null);
     assert.deepEqual(
       out.buckets.map((b) => b.n),
-      [0, 0, 0]
+      [0, 0, 0, 0]
+    );
+    assert.equal(
+      out.buckets.reduce((sum, bucket) => sum + bucket.n, 0),
+      out.counts.matched
     );
   });
 
@@ -242,6 +246,60 @@ describe('aiCalibration — abbinamento uno-a-uno', () => {
   });
 });
 
+describe('aiCalibration — ogni riga abbinata compare in un bucket', () => {
+  it("sum(buckets[].n) e' sempre uguale a counts.matched", () => {
+    const { entries, forward } = baseInput();
+    const out = buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0) });
+    const sum = out.buckets.reduce((total, bucket) => total + bucket.n, 0);
+    assert.equal(sum, out.counts.matched);
+    assert.equal(out.counts.matched, 3);
+  });
+
+  it('una valutazione abbinata con esito illeggibile finisce in SCONOSCIUTO', () => {
+    const out = buildAiCalibration({
+      entries: [entry({ id: 'u1', candidateKey: 'r:ENI', aiOutcome: null })],
+      forward: [point({ key: 'p', decidedAtMs: NOW, r: -1, status: 'STOP' })],
+      nowMs: NOW,
+      generatedAt: iso(0),
+    });
+    assert.equal(out.counts.matched, 1);
+    const sconosciuto = out.buckets.find((b) => b.decision === 'SCONOSCIUTO');
+    assert.equal(sconosciuto?.n, 1);
+    assert.equal(sconosciuto?.meanR, -1);
+    assert.equal(
+      out.buckets.reduce((total, bucket) => total + bucket.n, 0),
+      out.counts.matched
+    );
+    assert.equal(out.edgeR, null, 'SCONOSCIUTO non entra in edgeR');
+  });
+
+  it('la prosa non abbinata non entra nel rendiconto dei bucket', () => {
+    const out = buildAiCalibration({
+      entries: [
+        {
+          id: 'w1',
+          timestamp: iso(0),
+          ticker: 'ENI.MI',
+          market: 'EU',
+          direction: null,
+          source: 'desk',
+          aiOutcome: 'Non comprare contro il SuperTrend',
+          candidateKey: null,
+        },
+      ],
+      forward: [point({ key: 'p', decidedAtMs: NOW, r: 2 })],
+      nowMs: NOW,
+      generatedAt: iso(0),
+    });
+    assert.equal(out.counts.directivesIgnored, 1);
+    assert.equal(out.counts.matched, 0);
+    assert.equal(
+      out.buckets.reduce((total, bucket) => total + bucket.n, 0),
+      0
+    );
+  });
+});
+
 describe('aiCalibration — le direttive in prosa non sono esiti', () => {
   it('una direttiva desk/specialize finisce in SCONOSCIUTO e fuori dai bucket', () => {
     const entries: AiCalibrationEntry[] = [
@@ -278,7 +336,7 @@ describe('aiCalibration — le direttive in prosa non sono esiti', () => {
     assert.equal(out.counts.forwardWithoutDecision, 2);
     assert.deepEqual(
       out.buckets.map((b) => b.n),
-      [0, 0, 0]
+      [0, 0, 0, 0]
     );
     assert.equal(out.edgeR, null);
     assert.equal(out.skippedWinners.length, 0);

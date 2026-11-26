@@ -143,6 +143,7 @@ export interface AiCalibrationResponse {
     /** Righe in prosa (direttive senza `candidateKey`): mai classificate. */
     directivesIgnored: number;
   };
+  /** `sum(buckets[].n)` e' sempre uguale a `counts.matched`. */
   buckets: AiCalibrationBucket[];
   /** meanR(AZIONE) − meanR(SCARTO); `null` se manca uno dei due campioni. */
   edgeR: number | null;
@@ -162,7 +163,13 @@ function finiteR(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
-const BUCKET_ORDER: readonly AiDecisionClass[] = ['AZIONE', 'ATTESA', 'SCARTO'];
+/**
+ * Ordine dei bucket nella risposta. Include `SCONOSCIUTO` di proposito: ogni riga
+ * abbinata deve comparire in un bucket, cosi' `sum(buckets[].n) === counts.matched`
+ * sempre. Senza questo bucket una valutazione di candidato con esito illeggibile
+ * sarebbe contata in `matched` ma invisibile nel rendiconto.
+ */
+const BUCKET_ORDER: readonly AiDecisionClass[] = ['AZIONE', 'ATTESA', 'SCARTO', 'SCONOSCIUTO'];
 
 function bucketOf(rows: readonly AiCalibrationJoin[]): AiCalibrationBucket[] {
   return BUCKET_ORDER.map((decision) => {
@@ -367,6 +374,7 @@ export function buildAiCalibration(input: {
       'Il join e\' per ticker e prossimita\' temporale (finestra fissa); non dimostra che la decisione AI abbia causato l\'esito.',
       'L\'R di V1-live e\' di prezzo (senza costi ne\' leva) e solo su setup emessi con decisione TRADE: i candidati mai emessi non hanno esito forward e restano non abbinati.',
       `Righe AI senza esito entro ${Math.round(windowMs / 60000)} minuti sono contate come non abbinate, non come zero.`,
+      '`counts.matched` e\' sempre la somma dei `buckets`: le valutazioni abbinate con esito illeggibile stanno in `SCONOSCIUTO`, non spariscono.',
       'Il desk resta NON_VALIDATO finche\' il validatore deterministico non conferma: questa vista e\' esplorativa.',
     ],
   };
