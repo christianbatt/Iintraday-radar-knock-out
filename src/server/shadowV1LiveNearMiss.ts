@@ -16,8 +16,6 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { evaluateShadowV1Live } from '../knowledge/shadowV1Live';
 import { adxThresholds } from '../config/tradingParams';
 import type {
   ExecutionSetup,
@@ -26,8 +24,21 @@ import type {
   SystemParameters,
 } from '../types/radar';
 import { sessionCloseMsFor, sessionDateFor } from '../utils/sessionClose';
-import { barsForShadowV1Live } from './shadowV1LiveCollector';
 import { syncShadowV1NearMissToFirestore } from './shadowFirestoreSync';
+import {
+  hasOpenForwardRecords,
+  isOpenForwardStatus,
+  isResolvedForwardOutcome,
+  readJsonlRecords,
+  reevaluateForwardRecords,
+  writeAtomicText,
+  writeJsonlAtomic,
+  type JsonlLoadResult,
+  type NearMissStatus,
+} from './shadowV1LiveRecords';
+
+/** Stato del ciclo di vita: definito una volta nel nucleo condiviso. */
+export type { NearMissStatus };
 
 export const SHADOW_V1_NEAR_MISS_PATH = 'artifacts/shadow_v1_live/near_miss.jsonl';
 export const SHADOW_V1_NEAR_MISS_SUMMARY_PATH = 'artifacts/shadow_v1_live/near_miss_summary.json';
@@ -60,14 +71,6 @@ export type NearMissGate =
   | 'G7_ADR_HIGH'
   | 'G8_STOP_WIDE'
   | 'G11_SCORE';
-
-export type NearMissStatus =
-  | 'PENDING_FILL'
-  | 'OPEN'
-  | 'TARGET'
-  | 'STOP'
-  | 'EXPIRED'
-  | 'NOT_FILLED';
 
 export interface ShadowV1NearMissRecord {
   id: string;
@@ -126,45 +129,11 @@ const NEAR_MISS_GATE_LABELS: Record<NearMissGate, string> = {
   G11_SCORE: 'G11 Score vicino alla soglia (-6 pt)',
 };
 
-function writeAtomic(targetPath: string, content: string): void {
-  const dir = path.dirname(targetPath);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmpPath = `${targetPath}.tmp-${process.pid}-${randomUUID()}`;
-  fs.writeFileSync(tmpPath, content, 'utf8');
-  fs.renameSync(tmpPath, targetPath);
-}
-
-export interface NearMissLoadResult {
-  records: ShadowV1NearMissRecord[];
-  /** Righe non vuote scartate: JSON invalido o record senza i campi minimi. */
-  skipped: number;
-}
+export type NearMissLoadResult = JsonlLoadResult<ShadowV1NearMissRecord>;
 
 /** Lettura con inventario delle righe scartate (per la copia di sicurezza). */
 export function loadNearMissRecordsWithStats(filePath: string): NearMissLoadResult {
-  const records: ShadowV1NearMissRecord[] = [];
-  let skipped = 0;
-  if (!fs.existsSync(filePath)) return { records, skipped };
-  try {
-    const raw = fs.readFileSync(filePath, 'utf8');
-    for (const line of raw.split('\n')) {
-      const t = line.trim();
-      if (!t) continue;
-      try {
-        const parsed = JSON.parse(t) as ShadowV1NearMissRecord;
-        if (parsed && typeof parsed.id === 'string' && typeof parsed.ticker === 'string') {
-          records.push(parsed);
-        } else {
-          skipped += 1;
-        }
-      } catch {
-        skipped += 1;
-      }
-    }
-    return { records, skipped };
-  } catch {
-    return { records, skipped };
-  }
+  return readJsonlRecords<ShadowV1NearMissRecord>(filePath);
 }
 
 export function loadNearMissRecords(filePath: string): ShadowV1NearMissRecord[] {
@@ -172,11 +141,10 @@ export function loadNearMissRecords(filePath: string): ShadowV1NearMissRecord[] 
 }
 
 export function hasOpenNearMissRecords(rootDir: string = process.cwd()): boolean {
-  const existing = loadNearMissRecords(path.join(rootDir, SHADOW_V1_NEAR_MISS_PATH));
-  return existing.some((r) => r.status === 'PENDING_FILL' || r.status === 'OPEN');
+  return hasOpenForwardRecords(loadNearMissRecords(path.join(rootDir, SHADOW_V1_NEAR_MISS_PATH)));
 }
 
-function areSetupLevelsValid(setup: ExecutionSetup): boolean {
+export function areSetupLevelsValid(setup: ExecutionSetup): boolean {
   if (setup.direction !== 'LONG' && setup.direction !== 'SHORT') return false;
   const e = setup.entryLevel ?? setup.triggerLevel;
   const s = setup.stopLossLevel;
@@ -305,18 +273,14 @@ export function summarizeNearMissRecords(
     'G8_STOP_WIDE',
     'G11_SCORE',
   ];
-  const resolvedStatuses = new Set<NearMissStatus>(['TARGET', 'STOP', 'EXPIRED']);
-
   const byGate: NearMissGateBucket[] = gateOrder.map((gate) => {
     const items = records.filter((r) => r.nearMissGate === gate);
-    const resolved = items.filter(
-      (r) => resolvedStatuses.has(r.status) && typeof r.r === 'number' && Number.isFinite(r.r)
-    );
+    const resolved = items.filter((r) => isResolvedForwardOutcome(r.status, r.r));
     const wins = resolved.filter((r) => (r.r ?? 0) > 0).length;
     const stops = resolved.filter((r) => r.status === 'STOP').length;
     const expired = resolved.filter((r) => r.status === 'EXPIRED').length;
     const notFilled = items.filter((r) => r.status === 'NOT_FILLED').length;
-    const open = items.filter((r) => r.status === 'OPEN' || r.status === 'PENDING_FILL').length;
+    const open = items.filter((r) => isOpenForwardStatus(r.status)).length;
     const sumR = resolved.reduce((acc, r) => acc + (r.r ?? 0), 0);
 
     return {
@@ -336,10 +300,10 @@ export function summarizeNearMissRecords(
   });
 
   const active = records
-    .filter((r) => r.status === 'PENDING_FILL' || r.status === 'OPEN')
+    .filter((r) => isOpenForwardStatus(r.status))
     .sort((a, b) => b.decidedAtMs - a.decidedAtMs);
   const rest = records
-    .filter((r) => r.status !== 'PENDING_FILL' && r.status !== 'OPEN')
+    .filter((r) => !isOpenForwardStatus(r.status))
     .sort((a, b) => b.decidedAtMs - a.decidedAtMs);
   const euRest = rest.filter((r) => r.market === 'EU');
   const usRest = rest.filter((r) => r.market === 'US');
@@ -439,47 +403,7 @@ export function updateShadowV1NearMiss(input: {
     }
 
     // Rivaluta record non terminali usando solo barre 5m chiuse gia' raccolte in bars.json
-    for (const [id, rec] of byId.entries()) {
-      if (rec.status !== 'PENDING_FILL' && rec.status !== 'OPEN') continue;
-      const bars = barsForShadowV1Live(rec.ticker, rec.market);
-      if (bars.length === 0 && nowMs <= rec.sessionCloseMs) continue;
-
-      const evalRes = evaluateShadowV1Live({
-        setup: {
-          candidate: { ticker: rec.ticker },
-          decision: 'TRADE',
-          direction: rec.direction,
-          entryLevel: rec.entryLevel,
-          triggerLevel: rec.entryLevel,
-          stopLossLevel: rec.stopLossLevel,
-          target1Level: rec.target1Level,
-        },
-        decidedAtMs: rec.decidedAtMs,
-        sessionCloseMs: rec.sessionCloseMs,
-        nowMs,
-        bars,
-      });
-
-      if (evalRes.status === 'INVALID_SETUP' || evalRes.status === 'DUPLICATE') continue;
-      const nextStatus = evalRes.status as NearMissStatus;
-      if (
-        nextStatus !== rec.status ||
-        evalRes.r !== rec.r ||
-        evalRes.fillBarTs !== rec.fillBarTs ||
-        evalRes.exitBarTs !== rec.exitBarTs
-      ) {
-        byId.set(id, {
-          ...rec,
-          status: nextStatus,
-          r: evalRes.r,
-          fillBarTs: evalRes.fillBarTs,
-          exitBarTs: evalRes.exitBarTs,
-          exitPrice: evalRes.exitPrice,
-          updatedAtMs: nowMs,
-        });
-        changed = true;
-      }
-    }
+    if (reevaluateForwardRecords(byId, nowMs)) changed = true;
 
     const ordered = Array.from(byId.values())
       .sort((a, b) => a.decidedAtMs - b.decidedAtMs)
@@ -488,9 +412,8 @@ export function updateShadowV1NearMiss(input: {
     const summary = summarizeNearMissRecords(ordered, nowMs);
 
     if (changed || (!fs.existsSync(summaryPath) && ordered.length > 0)) {
-      const jsonl = ordered.map((r) => JSON.stringify(r)).join('\n') + (ordered.length ? '\n' : '');
-      writeAtomic(filePath, jsonl);
-      writeAtomic(summaryPath, JSON.stringify(summary, null, 2));
+      writeJsonlAtomic(filePath, ordered);
+      writeAtomicText(summaryPath, JSON.stringify(summary, null, 2));
       void syncShadowV1NearMissToFirestore(ordered, summary);
     }
 

@@ -10,6 +10,7 @@ import {
   createAiCalibrationHandler,
   isAiCalibrationEnabled,
   mapNearMissForwardPoints,
+  mapRejectedForwardPoints,
   registerAiCalibrationRoute,
   type AiCalibrationEntry,
   type AiCalibrationForwardPoint,
@@ -761,6 +762,36 @@ describe('aiCalibration — esiti near-miss per i candidati scartati', () => {
     assert.equal(body.buckets.find((b: any) => b.decision === 'AZIONE')?.sumR, 2);
   });
 
+  it('un esito di scarto fuori whitelist entra nel bucket SCARTO e si dichiara', () => {
+    const entries: AiCalibrationEntry[] = [
+      entry({ id: 'r1', ticker: 'ENI.MI', candidateKey: 'r1:ENI.MI', aiOutcome: 'BUY', decision: 'AZIONE' }),
+      entry({ id: 'r2', ticker: 'ISP.MI', candidateKey: 'r1:ISP.MI', aiOutcome: 'SKIP', decision: 'SCARTO' }),
+    ];
+    const forward: AiCalibrationForwardPoint[] = [
+      point({ key: 'sig:ENI', ticker: 'ENI.MI', decidedAtMs: NOW, r: 2, status: 'TARGET' }),
+      ...mapRejectedForwardPoints([
+        { id: 'EU|ISP.MI|2026-11-25', ticker: 'ISP.MI', decidedAtMs: NOW, r: 0.75, status: 'EXPIRED' },
+      ]),
+    ];
+
+    const out = buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0), minSample: 2 });
+    const skip = out.buckets.find((bucket) => bucket.decision === 'SCARTO');
+
+    assert.equal(skip?.n, 1);
+    assert.equal(skip?.meanR, 0.75);
+    assert.equal(out.counts.rejectedMatched, 1);
+    assert.equal(out.counts.rejectedForwardPoints, 1);
+    assert.equal(out.counts.nearMissMatched, 0);
+    assert.equal(
+      out.sources.forward,
+      'artifacts/shadow_v1_live/signals.jsonl + rejected.jsonl (controfattuale)'
+    );
+    assert.ok(
+      out.limitations.some((line) => line.includes('fuori dal near-miss') && line.includes('mai emesso')),
+      'il limite distingue gli altri scarti dal near-miss'
+    );
+  });
+
   it('lettura near-miss in errore: restano gli esiti dei segnali', async () => {
     const out = await createAiCalibrationHandler({
       env: {},
@@ -778,5 +809,34 @@ describe('aiCalibration — esiti near-miss per i candidati scartati', () => {
     assert.equal(out.status, 200);
     assert.equal(body.counts.matched, 1);
     assert.equal(body.counts.nearMissForwardPoints, 0);
+  });
+
+  it('il handler unisce anche gli altri scarti; in errore restano le altre fonti', async () => {
+    const deps = {
+      env: {},
+      now: () => NOW,
+      readEntries: () => [
+        entry({ id: 'h3', ticker: 'ISP.MI', candidateKey: 'r:ISP', aiOutcome: 'SKIP', decision: 'SCARTO' }),
+      ],
+      readForward: () => [point({ key: 'sig', ticker: 'ENI.MI', r: 1.5 })],
+      readRejectedForward: () => [
+        point({ key: 'rejected:x', ticker: 'ISP.MI', r: -0.4, source: 'rejected' as const }),
+      ],
+    };
+    const ok = await createAiCalibrationHandler(deps);
+    const okBody = ok.body as any;
+    assert.equal(okBody.counts.rejectedMatched, 1);
+    assert.equal(okBody.buckets.find((b: any) => b.decision === 'SCARTO')?.meanR, -0.4);
+
+    const failed = await createAiCalibrationHandler({
+      ...deps,
+      readRejectedForward: () => {
+        throw new Error('rejected.jsonl illeggibile');
+      },
+    });
+    const failedBody = failed.body as any;
+    assert.equal(failed.status, 200);
+    assert.equal(failedBody.counts.rejectedForwardPoints, 0);
+    assert.equal(failedBody.counts.forwardPoints, 1, 'gli esiti dei segnali restano');
   });
 });

@@ -30,6 +30,12 @@ import {
   type ShadowV1NearMissSummary,
 } from './shadowV1LiveNearMiss';
 import {
+  loadRejectedRecordsWithStats,
+  SHADOW_V1_REJECTED_MAX_RECORDS,
+  SHADOW_V1_REJECTED_PATH,
+  type ShadowV1RejectedRecord,
+} from './shadowV1LiveRejected';
+import {
   archiveClosedMonths,
   listArchivePaths,
   mergeRecordFiles,
@@ -50,10 +56,16 @@ import {
   runInShadowV1LiveStoreQueue,
   saveShadowV1LiveBarsToDisk,
 } from './shadowV1LiveCollector';
+import {
+  isValidForwardRecordShape,
+  mergeForwardRecordsMonotone,
+  writeJsonlAtomic,
+} from './shadowV1LiveRecords';
 import { loadShadowV2RecordsWithStats } from './shadowV2Collector';
 
 export const SHADOW_V1_SIGNALS_COLLECTION = '_system/shadow_v1_live/signals';
 export const SHADOW_V1_NEAR_MISS_COLLECTION = '_system/shadow_v1_live/near_miss';
+export const SHADOW_V1_REJECTED_COLLECTION = '_system/shadow_v1_live/rejected';
 export const SHADOW_V1_DIAGNOSTICS_DOC = '_system/shadow_v1_live/meta/scan_diagnostics';
 export const SHADOW_V1_NEAR_MISS_SUMMARY_DOC = '_system/shadow_v1_live/meta/near_miss_summary';
 export const SHADOW_V1_LIVE_MARKS_DOC = '_system/shadow_v1_live/meta/live_marks';
@@ -319,48 +331,31 @@ export function mergeV1LiveRecordsMonotone(
   );
 }
 
-function nearMissRank(status: string): number {
-  if (status === 'PENDING_FILL') return 0;
-  if (status === 'OPEN') return 1;
-  return 2;
-}
-
 export function isValidNearMissRecord(value: unknown): value is ShadowV1NearMissRecord {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const r = value as Record<string, unknown>;
-  return (
-    typeof r.id === 'string' &&
-    typeof r.ticker === 'string' &&
-    (r.market === 'EU' || r.market === 'US') &&
-    (r.direction === 'LONG' || r.direction === 'SHORT') &&
-    typeof r.decidedAtMs === 'number' &&
-    Number.isFinite(r.decidedAtMs) &&
-    typeof r.status === 'string'
-  );
+  return isValidForwardRecordShape(value);
 }
 
 export function mergeNearMissRecordsMonotone(
   a: readonly ShadowV1NearMissRecord[],
   b: readonly ShadowV1NearMissRecord[]
 ): ShadowV1NearMissRecord[] {
-  const byId = new Map<string, ShadowV1NearMissRecord>();
-  const accept = (rec: ShadowV1NearMissRecord) => {
-    const prev = byId.get(rec.id);
-    if (!prev) {
-      byId.set(rec.id, rec);
-      return;
-    }
-    const pr = nearMissRank(prev.status);
-    const nr = nearMissRank(rec.status);
-    if (nr > pr || (nr === pr && rec.updatedAtMs >= prev.updatedAtMs)) {
-      byId.set(rec.id, rec);
-    }
-  };
-  for (const r of a) accept(r);
-  for (const r of b) accept(r);
-  return Array.from(byId.values())
-    .sort((x, y) => x.decidedAtMs - y.decidedAtMs)
-    .slice(-SHADOW_V1_NEAR_MISS_MAX_RECORDS);
+  return mergeForwardRecordsMonotone(a, b, SHADOW_V1_NEAR_MISS_MAX_RECORDS);
+}
+
+export function isValidRejectedRecord(value: unknown): value is ShadowV1RejectedRecord {
+  return isValidForwardRecordShape(value);
+}
+
+/**
+ * Unione monotona per `id`: un esito terminale non torna indietro e, a parita'
+ * di stato, vince il record aggiornato piu' di recente (logica condivisa col
+ * near-miss in `shadowV1LiveRecords.ts`).
+ */
+export function mergeRejectedRecordsMonotone(
+  a: readonly ShadowV1RejectedRecord[],
+  b: readonly ShadowV1RejectedRecord[]
+): ShadowV1RejectedRecord[] {
+  return mergeForwardRecordsMonotone(a, b, SHADOW_V1_REJECTED_MAX_RECORDS);
 }
 
 function v2StatusRank(status: string): number {
@@ -490,23 +485,58 @@ export async function syncShadowV1LiveRecordsToFirestore(
   await batchUpsertChangedDocs(SHADOW_V1_SIGNALS_COLLECTION, entries, 'sync V1-live signals');
 }
 
+/** Upsert differenziale dei documenti di un registro controfattuale. */
+async function syncForwardRecords(
+  collection: string,
+  records: ReadonlyArray<{ id: string }>,
+  label: string
+): Promise<void> {
+  if (!activeAdapter || records.length === 0) return;
+  const entries = records.map((rec) => ({
+    key: rec.id,
+    payload: rec as unknown as Record<string, unknown>,
+  }));
+  await batchUpsertChangedDocs(collection, entries, label);
+}
+
+/**
+ * Documenti remoti validi di un registro controfattuale, con l'hash gia' in
+ * cache cosi' l'idratazione non li riscrive inutilmente.
+ */
+function collectRemoteForwardRecords<T extends { id: string }>(
+  docs: ReadonlyArray<{ id: string; data: Record<string, unknown> }>,
+  collection: string,
+  isValid: (value: unknown) => value is T
+): T[] {
+  const records: T[] = [];
+  for (const d of docs) {
+    if (!isValid(d.data)) continue;
+    records.push(d.data);
+    syncedHashByPath.set(
+      `${collection}/${shadowDocIdForKey(d.data.id)}`,
+      hashPayload(d.data)
+    );
+  }
+  return records;
+}
+
 export async function syncShadowV1NearMissToFirestore(
   records: readonly ShadowV1NearMissRecord[],
   summary: ShadowV1NearMissSummary
 ): Promise<void> {
   if (!activeAdapter) return;
-  if (records.length > 0) {
-    const entries = records.map((rec) => ({
-      key: rec.id,
-      payload: rec as unknown as Record<string, unknown>,
-    }));
-    await batchUpsertChangedDocs(SHADOW_V1_NEAR_MISS_COLLECTION, entries, 'sync V1 near-miss');
-  }
+  await syncForwardRecords(SHADOW_V1_NEAR_MISS_COLLECTION, records, 'sync V1 near-miss');
   await setDocIfChanged(
     SHADOW_V1_NEAR_MISS_SUMMARY_DOC,
     { payload: summary },
     'sync V1 near-miss summary'
   );
+}
+
+export async function syncShadowV1RejectedToFirestore(
+  records: readonly ShadowV1RejectedRecord[]
+): Promise<void> {
+  await syncForwardRecords(SHADOW_V1_REJECTED_COLLECTION, records, 'sync V1 rejected');
 }
 
 export async function syncShadowV1DiagnosticsToFirestore(
@@ -576,6 +606,7 @@ export interface HydrationReport {
   v1SignalsRemote: number;
   v1SignalsMerged: number;
   v1NearMissMerged: number;
+  v1RejectedMerged: number;
   v2SignalsLocal: number;
   v2SignalsRemote: number;
   v2SignalsMerged: number;
@@ -597,6 +628,7 @@ export async function hydrateAllShadowStateFromFirestore(
     v1SignalsRemote: 0,
     v1SignalsMerged: 0,
     v1NearMissMerged: 0,
+    v1RejectedMerged: 0,
     v2SignalsLocal: 0,
     v2SignalsRemote: 0,
     v2SignalsMerged: 0,
@@ -671,25 +703,42 @@ export async function hydrateAllShadowStateFromFirestore(
       adapter.listDocs(SHADOW_V1_NEAR_MISS_COLLECTION),
       'hydrate V1 near-miss'
     )) ?? [];
-    const remoteNearMiss: ShadowV1NearMissRecord[] = [];
-    for (const d of remoteNearMissDocs) {
-      if (isValidNearMissRecord(d.data)) {
-        remoteNearMiss.push(d.data);
-        syncedHashByPath.set(
-          `${SHADOW_V1_NEAR_MISS_COLLECTION}/${shadowDocIdForKey(d.data.id)}`,
-          hashPayload(d.data)
-        );
-      }
-    }
+    const remoteNearMiss = collectRemoteForwardRecords(
+      remoteNearMissDocs,
+      SHADOW_V1_NEAR_MISS_COLLECTION,
+      isValidNearMissRecord
+    );
     const mergedNearMiss = mergeNearMissRecordsMonotone(localNearMiss, remoteNearMiss);
     report.v1NearMissMerged = mergedNearMiss.length;
     if (mergedNearMiss.length > 0) {
       const summary = summarizeNearMissRecords(mergedNearMiss, nowMs);
-      const jsonl = mergedNearMiss.map((r) => JSON.stringify(r)).join('\n') + '\n';
       backupBeforeRewrite(nearMissPath, localNearMissLoad.skipped, 'V1 near-miss', nowMs);
-      writeFileAtomicSync(nearMissPath, jsonl);
+      writeJsonlAtomic(nearMissPath, mergedNearMiss);
       writeFileAtomicSync(nearMissSummaryPath, JSON.stringify(summary, null, 2));
       await syncShadowV1NearMissToFirestore(mergedNearMiss, summary);
+    }
+
+    // 2b. V1 Rejected (scarti fuori whitelist near-miss): stessa doppia tenuta.
+    const rejectedPath = path.join(rootDir, SHADOW_V1_REJECTED_PATH);
+    const localRejectedLoad = loadRejectedRecordsWithStats(rejectedPath);
+    const remoteRejectedDocs = (await withTimeout(
+      adapter.listDocs(SHADOW_V1_REJECTED_COLLECTION),
+      'hydrate V1 rejected'
+    )) ?? [];
+    const remoteRejected = collectRemoteForwardRecords(
+      remoteRejectedDocs,
+      SHADOW_V1_REJECTED_COLLECTION,
+      isValidRejectedRecord
+    );
+    const mergedRejected = mergeRejectedRecordsMonotone(
+      localRejectedLoad.records,
+      remoteRejected
+    );
+    report.v1RejectedMerged = mergedRejected.length;
+    if (mergedRejected.length > 0) {
+      backupBeforeRewrite(rejectedPath, localRejectedLoad.skipped, 'V1 rejected', nowMs);
+      writeJsonlAtomic(rejectedPath, mergedRejected);
+      await syncShadowV1RejectedToFirestore(mergedRejected);
     }
 
     // 3. V1 Scan Diagnostics
@@ -803,7 +852,7 @@ export async function hydrateAllShadowStateFromFirestore(
     }
 
     console.log(
-      `[Shadow Firestore] Idratazione completata — V1-live: ${report.v1SignalsMerged} (locale ${report.v1SignalsLocal}, cloud ${report.v1SignalsRemote}) | Near-Miss: ${report.v1NearMissMerged} | V2: ${report.v2SignalsMerged} (locale ${report.v2SignalsLocal}, cloud ${report.v2SignalsRemote})`
+      `[Shadow Firestore] Idratazione completata — V1-live: ${report.v1SignalsMerged} (locale ${report.v1SignalsLocal}, cloud ${report.v1SignalsRemote}) | Near-Miss: ${report.v1NearMissMerged} | Scartati: ${report.v1RejectedMerged} | V2: ${report.v2SignalsMerged} (locale ${report.v2SignalsLocal}, cloud ${report.v2SignalsRemote})`
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

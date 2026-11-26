@@ -148,7 +148,8 @@ valutazione abbinata con esito illeggibile non sparisca dal rendiconto.
   decisione AI ed esito.
 - L'R di Shadow V1-live è di prezzo (senza costi né leva) e riguarda solo setup
   emessi con decisione `TRADE`: gli altri candidati restano non abbinati, tranne
-  i near-miss (esito controfattuale, dichiarato in `limitations`).
+i near-miss e gli altri scarti (esiti controfattuali, dichiarati in
+`limitations`).
 - `SCONOSCIUTO` non è un giudizio: se cresce, il problema è nel formato
   dell'`aiOutcome` o nelle direttive scritte in prosa, non nel desk.
 - Il desk resta `NON_VALIDATO` finché il validatore deterministico non conferma:
@@ -189,14 +190,66 @@ Se la lettura dei near-miss fallisce, la calibrazione resta quella dei segnali
 (un `console.warn`, nessuna 500).
 
 Limite che resta: i near-miss coprono solo i blocchi da singolo gate della
-whitelist, con livelli validi e al massimo 400 record; gli altri candidati
-scartati continuano a non avere esito forward.
+whitelist, con livelli validi e al massimo `SHADOW_V1_NEAR_MISS_MAX_RECORDS`
+(400) record. Il registro degli altri scarti (sotto) ha lo stesso tetto, quindi
+i due file possono contenere fino a 400 righe ciascuno. Gli altri scarti sono
+coperti dal registro descritto sotto.
+
+## Terza fonte forward: gli altri scarti
+
+I near-miss coprono solo una parte dei candidati scartati. `src/server/shadowV1LiveRejected.ts`
+registra in un file dedicato (`artifacts/shadow_v1_live/rejected.jsonl`, tetto
+`SHADOW_V1_REJECTED_MAX_RECORDS` = 400) i candidati scartati che il near-miss
+lascia fuori e ne segue l'esito con lo stesso motore deterministico
+(`evaluateShadowV1Live`, barre 5m chiuse, zero look-ahead).
+
+Chi entra nel registro, in ordine di esclusione:
+
+- niente candidati `TRADE` (non sono scartati) e niente warmup incompleto
+  (indicatori non affidabili);
+- niente livelli entry/stop/target incoerenti: un setup non valutabile non ha
+  un esito, e non viene inventato;
+- niente doppioni con il near-miss: se `classifyNearMissCandidate` riconosce il
+  candidato, il record resta di competenza del near-miss (il join e' uno-a-uno);
+- tutto il resto con almeno un veto o un gate fallito: multi-gate, gate fuori
+  whitelist, veti (`VETO:<nome>` in `blockedGates`).
+
+I due registri condividono il nucleo `src/server/shadowV1LiveRecords.ts`:
+stati del ciclo di vita, lettura/scrittura JSONL atomica, rivalutazione dei
+record aperti sulle barre 5m chiuse (`evaluateShadowV1Live`, zero look-ahead),
+merge monotono e validazione dei documenti Firestore. Cambiano solo file,
+collezione, tetto e criteri di ingresso, non il motore di esito: una correzione
+all'uno vale per entrambi.
+
+Una riga per ticker e sessione (`US|AAPL|2026-11-25`): lo stesso titolo scartato
+piu' volte nella giornata e' lo stesso candidato. Lo stato segue lo stesso ciclo
+del near-miss (`PENDING_FILL` -> `OPEN` -> `TARGET`/`STOP`/`EXPIRED`, piu'
+`NOT_FILLED`); gli stati non terminali restano fuori dagli esiti.
+
+Persistenza a doppia tenuta come il near-miss: file locale piu' collezione
+Firestore `_system/shadow_v1_live/rejected`, fusa all'avvio da
+`hydrateAllShadowStateFromFirestore` (`report.v1RejectedMerged`). Un errore di
+lettura o scrittura non blocca la scansione.
+
+La calibrazione la legge come terza fonte (`readRejectedForward` nel cablaggio
+di `server.ts`) e la dichiara sui fatti:
+`counts.rejectedForwardPoints` (punti forniti), `counts.rejectedMatched`
+(abbinamenti che li hanno usati). `sources.forward` aggiunge `rejected.jsonl`
+solo se `rejectedMatched > 0`, e una riga di `limitations` ricorda che l'esito e'
+controfattuale (il setup non e' mai stato emesso) e di prezzo. Il pannello mostra
+`esiti controfattuali (altri scartati): N su M` solo quando N > 0, separato
+dalla riga near-miss.
+
+Limite: il registro non copre i candidati senza livelli coerenti (non hanno un
+esito calcolabile) e, oltre il tetto di 400 record, tiene solo i piu' recenti.
 
 ## Come verificare
 
 ```bash
 npx tsc --noEmit
 npm run -s test:ai-calibration      # calibrazione + render del blocco
+npm run -s test:shadowv1liverejected # registro controfattuale degli altri scarti
+npm run -s test:ai-forward         # entrambe le suite sopra, in un comando
 npm run -s test:ai-desk && npm run -s test:ai-shadow && npm run -s test:shadow-panel
 
 # route read-only, con server avviato

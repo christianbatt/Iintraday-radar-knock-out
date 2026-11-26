@@ -37,6 +37,7 @@ import {
 } from './shadowV1LiveCollector';
 import { getActiveMarketsAt } from './shadowMarketScheduler';
 import { hasOpenNearMissRecords, updateShadowV1NearMiss } from './shadowV1LiveNearMiss';
+import { hasOpenRejectedRecords, updateShadowV1Rejected } from './shadowV1LiveRejected';
 import { updateShadowV1LiveMarksOnDisk } from './shadowV1LiveMarks';
 import { loadRecords, SHADOW_V1_LIVE_SIGNALS_PATH, shadowV1LiveTmpPath } from './shadowV1LiveStore';
 import {
@@ -321,16 +322,29 @@ export async function observeShadowV1LiveScan(
     }
 
     const activeMarkets = getActiveMarketsAt(nowMs);
+    const blockedPairs = activeMarkets.length > 0 ? nearMissPairs : [];
+    const effectiveNearMissParams: SystemParameters =
+      options.parameters === undefined
+        ? {
+            ...parameters,
+            minScoreUSA: Math.max(TRADING_PARAMS.MIN_SCORE_EU, parameters.minScoreUSA - 6),
+          }
+        : parameters;
     if ((activeMarkets.length > 0 && nearMissPairs.length > 0) || hasOpenNearMissRecords(rootDir)) {
-      const effectiveNearMissParams: SystemParameters =
-        options.parameters === undefined
-          ? {
-              ...parameters,
-              minScoreUSA: Math.max(TRADING_PARAMS.MIN_SCORE_EU, parameters.minScoreUSA - 6),
-            }
-          : parameters;
       updateShadowV1NearMiss({
-        candidates: activeMarkets.length > 0 ? nearMissPairs : [],
+        candidates: blockedPairs,
+        parameters: effectiveNearMissParams,
+        quotes: validQuotes,
+        rootDir,
+        nowMs,
+      });
+    }
+    // ADDITIVO: gli stessi scarti, ma per chi non rientra nella whitelist
+    // near-miss (due o piu' gate, veti, gate fuori whitelist). File separato:
+    // il campione near-miss resta quello curato, qui c'e' la copertura intera.
+    if ((activeMarkets.length > 0 && nearMissPairs.length > 0) || hasOpenRejectedRecords(rootDir)) {
+      updateShadowV1Rejected({
+        candidates: blockedPairs,
         parameters: effectiveNearMissParams,
         quotes: validQuotes,
         rootDir,

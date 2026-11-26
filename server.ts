@@ -92,11 +92,13 @@ import { listArchivePaths, mergeRecordFiles } from './src/server/shadowV1LiveRet
 import {
   AI_CALIBRATION_MAX_ENTRIES,
   mapNearMissForwardPoints,
+  mapRejectedForwardPoints,
   registerAiCalibrationRoute,
   type AiCalibrationEntry,
   type AiCalibrationForwardPoint,
 } from './src/server/aiCalibration';
 import { loadNearMissRecords, SHADOW_V1_NEAR_MISS_PATH } from './src/server/shadowV1LiveNearMiss';
+import { loadRejectedRecords, SHADOW_V1_REJECTED_PATH } from './src/server/shadowV1LiveRejected';
 import { existsSync } from 'node:fs';
 import { logVetoOutcomes, VETO_LOG_RELATIVE_PATH } from './src/server/vetoOutcomeLog';
 import {
@@ -4312,6 +4314,13 @@ async function startServer() {
     readNearMissForward: () =>
       mapNearMissForwardPoints(
         loadNearMissRecords(path.join(process.cwd(), SHADOW_V1_NEAR_MISS_PATH))
+      ),
+    // ADDITIVO: gli scarti fuori whitelist near-miss (due o piu' gate, veti)
+    // hanno lo stesso esito deterministico sulle barre chiuse, in un file
+    // dedicato: e' la popolazione che mancava al bucket SCARTO.
+    readRejectedForward: () =>
+      mapRejectedForwardPoints(
+        loadRejectedRecords(path.join(process.cwd(), SHADOW_V1_REJECTED_PATH))
       ),
   });
   // L'auth viaggia con la registrazione della route (non come middleware

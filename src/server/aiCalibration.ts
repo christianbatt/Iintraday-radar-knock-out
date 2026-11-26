@@ -141,10 +141,11 @@ export interface AiCalibrationForwardPoint {
   status: 'STOP' | 'TARGET' | 'EXPIRED';
   /**
    * Origine dell'esito: `signals` (setup emesso; default per le righe senza
-   * campo) oppure `near_miss` (setup bloccato da un solo gate e mai emesso:
-   * esito controfattuale). Non cambia il join, serve a dichiarare i numeri.
+   * campo), `near_miss` (setup bloccato da un solo gate e mai emesso) oppure
+   * `rejected` (altro scarto con livelli coerenti, mai emesso). Gli ultimi due
+   * sono esiti controfattuali. Non cambia il join, serve a dichiarare i numeri.
    */
-  source?: 'signals' | 'near_miss';
+  source?: 'signals' | 'near_miss' | 'rejected';
 }
 
 /** Campi dei record near-miss usati come esito (strutturale: nessun import). */
@@ -159,6 +160,12 @@ export interface AiCalibrationNearMissRecord {
 const NEAR_MISS_RESOLVED_STATUSES = new Set(['TARGET', 'STOP', 'EXPIRED']);
 
 /**
+ * Record di esito gia' persistiti letti come punti forward (near-miss e scarti
+ * condividono la stessa forma: qui non si importa nulla dal server).
+ */
+export type AiCalibrationRejectedRecord = AiCalibrationNearMissRecord;
+
+/**
  * Converte i record near-miss GIA' persistiti in punti forward.
  *
  * Nessun nuovo macchinario: il tracker near-miss calcola gia' l'esito reale
@@ -167,8 +174,9 @@ const NEAR_MISS_RESOLVED_STATUSES = new Set(['TARGET', 'STOP', 'EXPIRED']);
  * e `NOT_FILLED` non hanno un esito e restano fuori (non sono zero). La chiave
  * e' prefissata per non collidere con quelle di `signals.jsonl`.
  */
-export function mapNearMissForwardPoints(
-  records: readonly AiCalibrationNearMissRecord[]
+function mapOutcomeForwardPoints(
+  records: readonly AiCalibrationNearMissRecord[],
+  source: 'near_miss' | 'rejected'
 ): AiCalibrationForwardPoint[] {
   const points: AiCalibrationForwardPoint[] = [];
   for (const record of Array.isArray(records) ? records : []) {
@@ -177,7 +185,7 @@ export function mapNearMissForwardPoints(
     if (typeof record.r !== 'number' || !Number.isFinite(record.r)) continue;
     if (typeof record.decidedAtMs !== 'number' || !Number.isFinite(record.decidedAtMs)) continue;
     points.push({
-      key: `near_miss:${
+      key: `${source}:${
         typeof record.id === 'string' && record.id.length > 0
           ? record.id
           : `${record.ticker}@${record.decidedAtMs}`
@@ -186,10 +194,26 @@ export function mapNearMissForwardPoints(
       decidedAtMs: record.decidedAtMs,
       r: record.r,
       status: record.status as AiCalibrationForwardPoint['status'],
-      source: 'near_miss',
+      source,
     });
   }
   return points;
+}
+
+export function mapNearMissForwardPoints(
+  records: readonly AiCalibrationNearMissRecord[]
+): AiCalibrationForwardPoint[] {
+  return mapOutcomeForwardPoints(records, 'near_miss');
+}
+
+/**
+ * Converte gli esiti dei candidati scartati fuori dal near-miss (stessa forma:
+ * stati terminali + R finito). Chiave prefissata `rejected:`.
+ */
+export function mapRejectedForwardPoints(
+  records: readonly AiCalibrationRejectedRecord[]
+): AiCalibrationForwardPoint[] {
+  return mapOutcomeForwardPoints(records, 'rejected');
 }
 
 export interface AiCalibrationBucket {
@@ -230,6 +254,10 @@ export interface AiCalibrationResponse {
     nearMissForwardPoints: number;
     /** Abbinamenti che hanno usato un esito near-miss. */
     nearMissMatched: number;
+    /** Punti forward controfattuali forniti dal registro degli altri scarti. */
+    rejectedForwardPoints: number;
+    /** Abbinamenti che hanno usato un esito di un candidato scartato fuori dal near-miss. */
+    rejectedMatched: number;
     matched: number;
     /** Abbinamenti con una decisione utilizzabile (tutti tranne SCONOSCIUTO). */
     classified: number;
@@ -270,6 +298,18 @@ function finiteR(value: unknown): value is number {
  * sarebbe contata in `matched` ma invisibile nel rendiconto.
  */
 const BUCKET_ORDER: readonly AiDecisionClass[] = ['AZIONE', 'ATTESA', 'SCARTO', 'SCONOSCIUTO'];
+
+/**
+ * Dicitura della fonte forward: i file controfattuali compaiono solo se almeno
+ * un loro esito e' stato davvero abbinato.
+ */
+function forwardSourceLabel(nearMissMatched: number, rejectedMatched: number): string {
+  const parts = ['artifacts/shadow_v1_live/signals.jsonl'];
+  if (nearMissMatched > 0) parts.push('near_miss.jsonl');
+  if (rejectedMatched > 0) parts.push('rejected.jsonl');
+  const counterfactual = nearMissMatched > 0 || rejectedMatched > 0;
+  return `${parts.join(' + ')}${counterfactual ? ' (controfattuale)' : ''}`;
+}
 
 function bucketOf(rows: readonly AiCalibrationJoin[]): AiCalibrationBucket[] {
   return BUCKET_ORDER.map((decision) => {
@@ -359,6 +399,9 @@ export function buildAiCalibration(input: {
   const nearMissForwardPoints = forwardList.filter(
     (point) => point && point.source === 'near_miss'
   ).length;
+  const rejectedForwardPoints = forwardList.filter(
+    (point) => point && point.source === 'rejected'
+  ).length;
 
   // Solo valutazioni di candidato; la prosa resta fuori e viene dichiarata.
   interface Candidate {
@@ -410,12 +453,14 @@ export function buildAiCalibration(input: {
   const usedPointKeys = new Set<string>();
   const joined: AiCalibrationJoin[] = [];
   let nearMissMatched = 0;
+  let rejectedMatched = 0;
   for (const pair of pairs) {
     if (matchedOrders.has(pair.candidate.order)) continue;
     if (usedPointKeys.has(pair.point.key)) continue;
     matchedOrders.add(pair.candidate.order);
     usedPointKeys.add(pair.point.key);
     if (pair.point.source === 'near_miss') nearMissMatched += 1;
+    if (pair.point.source === 'rejected') rejectedMatched += 1;
     const { entry, ticker, atMs } = pair.candidate;
     joined.push({
       candidateKey:
@@ -517,12 +562,9 @@ export function buildAiCalibration(input: {
         remoteEntries > 0
           ? 'shadow_ai_log.jsonl + Firestore (fallback)'
           : 'shadow_ai_log.jsonl',
-      // Il near-miss entra nella dicitura solo se un suo esito e' stato usato:
-      // fornirne senza abbinarli non rende la calibrazione "controfattuale".
-      forward:
-        nearMissMatched > 0
-          ? 'artifacts/shadow_v1_live/signals.jsonl + near_miss.jsonl (controfattuale)'
-          : 'artifacts/shadow_v1_live/signals.jsonl',
+      // Le fonti controfattuali entrano nella dicitura solo se un loro esito e'
+      // stato usato: fornirne senza abbinarli non rende la calibrazione tale.
+      forward: forwardSourceLabel(nearMissMatched, rejectedMatched),
     },
     counts: {
       aiEntries: rawEntries.length,
@@ -530,6 +572,8 @@ export function buildAiCalibration(input: {
       forwardPoints,
       nearMissForwardPoints,
       nearMissMatched,
+      rejectedForwardPoints,
+      rejectedMatched,
       matched,
       classified,
       remoteEntries,
@@ -550,10 +594,15 @@ export function buildAiCalibration(input: {
     limitations: [
       'Sola lettura: nessuna scrittura, nessun cambio di memoria AI, gate o selezione setup.',
       'Il join e\' per ticker e prossimita\' temporale (finestra fissa); non dimostra che la decisione AI abbia causato l\'esito.',
-      'L\'R di V1-live e\' di prezzo (senza costi ne\' leva) e solo su setup emessi con decisione TRADE: gli altri candidati restano non abbinati, tranne i near-miss.',
+      'L\'R di V1-live e\' di prezzo (senza costi ne\' leva) e solo su setup emessi con decisione TRADE: gli altri candidati restano non abbinati, tranne i near-miss e gli altri scarti registrati (esiti controfattuali).',
       ...(nearMissForwardPoints > 0
         ? [
             `${nearMissMatched} abbinamenti usano un esito near-miss controfattuale: il setup era bloccato da un solo gate (ADX borderline, G4, G5, G7, G8/G9, G11) e non e' mai stato emesso. L'esito e' calcolato sulle barre chiuse con lo stesso motore di V1-live, ma non e' un trade reale.`,
+          ]
+        : []),
+      ...(rejectedForwardPoints > 0
+        ? [
+            `${rejectedMatched} abbinamenti usano l'esito di un candidato scartato fuori dal near-miss (due o piu' gate, veto, o gate fuori whitelist) e mai emesso. L'esito e' calcolato sulle stesse barre chiuse, ma non e' un trade reale.`,
           ]
         : []),
       `Righe AI senza esito entro ${Math.round(windowMs / 60000)} minuti sono contate come non abbinate, non come zero.`,
@@ -592,6 +641,11 @@ export interface AiCalibrationRegistrationDeps {
    * inventati, nessuna 500).
    */
   readNearMissForward?: () => AiCalibrationForwardPoint[] | Promise<AiCalibrationForwardPoint[]>;
+  /**
+   * Esiti controfattuali degli altri candidati scartati: opzionale, stessa
+   * gestione del near-miss (in errore restano le altre fonti, nessuna 500).
+   */
+  readRejectedForward?: () => AiCalibrationForwardPoint[] | Promise<AiCalibrationForwardPoint[]>;
 
   env?: Record<string, string | undefined>;
   now?: () => number;
@@ -663,11 +717,20 @@ export async function createAiCalibrationHandler(
         console.warn(`[AI Calibration] near-miss non disponibili: ${message}`);
       }
     }
+    let rejected: AiCalibrationForwardPoint[] = [];
+    if (deps.readRejectedForward) {
+      try {
+        rejected = [...(await deps.readRejectedForward())];
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[AI Calibration] esiti degli scarti non disponibili: ${message}`);
+      }
+    }
     return {
       status: 200,
       body: buildAiCalibration({
         entries: read.entries,
-        forward: mergeForwardPoints(signals, nearMiss),
+        forward: mergeForwardPoints(mergeForwardPoints(signals, nearMiss), rejected),
         nowMs,
         generatedAt: new Date(nowMs).toISOString(),
         remoteEntries: read.remoteEntries,

@@ -262,6 +262,22 @@ describe('ShadowAISection — calibrazione nel pannello', () => {
     assert.ok(!plain.includes('shadow-ai-calibration-near-miss'));
   });
 
+  it('dichiara gli altri scarti controfattuali solo quando sono usati', () => {
+    const withRejected = {
+      ...EVIDENCE,
+      counts: { ...EVIDENCE.counts, rejectedMatched: 2 },
+    };
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, { calibration: withRejected })
+    );
+    assert.ok(out.includes('esiti controfattuali (altri scartati): 2 su 34'));
+
+    const plain = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, { calibration: EVIDENCE })
+    );
+    assert.ok(!plain.includes('shadow-ai-calibration-rejected'));
+  });
+
   it('flag off resta vuoto anche con calibrazione disponibile', () => {
     const out = renderToStaticMarkup(
       React.createElement(ShadowAISection, { flag: 'off', entries: [], calibration: EVIDENCE })
