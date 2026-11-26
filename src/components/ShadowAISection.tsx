@@ -79,6 +79,11 @@ export interface ShadowAiCalibrationView {
   counts?: { matched?: number; classified?: number };
   buckets?: { decision: string; n: number }[];
   skippedWinners?: unknown[];
+  /** Fonte effettiva del log (`sources.aiLog`), fallback Firestore compreso. */
+  sources?: { aiLog?: string };
+  /** Lettura fermata al tetto: il campione puo' essere incompleto. */
+  truncated?: boolean;
+  readLimit?: number;
 }
 
 /**
@@ -117,6 +122,15 @@ export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrati
     <p className="text-[10px] text-slate-400" data-testid="shadow-ai-calibration-classified">
       classificati: {classified} / min {calibration.minSample ?? 0}
     </p>
+    <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-source">
+      fonte: {calibration.sources?.aiLog ?? 'shadow_ai_log.jsonl'}
+      {/firestore/i.test(calibration.sources?.aiLog ?? '') ? ' · fallback attivo' : ''}
+    </p>
+    {calibration.truncated === true && (
+      <p className="text-[10px] text-amber-300" data-testid="shadow-ai-calibration-truncated">
+        lettura troncata a {calibration.readLimit ?? '—'} voci: il campione può essere incompleto
+      </p>
+    )}
     {excluded > 0 && (
       <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-excluded">
         abbinamenti esclusi (SCONOSCIUTO): {excluded} su {matched}

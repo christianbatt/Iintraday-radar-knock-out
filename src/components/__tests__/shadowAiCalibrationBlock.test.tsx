@@ -77,6 +77,49 @@ describe('ShadowAiCalibrationBlock — render', () => {
   });
 });
 
+describe('ShadowAiCalibrationBlock — fonte e troncamento', () => {
+  it('mostra la fonte usata e il fallback Firestore quando attivo', () => {
+    const plain = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, { calibration: EVIDENCE })
+    );
+    assert.ok(plain.includes('data-testid="shadow-ai-calibration-source"'));
+    assert.ok(plain.includes('fonte: shadow_ai_log.jsonl'));
+    assert.ok(!plain.includes('fallback attivo'));
+
+    const withFallback = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, {
+        calibration: {
+          ...EVIDENCE,
+          sources: { aiLog: 'shadow_ai_log.jsonl + Firestore (fallback)' },
+        },
+      })
+    );
+    assert.ok(withFallback.includes('shadow_ai_log.jsonl + Firestore (fallback)'));
+    assert.ok(withFallback.includes('fallback attivo'));
+  });
+
+  it('segnala la lettura troncata con il tetto raggiunto', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, {
+        calibration: { ...EVIDENCE, truncated: true, readLimit: 2000 },
+      })
+    );
+    assert.ok(out.includes('data-testid="shadow-ai-calibration-truncated"'));
+    assert.ok(out.includes('lettura troncata a 2000 voci'));
+    assert.ok(out.includes('campione può essere incompleto'));
+  });
+
+  it('non mostra nessun avviso quando la lettura e\' completa', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, {
+        calibration: { ...EVIDENCE, truncated: false, readLimit: 2000 },
+      })
+    );
+    assert.ok(!out.includes('data-testid="shadow-ai-calibration-truncated"'));
+    assert.ok(!out.includes('lettura troncata'));
+  });
+});
+
 describe('ShadowAiCalibrationBlock — classificati vs esclusi', () => {
   it('mostra classificati sulla soglia e gli abbinamenti esclusi a parte', () => {
     const out = renderToStaticMarkup(

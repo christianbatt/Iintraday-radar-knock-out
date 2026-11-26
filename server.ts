@@ -50,7 +50,7 @@ import {
   AI_SHADOW_LOG_RELATIVE_PATH,
   AI_SHADOW_SCAN_LOG_RELATIVE_PATH,
   buildAiShadowLogResponseWithFallback,
-  readAiShadowLogWithFallback,
+  readAiShadowLogFallbackDetailed,
 } from './src/server/aiShadowLog';
 import { isAiShadowLogFirestoreEnabled } from './src/server/aiShadowLogFirestore';
 import {
@@ -4286,11 +4286,17 @@ async function startServer() {
     // Stesse voci del pannello: file locale + fallback Firestore quando il flag
     // SHADOW_AI_LOG_FIRESTORE e' acceso. Su disco effimero il file puo' essere
     // vuoto mentre i documenti restano su Firestore.
-    readEntries: () =>
-      readAiShadowLogWithFallback({
+    readEntries: async () => {
+      const read = await readAiShadowLogFallbackDetailed({
         filePath: path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH),
         limit: AI_CALIBRATION_MAX_ENTRIES,
-      }) as Promise<AiCalibrationEntry[]>,
+      });
+      return {
+        entries: read.entries as AiCalibrationEntry[],
+        truncated: read.truncated,
+        readLimit: read.readLimit,
+      };
+    },
     aiLogSource: isAiShadowLogFirestoreEnabled()
       ? 'shadow_ai_log.jsonl + Firestore (fallback)'
       : 'shadow_ai_log.jsonl',

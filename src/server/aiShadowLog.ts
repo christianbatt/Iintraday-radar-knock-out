@@ -419,6 +419,19 @@ export interface AiShadowLogReadOptions {
  */
 export const AI_SHADOW_LOG_FALLBACK_MAX_LIMIT = 2000;
 
+export interface AiShadowLogFallbackReadResult {
+  entries: AiShadowLogEntry[];
+  /** Doc distinti considerati prima del taglio (lower bound: il remoto e' gia' tagliato). */
+  total: number;
+  /**
+   * `true` quando la lettura ha toccato il tetto: il campione puo' essere
+   * incompleto e chi aggrega deve dichiararlo, non fingere completezza.
+   */
+  truncated: boolean;
+  /** Tetto applicato in questa lettura. */
+  readLimit: number;
+}
+
 export interface AiShadowLogFallbackReadOptions {
   filePath: string;
   /** Default: `AI_SHADOW_LOG_FALLBACK_MAX_LIMIT`. */
@@ -447,9 +460,9 @@ function clampFallbackLimit(raw: number | undefined): number {
  * Il fallback remoto viene interrogato solo se il flag `SHADOW_AI_LOG_FIRESTORE`
  * e' acceso e il file locale non ha gia' raggiunto il limite.
  */
-export async function readAiShadowLogWithFallback(
+export async function readAiShadowLogFallbackDetailed(
   options: AiShadowLogFallbackReadOptions
-): Promise<AiShadowLogEntry[]> {
+): Promise<AiShadowLogFallbackReadResult> {
   const limit = clampFallbackLimit(options.limit);
   const includeScan = options.includeScan === true;
   const merged = new Map<string, { entry: AiShadowLogEntry; atMs: number }>();
@@ -485,11 +498,26 @@ export async function readAiShadowLogWithFallback(
     }
   }
 
-  return [...merged.values()]
-    .sort((a, b) => b.atMs - a.atMs)
+  const ordered = [...merged.values()].sort((a, b) => b.atMs - a.atMs);
+  const entries = ordered
     .slice(0, limit)
     .map((item) => item.entry)
     .reverse();
+  return {
+    entries,
+    total: ordered.length,
+    // Tetto raggiunto (anche esattamente): chi legge deve poter dire "forse
+    // incompleto" invece di presentare il campione come completo.
+    truncated: ordered.length >= limit,
+    readLimit: limit,
+  };
+}
+
+/** Variante comoda: solo le voci. Il dettaglio vive in `...Detailed`. */
+export async function readAiShadowLogWithFallback(
+  options: AiShadowLogFallbackReadOptions
+): Promise<AiShadowLogEntry[]> {
+  return (await readAiShadowLogFallbackDetailed(options)).entries;
 }
 
 /** Corpo di `GET /api/shadow/ai-log`: sola lettura, nessuna eccezione. */

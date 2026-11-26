@@ -29,6 +29,14 @@ esistono. Il campo `sources.aiLog` dichiara quale fonte ha risposto
 
 Se Firestore non risponde, resta il file locale e la route non fallisce.
 
+Quando la lettura **tocca il tetto** la risposta lo dichiara: `truncated: true`
+e `readLimit` (2000), con una riga in `limitations` che parla di campione
+potenzialmente incompleto. Il pannello mostra la fonte usata
+(`sources.aiLog`) e, quando il fallback è attivo, la dicitura "fallback
+attivo"; in caso di troncamento aggiunge un avviso con il tetto raggiunto.
+Tetto raggiunto esattamente conta come troncato: meglio un avviso in più che un
+campione presentato come completo.
+
 ## Join
 
 - **Unità**: la valutazione di un candidato, identificata da `runId:ticker`

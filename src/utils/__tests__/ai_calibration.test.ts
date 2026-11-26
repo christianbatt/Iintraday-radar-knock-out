@@ -422,6 +422,34 @@ describe('aiCalibration — la soglia conta solo le decisioni classificabili', (
   });
 });
 
+describe('aiCalibration — lettura troncata dichiarata', () => {
+  it('senza troncamento i campi sono espliciti e falsi', () => {
+    const { entries, forward } = baseInput();
+    const out = buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0) });
+    assert.equal(out.truncated, false);
+    assert.equal(out.readLimit, 0);
+    assert.ok(!out.limitations.some((line) => line.includes('troncata')));
+  });
+
+  it('con truncated:true lo dichiara nei campi e nei limiti', () => {
+    const { entries, forward } = baseInput();
+    const out = buildAiCalibration({
+      entries,
+      forward,
+      nowMs: NOW,
+      generatedAt: iso(0),
+      truncated: true,
+      readLimit: 2000,
+    });
+    assert.equal(out.truncated, true);
+    assert.equal(out.readLimit, 2000);
+    assert.ok(
+      out.limitations.some((line) => line.includes('2000') && line.includes('troncata')),
+      'il limite dichiara il tetto raggiunto'
+    );
+  });
+});
+
 describe('aiCalibration — flag e handler', () => {
   it('accesa di default, spenta solo con 0/false', () => {
     assert.equal(isAiCalibrationEnabled({}), true);
@@ -459,6 +487,23 @@ describe('aiCalibration — flag e handler', () => {
     const body = out.body as any;
     assert.equal(body.counts.matched, 3);
     assert.equal(body.sources.aiLog, 'shadow_ai_log.jsonl + Firestore (fallback)');
+  });
+
+  it('propaga truncated e readLimit dalla lettura dettagliata', async () => {
+    const out = await createAiCalibrationHandler({
+      env: {},
+      now: () => NOW,
+      readEntries: async () => ({
+        entries: baseInput().entries,
+        truncated: true,
+        readLimit: 2000,
+      }),
+      readForward: () => baseInput().forward,
+    });
+    const body = out.body as any;
+    assert.equal(body.truncated, true);
+    assert.equal(body.readLimit, 2000);
+    assert.equal(body.counts.matched, 3, 'le voci lette vengono comunque usate');
   });
 
   it('senza aiLogSource la fonte resta il file locale', async () => {

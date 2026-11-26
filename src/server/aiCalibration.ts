@@ -140,6 +140,10 @@ export interface AiCalibrationResponse {
   reason?: string;
   windowMs: number;
   minSample: number;
+  /** Il campione letto ha toccato il tetto: puo' essere incompleto. */
+  truncated: boolean;
+  /** Tetto applicato alla lettura (0 = non dichiarato). */
+  readLimit: number;
   sources: { aiLog: string; forward: string };
   counts: {
     aiEntries: number;
@@ -256,6 +260,9 @@ export function buildAiCalibration(input: {
   minSample?: number;
   /** Etichetta della fonte del log, per dichiarare se c'e' stato il fallback. */
   aiLogSource?: string;
+  /** La lettura ha toccato il tetto: il campione non e' completo. */
+  truncated?: boolean;
+  readLimit?: number;
 }): AiCalibrationResponse {
   const windowMs = input.windowMs ?? AI_CALIBRATION_MATCH_WINDOW_MS;
   const minSample = input.minSample ?? AI_CALIBRATION_MIN_SAMPLE;
@@ -366,6 +373,11 @@ export function buildAiCalibration(input: {
     ...(available ? {} : { reason: deduped.length === 0 ? 'nessuna valutazione AI nel log' : 'nessun esito forward disponibile' }),
     windowMs,
     minSample,
+    truncated: input.truncated === true,
+    readLimit:
+      typeof input.readLimit === 'number' && Number.isFinite(input.readLimit) && input.readLimit > 0
+        ? Math.floor(input.readLimit)
+        : 0,
     sources: {
       aiLog: input.aiLogSource ?? 'shadow_ai_log.jsonl',
       forward: 'artifacts/shadow_v1_live/signals.jsonl',
@@ -396,13 +408,30 @@ export function buildAiCalibration(input: {
       `Righe AI senza esito entro ${Math.round(windowMs / 60000)} minuti sono contate come non abbinate, non come zero.`,
       '`counts.matched` e\' sempre la somma dei `buckets`: le valutazioni abbinate con esito illeggibile stanno in `SCONOSCIUTO`, non spariscono.',
       'Il desk resta NON_VALIDATO finche\' il validatore deterministico non conferma: questa vista e\' esplorativa.',
+      ...(input.truncated === true
+        ? [
+            `Lettura troncata al tetto di ${input.readLimit ?? 0} valutazioni: il campione puo' essere incompleto (truncated: true).`,
+          ]
+        : []),
     ],
   };
 }
 
+export interface AiCalibrationEntriesInput {
+  entries: AiCalibrationEntry[];
+  truncated?: boolean;
+  readLimit?: number;
+}
+
 export interface AiCalibrationRegistrationDeps {
-  /** Puo' essere asincrona: il log arriva da file + fallback Firestore. */
-  readEntries: () => AiCalibrationEntry[] | Promise<AiCalibrationEntry[]>;
+  /**
+   * Accetta l'elenco nudo o `{ entries, truncated, readLimit }`: cosi' il tetto
+   * raggiunto arriva fino alla risposta invece di sembrare completezza.
+   */
+  readEntries: () =>
+    | AiCalibrationEntry[]
+    | AiCalibrationEntriesInput
+    | Promise<AiCalibrationEntry[] | AiCalibrationEntriesInput>;
   readForward: () => AiCalibrationForwardPoint[] | Promise<AiCalibrationForwardPoint[]>;
   /** Etichetta della fonte effettiva, esposta in `sources.aiLog`. */
   aiLogSource?: string;
@@ -417,6 +446,23 @@ type MinimalResponse = { status: (code: number) => { json: (body: unknown) => vo
  * Handler con dipendenze iniettate: a flag OFF nessuna lettura; ogni errore
  * diventa `available: false`, mai una 500.
  */
+function normalizeEntriesInput(
+  input: AiCalibrationEntry[] | AiCalibrationEntriesInput | null | undefined
+): AiCalibrationEntriesInput {
+  if (Array.isArray(input)) {
+    return { entries: input, truncated: false, readLimit: 0 };
+  }
+  if (input && typeof input === 'object' && Array.isArray((input as AiCalibrationEntriesInput).entries)) {
+    const value = input as AiCalibrationEntriesInput;
+    return {
+      entries: value.entries,
+      truncated: value.truncated === true,
+      readLimit: typeof value.readLimit === 'number' ? value.readLimit : 0,
+    };
+  }
+  return { entries: [], truncated: false, readLimit: 0 };
+}
+
 export async function createAiCalibrationHandler(
   deps: AiCalibrationRegistrationDeps
 ): Promise<{ status: number; body: Record<string, unknown> | AiCalibrationResponse }> {
@@ -428,14 +474,17 @@ export async function createAiCalibrationHandler(
   }
   const nowMs = now();
   try {
+    const read = normalizeEntriesInput(await deps.readEntries());
     return {
       status: 200,
       body: buildAiCalibration({
-        entries: await deps.readEntries(),
+        entries: read.entries,
         forward: await deps.readForward(),
         nowMs,
         generatedAt: new Date(nowMs).toISOString(),
         aiLogSource: deps.aiLogSource,
+        truncated: read.truncated,
+        readLimit: read.readLimit,
       }),
     };
   } catch (err) {

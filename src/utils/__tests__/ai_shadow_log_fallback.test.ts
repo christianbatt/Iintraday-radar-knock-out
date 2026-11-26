@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   AI_SHADOW_LOG_FALLBACK_MAX_LIMIT,
   appendAiShadowLog,
+  readAiShadowLogFallbackDetailed,
   readAiShadowLogWithFallback,
 } from '../../server/aiShadowLog';
 import type { AiShadowLogFirestoreReadItem } from '../../server/aiShadowLogFirestore';
@@ -143,6 +144,39 @@ describe('readAiShadowLogWithFallback', () => {
     assert.deepEqual(hidden.map((e) => e.id), ['eval1']);
     const shown = await readAiShadowLogWithFallback({ filePath: TMP, env: {}, includeScan: true });
     assert.deepEqual(shown.map((e) => e.id).sort(), ['eval1', 'scan1']);
+    reset();
+  });
+
+  it('dichiara truncated quando la lettura tocca il tetto', async () => {
+    reset();
+    appendAiShadowLog(
+      [
+        entry('a', { timestamp: '2026-11-25T08:00:00.000Z' }),
+        entry('b', { timestamp: '2026-11-25T09:00:00.000Z' }),
+        entry('c', { timestamp: '2026-11-25T10:00:00.000Z' }),
+      ],
+      TMP
+    );
+    const capped = await readAiShadowLogFallbackDetailed({ filePath: TMP, limit: 2, env: {} });
+    assert.equal(capped.entries.length, 2);
+    assert.equal(capped.total, 3);
+    assert.equal(capped.truncated, true);
+    assert.equal(capped.readLimit, 2);
+
+    const exact = await readAiShadowLogFallbackDetailed({ filePath: TMP, limit: 3, env: {} });
+    assert.equal(exact.entries.length, 3);
+    assert.equal(exact.truncated, true, 'tetto raggiunto esattamente: campione potenzialmente incompleto');
+    reset();
+  });
+
+  it('non dichiara truncated quando sotto il tetto', async () => {
+    reset();
+    appendAiShadowLog([entry('only')], TMP);
+    const read = await readAiShadowLogFallbackDetailed({ filePath: TMP, limit: 2000, env: {} });
+    assert.equal(read.entries.length, 1);
+    assert.equal(read.total, 1);
+    assert.equal(read.truncated, false);
+    assert.equal(read.readLimit, 2000);
     reset();
   });
 
