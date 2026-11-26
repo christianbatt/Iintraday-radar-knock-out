@@ -48,6 +48,32 @@ export const AI_CALIBRATION_MIN_SAMPLE = 30;
 /** Tetto della risposta: solo i casi piu' recenti, per non gonfiare il payload. */
 export const AI_CALIBRATION_MAX_ENTRIES = 2000;
 
+/**
+ * Allarmi di formato: sotto questi denominatori una percentuale e' rumore,
+ * quindi nessun allarme (meglio nessun avviso che un falso allarme su 3 righe).
+ */
+export const AI_CALIBRATION_ALERT_MIN_SAMPLE = 10;
+/** Oltre questa quota di abbinamenti in SCONOSCIUTO il formato si sta degradando. */
+export const AI_CALIBRATION_UNKNOWN_ALERT_RATIO = 0.3;
+/**
+ * Oltre questa quota di righe in prosa (direttive) il log non descrive piu'
+ * decisioni: la calibrazione resta senza materia prima.
+ */
+export const AI_CALIBRATION_DIRECTIVES_ALERT_RATIO = 0.5;
+
+export type AiCalibrationAlertCode = 'UNKNOWN_SHARE_HIGH' | 'DIRECTIVES_SHARE_HIGH';
+
+export interface AiCalibrationAlert {
+  code: AiCalibrationAlertCode;
+  /** Quota osservata, 4 decimali. */
+  ratio: number;
+  /** Soglia superata. */
+  threshold: number;
+  numerator: number;
+  denominator: number;
+  message: string;
+}
+
 export function isAiCalibrationEnabled(
   env: Record<string, string | undefined> | undefined
 ): boolean {
@@ -166,6 +192,8 @@ export interface AiCalibrationResponse {
   edgeR: number | null;
   /** Decisioni di scarto su setup che poi sono andati in positivo. */
   skippedWinners: AiCalibrationJoin[];
+  /** Allarmi di formato: vuoto quando la quota e' sotto soglia. */
+  alerts: AiCalibrationAlert[];
   verdict: 'insufficient' | 'evidence';
   note: string;
   limitations: string[];
@@ -358,6 +386,41 @@ export function buildAiCalibration(input: {
 
   const forwardPoints = [...forwardIndex.values()].reduce((n, list) => n + list.length, 0);
   const matched = joined.length;
+
+  // Allarmi di formato: un degrado degli handler si vede qui, non solo come
+  // silenzioso aumento dei non classificati.
+  const alerts: AiCalibrationAlert[] = [];
+  const unknownCount = buckets.find((bucket) => bucket.decision === 'SCONOSCIUTO')?.n ?? 0;
+  if (matched >= AI_CALIBRATION_ALERT_MIN_SAMPLE) {
+    const unknownRatio = unknownCount / matched;
+    if (unknownRatio > AI_CALIBRATION_UNKNOWN_ALERT_RATIO) {
+      alerts.push({
+        code: 'UNKNOWN_SHARE_HIGH',
+        ratio: round(unknownRatio, 4),
+        threshold: AI_CALIBRATION_UNKNOWN_ALERT_RATIO,
+        numerator: unknownCount,
+        denominator: matched,
+        message:
+          `${round(unknownRatio * 100, 1)}% degli abbinamenti e' SCONOSCIUTO (${unknownCount}/${matched}): ` +
+          'possibile degrado del campo decision scritto dagli handler (o aiOutcome illeggibile nelle righe storiche).',
+      });
+    }
+  }
+  if (deduped.length >= AI_CALIBRATION_ALERT_MIN_SAMPLE) {
+    const directivesRatio = directivesIgnored / deduped.length;
+    if (directivesRatio > AI_CALIBRATION_DIRECTIVES_ALERT_RATIO) {
+      alerts.push({
+        code: 'DIRECTIVES_SHARE_HIGH',
+        ratio: round(directivesRatio, 4),
+        threshold: AI_CALIBRATION_DIRECTIVES_ALERT_RATIO,
+        numerator: directivesIgnored,
+        denominator: deduped.length,
+        message:
+          `${round(directivesRatio * 100, 1)}% delle righe del log e' prosa (${directivesIgnored}/${deduped.length}): ` +
+          'la calibrazione ha poche decisioni su cui lavorare.',
+      });
+    }
+  }
   // La soglia si applica alle sole decisioni classificabili: una riga in
   // SCONOSCIUTO e' abbinata ma non e' un giudizio, e non deve avvicinare il
   // campione alla soglia.
@@ -410,6 +473,7 @@ export function buildAiCalibration(input: {
     buckets,
     edgeR,
     skippedWinners,
+    alerts,
     verdict,
     note:
       verdict === 'evidence'

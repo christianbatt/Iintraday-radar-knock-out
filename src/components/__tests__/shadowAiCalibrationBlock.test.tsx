@@ -137,6 +137,35 @@ describe('ShadowAiCalibrationBlock — fonte e troncamento', () => {
   });
 });
 
+describe('ShadowAiCalibrationBlock — allarmi di formato', () => {
+  it('mostra ogni allarme con il messaggio del server', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, {
+        calibration: {
+          ...EVIDENCE,
+          alerts: [
+            { code: 'UNKNOWN_SHARE_HIGH', message: '50% degli abbinamenti e SCONOSCIUTO' },
+            { code: 'DIRECTIVES_SHARE_HIGH', message: '80% delle righe e prosa' },
+          ],
+        },
+      })
+    );
+    assert.equal(out.match(/data-testid="shadow-ai-calibration-alert"/g)?.length, 2);
+    assert.ok(out.includes('50% degli abbinamenti'));
+    assert.ok(out.includes('80% delle righe'));
+    assert.ok(out.includes('⚠'));
+  });
+
+  it('senza allarmi non renderizza nessun avviso', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, {
+        calibration: { ...EVIDENCE, alerts: [] },
+      })
+    );
+    assert.ok(!out.includes('data-testid="shadow-ai-calibration-alert"'));
+  });
+});
+
 describe('ShadowAiCalibrationBlock — classificati vs esclusi', () => {
   it('mostra classificati sulla soglia e gli abbinamenti esclusi a parte', () => {
     const out = renderToStaticMarkup(

@@ -84,6 +84,8 @@ export interface ShadowAiCalibrationView {
   /** Lettura fermata al tetto: il campione puo' essere incompleto. */
   truncated?: boolean;
   readLimit?: number;
+  /** Allarmi di formato calcolati dal server (vuoto = nessun degrado). */
+  alerts?: { code: string; message: string }[];
 }
 
 /**
@@ -152,6 +154,15 @@ export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrati
         : calibration.edgeR}
       {calibration.verdict === 'evidence' ? '' : ' (non un risultato)'}
     </p>
+    {(calibration.alerts ?? []).map((alert) => (
+      <p
+        key={alert.code}
+        data-testid="shadow-ai-calibration-alert"
+        className="text-[10px] text-rose-300 font-bold"
+      >
+        ⚠ {alert.message}
+      </p>
+    ))}
     {(calibration.skippedWinners?.length ?? 0) > 0 && (
       <p className="text-[10px] text-amber-300">
         scarti andati in positivo: {calibration.skippedWinners?.length}

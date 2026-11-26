@@ -98,6 +98,21 @@ risultato (nel pannello: "non un risultato"). Il pannello mostra `classificati: 
 min 30` come riga della soglia e, separatamente, `abbinamenti esclusi
 (SCONOSCIUTO): N su M`: gli abbinati non vengono mai confrontati con la soglia.
 
+## Allarmi di formato
+
+Un degrado degli handler non deve finire silenziosamente nei non classificati.
+La risposta porta `alerts[]`, vuoto quando non c'è nulla da segnalare:
+
+| Codice | Quota | Soglia | Cosa indica |
+|---|---|---|---|
+| `UNKNOWN_SHARE_HIGH` | SCONOSCIUTO / abbinati | 30% | il campo `decision` non arriva più, o gli `aiOutcome` storici sono illeggibili |
+| `DIRECTIVES_SHARE_HIGH` | righe prosa / righe dedup | 50% | il log è quasi tutto direttive: poche decisioni su cui misurare |
+
+Ogni allarme porta `code`, `ratio`, `threshold`, `numerator`, `denominator` e un
+`message` leggibile; il pannello li mostra con `⚠` in rosso. Sotto
+`AI_CALIBRATION_ALERT_MIN_SAMPLE` (10) righe di denominatore non si allarma:
+una percentuale su 2 righe sarebbe rumore.
+
 ## `edgeR`
 
 ```

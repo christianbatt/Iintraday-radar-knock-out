@@ -450,6 +450,86 @@ describe('aiCalibration — lettura troncata dichiarata', () => {
   });
 });
 
+describe('aiCalibration — allarmi di formato', () => {
+  function tenCandidates(unknown: number) {
+    const entries: AiCalibrationEntry[] = [];
+    const forward: AiCalibrationForwardPoint[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      const ticker = `TCK${i}`;
+      const isUnknown = i < unknown;
+      entries.push(
+        entry({
+          id: `a${i}`,
+          ticker,
+          candidateKey: `r:${ticker}`,
+          aiOutcome: isUnknown ? null : 'BUY',
+          decision: isUnknown ? null : 'AZIONE',
+        })
+      );
+      forward.push(point({ key: `p${i}`, ticker, decidedAtMs: NOW, r: 1 }));
+    }
+    return { entries, forward };
+  }
+
+  it('allarma quando la quota di SCONOSCIUTO supera la soglia', () => {
+    const { entries, forward } = tenCandidates(5);
+    const out = buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0) });
+    assert.equal(out.counts.matched, 10);
+    const alert = out.alerts.find((a) => a.code === 'UNKNOWN_SHARE_HIGH');
+    assert.ok(alert, 'allarme presente');
+    assert.equal(alert?.numerator, 5);
+    assert.equal(alert?.denominator, 10);
+    assert.equal(alert?.threshold, 0.3);
+    assert.equal(alert?.ratio, 0.5);
+    assert.match(alert?.message ?? '', /50% degli abbinamenti/);
+  });
+
+  it('non allarma quando la quota resta sotto soglia', () => {
+    const { entries, forward } = tenCandidates(2);
+    const out = buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0) });
+    assert.deepEqual(out.alerts, []);
+    assert.equal(out.buckets.find((b) => b.decision === 'SCONOSCIUTO')?.n, 2);
+  });
+
+  it('allarma quando il log e\' quasi tutto prosa', () => {
+    const entries: AiCalibrationEntry[] = Array.from({ length: 10 }, (_, i) =>
+      entry({
+        id: `d${i}`,
+        source: 'desk',
+        candidateKey: null,
+        aiOutcome: 'Non comprare contro il trend',
+      })
+    );
+    const out = buildAiCalibration({
+      entries,
+      forward: [point({ key: 'p', decidedAtMs: NOW, r: 1 })],
+      nowMs: NOW,
+      generatedAt: iso(0),
+    });
+    assert.equal(out.counts.matched, 0);
+    const alert = out.alerts.find((a) => a.code === 'DIRECTIVES_SHARE_HIGH');
+    assert.ok(alert, 'allarme prosa presente');
+    assert.equal(alert?.numerator, 10);
+    assert.equal(alert?.denominator, 10);
+    assert.match(alert?.message ?? '', /100% delle righe del log e' prosa/);
+  });
+
+  it('non allarma su campioni minuscoli', () => {
+    const entries: AiCalibrationEntry[] = [
+      entry({ id: 's1', source: 'desk', candidateKey: null, aiOutcome: 'prosa' }),
+      entry({ id: 's2', source: 'desk', candidateKey: null, aiOutcome: 'prosa' }),
+    ];
+    const out = buildAiCalibration({
+      entries,
+      forward: [point({ key: 'p', decidedAtMs: NOW, r: 1 })],
+      nowMs: NOW,
+      generatedAt: iso(0),
+    });
+    assert.equal(out.counts.directivesIgnored, 2);
+    assert.deepEqual(out.alerts, [], 'sotto il denominatore minimo nessuna percentuale');
+  });
+});
+
 describe('aiCalibration — flag e handler', () => {
   it('accesa di default, spenta solo con 0/false', () => {
     assert.equal(isAiCalibrationEnabled({}), true);
