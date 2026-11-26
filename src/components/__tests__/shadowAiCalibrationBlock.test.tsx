@@ -187,6 +187,32 @@ describe('ShadowAiCalibrationBlock — classificati vs esclusi', () => {
   });
 });
 
+describe('ShadowAiCalibrationBlock — R netto', () => {
+  it('mostra costo per trade, componenti e edgeR netto', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, {
+        calibration: {
+          ...EVIDENCE,
+          edgeRNet: 0.42,
+          costR: 0.36,
+          netModel: { feeR: 0.2, spreadR: 0.16, totalR: 0.36, source: 'Shadow V2' },
+        },
+      })
+    );
+    assert.ok(out.includes('data-testid="shadow-ai-calibration-net"'));
+    assert.ok(out.includes('costi 0.36 R per trade'));
+    assert.ok(out.includes('fee 0.2 + spread 0.16'));
+    assert.ok(out.includes('edgeR netto 0.42'));
+  });
+
+  it('senza costR non aggiunge la riga netta (payload storici)', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, { calibration: EVIDENCE })
+    );
+    assert.ok(!out.includes('shadow-ai-calibration-net'));
+  });
+});
+
 describe('ShadowAiCalibrationBlock — validatore deterministico', () => {
   it('mostra verdetto, stato del desk e riga di dettaglio', () => {
     const out = renderToStaticMarkup(

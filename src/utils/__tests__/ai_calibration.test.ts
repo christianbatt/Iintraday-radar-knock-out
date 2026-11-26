@@ -775,6 +775,42 @@ describe('aiCalibration — esiti near-miss per i candidati scartati', () => {
       out.limitations.some((line) => line.includes('le righe del log non vengono promosse')),
       'il verdetto non riscrive lo status NON_VALIDATO delle righe'
     );
+    assert.equal(out.costR, 0.36, 'fee 0.20 R + proxy spread 0.16 R');
+    assert.equal(out.netModel.totalR, 0.36);
+    assert.ok(out.netModel.source.includes('Trade Republic'));
+    assert.equal(out.edgeRNet, 2);
+    assert.equal(
+      out.buckets.find((bucket) => bucket.decision === 'AZIONE')?.meanRNet,
+      0.64,
+      'meanR 1.00 al netto di 0.36 R'
+    );
+  });
+
+  it('R netto: il costo abbassa meanR e successo, non la differenza fra medie', () => {
+    const entries: AiCalibrationEntry[] = [
+      entry({ id: 'n1', ticker: 'AAA', candidateKey: 'r:AAA', decision: 'AZIONE' }),
+      entry({ id: 'n2', ticker: 'BBB', candidateKey: 'r:BBB', decision: 'SCARTO' }),
+    ];
+    const forward: AiCalibrationForwardPoint[] = [
+      point({ key: 'sig:AAA', ticker: 'AAA', r: 0.1, status: 'TARGET' }),
+      point({ key: 'sig:BBB', ticker: 'BBB', r: -0.1, status: 'STOP' }),
+    ];
+
+    const out = buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0), minSample: 2 });
+    const azione = out.buckets.find((bucket) => bucket.decision === 'AZIONE');
+    const scarto = out.buckets.find((bucket) => bucket.decision === 'SCARTO');
+
+    assert.equal(azione?.winRatePct, 100, 'lordo: +0.1 R e positivo');
+    assert.equal(azione?.winRateNetPct, 0, 'netto: 0.1 - 0.36 < 0, il trade diventa perdente');
+    assert.equal(azione?.meanRNet, -0.26);
+    assert.equal(scarto?.winRatePct, 0);
+    assert.equal(scarto?.winRateNetPct, 0);
+    assert.equal(out.edgeR, 0.2);
+    assert.equal(out.edgeRNet, 0.2, 'un costo costante non cambia la differenza di medie');
+    assert.ok(
+      out.limitations.some((line) => line.includes('R netto') && line.includes('win rate')),
+      'la risposta dichiara il modello netto'
+    );
   });
 
   it('near-miss forniti ma non abbinati: la fonte resta signals-only', () => {

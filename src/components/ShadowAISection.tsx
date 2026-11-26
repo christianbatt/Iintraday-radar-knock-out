@@ -75,6 +75,9 @@ export interface ShadowAiCalibrationView {
   available?: boolean;
   verdict?: 'insufficient' | 'evidence';
   edgeR?: number | null;
+  edgeRNet?: number | null;
+  costR?: number;
+  netModel?: { feeR?: number; spreadR?: number; totalR?: number; source?: string };
   minSample?: number;
   counts?: {
     matched?: number;
@@ -83,7 +86,7 @@ export interface ShadowAiCalibrationView {
     nearMissMatched?: number;
     rejectedMatched?: number;
   };
-  buckets?: { decision: string; n: number }[];
+  buckets?: { decision: string; n: number; meanRNet?: number | null; winRateNetPct?: number | null }[];
   skippedWinners?: unknown[];
   /** Fonte effettiva del log (`sources.aiLog`) e degli esiti (`sources.forward`). */
   sources?: { aiLog?: string; forward?: string };
@@ -200,6 +203,16 @@ export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrati
         : calibration.edgeR}
       {calibration.verdict === 'evidence' ? '' : ' (non un risultato)'}
     </p>
+    {typeof calibration.costR === 'number' && (
+      <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-net">
+        R netto: costi {calibration.costR} R per trade (fee{' '}
+        {calibration.netModel?.feeR ?? '—'} + spread {calibration.netModel?.spreadR ?? '—'}); edgeR
+        netto{' '}
+        {calibration.edgeRNet === null || calibration.edgeRNet === undefined
+          ? 'non calcolabile'
+          : calibration.edgeRNet}
+      </p>
+    )}
     {(calibration.alerts ?? []).map((alert) => (
       <p
         key={alert.code}

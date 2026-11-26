@@ -92,6 +92,8 @@ export interface AiDeskValidationBucket {
   n: number;
   meanR?: number | null;
   winRatePct?: number | null;
+  /** Successo al netto dei costi dichiarati: preferito a `winRatePct` quando c'e'. */
+  winRateNetPct?: number | null;
 }
 
 export interface AiDeskValidationAlertLike {
@@ -103,6 +105,8 @@ export interface AiDeskValidationInput {
   classified?: number;
   buckets?: readonly AiDeskValidationBucket[];
   edgeR?: number | null;
+  /** Edge netto di costi: se presente vince su `edgeR`. */
+  edgeRNet?: number | null;
   alerts?: readonly AiDeskValidationAlertLike[];
 }
 
@@ -143,12 +147,22 @@ export function validateAiDeskSample(input: AiDeskValidationInput): AiDeskValida
     ? Math.max(0, Math.floor(input.classified))
     : classifiedFromBuckets;
   const unknownShare = matched > 0 ? unknownN / matched : null;
-  const edgeR = finite(input.edgeR) ? input.edgeR : null;
+  // Preferenza dichiarata per i valori NETTI: se la calibrazione li fornisce,
+  // le regole si applicano al netto dei costi, non al lordo di prezzo.
+  const netEdge = finite(input.edgeRNet) ? input.edgeRNet : null;
+  const edgeR = netEdge !== null ? netEdge : finite(input.edgeR) ? input.edgeR : null;
+  const edgeIsNet = netEdge !== null;
 
   const action = bucketOf(buckets, 'AZIONE');
   const skip = bucketOf(buckets, 'SCARTO');
-  const actionWin = action && finite(action.winRatePct) ? action.winRatePct : null;
-  const skipWin = skip && finite(skip.winRatePct) ? skip.winRatePct : null;
+  const winOf = (bucket: AiDeskValidationBucket | null): number | null => {
+    if (!bucket) return null;
+    if (finite(bucket.winRateNetPct)) return bucket.winRateNetPct;
+    if (finite(bucket.winRatePct)) return bucket.winRatePct;
+    return null;
+  };
+  const actionWin = winOf(action);
+  const skipWin = winOf(skip);
   const winRateGap =
     actionWin !== null && skipWin !== null ? round(actionWin - skipWin, 2) : null;
 
@@ -202,7 +216,7 @@ export function validateAiDeskSample(input: AiDeskValidationInput): AiDeskValida
 
   checks.push({
     code: 'edge_r',
-    label: 'edgeR',
+    label: 'edgeR netto di costi',
     status: edgeR === null ? 'insufficient' : edgeR >= AI_DESK_VALIDATION_MIN_EDGE_R ? 'pass' : 'fail',
     observed: edgeR,
     threshold: AI_DESK_VALIDATION_MIN_EDGE_R,
@@ -210,7 +224,7 @@ export function validateAiDeskSample(input: AiDeskValidationInput): AiDeskValida
     detail:
       edgeR === null
         ? 'edgeR non calcolabile: manca AZIONE o SCARTO con esiti.'
-        : `edgeR ${edgeR} R (soglia +${AI_DESK_VALIDATION_MIN_EDGE_R} R).`,
+        : `edgeR${edgeIsNet ? ' netto' : ''} ${edgeR} R (soglia +${AI_DESK_VALIDATION_MIN_EDGE_R} R).`,
   });
 
   checks.push({
@@ -259,7 +273,7 @@ export function validateAiDeskSample(input: AiDeskValidationInput): AiDeskValida
     limitations: [
       'Deterministico e in sola lettura: nessun I/O, nessuna LLM, nessuna scrittura; lo stesso campione produce sempre lo stesso verdetto.',
       'Conferma solo questa vista: non riscrive lo status NON_VALIDATO delle righe del log, non cambia memoria AI, gate o selezione dei setup.',
-      'edgeR e il divario di successo sono misure di prezzo su esiti abbinati: non dimostrano che la decisione AI abbia causato l esito.',
+      'Con edgeR/misure nette fornite, le regole si applicano al netto dei costi; senza, restano sul lordo di prezzo. In nessun caso dimostrano che la decisione AI abbia causato l esito.',
       'Le soglie sono dichiarate prima dei dati e inclusive sul bordo; un campione troncato o sporco resta INSUFFICIENTE.',
     ],
   };

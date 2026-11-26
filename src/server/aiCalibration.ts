@@ -36,6 +36,7 @@
  */
 
 import { isAiShadowDecision } from './aiShadowLog';
+import { SHADOW_V2_HYPOTHESES } from '../knowledge/shadowV2';
 import {
   AI_DESK_VALIDATION_VERSION,
   validateAiDeskSample,
@@ -52,6 +53,28 @@ export const AI_CALIBRATION_MATCH_WINDOW_MS = 30 * 60 * 1000;
 export const AI_CALIBRATION_MIN_SAMPLE = 30;
 /** Tetto della risposta: solo i casi piu' recenti, per non gonfiare il payload. */
 export const AI_CALIBRATION_MAX_ENTRIES = 2000;
+
+/**
+ * R NETTO: la calibrazione misurava l'R di prezzo (lordo). Un costo costante per
+ * trade non sposta `edgeR` (differenza di medie), ma sposta `meanR` e soprattutto
+ * il win rate: un trade chiuso appena sopra zero diventa perdente. Modello
+ * dichiarato, riusato da Shadow V2 invece di inventare numeri nuovi:
+ *
+ * - commissione reale Trade Republic round-trip (EUR 2.00) sul rischio di
+ *   riferimento (capitale 1000 EUR * rischio 1% = 10 EUR) => 0.20 R;
+ * - proxy spread sottostante: le barre di V1-live non portano Corwin-Schultz,
+ *   quindi si usa il TETTO dichiarato `UNDERLYING_SPREAD_MAX_R` (0.16 R) come
+ *   costo conservativo, non misurato;
+ * - totale 0.36 R per trade, uguale su AZIONE e SCARTO.
+ */
+export const AI_CALIBRATION_NET_FEE_R = Math.round(
+  (SHADOW_V2_HYPOTHESES.FEE_ROUNDTRIP_EUR /
+    (SHADOW_V2_HYPOTHESES.REFERENCE_CAPITAL_EUR * SHADOW_V2_HYPOTHESES.RISK_PCT)) *
+    10_000
+) / 10_000;
+export const AI_CALIBRATION_NET_SPREAD_R = SHADOW_V2_HYPOTHESES.UNDERLYING_SPREAD_MAX_R;
+export const AI_CALIBRATION_NET_COST_R =
+  Math.round((AI_CALIBRATION_NET_FEE_R + AI_CALIBRATION_NET_SPREAD_R) * 10_000) / 10_000;
 
 /**
  * Allarmi di formato: sotto questi denominatori una percentuale e' rumore,
@@ -227,6 +250,11 @@ export interface AiCalibrationBucket {
   meanR: number | null;
   winRatePct: number | null;
   sumR: number | null;
+  /** Media di R al netto dei costi dichiarati (`netModel.totalR`). */
+  meanRNet: number | null;
+  /** Successo calcolato sull'R netto: un trade a +0.1R lordo e' perdente netto. */
+  winRateNetPct: number | null;
+  sumRNet: number | null;
 }
 
 export interface AiCalibrationJoin {
@@ -235,6 +263,8 @@ export interface AiCalibrationJoin {
   decision: AiDecisionClass;
   aiOutcome: string | null;
   r: number;
+  /** R al netto dei costi dichiarati. */
+  rNet: number;
   forwardStatus: string;
   deltaMs: number;
 }
@@ -278,6 +308,17 @@ export interface AiCalibrationResponse {
   buckets: AiCalibrationBucket[];
   /** meanR(AZIONE) − meanR(SCARTO); `null` se manca uno dei due campioni. */
   edgeR: number | null;
+  /** Stessa differenza sui valori netti (invariante a un costo costante). */
+  edgeRNet: number | null;
+  /** Costo per trade applicato a ogni abbinamento, in R. */
+  costR: number;
+  /** Modello di costo dichiarato (fonte e componenti). */
+  netModel: {
+    feeR: number;
+    spreadR: number;
+    totalR: number;
+    source: string;
+  };
   /** Decisioni di scarto su setup che poi sono andati in positivo. */
   skippedWinners: AiCalibrationJoin[];
   /** Allarmi di formato: vuoto quando la quota e' sotto soglia. */
@@ -323,16 +364,23 @@ function forwardSourceLabel(nearMissMatched: number, rejectedMatched: number): s
 
 function bucketOf(rows: readonly AiCalibrationJoin[]): AiCalibrationBucket[] {
   return BUCKET_ORDER.map((decision) => {
-    const rs = rows.filter((row) => row.decision === decision).map((row) => row.r);
+    const inBucket = rows.filter((row) => row.decision === decision);
+    const rs = inBucket.map((row) => row.r);
+    const netRs = inBucket.map((row) => row.rNet);
     const n = rs.length;
     const sum = rs.reduce((a, b) => a + b, 0);
+    const netSum = netRs.reduce((a, b) => a + b, 0);
     const wins = rs.filter((r) => r > 0).length;
+    const netWins = netRs.filter((r) => r > 0).length;
     return {
       decision,
       n,
       meanR: n > 0 ? round(sum / n, 4) : null,
       winRatePct: n > 0 ? round((wins / n) * 100, 2) : null,
       sumR: n > 0 ? round(sum, 4) : null,
+      meanRNet: n > 0 ? round(netSum / n, 4) : null,
+      winRateNetPct: n > 0 ? round((netWins / n) * 100, 2) : null,
+      sumRNet: n > 0 ? round(netSum, 4) : null,
     };
   });
 }
@@ -481,6 +529,7 @@ export function buildAiCalibration(input: {
       decision: classifyEntryDecision(entry),
       aiOutcome: entry.aiOutcome ?? null,
       r: pair.point.r,
+      rNet: round(pair.point.r - AI_CALIBRATION_NET_COST_R, 4),
       forwardStatus: pair.point.status,
       deltaMs: Math.round(pair.point.decidedAtMs - atMs),
     });
@@ -493,6 +542,10 @@ export function buildAiCalibration(input: {
   const edgeR =
     action && skip && action.meanR !== null && skip.meanR !== null
       ? round(action.meanR - skip.meanR, 4)
+      : null;
+  const edgeRNet =
+    action && skip && action.meanRNet !== null && skip.meanRNet !== null
+      ? round(action.meanRNet - skip.meanRNet, 4)
       : null;
 
   const skippedWinners = joined
@@ -554,7 +607,16 @@ export function buildAiCalibration(input: {
     classified >= minSample ? 'evidence' : 'insufficient';
   // Il validatore lavora sull'aggregato gia' calcolato: stesse regole per tutti,
   // nessuna soglia adattiva e nessun accesso ai dati grezzi.
-  const validation = validateAiDeskSample({ classified, buckets, edgeR, alerts });
+  // Il verdetto usa i valori NETTI: e' la stessa differenza di medie (un costo
+  // costante si semplifica), ma il divario di successo no: un trade a +0.1R
+  // lordo e' perdente al netto, e questo deve contare.
+  const validation = validateAiDeskSample({
+    classified,
+    buckets,
+    edgeR: edgeRNet ?? edgeR,
+    edgeRNet,
+    alerts,
+  });
 
   return {
     version: AI_CALIBRATION_VERSION,
@@ -597,6 +659,16 @@ export function buildAiCalibration(input: {
     },
     buckets,
     edgeR,
+    edgeRNet,
+    costR: AI_CALIBRATION_NET_COST_R,
+    netModel: {
+      feeR: AI_CALIBRATION_NET_FEE_R,
+      spreadR: AI_CALIBRATION_NET_SPREAD_R,
+      totalR: AI_CALIBRATION_NET_COST_R,
+      source:
+        'Shadow V2: fee Trade Republic 2.00 EUR round-trip sul rischio di riferimento 10 EUR ' +
+        '+ proxy spread al tetto UNDERLYING_SPREAD_MAX_R (non misurato sulle barre V1-live)',
+    },
     skippedWinners,
     alerts,
     verdict,
@@ -609,7 +681,11 @@ export function buildAiCalibration(input: {
     limitations: [
       'Sola lettura: nessuna scrittura, nessun cambio di memoria AI, gate o selezione setup.',
       'Il join e\' per ticker e prossimita\' temporale (finestra fissa); non dimostra che la decisione AI abbia causato l\'esito.',
-      'L\'R di V1-live e\' di prezzo (senza costi ne\' leva) e solo su setup emessi con decisione TRADE: gli altri candidati restano non abbinati, tranne i near-miss e gli altri scarti registrati (esiti controfattuali).',
+      'L\'R di V1-live e\' di prezzo e solo su setup emessi con decisione TRADE: gli altri candidati restano non abbinati, tranne i near-miss e gli altri scarti registrati (esiti controfattuali).',
+      `R netto: a ogni abbinamento si sottrae ${AI_CALIBRATION_NET_COST_R} R di costi dichiarati ` +
+        `(${AI_CALIBRATION_NET_FEE_R} R di fee round-trip + ${AI_CALIBRATION_NET_SPREAD_R} R di proxy spread al tetto, non misurato). ` +
+        'Un costo costante non cambia edgeR, ma abbassa meanR e win rate: il verdetto del validatore usa i valori netti.',
+      'Nessuna leva nel R: il moltiplicatore del certificato non entra nel calcolo, quindi il R netto non e\' un P&L.',
       ...(nearMissForwardPoints > 0
         ? [
             `${nearMissMatched} abbinamenti usano un esito near-miss controfattuale: il setup era bloccato da un solo gate (ADX borderline, G4, G5, G7, G8/G9, G11) e non e' mai stato emesso. L'esito e' calcolato sulle barre chiuse con lo stesso motore di V1-live, ma non e' un trade reale.`,

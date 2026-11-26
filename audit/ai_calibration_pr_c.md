@@ -278,6 +278,35 @@ selezione dei setup. Un `CONFERMATO` vale per questa vista; la promozione delle
 righe resta un processo esplicito e separato. Se il campione e' troncato o
 sporco il verdetto resta `INSUFFICIENTE`.
 
+## R netto: costi dichiarati, nessun parametro nuovo
+
+`edgeR` lordo e' R di prezzo. Il R netto riusa il modello di frizione gia'
+dichiarato da Shadow V2 (`SHADOW_V2_HYPOTHESES`), senza inventare numeri:
+
+| Componente | Valore | Origine |
+|---|---|---|
+| fee round-trip | **0.20 R** | `FEE_ROUNDTRIP_EUR` 2.00 / rischio di riferimento 10 EUR (1000 EUR * 1%) |
+| proxy spread | **0.16 R** | `UNDERLYING_SPREAD_MAX_R` usato come tetto conservativo: le barre V1-live non portano Corwin-Schultz, quindi non e' misurato |
+| **totale per trade** | **0.36 R** | uguale su `AZIONE` e `SCARTO` |
+
+La risposta porta `costR`, `netModel` (`feeR`, `spreadR`, `totalR`, `source`) e
+`edgeRNet`; ogni bucket aggiunge `meanRNet`, `winRateNetPct`, `sumRNet` e ogni
+abbinamento `rNet`.
+
+Due fatti da tenere presenti, dichiarati in `limitations`:
+
+- un costo **costante** si semplifica nella differenza di medie: `edgeRNet` = `edgeR`;
+- **non** si semplifica nel successo: un trade chiuso a +0.1 R lordo e' perdente
+  al netto, quindi il divario `AZIONE` - `SCARTO` puo' ridursi. Il validatore
+  applica `edge_r` e `win_rate_gap` ai valori netti quando ci sono
+  (`edgeRNet`, `winRateNetPct`), altrimenti al lordo: le soglie restano 0.2 R e
+  10 punti.
+
+Nessuna leva nel calcolo: il moltiplicatore del certificato non entra nel R
+netto, che quindi non e' un P&L. `skippedWinners` resta un conteggio lordo.
+Il pannello mostra `R netto: costi 0.36 R per trade (fee … + spread …); edgeR
+netto …`.
+
 ## Come verificare
 
 ```bash

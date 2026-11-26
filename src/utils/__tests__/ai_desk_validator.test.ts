@@ -111,6 +111,28 @@ describe('aiDeskValidator — verdetto', () => {
     assert.equal(out.checks.find((check) => check.code === 'edge_r')?.status, 'pass');
   });
 
+  it('preferisce i valori netti: gap netto sotto soglia => NON_CONFERMATO', () => {
+    const out = validateAiDeskSample({
+      classified: 40,
+      buckets: [
+        // Lordo: 60% vs 40% (gap 20). Netto: 48% vs 42% (gap 6, sotto soglia 10).
+        { decision: 'AZIONE', n: 20, meanR: 0.8, winRatePct: 60, winRateNetPct: 48 },
+        { decision: 'SCARTO', n: 14, meanR: 0.1, winRatePct: 40, winRateNetPct: 42 },
+        { decision: 'SCONOSCIUTO', n: 0, meanR: null, winRatePct: null },
+      ],
+      edgeR: 0.7,
+      edgeRNet: 0.7,
+    });
+    assert.equal(out.verdict, 'NON_CONFERMATO');
+    const gap = out.checks.find((check) => check.code === 'win_rate_gap');
+    assert.equal(gap?.observed, 6);
+    assert.equal(gap?.status, 'fail');
+    assert.match(
+      out.checks.find((check) => check.code === 'edge_r')?.detail ?? '',
+      /edgeR netto/
+    );
+  });
+
   it('SCONOSCIUTO sopra il 30%: campione sporco => INSUFFICIENTE', () => {
     const out = validateAiDeskSample(
       strongSample({
