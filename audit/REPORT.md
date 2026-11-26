@@ -6,7 +6,7 @@
 
 Legenda evidenze: **VERIFICATO** = letto o eseguito in questa sessione · **IPOTESI** = dedotto dal codice, non eseguito · **NON TROVATO** = assente o non accessibile.
 
-**Documenti collegati**: [ai_calibration_pr_c.md](ai_calibration_pr_c.md) — calibrazione del desk AI (`ai-calibration@1`): join uno-a-uno decisione → esito forward, finestra, soglia, `edgeR`, campo chiuso `decision`, limiti e comandi di verifica. [ai_shadow_log_report_pass2.md](ai_shadow_log_report_pass2.md) — analisi del log AI shadow.
+**Documenti collegati**: [ai_calibration_pr_c.md](ai_calibration_pr_c.md) — calibrazione del desk AI (`ai-calibration@1`): join uno-a-uno decisione → esito forward, finestra, soglia, `edgeR`, campo chiuso `decision`, limiti e comandi di verifica.
 
 ---
 
