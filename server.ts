@@ -86,7 +86,13 @@ import {
 } from './src/server/shadowFirestoreSync';
 import { registerShadowV1LiveViewRoute } from './src/server/shadowV1LiveView';
 import { logVetoOutcomes, VETO_LOG_RELATIVE_PATH } from './src/server/vetoOutcomeLog';
-import { analyzeDeskEvidence, type DeskEvidenceSources } from './src/server/aiDesk';
+import {
+  analyzeDeskEvidencePack,
+  buildDeskEvidencePack,
+  type DeskEvidenceSources,
+} from './src/server/aiDesk';
+import { buildEvidencePromptAddendum } from './src/knowledge/aiDeskContract';
+import type { AiEvidencePack } from './src/knowledge/aiEvidencePack';
 import { isAiDeskEvidenceEnabled } from './src/config/aiDesk';
 import {
   DEFAULT_YAHOO_USER_AGENT,
@@ -2854,17 +2860,31 @@ app.get(['/api/ai/memory', '/api/ai-memory'], requireApiAuth, async (_req: Reque
 });
 
 /**
- * ADDITIVO (PR-B): analisi AI desk ancorata al fascicolo probatorio.
- *
- * Riusa la risposta GIA ottenuta dall'endpoint: nessuna seconda chiamata LLM,
- * nessuna attesa aggiuntiva sul pulsante. Con `AI_DESK_EVIDENCE` spento
- * restituisce `null` e la risposta resta identica. Non lancia mai.
+ * ADDITIVO (PR-B): fascicolo costruito UNA sola volta per richiesta e usato sia
+ * dal prompt (contratto dentro la stessa e unica chiamata LLM) sia dalla
+ * validazione. Con `AI_DESK_EVIDENCE` spento restituisce `null`: nessuna
+ * lettura e risposta identica. Non lancia mai.
  */
-function buildDeskEvidenceAnalysis(sources: DeskEvidenceSources, response: unknown) {
+function prepareDeskEvidence(sources: DeskEvidenceSources): AiEvidencePack | null {
   if (!isAiDeskEvidenceEnabled()) return null;
   try {
-    const result = analyzeDeskEvidence({
-      sources,
+    return buildDeskEvidencePack(sources);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[AI Desk Evidence] fascicolo non disponibile: ${message}`);
+    return null;
+  }
+}
+
+/**
+ * ADDITIVO (PR-B): valida la risposta GIA ottenuta, sul pack gia' costruito.
+ * Nessuna seconda chiamata LLM, nessuna attesa aggiuntiva. Non lancia mai.
+ */
+function buildDeskEvidenceAnalysis(pack: AiEvidencePack | null, response: unknown) {
+  if (pack === null) return null;
+  try {
+    const result = analyzeDeskEvidencePack({
+      pack,
       response,
       predicateIds: LEARNING_PREDICATE_IDS,
     });
@@ -3078,7 +3098,7 @@ app.post('/api/ai/specialize', requireApiAuth, async (req: Request, res: Respons
     const profitableExcluded = excluded.filter((e) => e.outcomeStatus === 'THEORETICAL_PROFIT');
     const stoppedExcluded = excluded.filter((e) => e.outcomeStatus === 'THEORETICAL_STOP');
 
-    const promptText = `Sei il Lead Quantitative Risk Manager & Head of Systematic Trading.
+    let promptText = `Sei il Lead Quantitative Risk Manager & Head of Systematic Trading.
 Analizza questo dataset di trade conclusi (inclusi sia operazioni in paper trading che eseguite a mercato reale) e setup scartati per distillare da 1 a 3 DIRETTIVE OPERATIVE AUREE (Regole di condotta) che guideranno le future valutazioni dell'AI su catalizzatori e parametri.
 
 STATISTICHE FORNITE (trade reali e paper trading):
@@ -3104,6 +3124,20 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
     }
   ]
 }`;
+
+    // ADDITIVO (PR-B): il contratto (fascicolo + campi obbligatori) entra nella
+    // STESSA chiamata LLM, prima del modello. Nessun secondo giro.
+    const deskEvidencePack = prepareDeskEvidence({
+      nowMs: Date.now(),
+      trades,
+      excluded,
+      rootDir: process.cwd(),
+    });
+    if (deskEvidencePack !== null) {
+      promptText += buildEvidencePromptAddendum(deskEvidencePack, {
+        predicateIds: LEARNING_PREDICATE_IDS,
+      });
+    }
 
     const systemInstruction = `Sei un Risk Manager quantitativo rigoroso. Estrai solo regole concrete, empiriche e non banali basate esclusivamente sui dati forniti. Rispondi solo in formato JSON.`;
 
@@ -3230,10 +3264,7 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
     const reasonDetail = outcome.reasonDetail;
 
     // ADDITIVO (PR-B): analisi AI ancorata al fascicolo, dietro AI_DESK_EVIDENCE=1.
-    const deskAnalysisPayload = buildDeskEvidenceAnalysis(
-      { nowMs: Date.now(), trades, excluded, rootDir: process.cwd() },
-      generated
-    );
+    const deskAnalysisPayload = buildDeskEvidenceAnalysis(deskEvidencePack, generated);
 
     return res.json({
       success: true,
@@ -3298,7 +3329,7 @@ app.post('/api/ai/desk-post-mortem', requireApiAuth, async (req: Request, res: R
 
     const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
 
-    const promptText = `Sei l'Head of Quantitative Trading & Senior Risk Officer di un desk proprietario intraday.
+    let promptText = `Sei l'Head of Quantitative Trading & Senior Risk Officer di un desk proprietario intraday.
 Redigi il "POST-MORTEM UFFICIALE DEL DESK" analizzando le ultime sessioni operative (${market === 'EU' ? 'Europa' : market === 'US' ? 'USA' : 'Globale'}) includendo tutti i trade registrati a diario (sia eseguiti a mercato reale che in paper trading).
 
 METRICHE DI PERFORMANCE (REALI E PAPER TRADING):
@@ -3324,6 +3355,19 @@ Restituisci un JSON rigoroso con questi campi:
 5. "newDirectives": array opzionale di ipotesi non persistenti. Ogni elemento deve contenere un predicato CHIUSO scelto esclusivamente da questo enum, senza inventarne altri:
 ${LEARNING_PREDICATE_PROMPT}
 Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "directive": string, "confidence": null, "sampleEvidence": string }).`;
+
+    // ADDITIVO (PR-B): contratto dentro la stessa e unica chiamata LLM.
+    const deskEvidencePack = prepareDeskEvidence({
+      nowMs: Date.now(),
+      trades: sessionTrades,
+      excluded: [],
+      rootDir: process.cwd(),
+    });
+    if (deskEvidencePack !== null) {
+      promptText += buildEvidencePromptAddendum(deskEvidencePack, {
+        predicateIds: LEARNING_PREDICATE_IDS,
+      });
+    }
 
     const systemInstruction = `Sei un Senior Risk Officer rigoroso ed esperto. Analizza con occhio clinico e linguaggio istituzionale da hedge fund. Non inventare dati. Rispondi solo in formato JSON.`;
 
@@ -3462,10 +3506,7 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
     });
 
     // ADDITIVO (PR-B): analisi AI ancorata al fascicolo, dietro AI_DESK_EVIDENCE=1.
-    const deskAnalysisPayload = buildDeskEvidenceAnalysis(
-      { nowMs: Date.now(), trades: sessionTrades, excluded: [], rootDir: process.cwd() },
-      generated
-    );
+    const deskAnalysisPayload = buildDeskEvidenceAnalysis(deskEvidencePack, generated);
 
     return res.json({
       success: true,

@@ -6,6 +6,7 @@ import {
   AI_DESK_MAX_DIRECTIVES,
   AI_DESK_MAX_SUMMARY_CHARS,
   buildDeskPrompt,
+  buildEvidencePromptAddendum,
   extractJsonObject,
   extractMeasuredNumbers,
   parseDeskAnalysis,
@@ -257,20 +258,25 @@ describe('aiDeskContract — direttive', () => {
 });
 
 describe('aiDeskContract — sintesi ancorata al fascicolo', () => {
-  it('una sintesi senza numeri misurati e verificata e non cita nulla', () => {
+  it('la sintesi senza summaryRefs non e verificata, anche senza numeri', () => {
     const result = parse({ summary: 'Il desk ha operato con disciplina.' });
     assert.equal(result.ok, true);
     if (!result.ok) return;
-    assert.equal(result.analysis.summaryVerified, true);
+    assert.equal(result.analysis.summaryVerified, false);
+    assert.deepEqual(result.analysis.summaryDeclaredRefs, []);
     assert.deepEqual(result.analysis.summaryEvidenceRefs, []);
-    assert.equal(result.analysis.verified, true);
+    assert.equal(result.analysis.verified, false);
   });
 
-  it('una sintesi con numeri del fascicolo e verificata e cita le chiavi', () => {
-    const result = parse({ summary: 'Win rate 52,38% con R medio 0.18R.' });
+  it('la sintesi con summaryRefs e numeri del fascicolo e verificata', () => {
+    const result = parse({
+      summary: 'Win rate 52,38% con R medio 0.18R.',
+      summaryRefs: ['shadowV1Live.winRatePct'],
+    });
     assert.equal(result.ok, true);
     if (!result.ok) return;
     assert.equal(result.analysis.summaryVerified, true);
+    assert.deepEqual(result.analysis.summaryDeclaredRefs, ['shadowV1Live.winRatePct']);
     assert.deepEqual(result.analysis.summaryEvidenceRefs, [
       'shadowV1Live.meanR',
       'shadowV1Live.winRatePct',
@@ -278,8 +284,22 @@ describe('aiDeskContract — sintesi ancorata al fascicolo', () => {
     assert.deepEqual(result.analysis.summaryUnsupportedNumbers, []);
   });
 
+  it('un summaryRefs inesistente non verifica la sintesi', () => {
+    const result = parse({
+      summary: 'Il desk ha operato con disciplina.',
+      summaryRefs: ['chiave.inventata'],
+    });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.deepEqual(result.analysis.summaryDeclaredRefs, []);
+    assert.equal(result.analysis.summaryVerified, false);
+  });
+
   it('una sintesi con un numero inventato e marcata non verificata', () => {
-    const result = parse({ summary: 'Win rate 61,4% nel campione.' });
+    const result = parse({
+      summary: 'Win rate 61,4% nel campione.',
+      summaryRefs: ['shadowV1Live.winRatePct'],
+    });
     assert.equal(result.ok, true);
     if (!result.ok) return;
     assert.equal(result.analysis.summaryVerified, false);
@@ -290,6 +310,7 @@ describe('aiDeskContract — sintesi ancorata al fascicolo', () => {
   it('un claim valido non basta se la sintesi non e ancorata', () => {
     const result = parse({
       summary: 'R medio 9,99R',
+      summaryRefs: ['shadowV1Live.meanR'],
       claims: [{ statement: 'R medio 0.18R', evidenceRefs: ['shadowV1Live.meanR'] }],
     });
     assert.equal(result.ok, true);
@@ -314,13 +335,56 @@ describe('aiDeskContract — riuso della risposta gia ottenuta', () => {
     assert.equal(result.ok, true);
     if (!result.ok) return;
     assert.equal(result.analysis.summary, 'Sintesi del Risk Officer: win rate 52,38%.');
-    assert.equal(result.analysis.summaryVerified, true);
+    // Forma storica: nessun summaryRefs, quindi sintesi non verificata.
+    assert.equal(result.analysis.summaryVerified, false);
+    assert.deepEqual(result.analysis.summaryDeclaredRefs, []);
     assert.equal(result.analysis.proposedDirectives.length, 0);
     assert.deepEqual(
       result.analysis.rejected.map((item) => item.code),
       ['no_ref']
     );
     assert.equal(result.analysis.complete, false);
+  });
+});
+
+describe('aiDeskContract — contratto nella stessa chiamata LLM', () => {
+  it("l'addendum porta fascicolo, summaryRefs ed evidenceRefs senza secondo giro", () => {
+    const addendum = buildEvidencePromptAddendum(makePack(), { predicateIds: PREDICATES });
+    assert.match(addendum, /FASCICOLO PROBATORIO/);
+    assert.match(addendum, /"summaryRefs"/);
+    assert.match(addendum, /"evidenceRefs"/);
+    assert.match(addendum, /MARKET_EU/);
+    assert.match(addendum, /NON VERIFICATA/);
+    const base = 'Istruzioni originali del desk.';
+    assert.equal((base + addendum).indexOf(base), 0);
+  });
+
+  it('una direttiva con evidenceRefs validi passa, una senza refs viene scartata', () => {
+    const result = parse({
+      summary: 'Win rate 52,38% sulle operazioni chiuse.',
+      summaryRefs: ['shadowV1Live.winRatePct'],
+      newDirectives: [
+        {
+          topic: 'Filtro trend',
+          market: 'EU',
+          predicateId: 'MARKET_EU',
+          directive: 'Non aprire contro il SuperTrend.',
+          evidenceRefs: ['shadowV1Live.winRatePct'],
+        },
+        {
+          topic: 'Senza fonte',
+          market: 'EU',
+          predicateId: 'MARKET_EU',
+          directive: 'Regola non ancorata.',
+        },
+      ],
+    });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.analysis.proposedDirectives.length, 1);
+    assert.deepEqual(result.analysis.rejected.map((item) => item.code), ['no_ref']);
+    assert.equal(result.analysis.summaryVerified, true);
+    assert.equal(result.analysis.verified, false);
   });
 });
 

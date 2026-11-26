@@ -93,8 +93,13 @@ export interface AiDeskAnalysis {
   contractVersion: typeof AI_DESK_CONTRACT_VERSION;
   evidencePackVersion: typeof AI_EVIDENCE_PACK_VERSION;
   summary: string;
-  /** `true` quando ogni numero misurato nella sintesi esiste nel fascicolo. */
+  /**
+   * `true` solo se la sintesi cita almeno una chiave del fascicolo E ogni suo
+   * numero misurato esiste nel fascicolo.
+   */
   summaryVerified: boolean;
+  /** Chiavi dichiarate dalla LLM in `summaryRefs`, filtrate su quelle esistenti. */
+  summaryDeclaredRefs: string[];
   /** Chiavi del fascicolo che sostengono i numeri della sintesi. */
   summaryEvidenceRefs: string[];
   /** Numeri della sintesi non riconducibili al fascicolo. */
@@ -125,6 +130,43 @@ export interface AiDeskPrompt {
 // ---------------------------------------------------------------------------
 // Prompt
 // ---------------------------------------------------------------------------
+
+/**
+ * Blocco da accodare al prompt ESISTENTE dell'endpoint: cosi' la stessa e unica
+ * chiamata LLM riceve il fascicolo e produce `summaryRefs` + `evidenceRefs`,
+ * senza un secondo giro. Il parser continua a leggere `newDirectives`, quindi
+ * non serve cambiare il resto dell'handler.
+ */
+export function buildEvidencePromptAddendum(
+  pack: AiEvidencePack,
+  options: { predicateIds?: readonly string[]; maxChars?: number } = {}
+): string {
+  const serialized = serializeAiEvidencePack(pack, { maxChars: options.maxChars });
+  const predicateIds = Array.isArray(options.predicateIds) ? options.predicateIds : [];
+  const lines = [
+    '',
+    '=== FASCICOLO PROBATORIO (unica fonte ammessa per i numeri) ===',
+    serialized.text,
+    '',
+    '=== CAMPI OBBLIGATORI AGGIUNTIVI, NELLO STESSO JSON ===',
+    '{',
+    '  "summary": "sintesi: ogni numero con decimali o unita deve esistere nel fascicolo",',
+    '  "summaryRefs": ["almeno una chiave del fascicolo, es. journal.n"],',
+    '  "newDirectives": [{ "topic": "...", "market": "EU|US|GLOBAL", "predicateId": "...", "directive": "...", "evidenceRefs": ["chiave"] }],',
+    '  "claims": [{ "statement": "...", "evidenceRefs": ["chiave"] }],',
+    '  "dataGaps": ["dati mancanti o insufficienti"]',
+    '}',
+    '',
+    'REGOLE VINCOLANTI:',
+    `- summaryRefs: da 1 a ${AI_DESK_MAX_REFS_PER_CLAIM} chiavi esistenti. Senza almeno una chiave la sintesi viene marcata NON VERIFICATA.`,
+    `- Ogni newDirectives[].evidenceRefs: da 1 a ${AI_DESK_MAX_REFS_PER_CLAIM} chiavi esistenti. Le direttive senza riferimenti vengono scartate.`,
+    '- Ogni numero con decimali o con %/€/R deve comparire in una chiave del fascicolo (tolleranza 2%, minimo 0.005).',
+    '- Le chiavi elencate in INSUFFICIENT vanno nei dataGaps, mai usate per conclusioni.',
+    predicateIds.length > 0 ? `- predicateId ammessi: ${predicateIds.join(', ')}.` : '',
+    '- Nessun testo fuori dal JSON.',
+  ];
+  return lines.filter((line) => line.length > 0).join('\n');
+}
 
 const RESPONSE_SCHEMA = [
   '{',
@@ -278,21 +320,34 @@ function collectRefs(
 }
 
 /**
- * Verifica dei numeri della sintesi contro l'INTERO fascicolo (la sintesi non ha
- * riferimenti per-claim). Un numero misurato che non esiste nel fascicolo rende
- * la sintesi non verificata: il testo resta, ma il consumatore sa che non e'
- * ancorato.
+ * Verifica della sintesi:
+ * 1. deve dichiarare almeno una chiave esistente in `summaryRefs` (senza
+ *    riferimenti la sintesi e' NON verificata, anche se non contiene numeri);
+ * 2. ogni numero misurato deve esistere nel fascicolo.
+ * Il testo resta visibile in ogni caso: cambia solo la marcatura.
  */
 export function verifyDeskSummary(
   text: string,
-  pack: AiEvidencePack
-): { text: string; verified: boolean; evidenceRefs: string[]; unsupportedNumbers: string[] } {
+  pack: AiEvidencePack,
+  declaredRefs: readonly string[] = []
+): {
+  text: string;
+  verified: boolean;
+  declaredRefs: string[];
+  evidenceRefs: string[];
+  unsupportedNumbers: string[];
+} {
   const cleaned = clip(cleanText(text), AI_DESK_MAX_SUMMARY_CHARS);
-  const measured = extractMeasuredNumbers(cleaned).filter((token) => token.measured);
-  if (measured.length === 0) {
-    return { text: cleaned, verified: true, evidenceRefs: [], unsupportedNumbers: [] };
+  const known = new Set(pack.evidence.map((item) => item.key));
+  const validDeclared: string[] = [];
+  for (const ref of declaredRefs) {
+    if (typeof ref !== 'string') continue;
+    const key = ref.trim();
+    if (key.length === 0 || !known.has(key) || validDeclared.includes(key)) continue;
+    validDeclared.push(key);
   }
-  const refs = new Set<string>();
+  const measured = extractMeasuredNumbers(cleaned).filter((token) => token.measured);
+  const refs = new Set<string>(validDeclared);
   const unsupportedNumbers: string[] = [];
   for (const token of measured) {
     const matches = pack.evidence.filter((item) => isSupportedNumber(token.value, [item]));
@@ -304,7 +359,8 @@ export function verifyDeskSummary(
   }
   return {
     text: cleaned,
-    verified: unsupportedNumbers.length === 0,
+    verified: validDeclared.length > 0 && unsupportedNumbers.length === 0,
+    declaredRefs: validDeclared,
     evidenceRefs: [...refs].sort(),
     unsupportedNumbers,
   };
@@ -422,9 +478,13 @@ export function validateDeskAnalysis(
   // risposta gia' ottenuta dall'endpoint puo' essere validata senza richiamare
   // la LLM una seconda volta.
   const summarySource = record.summary ?? record.executiveSummary;
+  const declaredSummaryRefs = Array.isArray(record.summaryRefs)
+    ? record.summaryRefs.filter((ref): ref is string => typeof ref === 'string')
+    : [];
   const summaryCheck = verifyDeskSummary(
     typeof summarySource === 'string' ? summarySource : '',
-    options.pack
+    options.pack,
+    declaredSummaryRefs
   );
 
   const claims: AiDeskClaim[] = [];
@@ -468,6 +528,7 @@ export function validateDeskAnalysis(
     evidencePackVersion: AI_EVIDENCE_PACK_VERSION,
     summary: summaryCheck.text,
     summaryVerified: summaryCheck.verified,
+    summaryDeclaredRefs: summaryCheck.declaredRefs,
     summaryEvidenceRefs: summaryCheck.evidenceRefs,
     summaryUnsupportedNumbers: summaryCheck.unsupportedNumbers,
     claims,

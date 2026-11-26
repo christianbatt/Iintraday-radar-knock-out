@@ -167,16 +167,31 @@ export function analyzeDeskEvidence(args: {
   response: unknown;
   predicateIds: readonly string[];
 }): DeskEvidenceAnalysis {
-  const pack = buildDeskEvidencePack(args.sources);
+  return analyzeDeskEvidencePack({
+    pack: buildDeskEvidencePack(args.sources),
+    response: args.response,
+    predicateIds: args.predicateIds,
+  });
+}
+
+/**
+ * Variante che riceve il pack gia' costruito: l'endpoint lo usa una sola volta,
+ * sia per il prompt sia per la validazione (nessuna lettura duplicata).
+ */
+export function analyzeDeskEvidencePack(args: {
+  pack: AiEvidencePack;
+  response: unknown;
+  predicateIds: readonly string[];
+}): DeskEvidenceAnalysis {
   const analysis = validateDeskAnalysis(args.response, {
-    pack,
+    pack: args.pack,
     predicateIds: args.predicateIds,
   });
   return {
     analysis,
-    evidenceKeys: pack.evidence.length,
-    missingSections: [...pack.missing],
-    insufficientKeys: pack.insufficient.length,
-    packGeneratedAt: pack.generatedAt,
+    evidenceKeys: args.pack.evidence.length,
+    missingSections: [...args.pack.missing],
+    insufficientKeys: args.pack.insufficient.length,
+    packGeneratedAt: args.pack.generatedAt,
   };
 }
