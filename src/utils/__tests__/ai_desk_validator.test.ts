@@ -188,3 +188,44 @@ describe('aiDeskValidator — bordi e determinismo', () => {
     assert.equal(out.checks.find((check) => check.code === 'win_rate_gap')?.observed, null);
   });
 });
+
+describe('aiDeskValidator — incertezza e copertura', () => {
+  it('senza intervalli il check non esiste: risposte storiche invariate', () => {
+    const out = validateAiDeskSample(strongSample());
+    assert.equal(out.checks.some((check) => check.code === 'edge_r_ci'), false);
+    assert.equal(out.verdict, 'CONFERMATO');
+  });
+
+  it('limite inferiore sopra zero: check superato e CONFERMATO', () => {
+    const out = validateAiDeskSample(
+      strongSample({ uncertainty: { edgeR: { lower: 0.05, upper: 1.1 } } })
+    );
+    const check = out.checks.find((item) => item.code === 'edge_r_ci');
+    assert.equal(check?.status, 'pass');
+    assert.equal(check?.observed, 0.05);
+    assert.equal(out.verdict, 'CONFERMATO');
+  });
+
+  it('intervallo che tocca lo zero: NON_CONFERMATO anche con stime puntuali forti', () => {
+    const out = validateAiDeskSample(
+      strongSample({ uncertainty: { edgeR: { lower: -0.15, upper: 1.4 } } })
+    );
+    assert.equal(out.checks.find((item) => item.code === 'edge_r_ci')?.status, 'fail');
+    assert.equal(out.verdict, 'NON_CONFERMATO');
+  });
+
+  it('intervallo non calcolabile: INSUFFICIENTE, mai un verdetto inventato', () => {
+    const out = validateAiDeskSample(strongSample({ uncertainty: { edgeR: null } }));
+    assert.equal(out.checks.find((item) => item.code === 'edge_r_ci')?.status, 'insufficient');
+    assert.equal(out.verdict, 'INSUFFICIENTE');
+  });
+
+  it('COVERAGE_LOW degrada il campione come un formato rotto', () => {
+    const out = validateAiDeskSample(strongSample({ alerts: [{ code: 'COVERAGE_LOW' }] }));
+    assert.equal(
+      out.checks.find((item) => item.code === 'sample_integrity')?.status,
+      'insufficient'
+    );
+    assert.equal(out.verdict, 'INSUFFICIENTE');
+  });
+});

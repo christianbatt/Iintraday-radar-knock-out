@@ -102,6 +102,26 @@ export interface ShadowAiCalibrationView {
     deskStatus?: string;
     headline?: string;
   };
+  /** Intervalli bootstrap deterministici sul R netto (diagnostica). */
+  uncertainty?: {
+    confidence?: number;
+    iterations?: number;
+    edgeR?: { lower: number; upper: number } | null;
+    winRateGapPct?: { lower: number; upper: number } | null;
+  } | null;
+  /** Copertura della pipeline LLM sui candidati del log. */
+  coverage?: {
+    candidates?: number;
+    evaluated?: number;
+    evaluatedSharePct?: number | null;
+    parseErrorRatePct?: number | null;
+  } | null;
+  /** Ordinalita' di ATTESA fra SCARTO e AZIONE. */
+  ordinality?: { status?: string; detail?: string } | null;
+  /** R netto per trade delle tre policy di selezione. */
+  policies?: { code?: string; trades?: number; meanRNet?: number | null }[];
+  /** Edge per mercato/direzione e contraddizioni dichiarate. */
+  strata?: { dimension?: string; value?: string; contradicts?: boolean }[];
 }
 
 /**
@@ -203,6 +223,20 @@ export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrati
         : calibration.edgeR}
       {calibration.verdict === 'evidence' ? '' : ' (non un risultato)'}
     </p>
+    {calibration.uncertainty?.edgeR && (
+      <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-uncertainty">
+        IC{Math.round((calibration.uncertainty.confidence ?? 0.95) * 100)}% R netto: edgeR [
+        {calibration.uncertainty.edgeR.lower}, {calibration.uncertainty.edgeR.upper}]
+        {calibration.uncertainty.winRateGapPct
+          ? ` · divario [${calibration.uncertainty.winRateGapPct.lower}, ${calibration.uncertainty.winRateGapPct.upper}] punti`
+          : ''}
+      </p>
+    )}
+    {calibration.uncertainty?.edgeR === null && calibration.uncertainty && (
+      <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-uncertainty">
+        IC: non calcolabile (meno di 2 esiti per lato)
+      </p>
+    )}
     {typeof calibration.costR === 'number' && (
       <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-net">
         R netto: costi {calibration.costR} R per trade (fee{' '}
@@ -211,6 +245,49 @@ export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrati
         {calibration.edgeRNet === null || calibration.edgeRNet === undefined
           ? 'non calcolabile'
           : calibration.edgeRNet}
+      </p>
+    )}
+    {calibration.coverage && typeof calibration.coverage.evaluatedSharePct === 'number' && (
+      <p
+        className={`text-[10px] ${
+          calibration.coverage.evaluatedSharePct < 50 ? 'text-amber-300' : 'text-slate-500'
+        }`}
+        data-testid="shadow-ai-calibration-coverage"
+      >
+        copertura LLM: {calibration.coverage.evaluated ?? 0}/{
+          calibration.coverage.candidates ?? 0
+        } candidati valutati ({calibration.coverage.evaluatedSharePct}%)
+        {typeof calibration.coverage.parseErrorRatePct === 'number' &&
+        calibration.coverage.parseErrorRatePct > 0
+          ? ` · errori di parsing ${calibration.coverage.parseErrorRatePct}%`
+          : ''}
+      </p>
+    )}
+    {calibration.ordinality?.status && calibration.ordinality.status !== 'non_valutabile' && (
+      <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-ordinality">
+        ATTESA fra SCARTO e AZIONE: {calibration.ordinality.status}
+      </p>
+    )}
+    {(calibration.policies ?? []).some((policy) => (policy.trades ?? 0) > 0) && (
+      <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-policies">
+        policy (R netto per trade):{' '}
+        {(calibration.policies ?? [])
+          .map(
+            (policy) =>
+              `${policy.code ?? '—'} n=${policy.trades ?? 0} ${
+                policy.meanRNet === null || policy.meanRNet === undefined ? '—' : policy.meanRNet
+              }`
+          )
+          .join(' · ')}
+      </p>
+    )}
+    {(calibration.strata ?? []).some((stratum) => stratum.contradicts === true) && (
+      <p className="text-[10px] text-amber-300" data-testid="shadow-ai-calibration-strata">
+        strati in contraddizione:{' '}
+        {(calibration.strata ?? [])
+          .filter((stratum) => stratum.contradicts === true)
+          .map((stratum) => `${stratum.dimension} ${stratum.value}`)
+          .join(', ')}
       </p>
     )}
     {(calibration.alerts ?? []).map((alert) => (

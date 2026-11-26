@@ -340,3 +340,55 @@ describe('ShadowAISection — calibrazione nel pannello', () => {
     assert.equal(out, '');
   });
 });
+
+describe('ShadowAiCalibrationBlock — incertezza, copertura e policy', () => {
+  const ENRICHED = {
+    ...EVIDENCE,
+    uncertainty: {
+      confidence: 0.95,
+      edgeR: { lower: 0.1, upper: 0.8 },
+      winRateGapPct: { lower: 2, upper: 18 },
+    },
+    coverage: {
+      candidates: 120,
+      evaluated: 30,
+      evaluatedSharePct: 25,
+      parseErrorRatePct: 1.67,
+    },
+    policies: [{ code: 'SOLO_AZIONE', trades: 20, meanRNet: 0.44 }],
+  };
+
+  it('mostra intervallo, copertura e valore della policy', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, { calibration: ENRICHED })
+    );
+    assert.ok(out.includes('data-testid="shadow-ai-calibration-uncertainty"'));
+    assert.ok(out.includes('IC95% R netto: edgeR [0.1, 0.8]'));
+    assert.ok(out.includes('divario [2, 18] punti'));
+    assert.ok(out.includes('shadow-ai-calibration-coverage'));
+    assert.ok(out.includes('copertura LLM: 30/120 candidati valutati (25%)'));
+    assert.ok(out.includes('errori di parsing 1.67%'));
+    assert.ok(out.includes('SOLO_AZIONE n=20 0.44'));
+  });
+
+  it('intervallo non calcolabile: lo dichiara invece di mostrare zeri', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, {
+        calibration: { ...EVIDENCE, uncertainty: { confidence: 0.95, edgeR: null } },
+      })
+    );
+    assert.ok(out.includes('IC: non calcolabile'));
+  });
+
+  it('strato in contraddizione: nominato nel pannello', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, {
+        calibration: {
+          ...EVIDENCE,
+          strata: [{ dimension: 'market', value: 'US', contradicts: true }],
+        },
+      })
+    );
+    assert.ok(out.includes('strati in contraddizione: market US'));
+  });
+});

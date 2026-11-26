@@ -322,3 +322,57 @@ curl -s http://127.0.0.1:3000/api/shadow/ai-calibration | head -c 400
 
 Flag: `SHADOW_AI_CALIBRATION` (accesa di default, spenta con `0`/`false`; a flag
 off la route risponde 404 senza leggere nulla).
+
+## Incertezza campionaria (`uncertainty`)
+
+Le soglie del validatore sono stime puntuali. Con 10 casi per lato un `edgeR` di
++0.25 R ha un intervallo che attraversa lo zero, e un `CONFERMATO` costruito sul
+solo punto sarebbe una promessa che i dati non fanno.
+
+La risposta porta `uncertainty`: bootstrap percentile **deterministico**
+(`ai-calibration@1`, 2000 iterazioni, seed fissa `0x5eed1a7e`, nessun orologio,
+nessun I/O) sul **R netto**. Stesso campione, stessi intervalli:
+
+- `edgeR`: IC 95% della differenza di medie nette;
+- `winRateGapPct`: IC 95% della differenza di successo netto, in punti.
+
+Sotto 2 esiti per lato gli intervalli sono `null`: non si inventa una certezza
+con un campione di uno.
+
+Il validatore aggiunge il check `edge_r_ci` **solo quando riceve gli
+intervalli**: chiede che il limite inferiore dell'edge netto sia `> 0`. E' una
+richiesta di **segno**, non di magnitudine: la soglia `+0.2 R` resta una regola
+sulla stima puntuale, non un risultato con quella confidenza. Senza intervalli
+(risposte storiche) il check non esiste e il verdetto resta quello delle cinque
+regole precedenti, quindi nessuna risposta gia' prodotta cambia significato.
+
+## Qualita' del campione (`coverage`, `ordinality`, `policies`, `strata`)
+
+Il validatore misurava il campione, non la pipeline che lo produce. Con
+`shadow_ai_scans.jsonl` a 160 righe tutte `NON_INVIATO_ALLA_LLM` un verdetto
+sarebbe formalmente calcolabile e sostanzialmente vuoto.
+
+- **`coverage`**: candidati nel log, `evaluated`, `notEvaluated`, `unknown`
+  (righe storiche senza il campo booleano, fuori dal denominatore), quota
+  valutata, tasso di `ERRORE_PARSING`, motivi di scarto (`byReason`) e latenza
+  `p50`/`p95` dei batch valutati. Sotto il 50% di copertura con almeno 10
+  candidati noti scatta l'allarme `COVERAGE_LOW`, che il validatore tratta come
+  un formato rotto: `sample_integrity` diventa `insufficient` e il verdetto
+  resta `INSUFFICIENTE`. Le righe senza `evaluated` non producono allarmi: non
+  dicono nulla sulla pipeline.
+- **`ordinality`**: `ATTESA` deve stare fra `SCARTO` e `AZIONE` (almeno 10 casi
+  per classe e medie nette disponibili). Se non ci sta, la classe intermedia non
+  porta informazione. E' diagnostica: non entra nel verdetto.
+- **`policies`**: R netto per trade di tre selezioni — solo `AZIONE`,
+  `AZIONE`+`ATTESA`, tutti i classificati — con numero di trade e successo
+  netto. Serve a leggere il valore in funzione del numero di operazioni, non
+  solo come differenza di medie. Nessuna capitalizzazione e nessuna leva: non e'
+  un P&L.
+- **`strata`**: edge netto per mercato e per direzione. Uno strato con almeno 10
+  casi per lato ed edge negativo e' marcato `contradicts: true` e nominato nel
+  pannello. Non cambia il verdetto (i campioni per strato sono piccoli), ma
+  impedisce di leggere un edge aggregato come se valesse ovunque.
+
+Il pannello mostra, quando presenti: `IC95% R netto: edgeR [a, b] · divario [c,
+d] punti`, `copertura LLM: x/y candidati valutati (z%)`, la riga delle policy e
+l'eventuale riga `strati in contraddizione`.

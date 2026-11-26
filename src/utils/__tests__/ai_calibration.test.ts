@@ -923,3 +923,179 @@ describe('aiCalibration — esiti near-miss per i candidati scartati', () => {
     assert.equal(failedBody.counts.forwardPoints, 1, 'gli esiti dei segnali restano');
   });
 });
+
+describe('aiCalibration — incertezza deterministica sul R netto', () => {
+  function sample(azioneR: number[], scartoR: number[]) {
+    const entries: AiCalibrationEntry[] = [];
+    const forward: AiCalibrationForwardPoint[] = [];
+    azioneR.forEach((r, i) => {
+      const ticker = `AZ${i}`;
+      entries.push(entry({ id: `az${i}`, ticker, candidateKey: `k:AZ${i}`, decision: 'AZIONE' }));
+      forward.push(point({ key: `p:AZ${i}`, ticker, r }));
+    });
+    scartoR.forEach((r, i) => {
+      const ticker = `SC${i}`;
+      entries.push(entry({ id: `sc${i}`, ticker, candidateKey: `k:SC${i}`, decision: 'SCARTO' }));
+      forward.push(point({ key: `p:SC${i}`, ticker, r }));
+    });
+    return buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0) });
+  }
+
+  it('stesso campione => stessi intervalli, e la stima puntuale cade dentro', () => {
+    const first = sample([1, 0.5, 0.8, 1.2, 0.4], [-1, -0.5, -0.8, -1.2, -0.4]);
+    const second = sample([1, 0.5, 0.8, 1.2, 0.4], [-1, -0.5, -0.8, -1.2, -0.4]);
+
+    assert.deepEqual(first.uncertainty, second.uncertainty, 'nessuna casualita: stessa seed');
+    assert.equal(first.uncertainty.net, true, 'gli intervalli sono sul R netto');
+    assert.ok(first.uncertainty.edgeR);
+    assert.ok(first.uncertainty.edgeR.lower <= first.edgeRNet!);
+    assert.ok(first.uncertainty.edgeR.upper >= first.edgeRNet!);
+    assert.ok(first.uncertainty.winRateGapPct);
+  });
+
+  it('meno di 2 esiti per lato: nessun intervallo inventato', () => {
+    const out = sample([1], [-1]);
+    assert.equal(out.uncertainty.edgeR, null);
+    assert.equal(out.uncertainty.winRateGapPct, null);
+  });
+});
+
+describe('aiCalibration — copertura della pipeline', () => {
+  it('distingue valutati, non valutati e righe storiche senza campo', () => {
+    const rows: AiCalibrationEntry[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      rows.push(
+        entry({
+          id: `e${i}`,
+          ticker: `E${i}`,
+          candidateKey: `k:E${i}`,
+          evaluated: true,
+          durationMs: 100 + i * 50,
+        })
+      );
+    }
+    for (let i = 0; i < 9; i += 1) {
+      rows.push(
+        entry({
+          id: `n${i}`,
+          ticker: `N${i}`,
+          candidateKey: `k:N${i}`,
+          evaluated: false,
+          discardReason: 'NON_INVIATO_ALLA_LLM',
+        })
+      );
+    }
+    for (let i = 0; i < 4; i += 1) {
+      rows.push(entry({ id: `u${i}`, ticker: `U${i}`, candidateKey: `k:U${i}` }));
+    }
+
+    const out = buildAiCalibration({ entries: rows, forward: [], nowMs: NOW, generatedAt: iso(0) });
+
+    assert.equal(out.coverage.candidates, 16);
+    assert.equal(out.coverage.evaluated, 3);
+    assert.equal(out.coverage.notEvaluated, 9);
+    assert.equal(out.coverage.unknown, 4, 'le righe senza campo non sporcano il denominatore');
+    assert.equal(out.coverage.evaluatedSharePct, 25);
+    assert.deepEqual(out.coverage.byReason, [{ reason: 'NON_INVIATO_ALLA_LLM', count: 9 }]);
+    assert.equal(out.coverage.latency.samples, 3);
+    assert.ok(out.coverage.latency.p95Ms !== null);
+
+    const alert = out.alerts.find((item) => item.code === 'COVERAGE_LOW');
+    assert.ok(alert, 'copertura bassa: allarme esplicito');
+    assert.match(alert!.message, /25%/);
+    assert.equal(
+      out.validation.checks.find((check) => check.code === 'sample_integrity')?.status,
+      'insufficient'
+    );
+  });
+
+  it('righe senza campo evaluated: quota non calcolabile e nessun allarme', () => {
+    const rows = Array.from({ length: 12 }, (_, i) =>
+      entry({ id: `u${i}`, ticker: `U${i}`, candidateKey: `k:U${i}` })
+    );
+    const out = buildAiCalibration({ entries: rows, forward: [], nowMs: NOW, generatedAt: iso(0) });
+
+    assert.equal(out.coverage.evaluatedSharePct, null);
+    assert.equal(out.coverage.unknown, 12);
+    assert.equal(out.alerts.some((item) => item.code === 'COVERAGE_LOW'), false);
+  });
+});
+
+describe('aiCalibration — ordinalita, policy e strati', () => {
+  function buildSets(
+    sets: { decision: 'AZIONE' | 'ATTESA' | 'SCARTO'; r: number; market?: string; n: number }[]
+  ) {
+    const entries: AiCalibrationEntry[] = [];
+    const forward: AiCalibrationForwardPoint[] = [];
+    let index = 0;
+    for (const set of sets) {
+      for (let i = 0; i < set.n; i += 1) {
+        index += 1;
+        const ticker = `T${index}`;
+        entries.push(
+          entry({
+            id: `e${index}`,
+            ticker,
+            market: set.market ?? 'EU',
+            candidateKey: `k:${ticker}`,
+            decision: set.decision,
+          })
+        );
+        forward.push(point({ key: `p:${ticker}`, ticker, r: set.r }));
+      }
+    }
+    return buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0) });
+  }
+
+  it('ATTESA fra le altre due: ordinato; fuori posto: non ordinato', () => {
+    const ordered = buildSets([
+      { decision: 'AZIONE', r: 1, n: 10 },
+      { decision: 'ATTESA', r: 0, n: 10 },
+      { decision: 'SCARTO', r: -1, n: 10 },
+    ]);
+    assert.equal(ordered.ordinality.status, 'ordinato');
+
+    const broken = buildSets([
+      { decision: 'AZIONE', r: 1, n: 10 },
+      { decision: 'ATTESA', r: -2, n: 10 },
+      { decision: 'SCARTO', r: -1, n: 10 },
+    ]);
+    assert.equal(broken.ordinality.status, 'non_ordinato');
+    assert.match(broken.ordinality.detail, /non porta informazione/);
+  });
+
+  it('policy: il costo uniforme non cambia la differenza, il filtro si vede nei trade', () => {
+    const out = buildSets([
+      { decision: 'AZIONE', r: 1, n: 10 },
+      { decision: 'ATTESA', r: 0, n: 10 },
+      { decision: 'SCARTO', r: -1, n: 10 },
+    ]);
+    const solo = out.policies.find((policy) => policy.code === 'SOLO_AZIONE')!;
+    const tutti = out.policies.find((policy) => policy.code === 'TUTTI_I_CLASSIFICATI')!;
+
+    assert.equal(solo.trades, 10);
+    assert.equal(solo.meanRNet, 0.64, '1.00 - 0.36 di costi');
+    assert.equal(tutti.trades, 30);
+    assert.equal(tutti.meanRNet, -0.36, 'media lorda 0, al netto -0.36');
+    assert.equal(tutti.winRateNetPct, 33.33);
+  });
+
+  it('strato con edge negativo e lati sufficienti: contraddizione dichiarata', () => {
+    const out = buildSets([
+      { decision: 'AZIONE', r: 1, market: 'EU', n: 10 },
+      { decision: 'SCARTO', r: -1, market: 'EU', n: 10 },
+      { decision: 'AZIONE', r: -1, market: 'US', n: 10 },
+      { decision: 'SCARTO', r: 1, market: 'US', n: 10 },
+    ]);
+
+    const us = out.strata.find((row) => row.dimension === 'market' && row.value === 'US')!;
+    assert.equal(us.edgeRNet, -2);
+    assert.equal(us.contradicts, true);
+    const eu = out.strata.find((row) => row.dimension === 'market' && row.value === 'EU')!;
+    assert.equal(eu.contradicts, false);
+    assert.ok(
+      out.limitations.some((line) => line.includes('strati')),
+      'la risposta dichiara che gli strati non entrano nel verdetto'
+    );
+  });
+});

@@ -51,6 +51,7 @@ export type AiDeskValidationCheckCode =
   | 'sample_per_bucket'
   | 'sample_integrity'
   | 'edge_r'
+  | 'edge_r_ci'
   | 'win_rate_gap';
 /**
  * `insufficient` non e' un fallimento del desk: e' l'impossibilita' di
@@ -108,6 +109,16 @@ export interface AiDeskValidationInput {
   /** Edge netto di costi: se presente vince su `edgeR`. */
   edgeRNet?: number | null;
   alerts?: readonly AiDeskValidationAlertLike[];
+  /**
+   * Intervalli deterministici sul R netto. Quando presenti, il check
+   * `edge_r_ci` chiede che il limite inferiore dell'edge sia > 0; quando
+   * assenti (risposte storiche o campione troppo corto) il check non esiste e
+   * il verdetto resta quello delle regole puntuali.
+   */
+  uncertainty?: {
+    edgeR?: { lower: number; upper: number } | null;
+    winRateGapPct?: { lower: number; upper: number } | null;
+  } | null;
 }
 
 function finite(value: unknown): value is number {
@@ -191,8 +202,14 @@ export function validateAiDeskSample(input: AiDeskValidationInput): AiDeskValida
       `(soglia ${AI_DESK_VALIDATION_MIN_PER_BUCKET}).`,
   });
 
+  // `COVERAGE_LOW` degrada il campione quanto un formato rotto: se il desk non
+  // ha visto i candidati, le regole misurano la pipeline e non la selezione.
   const degradingAlert = (Array.isArray(input.alerts) ? input.alerts : []).some(
-    (alert) => alert && (alert.code === 'UNKNOWN_SHARE_HIGH' || alert.code === 'DIRECTIVES_SHARE_HIGH')
+    (alert) =>
+      alert &&
+      (alert.code === 'UNKNOWN_SHARE_HIGH' ||
+        alert.code === 'DIRECTIVES_SHARE_HIGH' ||
+        alert.code === 'COVERAGE_LOW')
   );
   checks.push({
     code: 'sample_integrity',
@@ -246,6 +263,35 @@ export function validateAiDeskSample(input: AiDeskValidationInput): AiDeskValida
           `(soglia ${AI_DESK_VALIDATION_MIN_WIN_RATE_GAP_PCT}).`,
   });
 
+  // Incertezza: solo se il chiamante fornisce gli intervalli. Regola dichiarata:
+  // il limite inferiore dell'edge netto deve stare sopra zero. E' una richiesta
+  // di SEGNO, non di magnitudine: la soglia +0.2 R resta sul punto.
+  const uncertainty =
+    input.uncertainty && typeof input.uncertainty === 'object' ? input.uncertainty : null;
+  if (uncertainty) {
+    const interval =
+      uncertainty.edgeR &&
+      finite(uncertainty.edgeR.lower) &&
+      finite(uncertainty.edgeR.upper)
+        ? uncertainty.edgeR
+        : null;
+    checks.push({
+      code: 'edge_r_ci',
+      label: 'edgeR positivo al 95%',
+      status: interval === null ? 'insufficient' : interval.lower > 0 ? 'pass' : 'fail',
+      observed: interval === null ? null : interval.lower,
+      threshold: 0,
+      unit: 'R',
+      detail:
+        interval === null
+          ? 'intervallo non calcolabile: servono almeno 2 esiti per lato.'
+          : `limite inferiore IC95% ${interval.lower} R (superiore ${interval.upper} R): ` +
+            (interval.lower > 0
+              ? 'edge positivo anche nel caso sfavorevole.'
+              : 'edge non distinguibile da zero: il punto non basta.'),
+    });
+  }
+
   const insufficient = checks.filter((check) => check.status === 'insufficient');
   const failed = checks.filter((check) => check.status === 'fail');
   const verdict: AiDeskValidationVerdict =
@@ -275,6 +321,7 @@ export function validateAiDeskSample(input: AiDeskValidationInput): AiDeskValida
       'Conferma solo questa vista: non riscrive lo status NON_VALIDATO delle righe del log, non cambia memoria AI, gate o selezione dei setup.',
       'Con edgeR/misure nette fornite, le regole si applicano al netto dei costi; senza, restano sul lordo di prezzo. In nessun caso dimostrano che la decisione AI abbia causato l esito.',
       'Le soglie sono dichiarate prima dei dati e inclusive sul bordo; un campione troncato o sporco resta INSUFFICIENTE.',
+      'Se forniti, gli intervalli bootstrap richiedono solo un edge di segno positivo (limite inferiore > 0): non dimostrano che l edge superi 0.2 R con il 95% di confidenza.',
     ],
   };
 }

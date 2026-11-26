@@ -38,6 +38,7 @@
 import { isAiShadowDecision } from './aiShadowLog';
 import { SHADOW_V2_HYPOTHESES } from '../knowledge/shadowV2';
 import {
+  AI_DESK_VALIDATION_MIN_PER_BUCKET,
   AI_DESK_VALIDATION_VERSION,
   validateAiDeskSample,
   type AiDeskValidation,
@@ -53,6 +54,26 @@ export const AI_CALIBRATION_MATCH_WINDOW_MS = 30 * 60 * 1000;
 export const AI_CALIBRATION_MIN_SAMPLE = 30;
 /** Tetto della risposta: solo i casi piu' recenti, per non gonfiare il payload. */
 export const AI_CALIBRATION_MAX_ENTRIES = 2000;
+
+/**
+ * INCERTEZZA CAMPIONARIA: le soglie del validatore si applicano a stime
+ * puntuali. Con 10 casi per lato un `edgeR` di +0.25 R ha un intervallo che
+ * attraversa lo zero: il bootstrap percentile DETERMINISTICO (seed fissa,
+ * nessun orologio, nessun I/O) rende visibile quella fragilita' senza
+ * introdurre casualita' nella risposta. Gli intervalli sono calcolati sul R
+ * NETTO, come il verdetto, e riguardano il SEGNO dell'edge: la soglia di +0.2 R
+ * resta una regola sulla stima puntuale.
+ */
+export const AI_CALIBRATION_BOOTSTRAP_ITERATIONS = 2000;
+export const AI_CALIBRATION_BOOTSTRAP_SEED = 0x5eed1a7e;
+export const AI_CALIBRATION_CONFIDENCE = 0.95;
+/**
+ * Copertura minima del log: sotto questa quota di candidati davvero valutati il
+ * campione descrive la pipeline (chiavi assenti, batch falliti), non il desk.
+ * Vale solo con almeno `AI_CALIBRATION_ALERT_MIN_SAMPLE` candidati, per non
+ * allarmare su tre righe.
+ */
+export const AI_CALIBRATION_MIN_EVALUATED_SHARE = 0.5;
 
 /**
  * R NETTO: la calibrazione misurava l'R di prezzo (lordo). Un costo costante per
@@ -89,7 +110,10 @@ export const AI_CALIBRATION_UNKNOWN_ALERT_RATIO = 0.3;
  */
 export const AI_CALIBRATION_DIRECTIVES_ALERT_RATIO = 0.5;
 
-export type AiCalibrationAlertCode = 'UNKNOWN_SHARE_HIGH' | 'DIRECTIVES_SHARE_HIGH';
+export type AiCalibrationAlertCode =
+  | 'UNKNOWN_SHARE_HIGH'
+  | 'DIRECTIVES_SHARE_HIGH'
+  | 'COVERAGE_LOW';
 
 export interface AiCalibrationAlert {
   code: AiCalibrationAlertCode;
@@ -157,6 +181,10 @@ export interface AiCalibrationEntry {
   candidateKey?: string | null;
   evaluated?: boolean;
   discarded?: boolean;
+  /** Motivo chiuso dello scarto (`AI_SHADOW_DISCARD_REASONS`), per la copertura. */
+  discardReason?: string | null;
+  /** Durata del batch LLM che ha prodotto la valutazione (P4). */
+  durationMs?: number | null;
   /** Campo chiuso scritto dall'handler; assente nelle righe storiche. */
   decision?: string | null;
 }
@@ -260,6 +288,9 @@ export interface AiCalibrationBucket {
 export interface AiCalibrationJoin {
   candidateKey: string | null;
   ticker: string;
+  /** Mercato e direzione della decisione: servono agli strati, non al join. */
+  market: string;
+  direction: string | null;
   decision: AiDecisionClass;
   aiOutcome: string | null;
   r: number;
@@ -267,6 +298,73 @@ export interface AiCalibrationJoin {
   rNet: number;
   forwardStatus: string;
   deltaMs: number;
+}
+
+/** Intervallo percentile di un bootstrap deterministico. */
+export interface AiCalibrationInterval {
+  lower: number;
+  upper: number;
+}
+
+export interface AiCalibrationUncertainty {
+  method: 'bootstrap-percentile';
+  iterations: number;
+  seed: number;
+  confidence: number;
+  /** Gli intervalli sono sul R netto, come il verdetto del validatore. */
+  net: true;
+  edgeR: AiCalibrationInterval | null;
+  winRateGapPct: AiCalibrationInterval | null;
+  note: string;
+}
+
+/**
+ * Copertura della pipeline: quanti candidati il desk ha davvero valutato. Una
+ * calibrazione su un campione valutato al 2% e' formalmente valida e
+ * sostanzialmente inutile, quindi il numero sta nella risposta e produce un
+ * allarme (e un blocco del validatore) sotto la soglia dichiarata.
+ */
+export interface AiCalibrationCoverage {
+  candidates: number;
+  evaluated: number;
+  notEvaluated: number;
+  /** Righe storiche senza il campo booleano `evaluated`: fuori dal denominatore. */
+  unknown: number;
+  evaluatedSharePct: number | null;
+  parseErrorRatePct: number | null;
+  byReason: { reason: string; count: number }[];
+  latency: { samples: number; p50Ms: number | null; p95Ms: number | null };
+}
+
+/** L'ordinalita' del schema a tre classi: SCARTO < ATTESA < AZIONE. */
+export interface AiCalibrationOrdinality {
+  status: 'ordinato' | 'non_ordinato' | 'non_valutabile';
+  detail: string;
+}
+
+/** Valore di una policy di selezione, in R netto per trade. */
+export interface AiCalibrationPolicyRow {
+  code: 'SOLO_AZIONE' | 'AZIONE_E_ATTESA' | 'TUTTI_I_CLASSIFICATI';
+  decisions: AiDecisionClass[];
+  trades: number;
+  sumRNet: number | null;
+  meanRNet: number | null;
+  winRateNetPct: number | null;
+}
+
+/**
+ * Strato esplorativo (mercato o direzione). `contradicts` segnala uno strato con
+ * entrambi i lati sufficienti e edge netto negativo: non cambia il verdetto,
+ * ma impedisce di leggere un edge aggregato come se valesse ovunque.
+ */
+export interface AiCalibrationStratum {
+  dimension: 'market' | 'direction';
+  value: string;
+  matched: number;
+  actionN: number;
+  skipN: number;
+  edgeRNet: number | null;
+  contradicts: boolean;
 }
 
 export interface AiCalibrationResponse {
@@ -319,6 +417,16 @@ export interface AiCalibrationResponse {
     totalR: number;
     source: string;
   };
+  /** Incertezza campionaria dell'edge e del divario di successo (R netto). */
+  uncertainty: AiCalibrationUncertainty;
+  /** Copertura della pipeline LLM (candidati valutati / candidati nel log). */
+  coverage: AiCalibrationCoverage;
+  /** Ordinalita' di ATTESA fra SCARTO e AZIONE (diagnostica, non verdetto). */
+  ordinality: AiCalibrationOrdinality;
+  /** R netto per trade di tre policy di selezione. */
+  policies: AiCalibrationPolicyRow[];
+  /** Edge per mercato e per direzione, con le contraddizioni dichiarate. */
+  strata: AiCalibrationStratum[];
   /** Decisioni di scarto su setup che poi sono andati in positivo. */
   skippedWinners: AiCalibrationJoin[];
   /** Allarmi di formato: vuoto quando la quota e' sotto soglia. */
@@ -340,6 +448,248 @@ function round(value: number, decimals: number): number {
 
 function finiteR(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
+}
+
+function mean(values: readonly number[]): number {
+  return values.reduce((total, value) => total + value, 0) / values.length;
+}
+
+function meanDiff(a: readonly number[], b: readonly number[]): number {
+  return mean(a) - mean(b);
+}
+
+function winSharePct(values: readonly number[]): number {
+  return (values.filter((value) => value > 0).length / values.length) * 100;
+}
+
+/** PRNG deterministico (mulberry32): nessuna dipendenza, nessun orologio. */
+function mulberry32(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Percentile nearest-rank su un array gia' ordinato. */
+function percentile(sorted: readonly number[], p: number): number {
+  if (sorted.length === 0) return Number.NaN;
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.floor(p * (sorted.length - 1)))
+  );
+  return sorted[index];
+}
+
+/**
+ * Intervallo bootstrap percentile della differenza fra due campioni. `null`
+ * sotto 2 esiti per lato: con un solo valore l'intervallo sarebbe una certezza
+ * finta, non un'informazione.
+ */
+function bootstrapInterval(
+  a: readonly number[],
+  b: readonly number[],
+  iterations: number,
+  statistic: (sampleA: number[], sampleB: number[]) => number,
+  seed: number
+): AiCalibrationInterval | null {
+  if (a.length < 2 || b.length < 2) return null;
+  const random = mulberry32(seed);
+  const values: number[] = [];
+  for (let i = 0; i < iterations; i += 1) {
+    const sampleA: number[] = new Array(a.length);
+    for (let j = 0; j < a.length; j += 1) sampleA[j] = a[Math.floor(random() * a.length)];
+    const sampleB: number[] = new Array(b.length);
+    for (let j = 0; j < b.length; j += 1) sampleB[j] = b[Math.floor(random() * b.length)];
+    values.push(statistic(sampleA, sampleB));
+  }
+  values.sort((x, y) => x - y);
+  const alpha = (1 - AI_CALIBRATION_CONFIDENCE) / 2;
+  return {
+    lower: round(percentile(values, alpha), 4),
+    upper: round(percentile(values, 1 - alpha), 4),
+  };
+}
+
+function buildUncertainty(
+  action: readonly number[],
+  skip: readonly number[]
+): AiCalibrationUncertainty {
+  return {
+    method: 'bootstrap-percentile',
+    iterations: AI_CALIBRATION_BOOTSTRAP_ITERATIONS,
+    seed: AI_CALIBRATION_BOOTSTRAP_SEED,
+    confidence: AI_CALIBRATION_CONFIDENCE,
+    net: true,
+    edgeR: bootstrapInterval(
+      action,
+      skip,
+      AI_CALIBRATION_BOOTSTRAP_ITERATIONS,
+      meanDiff,
+      AI_CALIBRATION_BOOTSTRAP_SEED
+    ),
+    winRateGapPct: bootstrapInterval(
+      action,
+      skip,
+      AI_CALIBRATION_BOOTSTRAP_ITERATIONS,
+      (sampleA, sampleB) => winSharePct(sampleA) - winSharePct(sampleB),
+      AI_CALIBRATION_BOOTSTRAP_SEED + 1
+    ),
+    note:
+      'Bootstrap percentile deterministico sul R netto (seed fissa): descrive ' +
+      'l incertezza campionaria del segno, non una probabilita di profitto.',
+  };
+}
+
+/**
+ * Copertura della pipeline sui candidati del log, non sui soli abbinati: se il
+ * desk non ha mai visto i candidati, il join non puo' accorgersene.
+ */
+function buildCoverage(rows: readonly AiCalibrationEntry[]): AiCalibrationCoverage {
+  const candidateRows = rows.filter(isCandidateRow);
+  const evaluated = candidateRows.filter((row) => row.evaluated === true);
+  const notEvaluated = candidateRows.filter((row) => row.evaluated === false);
+  // Le righe storiche senza il campo booleano non sono ne' valutate ne' no:
+  // contarle come "non valutate" produrrebbe allarmi su dati che non dicono
+  // nulla sulla pipeline. Restano dichiarate in `unknown`.
+  const known = evaluated.length + notEvaluated.length;
+  const byReason = new Map<string, number>();
+  let parseErrors = 0;
+  for (const row of notEvaluated) {
+    const reason = typeof row.discardReason === 'string' ? row.discardReason.trim() : '';
+    if (reason.length === 0) continue;
+    byReason.set(reason, (byReason.get(reason) ?? 0) + 1);
+    if (reason === 'ERRORE_PARSING') parseErrors += 1;
+  }
+  const durations = candidateRows
+    .filter((row) => row.evaluated === true && finiteR(row.durationMs))
+    .map((row) => row.durationMs as number)
+    .sort((a, b) => a - b);
+  const candidates = candidateRows.length;
+  return {
+    candidates,
+    evaluated: evaluated.length,
+    notEvaluated: notEvaluated.length,
+    unknown: candidates - known,
+    evaluatedSharePct: known > 0 ? round((evaluated.length / known) * 100, 2) : null,
+    parseErrorRatePct: known > 0 ? round((parseErrors / known) * 100, 2) : null,
+    byReason: [...byReason.entries()]
+      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+      .map(([reason, count]) => ({ reason, count })),
+    latency: {
+      samples: durations.length,
+      p50Ms: durations.length > 0 ? Math.round(percentile(durations, 0.5)) : null,
+      p95Ms: durations.length > 0 ? Math.round(percentile(durations, 0.95)) : null,
+    },
+  };
+}
+
+function buildStrata(rows: readonly AiCalibrationJoin[]): AiCalibrationStratum[] {
+  const strata: AiCalibrationStratum[] = [];
+  for (const dimension of ['market', 'direction'] as const) {
+    const groups = new Map<string, AiCalibrationJoin[]>();
+    for (const row of rows) {
+      const raw = dimension === 'market' ? row.market : row.direction;
+      const value = typeof raw === 'string' ? raw.trim() : '';
+      if (value.length === 0) continue;
+      const list = groups.get(value) ?? [];
+      list.push(row);
+      groups.set(value, list);
+    }
+    for (const [value, group] of [...groups.entries()].sort((a, b) =>
+      a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0
+    )) {
+      const action = group.filter((row) => row.decision === 'AZIONE').map((row) => row.rNet);
+      const skip = group.filter((row) => row.decision === 'SCARTO').map((row) => row.rNet);
+      const edgeRNet =
+        action.length > 0 && skip.length > 0
+          ? round(mean(action) - mean(skip), 4)
+          : null;
+      strata.push({
+        dimension,
+        value,
+        matched: group.length,
+        actionN: action.length,
+        skipN: skip.length,
+        edgeRNet,
+        contradicts:
+          edgeRNet !== null &&
+          edgeRNet < 0 &&
+          action.length >= AI_DESK_VALIDATION_MIN_PER_BUCKET &&
+          skip.length >= AI_DESK_VALIDATION_MIN_PER_BUCKET,
+      });
+    }
+  }
+  return strata;
+}
+
+function buildPolicies(rows: readonly AiCalibrationJoin[]): AiCalibrationPolicyRow[] {
+  const definitions: {
+    code: AiCalibrationPolicyRow['code'];
+    decisions: AiDecisionClass[];
+  }[] = [
+    { code: 'SOLO_AZIONE', decisions: ['AZIONE'] },
+    { code: 'AZIONE_E_ATTESA', decisions: ['AZIONE', 'ATTESA'] },
+    { code: 'TUTTI_I_CLASSIFICATI', decisions: ['AZIONE', 'ATTESA', 'SCARTO'] },
+  ];
+  return definitions.map(({ code, decisions }) => {
+    const values = rows
+      .filter((row) => decisions.includes(row.decision))
+      .map((row) => row.rNet);
+    return {
+      code,
+      decisions,
+      trades: values.length,
+      sumRNet: values.length > 0 ? round(values.reduce((total, value) => total + value, 0), 4) : null,
+      meanRNet: values.length > 0 ? round(mean(values), 4) : null,
+      winRateNetPct: values.length > 0 ? round(winSharePct(values), 2) : null,
+    };
+  });
+}
+
+/**
+ * ATTESA deve stare fra SCARTO e AZIONE, altrimenti la terza classe non porta
+ * informazione. Diagnostica: non entra nel verdetto e non promuove nulla.
+ */
+function buildOrdinality(
+  buckets: readonly AiCalibrationBucket[]
+): AiCalibrationOrdinality {
+  const bucketOf = (decision: AiDecisionClass) =>
+    buckets.find((bucket) => bucket.decision === decision) ?? null;
+  const action = bucketOf('AZIONE');
+  const wait = bucketOf('ATTESA');
+  const skip = bucketOf('SCARTO');
+  const minimum = AI_DESK_VALIDATION_MIN_PER_BUCKET;
+  if (
+    !action ||
+    !wait ||
+    !skip ||
+    action.n < minimum ||
+    wait.n < minimum ||
+    skip.n < minimum ||
+    action.meanRNet === null ||
+    wait.meanRNet === null ||
+    skip.meanRNet === null
+  ) {
+    return {
+      status: 'non_valutabile',
+      detail:
+        `AZIONE ${action?.n ?? 0}, ATTESA ${wait?.n ?? 0}, SCARTO ${skip?.n ?? 0}: ` +
+        `servono almeno ${minimum} casi e una media netta per ciascuna classe.`,
+    };
+  }
+  const ordered = skip.meanRNet <= wait.meanRNet && wait.meanRNet <= action.meanRNet;
+  return {
+    status: ordered ? 'ordinato' : 'non_ordinato',
+    detail:
+      `R netto SCARTO ${skip.meanRNet} <= ATTESA ${wait.meanRNet} <= AZIONE ${action.meanRNet}: ` +
+      (ordered
+        ? 'le tre classi sono ordinate.'
+        : 'ATTESA non sta fra le altre due: la classe intermedia non porta informazione.'),
+  };
 }
 
 /**
@@ -452,6 +802,9 @@ export function buildAiCalibration(input: {
   const rawEntries = Array.isArray(input.entries) ? input.entries : [];
   const cappedEntries = rawEntries.slice(-AI_CALIBRATION_MAX_ENTRIES);
   const deduped = dedupeEntries(cappedEntries);
+  // La copertura si misura sui candidati del log, prima di qualsiasi join: e'
+  // l'unico numero che dice se il desk ha davvero visto qualcosa.
+  const coverage = buildCoverage(deduped);
   const forwardList = Array.isArray(input.forward) ? input.forward : [];
   const forwardIndex = indexForward(forwardList);
   const nearMissForwardPoints = forwardList.filter(
@@ -526,6 +879,11 @@ export function buildAiCalibration(input: {
           ? entry.candidateKey
           : null,
       ticker,
+      market: typeof entry.market === 'string' ? entry.market.trim() : '',
+      direction:
+        typeof entry.direction === 'string' && entry.direction.trim().length > 0
+          ? entry.direction.trim()
+          : null,
       decision: classifyEntryDecision(entry),
       aiOutcome: entry.aiOutcome ?? null,
       r: pair.point.r,
@@ -537,6 +895,16 @@ export function buildAiCalibration(input: {
   const unmatchedAiEntries = candidates.length - joined.length;
 
   const buckets = bucketOf(joined);
+  const actionNetR = joined
+    .filter((row) => row.decision === 'AZIONE')
+    .map((row) => row.rNet);
+  const skipNetR = joined
+    .filter((row) => row.decision === 'SCARTO')
+    .map((row) => row.rNet);
+  const uncertainty = buildUncertainty(actionNetR, skipNetR);
+  const strata = buildStrata(joined);
+  const policies = buildPolicies(joined);
+  const ordinality = buildOrdinality(buckets);
   const action = buckets.find((b) => b.decision === 'AZIONE');
   const skip = buckets.find((b) => b.decision === 'SCARTO');
   const edgeR =
@@ -574,6 +942,23 @@ export function buildAiCalibration(input: {
           'possibile degrado del campo decision scritto dagli handler (o aiOutcome illeggibile nelle righe storiche).',
       });
     }
+  }
+  const coveredCandidates = coverage.evaluated + coverage.notEvaluated;
+  if (
+    coveredCandidates >= AI_CALIBRATION_ALERT_MIN_SAMPLE &&
+    coverage.evaluatedSharePct !== null &&
+    coverage.evaluatedSharePct < AI_CALIBRATION_MIN_EVALUATED_SHARE * 100
+  ) {
+    alerts.push({
+      code: 'COVERAGE_LOW',
+      ratio: round(coverage.evaluated / coveredCandidates, 4),
+      threshold: AI_CALIBRATION_MIN_EVALUATED_SHARE,
+      numerator: coverage.evaluated,
+      denominator: coveredCandidates,
+      message:
+        `solo ${coverage.evaluatedSharePct}% dei candidati e' stato valutato ` +
+        `(${coverage.evaluated}/${coveredCandidates}): il campione descrive la pipeline, non il desk.`,
+    });
   }
   if (deduped.length >= AI_CALIBRATION_ALERT_MIN_SAMPLE) {
     const directivesRatio = directivesIgnored / deduped.length;
@@ -616,6 +1001,7 @@ export function buildAiCalibration(input: {
     edgeR: edgeRNet ?? edgeR,
     edgeRNet,
     alerts,
+    uncertainty: { edgeR: uncertainty.edgeR, winRateGapPct: uncertainty.winRateGapPct },
   });
 
   return {
@@ -669,6 +1055,11 @@ export function buildAiCalibration(input: {
         'Shadow V2: fee Trade Republic 2.00 EUR round-trip sul rischio di riferimento 10 EUR ' +
         '+ proxy spread al tetto UNDERLYING_SPREAD_MAX_R (non misurato sulle barre V1-live)',
     },
+    uncertainty,
+    coverage,
+    ordinality,
+    policies,
+    strata,
     skippedWinners,
     alerts,
     verdict,
@@ -698,6 +1089,16 @@ export function buildAiCalibration(input: {
         : []),
       `Righe AI senza esito entro ${Math.round(windowMs / 60000)} minuti sono contate come non abbinate, non come zero.`,
       '`counts.matched` e\' sempre la somma dei `buckets`: le valutazioni abbinate con esito illeggibile stanno in `SCONOSCIUTO`, non spariscono.',
+      `Incertezza: IC ${Math.round(AI_CALIBRATION_CONFIDENCE * 100)}% da bootstrap deterministico sul R netto ` +
+        `(${AI_CALIBRATION_BOOTSTRAP_ITERATIONS} iterazioni, seed fissa). Il check \`edge_r_ci\` chiede solo che il limite inferiore sia > 0: ` +
+        'la soglia di +0.2 R resta una regola sulla stima puntuale, non un risultato con quella confidenza.',
+      coverage.evaluatedSharePct !== null
+        ? `Copertura LLM: ${coverage.evaluated}/${coverage.candidates} candidati valutati (${coverage.evaluatedSharePct}%). ` +
+          `Sotto ${Math.round(AI_CALIBRATION_MIN_EVALUATED_SHARE * 100)}% il campione parla della pipeline, non del desk, e il validatore resta INSUFFICIENTE.`
+        : 'Copertura LLM non calcolabile: nessun candidato nel log.',
+      'Le policy sono R netti per trade, senza capitalizzazione ne leva: non sono un P&L.',
+      'Gli strati (mercato, direzione) sono esplorativi: non entrano nel verdetto e non dimostrano causalita. ' +
+        'Un edge aggregato puo non valere in ogni strato.',
       validation.verdict === 'CONFERMATO'
         ? `Validatore ${AI_DESK_VALIDATION_VERSION}: CONFERMATO (${validation.checks
             .filter((check) => check.status === 'pass')
