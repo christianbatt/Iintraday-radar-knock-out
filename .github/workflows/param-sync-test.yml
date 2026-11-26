@@ -51,6 +51,8 @@ jobs:
         run: npx tsx src/utils/__tests__/shadow_firestore_sync.test.ts
       - name: Firebase sync tests
         run: npm run test:firebase-sync
+      - name: Client process guard (nessun process.env senza typeof process)
+        run: npm run test:client-guard
       - name: Test sprint1
         run: npm run test:sprint1
       - name: Test phase1
