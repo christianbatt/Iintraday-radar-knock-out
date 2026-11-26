@@ -381,17 +381,20 @@ test('collector V1-live e collector V2 propagano le mutazioni su Firestore end-t
     const decidedAtMs = Date.UTC(2026, 10, 19, 14, 0, 0);
     const bar1Ts = decidedAtMs + SHADOW_V1_LIVE_BAR_MS;
     const bar2Ts = decidedAtMs + 2 * SHADOW_V1_LIVE_BAR_MS;
+    const bar1 = { t: bar1Ts, o: 100.2, h: 100.3, l: 99.9, c: 100.1 };
+    const bar2 = { t: bar2Ts, o: 100.1, h: 104.5, l: 100.1, c: 104.2 };
 
-    recordBarsForShadowV1Live('NVDA', 'US', [
-      { t: bar1Ts, o: 100.2, h: 100.3, l: 99.9, c: 100.1 },
-    ], bar1Ts + SHADOW_V1_LIVE_BAR_MS);
+    recordBarsForShadowV1Live('NVDA', 'US', [bar1], bar1Ts + SHADOW_V1_LIVE_BAR_MS);
 
-    let fakeNow = bar1Ts + SHADOW_V1_LIVE_BAR_MS;
+    // L'istante della decisione lo fissa il server alla POST (deps.now), non il
+    // `calculatedAt` del client: il setup nasce a D0, quando la barra di fill
+    // (D0+5m) non esiste ancora. La barra che tocca l'entry arriva al ciclo.
+    let fakeNow = decidedAtMs;
     const handler = createObserveHandler({
       env: {},
       signalsPath,
       now: () => fakeNow,
-      bars: (t, m) => (t === 'NVDA' && m === 'US' ? [{ t: bar1Ts, o: 100.2, h: 100.3, l: 99.9, c: 100.1 }] : []),
+      bars: () => [],
     });
 
     const resp = await handler({
@@ -407,6 +410,21 @@ test('collector V1-live e collector V2 propagano le mutazioni su Firestore end-t
       skipRateLimit: true,
     });
     assert.equal(resp.status, 200);
+    assert.equal(resp.body.outcome, 'PENDING_FILL');
+    await flushPendingShadowFirestoreSync();
+
+    const v1RemotePending = await adapter.listDocs(SHADOW_V1_SIGNALS_COLLECTION);
+    assert.equal(v1RemotePending.length, 1);
+    assert.equal(v1RemotePending[0].data.status, 'PENDING_FILL');
+
+    // Prima barra chiusa che tocca l'entry 100 -> OPEN sullo stesso documento.
+    fakeNow = bar1Ts + SHADOW_V1_LIVE_BAR_MS;
+    await runShadowV1LiveRevaluationCycle({
+      env: {},
+      signalsPath,
+      now: () => fakeNow,
+      bars: () => [bar1],
+    });
     await flushPendingShadowFirestoreSync();
 
     // Deve esistere su Firestore come OPEN
@@ -420,10 +438,7 @@ test('collector V1-live e collector V2 propagano le mutazioni su Firestore end-t
       env: {},
       signalsPath,
       now: () => fakeNow,
-      bars: () => [
-        { t: bar1Ts, o: 100.2, h: 100.3, l: 99.9, c: 100.1 },
-        { t: bar2Ts, o: 100.1, h: 104.5, l: 100.1, c: 104.2 },
-      ],
+      bars: () => [bar1, bar2],
     });
     await flushPendingShadowFirestoreSync();
 
