@@ -31,6 +31,21 @@ scartato.
   `SCONOSCIUTO`, non si abbinano e sono contate in `counts.directivesIgnored`:
   una frase come «non comprare contro il trend» non è un esito.
 
+## Campo chiuso `decision`
+
+Ogni riga del log AI shadow può portare `decision`, con tre soli valori:
+`AZIONE`, `ATTESA`, `SCARTO`.
+
+- è **scritto dall'handler** che riceve la risposta del modello: il prompt dei
+  batch di scansione chiede `decision` per ogni candidato e il parser accetta
+  solo quei tre valori (`isAiShadowDecision`); qualunque altra cosa diventa
+  `null`;
+- la calibrazione lo usa come **fonte di verità** (`classifyEntryDecision`);
+- la classificazione testuale dell'`aiOutcome` resta solo per le **righe
+  storiche** prive del campo, e per la prosa (`specialize`/`desk`) il risultato è
+  comunque `SCONOSCIUTO`;
+- le direttive non hanno `decision`: sono prosa, non esiti.
+
 ## Finestra
 
 `AI_CALIBRATION_MATCH_WINDOW_MS = 30 minuti`, fissa e inclusiva sul bordo

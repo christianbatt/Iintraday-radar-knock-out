@@ -25,6 +25,21 @@ export type AiShadowLogSource = 'scan' | 'specialize' | 'desk';
 export type AiShadowLogStatus = 'NON_VALIDATO';
 
 /**
+ * Decisione CHIUSA del desk su un candidato, scritta dall'handler che riceve la
+ * risposta della LLM. Tre soli valori ammessi: nessuna euristica sul testo, e
+ * nessuna classificazione a posteriori nella calibrazione. Le direttive in
+ * prosa restano `null`.
+ */
+export type AiShadowDecision = 'AZIONE' | 'ATTESA' | 'SCARTO';
+
+export const AI_SHADOW_DECISIONS: readonly AiShadowDecision[] = ['AZIONE', 'ATTESA', 'SCARTO'];
+
+/** Unico modo ammesso per riconoscere una decisione: uguaglianza esatta. */
+export function isAiShadowDecision(value: unknown): value is AiShadowDecision {
+  return value === 'AZIONE' || value === 'ATTESA' || value === 'SCARTO';
+}
+
+/**
  * Origine dei candidati usati dall'handler per la valutazione AI:
  * `body` = campo `scanCandidates` inviato dal client, `snapshot` = istantanea di
  * processo dell'ultima scansione, `none` = nessuna sorgente disponibile.
@@ -46,6 +61,13 @@ export interface AiShadowLogEntry {
   discardReason: string | null;
   status: AiShadowLogStatus;
   outcome: null;
+  /**
+   * Decisione chiusa sull'eventuale candidato (`AZIONE`/`ATTESA`/`SCARTO`).
+   * `null` per le direttive in prosa e per le righe storiche scritte prima di
+   * questo campo: solo la calibrazione, per quelle, usa la classificazione
+   * testuale di ripiego.
+   */
+  decision?: AiShadowDecision | null;
   /** ADDITIVO (P2): origine dei candidati. */
   candidateSource?: AiShadowLogCandidateSource | null;
   /** ADDITIVO (P3): `runId:ticker`, identico fra riga di scansione e riga handler. */
@@ -137,6 +159,7 @@ function normalizeEntries(input: unknown): AiShadowLogEntry[] {
         discardReason,
         status: 'NON_VALIDATO',
         outcome: null,
+        decision: isAiShadowDecision(r.decision) ? r.decision : null,
         candidateSource:
           r.candidateSource === 'body' ||
           r.candidateSource === 'snapshot' ||
@@ -191,6 +214,8 @@ function normalizeEntries(input: unknown): AiShadowLogEntry[] {
       discardReason,
       status: 'NON_VALIDATO',
       outcome: null,
+      // Proposta in prosa: nessuna decisione chiusa, mai dedotta dal testo.
+      decision: null,
     });
   }
   return out;
@@ -260,6 +285,7 @@ export function buildScanCandidateEntries(
     discardReason: AI_SHADOW_DISCARD_REASONS.NON_INVIATO_ALLA_LLM,
     status: 'NON_VALIDATO' as const,
     outcome: null,
+    decision: null,
     candidateSource: null,
     candidateKey:
       normalizedRunId && c.ticker != null ? `${normalizedRunId}:${String(c.ticker)}` : null,

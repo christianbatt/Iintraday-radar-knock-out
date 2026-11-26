@@ -16,6 +16,10 @@
  *   non puo' essere attribuita a due decisioni (ne' una decisione a due esiti).
  *   Assegnazione greedy sulle coppie ordinate per distanza crescente, con
  *   spareggio deterministico;
+ * - la decisione viene dal campo CHIUSO `decision` scritto dall'handler
+ *   (`AZIONE`/`ATTESA`/`SCARTO`). La classificazione testuale sopravvive solo
+ *   per le righe storiche, scritte prima di quel campo: nessuna euristica sul
+ *   testo quando l'handler ha gia' deciso;
  * - solo le VALUTAZIONI DI CANDIDATO entrano nei bucket: le direttive in prosa
  *   (`source: 'specialize'|'desk'` senza `candidateKey`) finiscono in
  *   `SCONOSCIUTO` e sono contate in `counts.directivesIgnored`. Anche un testo
@@ -30,6 +34,8 @@
  * NESSUN effetto collaterale: nessun I/O, nessun orologio globale, nessuna
  * scrittura. Non cambia memoria AI, non tocca gate o selezione dei setup.
  */
+
+import { isAiShadowDecision } from './aiShadowLog';
 
 export const AI_CALIBRATION_VERSION = 'ai-calibration@1';
 export const AI_CALIBRATION_PATH = '/api/shadow/ai-calibration';
@@ -72,16 +78,16 @@ export function classifyAiOutcome(raw: string | null | undefined): AiDecisionCla
 /**
  * Classifica una RIGA del log, non un testo qualsiasi.
  *
- * Solo una valutazione di candidato (riga di scansione o riga con
- * `candidateKey`) descrive una decisione su un setup. Le direttive prodotte da
- * `specialize`/`desk` sono prosa: anche se contengono "non comprare" o "attendi"
- * NON sono un esito e restano `SCONOSCIUTO`.
+ * Precedenza:
+ * 1. `decision` chiusa scritta dall'handler (fonte di verita');
+ * 2. per le sole righe storiche senza `decision`, classificazione testuale
+ *    dell'`aiOutcome`;
+ * 3. prosa (`specialize`/`desk` senza `candidateKey`): sempre `SCONOSCIUTO`,
+ *    anche se contiene "non comprare" o "attendi".
  */
 export function classifyEntryDecision(entry: AiCalibrationEntry): AiDecisionClass {
-  const hasCandidateKey =
-    typeof entry.candidateKey === 'string' && entry.candidateKey.length > 0;
-  const isCandidateEvaluation = hasCandidateKey || entry.source === 'scan';
-  if (!isCandidateEvaluation) return 'SCONOSCIUTO';
+  if (isAiShadowDecision(entry.decision)) return entry.decision;
+  if (!isCandidateRow(entry)) return 'SCONOSCIUTO';
   return classifyAiOutcome(entry.aiOutcome);
 }
 
@@ -96,6 +102,8 @@ export interface AiCalibrationEntry {
   candidateKey?: string | null;
   evaluated?: boolean;
   discarded?: boolean;
+  /** Campo chiuso scritto dall'handler; assente nelle righe storiche. */
+  decision?: string | null;
 }
 
 export interface AiCalibrationForwardPoint {

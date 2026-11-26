@@ -12,8 +12,12 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { AiShadowLogCandidateSource, AiShadowLogEntry } from './aiShadowLog';
-import { AI_SHADOW_DISCARD_REASONS } from './aiShadowLog';
+import type {
+  AiShadowDecision,
+  AiShadowLogCandidateSource,
+  AiShadowLogEntry,
+} from './aiShadowLog';
+import { AI_SHADOW_DISCARD_REASONS, isAiShadowDecision } from './aiShadowLog';
 
 export interface ScanCandidateSnapshot {
   ticker: string;
@@ -50,6 +54,8 @@ export interface ScanEvaluation {
   ticker: string;
   aiOutcome: string;
   aiCategory: string | null;
+  /** Decisione chiusa dichiarata dalla LLM e validata dall'handler. */
+  decision: AiShadowDecision | null;
 }
 
 export type ScanEvaluationBatchStatus = 'ok' | 'parse_error' | 'llm_missing';
@@ -527,9 +533,9 @@ export function buildScanEvaluationPrompt(
 ${buildScanCandidatesSection(candidates)}
 
 Restituisci solo JSON valido in questo formato esatto:
-{"scanEvaluations":[{"ticker":"<ticker>","aiOutcome":"<giudizio sintetico>","aiCategory":"<categoria sintetica>"}]}
+{"scanEvaluations":[{"ticker":"<ticker>","aiOutcome":"<giudizio sintetico>","aiCategory":"<categoria sintetica>","decision":"AZIONE|ATTESA|SCARTO"}]}
 
-Regole: una voce per ogni ticker elencato, ticker identici a quelli della sezione, nessun ticker inventato, "aiOutcome" non vuoto.`;
+Regole: una voce per ogni ticker elencato, ticker identici a quelli della sezione, nessun ticker inventato, "aiOutcome" non vuoto, "decision" uno solo dei tre valori ammessi (AZIONE = il candidato ha un edge, ATTESA = serve altra conferma, SCARTO = da non operare). Fuori da quei valori il campo viene ignorato.`;
 }
 
 /** Batch di dimensione fissa, nell'ordine dei candidati. */
@@ -585,7 +591,10 @@ export function parseScanEvaluations(raw: string): { ok: boolean; evaluations: S
       typeof row.aiCategory === 'string' && row.aiCategory.trim().length > 0
         ? row.aiCategory.trim()
         : null;
-    evaluations.push({ ticker, aiOutcome, aiCategory });
+    // Solo i tre valori ammessi: qualunque altra cosa (o l'assenza) resta null,
+    // cosi' la calibrazione non deve indovinare.
+    const decision = isAiShadowDecision(row.decision) ? row.decision : null;
+    evaluations.push({ ticker, aiOutcome, aiCategory, decision });
   }
   return { ok: true, evaluations };
 }
@@ -596,6 +605,7 @@ function buildEntry(
   evaluated: boolean,
   aiOutcome: string | null,
   aiCategory: string | null,
+  decision: AiShadowDecision | null,
   discardReason: string | null,
   meta: {
     runId: string | null;
@@ -621,6 +631,7 @@ function buildEntry(
     discardReason,
     status: 'NON_VALIDATO',
     outcome: null,
+    decision,
     candidateSource: meta.candidateSource,
     candidateKey: meta.runId ? `${meta.runId}:${candidate.ticker}` : null,
     runId: meta.runId,
@@ -648,6 +659,7 @@ export function buildNoCandidateEntry(source: 'specialize' | 'desk'): AiShadowLo
     discardReason: AI_SHADOW_DISCARD_REASONS.NESSUN_CANDIDATO_DISPONIBILE,
     status: 'NON_VALIDATO',
     outcome: null,
+    decision: null,
     candidateSource: 'none',
     candidateKey: null,
     runId: null,
@@ -707,6 +719,7 @@ export function combineScanEvaluations(
         false,
         null,
         null,
+        null,
         AI_SHADOW_DISCARD_REASONS.NON_INVIATO_ALLA_LLM,
         rowMeta
       );
@@ -716,6 +729,7 @@ export function combineScanEvaluations(
         candidate,
         source,
         false,
+        null,
         null,
         null,
         AI_SHADOW_DISCARD_REASONS.ERRORE_PARSING,
@@ -729,6 +743,7 @@ export function combineScanEvaluations(
         false,
         null,
         null,
+        null,
         AI_SHADOW_DISCARD_REASONS.LLM_NON_DISPONIBILE,
         rowMeta
       );
@@ -738,6 +753,7 @@ export function combineScanEvaluations(
         candidate,
         source,
         false,
+        null,
         null,
         null,
         AI_SHADOW_DISCARD_REASONS.NON_RESTITUITO_DALLA_LLM,
@@ -750,6 +766,7 @@ export function combineScanEvaluations(
       true,
       hit.evaluation.aiOutcome,
       hit.evaluation.aiCategory,
+      hit.evaluation.decision,
       null,
       rowMeta
     );
