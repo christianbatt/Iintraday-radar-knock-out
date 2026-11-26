@@ -26,4 +26,14 @@ shadow_ai_log.*.jsonl
 # Snapshot grezzi di scansione separati dal log AI principale.
 shadow_ai_scans.jsonl
 shadow_ai_scans.*.jsonl
+# Dataset generati dagli script di analisi (replay, snapshot, universi, candele):
+# riproducibili e pesanti (~253 MB complessivi), non vanno versionati.
+artifacts/replay_*/
+artifacts/snapshot_*.json
+artifacts/universe/
+artifacts/universe_*.json
+artifacts/bars*/
+artifacts/prod_bars/
+artifacts/_baseline_residuo/
+artifacts/aa_replay_*/
 # artifacts/shadow_v2/signals.jsonl è versionato intenzionalmente: non aggiungere regole di ignore.
