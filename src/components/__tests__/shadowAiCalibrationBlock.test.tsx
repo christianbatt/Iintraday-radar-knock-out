@@ -78,7 +78,7 @@ describe('ShadowAiCalibrationBlock — render', () => {
 });
 
 describe('ShadowAiCalibrationBlock — fonte e troncamento', () => {
-  it('mostra la fonte usata e il fallback Firestore quando attivo', () => {
+  it('mostra la fonte usata e il fallback solo con voci remote reali', () => {
     const plain = renderToStaticMarkup(
       React.createElement(ShadowAiCalibrationBlock, { calibration: EVIDENCE })
     );
@@ -91,11 +91,28 @@ describe('ShadowAiCalibrationBlock — fonte e troncamento', () => {
         calibration: {
           ...EVIDENCE,
           sources: { aiLog: 'shadow_ai_log.jsonl + Firestore (fallback)' },
+          counts: { ...EVIDENCE.counts, remoteEntries: 2 },
         },
       })
     );
     assert.ok(withFallback.includes('shadow_ai_log.jsonl + Firestore (fallback)'));
-    assert.ok(withFallback.includes('fallback attivo'));
+    assert.ok(withFallback.includes('fallback attivo (2 voci)'));
+  });
+
+  it('flag acceso ma zero voci remote: nessuna dicitura di fallback', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, {
+        calibration: {
+          ...EVIDENCE,
+          // Etichetta che nomina Firestore ma nessuna voce remota usata:
+          // il caso che prima produceva un "fallback attivo" falso.
+          sources: { aiLog: 'shadow_ai_log.jsonl + Firestore (fallback)' },
+          counts: { ...EVIDENCE.counts, remoteEntries: 0 },
+        },
+      })
+    );
+    assert.ok(out.includes('shadow_ai_log.jsonl + Firestore (fallback)'));
+    assert.ok(!out.includes('fallback attivo'));
   });
 
   it('segnala la lettura troncata con il tetto raggiunto', () => {

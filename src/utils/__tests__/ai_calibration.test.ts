@@ -475,18 +475,33 @@ describe('aiCalibration — flag e handler', () => {
     assert.equal(reads, 0);
   });
 
-  it('a flag ON attende letture asincrone (file + fallback Firestore)', async () => {
+  it('a flag ON attende letture asincrone e dichiara il fallback solo con voci remote', async () => {
     const out = await createAiCalibrationHandler({
       env: {},
       now: () => NOW,
-      aiLogSource: 'shadow_ai_log.jsonl + Firestore (fallback)',
-      readEntries: async () => baseInput().entries,
+      readEntries: async () => ({
+        entries: baseInput().entries,
+        remoteEntries: 2,
+      }),
       readForward: async () => baseInput().forward,
     });
     assert.equal(out.status, 200);
     const body = out.body as any;
     assert.equal(body.counts.matched, 3);
+    assert.equal(body.counts.remoteEntries, 2);
     assert.equal(body.sources.aiLog, 'shadow_ai_log.jsonl + Firestore (fallback)');
+  });
+
+  it('flag Firestore acceso ma zero voci remote: la fonte resta il file', async () => {
+    const out = await createAiCalibrationHandler({
+      env: {},
+      now: () => NOW,
+      readEntries: async () => ({ entries: baseInput().entries, remoteEntries: 0 }),
+      readForward: () => baseInput().forward,
+    });
+    const body = out.body as any;
+    assert.equal(body.counts.remoteEntries, 0);
+    assert.equal(body.sources.aiLog, 'shadow_ai_log.jsonl');
   });
 
   it('propaga truncated e readLimit dalla lettura dettagliata', async () => {
@@ -506,7 +521,7 @@ describe('aiCalibration — flag e handler', () => {
     assert.equal(body.counts.matched, 3, 'le voci lette vengono comunque usate');
   });
 
-  it('senza aiLogSource la fonte resta il file locale', async () => {
+  it('con elenco nudo la fonte resta il file locale', async () => {
     const out = await createAiCalibrationHandler({
       env: {},
       now: () => NOW,
@@ -514,6 +529,7 @@ describe('aiCalibration — flag e handler', () => {
       readForward: () => baseInput().forward,
     });
     assert.equal((out.body as any).sources.aiLog, 'shadow_ai_log.jsonl');
+    assert.equal((out.body as any).counts.remoteEntries, 0);
   });
 
   it('non lancia: lettura sincrona che esplode o promise rifiutata producono available:false', async () => {

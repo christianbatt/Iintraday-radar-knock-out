@@ -52,7 +52,6 @@ import {
   buildAiShadowLogResponseWithFallback,
   readAiShadowLogFallbackDetailed,
 } from './src/server/aiShadowLog';
-import { isAiShadowLogFirestoreEnabled } from './src/server/aiShadowLogFirestore';
 import {
   setLastScanCandidates,
   getLastScanCandidates,
@@ -4295,11 +4294,9 @@ async function startServer() {
         entries: read.entries as AiCalibrationEntry[],
         truncated: read.truncated,
         readLimit: read.readLimit,
+        remoteEntries: read.remoteEntries,
       };
     },
-    aiLogSource: isAiShadowLogFirestoreEnabled()
-      ? 'shadow_ai_log.jsonl + Firestore (fallback)'
-      : 'shadow_ai_log.jsonl',
     readForward: () => {
       const signalsPath = path.join(process.cwd(), SHADOW_V1_LIVE_SIGNALS_PATH);
       const files = [signalsPath, ...listArchivePaths(signalsPath)].filter((file) =>

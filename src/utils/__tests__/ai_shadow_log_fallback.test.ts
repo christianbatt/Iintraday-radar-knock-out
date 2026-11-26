@@ -43,6 +43,53 @@ function reset(): void {
   fs.rmSync(TMP, { force: true });
 }
 
+describe('readAiShadowLogFallbackDetailed — voci remote realmente usate', () => {
+  it('conta le voci prese da Firestore quando il file e\' vuoto', async () => {
+    reset();
+    const read = await readAiShadowLogFallbackDetailed({
+      filePath: TMP,
+      env: { SHADOW_AI_LOG_FIRESTORE: '1' },
+      readRemote: async () => [remote('a', entry('1')), remote('b', entry('2'))],
+    });
+    assert.equal(read.entries.length, 2);
+    assert.equal(read.remoteEntries, 2);
+    reset();
+  });
+
+  it('non conta i doc gia\' presenti nel file', async () => {
+    reset();
+    appendAiShadowLog([entry('run1__ENI.MI', { runId: 'run1', ticker: 'ENI.MI' })], TMP);
+    const read = await readAiShadowLogFallbackDetailed({
+      filePath: TMP,
+      env: { SHADOW_AI_LOG_FIRESTORE: '1' },
+      readRemote: async () => [
+        remote('run1__ENI.MI', entry('dup', { runId: 'run1', ticker: 'ENI.MI' })),
+        remote('run1__UCG.MI', entry('new', { runId: 'run1', ticker: 'UCG.MI' })),
+      ],
+    });
+    assert.equal(read.remoteEntries, 1, 'solo il documento non presente sul file');
+    reset();
+  });
+
+  it('a flag spento o con remoto vuoto le voci remote sono zero', async () => {
+    reset();
+    const off = await readAiShadowLogFallbackDetailed({
+      filePath: TMP,
+      env: {},
+      readRemote: async () => [remote('a', entry('1'))],
+    });
+    assert.equal(off.remoteEntries, 0);
+
+    const empty = await readAiShadowLogFallbackDetailed({
+      filePath: TMP,
+      env: { SHADOW_AI_LOG_FIRESTORE: '1' },
+      readRemote: async () => [],
+    });
+    assert.equal(empty.remoteEntries, 0);
+    reset();
+  });
+});
+
 describe('readAiShadowLogWithFallback', () => {
   it('a flag spento legge solo il file e non interroga il remoto', async () => {
     reset();

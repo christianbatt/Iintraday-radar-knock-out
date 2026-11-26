@@ -430,6 +430,12 @@ export interface AiShadowLogFallbackReadResult {
   truncated: boolean;
   /** Tetto applicato in questa lettura. */
   readLimit: number;
+  /**
+   * Voci prese DAVVERO da Firestore (dopo dedup). Zero significa che il
+   * fallback non ha aggiunto nulla, anche se il flag e' acceso: chi mostra
+   * "fallback attivo" deve guardare questo numero, non il flag.
+   */
+  remoteEntries: number;
 }
 
 export interface AiShadowLogFallbackReadOptions {
@@ -475,6 +481,7 @@ export async function readAiShadowLogFallbackDetailed(
   }
 
   const localCount = merged.size;
+  let remoteEntries = 0;
   const env = options.env ?? process.env;
   if (localCount < limit && isAiShadowLogFirestoreEnabled(env)) {
     const readRemote =
@@ -495,6 +502,7 @@ export async function readAiShadowLogFallbackDetailed(
       if (!normalized) continue;
       if (!includeScan && isUnprocessedScanEntry(normalized)) continue;
       merged.set(item.docId, { entry: normalized, atMs: Date.parse(normalized.timestamp) || 0 });
+      remoteEntries += 1;
     }
   }
 
@@ -510,6 +518,7 @@ export async function readAiShadowLogFallbackDetailed(
     // incompleto" invece di presentare il campione come completo.
     truncated: ordered.length >= limit,
     readLimit: limit,
+    remoteEntries,
   };
 }
 

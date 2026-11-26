@@ -152,6 +152,8 @@ export interface AiCalibrationResponse {
     matched: number;
     /** Abbinamenti con una decisione utilizzabile (tutti tranne SCONOSCIUTO). */
     classified: number;
+    /** Voci effettivamente lette da Firestore (0 = fallback inutile). */
+    remoteEntries: number;
     unmatchedAiEntries: number;
     forwardWithoutDecision: number;
     skippedAiEntries: number;
@@ -258,8 +260,8 @@ export function buildAiCalibration(input: {
   generatedAt: string;
   windowMs?: number;
   minSample?: number;
-  /** Etichetta della fonte del log, per dichiarare se c'e' stato il fallback. */
-  aiLogSource?: string;
+  /** Voci prese davvero da Firestore (0 = fallback non ha aggiunto nulla). */
+  remoteEntries?: number;
   /** La lettura ha toccato il tetto: il campione non e' completo. */
   truncated?: boolean;
   readLimit?: number;
@@ -362,6 +364,12 @@ export function buildAiCalibration(input: {
   const classified = buckets
     .filter((bucket) => bucket.decision !== 'SCONOSCIUTO')
     .reduce((total, bucket) => total + bucket.n, 0);
+  const remoteEntries =
+    typeof input.remoteEntries === 'number' &&
+    Number.isFinite(input.remoteEntries) &&
+    input.remoteEntries > 0
+      ? Math.floor(input.remoteEntries)
+      : 0;
   const available = deduped.length > 0 && forwardPoints > 0;
   const verdict: AiCalibrationResponse['verdict'] =
     classified >= minSample ? 'evidence' : 'insufficient';
@@ -379,7 +387,12 @@ export function buildAiCalibration(input: {
         ? Math.floor(input.readLimit)
         : 0,
     sources: {
-      aiLog: input.aiLogSource ?? 'shadow_ai_log.jsonl',
+      // La dicitura del fallback dipende dalle voci realmente usate: un flag
+      // acceso senza risultati non rende la fonte "file + Firestore".
+      aiLog:
+        remoteEntries > 0
+          ? 'shadow_ai_log.jsonl + Firestore (fallback)'
+          : 'shadow_ai_log.jsonl',
       forward: 'artifacts/shadow_v1_live/signals.jsonl',
     },
     counts: {
@@ -388,6 +401,7 @@ export function buildAiCalibration(input: {
       forwardPoints,
       matched,
       classified,
+      remoteEntries,
       unmatchedAiEntries,
       forwardWithoutDecision: Math.max(0, forwardPoints - usedPointKeys.size),
       skippedAiEntries,
@@ -421,6 +435,8 @@ export interface AiCalibrationEntriesInput {
   entries: AiCalibrationEntry[];
   truncated?: boolean;
   readLimit?: number;
+  /** Voci prese da Firestore: alimenta `counts.remoteEntries` e la fonte. */
+  remoteEntries?: number;
 }
 
 export interface AiCalibrationRegistrationDeps {
@@ -433,8 +449,7 @@ export interface AiCalibrationRegistrationDeps {
     | AiCalibrationEntriesInput
     | Promise<AiCalibrationEntry[] | AiCalibrationEntriesInput>;
   readForward: () => AiCalibrationForwardPoint[] | Promise<AiCalibrationForwardPoint[]>;
-  /** Etichetta della fonte effettiva, esposta in `sources.aiLog`. */
-  aiLogSource?: string;
+
   env?: Record<string, string | undefined>;
   now?: () => number;
 }
@@ -450,7 +465,7 @@ function normalizeEntriesInput(
   input: AiCalibrationEntry[] | AiCalibrationEntriesInput | null | undefined
 ): AiCalibrationEntriesInput {
   if (Array.isArray(input)) {
-    return { entries: input, truncated: false, readLimit: 0 };
+    return { entries: input, truncated: false, readLimit: 0, remoteEntries: 0 };
   }
   if (input && typeof input === 'object' && Array.isArray((input as AiCalibrationEntriesInput).entries)) {
     const value = input as AiCalibrationEntriesInput;
@@ -458,9 +473,13 @@ function normalizeEntriesInput(
       entries: value.entries,
       truncated: value.truncated === true,
       readLimit: typeof value.readLimit === 'number' ? value.readLimit : 0,
+      remoteEntries:
+        typeof value.remoteEntries === 'number' && value.remoteEntries > 0
+          ? value.remoteEntries
+          : 0,
     };
   }
-  return { entries: [], truncated: false, readLimit: 0 };
+  return { entries: [], truncated: false, readLimit: 0, remoteEntries: 0 };
 }
 
 export async function createAiCalibrationHandler(
@@ -482,7 +501,7 @@ export async function createAiCalibrationHandler(
         forward: await deps.readForward(),
         nowMs,
         generatedAt: new Date(nowMs).toISOString(),
-        aiLogSource: deps.aiLogSource,
+        remoteEntries: read.remoteEntries,
         truncated: read.truncated,
         readLimit: read.readLimit,
       }),
@@ -497,7 +516,6 @@ export async function createAiCalibrationHandler(
         forward: [],
         nowMs,
         generatedAt: new Date(nowMs).toISOString(),
-        aiLogSource: deps.aiLogSource,
       }),
     };
   }

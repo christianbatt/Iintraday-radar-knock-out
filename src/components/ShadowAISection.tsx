@@ -76,7 +76,7 @@ export interface ShadowAiCalibrationView {
   verdict?: 'insufficient' | 'evidence';
   edgeR?: number | null;
   minSample?: number;
-  counts?: { matched?: number; classified?: number };
+  counts?: { matched?: number; classified?: number; remoteEntries?: number };
   buckets?: { decision: string; n: number }[];
   skippedWinners?: unknown[];
   /** Fonte effettiva del log (`sources.aiLog`), fallback Firestore compreso. */
@@ -106,13 +106,20 @@ function calibrationCounts(calibration: ShadowAiCalibrationView) {
     typeof calibration.counts?.classified === 'number'
       ? calibration.counts.classified
       : Math.max(0, matched - sconosciuto);
-  return { matched, classified, excluded: Math.max(0, matched - classified) };
+  // Il fallback si dichiara sulle voci REMOTE davvero usate, non sul flag.
+  const remoteEntries = calibration.counts?.remoteEntries ?? 0;
+  return {
+    matched,
+    classified,
+    excluded: Math.max(0, matched - classified),
+    remoteEntries: remoteEntries > 0 ? remoteEntries : 0,
+  };
 }
 
 export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrationView }> = ({
   calibration,
 }) => {
-  const { matched, classified, excluded } = calibrationCounts(calibration);
+  const { matched, classified, excluded, remoteEntries } = calibrationCounts(calibration);
   return (
   <div data-testid="shadow-ai-calibration" className="border-t border-slate-700 pt-2 space-y-1">
     <p className="text-[10px] font-bold text-slate-300">
@@ -124,7 +131,7 @@ export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrati
     </p>
     <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-source">
       fonte: {calibration.sources?.aiLog ?? 'shadow_ai_log.jsonl'}
-      {/firestore/i.test(calibration.sources?.aiLog ?? '') ? ' · fallback attivo' : ''}
+      {remoteEntries > 0 ? ` · fallback attivo (${remoteEntries} voci)` : ''}
     </p>
     {calibration.truncated === true && (
       <p className="text-[10px] text-amber-300" data-testid="shadow-ai-calibration-truncated">

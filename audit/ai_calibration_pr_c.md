@@ -24,8 +24,14 @@ clamp HTTP di 200: l'aggregato ha bisogno di tutte le voci recenti.
 
 Motivo: in produzione il disco può essere effimero. Senza fallback il file
 locale sarebbe vuoto e la calibrazione riporterebbe zero valutazioni su dati che
-esistono. Il campo `sources.aiLog` dichiara quale fonte ha risposto
-(`shadow_ai_log.jsonl` oppure `shadow_ai_log.jsonl + Firestore (fallback)`).
+esistono.
+
+Il fallback si dichiara sulle **voci realmente usate**, non sul flag:
+`counts.remoteEntries` conta i documenti presi da Firestore dopo la deduplica
+(0 se il remoto non ha aggiunto nulla) e `sources.aiLog` diventa
+`shadow_ai_log.jsonl + Firestore (fallback)` solo in quel caso, altrimenti resta
+`shadow_ai_log.jsonl`. Un flag acceso con Firestore vuoto non produce nessuna
+dicitura di fallback, né nella risposta né nel pannello.
 
 Se Firestore non risponde, resta il file locale e la route non fallisce.
 
