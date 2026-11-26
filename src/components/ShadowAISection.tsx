@@ -24,6 +24,8 @@ export interface AiShadowLogEntry {
   candidateKey?: string | null;
   /** ADDITIVO (P2): origine dei candidati. */
   candidateSource?: 'body' | 'snapshot' | 'none' | null;
+  /** Decisione chiusa scritta dall'handler; assente o `null` nelle righe in prosa. */
+  decision?: 'AZIONE' | 'ATTESA' | 'SCARTO' | null;
 }
 
 export interface ShadowLogSummary {
@@ -243,6 +245,13 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
               {entries.map((e) => (
                 <li key={e.id} className="text-[11px] text-slate-300 flex items-center gap-2">
                   <span className="px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 font-bold">NON VALIDATO</span>
+                  <span
+                    data-testid="shadow-ai-row-decision"
+                    className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-200"
+                    title="decision (campo chiuso scritto dall'handler)"
+                  >
+                    {e.decision ?? '—'}
+                  </span>
                   <span>{e.ticker ?? '—'} · {e.market} · {e.aiCategory ?? '—'}</span>
                   <span className="text-slate-500 truncate">{e.aiOutcome ?? '—'}</span>
                 </li>

@@ -164,4 +164,15 @@ describe('aiCalibration — la decision chiusa vince sul testo', () => {
     });
     assert.equal(classifyEntryDecision(prose), 'SCONOSCIUTO');
   });
+
+  it('una decision chiusa su una direttiva e\' un dato incoerente: resta SCONOSCIUTO', () => {
+    const proseWithDecision = calibrationEntry({
+      id: 'm5',
+      source: 'desk',
+      candidateKey: null,
+      aiOutcome: 'BUY subito',
+      decision: 'AZIONE',
+    });
+    assert.equal(classifyEntryDecision(proseWithDecision), 'SCONOSCIUTO');
+  });
 });

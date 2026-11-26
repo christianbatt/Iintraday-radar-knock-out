@@ -40,7 +40,8 @@ Ogni riga del log AI shadow può portare `decision`, con tre soli valori:
   batch di scansione chiede `decision` per ogni candidato e il parser accetta
   solo quei tre valori (`isAiShadowDecision`); qualunque altra cosa diventa
   `null`;
-- la calibrazione lo usa come **fonte di verità** (`classifyEntryDecision`);
+- la calibrazione lo usa come **fonte di verità** (`classifyEntryDecision`), ma solo dopo aver escluso la prosa: una `decision` chiusa su una riga `specialize`/`desk` è un dato incoerente e resta `SCONOSCIUTO`;
+- il pannello Shadow AI lo mostra accanto a ogni riga (`—` quando è `null`), così il valore scritto dall'handler è ispezionabile;
 - la classificazione testuale dell'`aiOutcome` resta solo per le **righe
   storiche** prive del campo, e per la prosa (`specialize`/`desk`) il risultato è
   comunque `SCONOSCIUTO`;
@@ -54,9 +55,11 @@ finestra la valutazione è `unmatchedAiEntries`, mai zero.
 
 ## Soglia
 
-`AI_CALIBRATION_MIN_SAMPLE = 30` casi abbinati. Sotto soglia il verdetto è
-`insufficient`, `edgeR` resta calcolabile ma non è presentato come risultato
-(nel pannello: "non un risultato").
+`AI_CALIBRATION_MIN_SAMPLE = 30` casi **classificati** (`AZIONE` + `ATTESA` +
+`SCARTO`, campo `counts.classified`). Le righe in `SCONOSCIUTO` sono abbinate ma
+non sono un giudizio: non avvicinano il campione alla soglia. Sotto soglia il
+verdetto è `insufficient`, `edgeR` resta calcolabile ma non è presentato come
+risultato (nel pannello: "non un risultato").
 
 ## `edgeR`
 
@@ -79,6 +82,7 @@ migliori di quelli che ha scartato; negativo = li ha approvati peggiori.
 | `counts.skippedAiEntries` | valutazioni senza ticker o timestamp valido |
 | `counts.forwardPoints` | esiti forward terminali con `r` finito |
 | `counts.matched` | abbinamenti uno-a-uno effettuati |
+| `counts.classified` | abbinamenti con decisione utilizzabile: base della soglia |
 | `counts.unmatchedAiEntries` | valutazioni di candidato rimaste senza esito |
 | `counts.forwardWithoutDecision` | esiti che nessuna decisione ha rivendicato |
 

@@ -33,7 +33,7 @@
     "test:shadowv1liveview": "tsx src/utils/__tests__/shadow_v1_live_view.test.ts",
     "test:shadowv1livepanel": "tsx src/components/__tests__/shadowV1LivePanel.test.tsx",
     "test:orb": "tsx src/utils/__tests__/orb_regression.test.ts",
-    "test:ai-shadow": "tsx src/utils/__tests__/ai_shadow_log.test.ts && tsx src/utils/__tests__/ai_shadow_log_coverage.test.ts && tsx src/utils/__tests__/ai_shadow_p2_p3_p4.test.ts && tsx src/utils/__tests__/ai_shadow_runid.test.ts && tsx src/utils/__tests__/ai_shadow_scan_gates.test.ts && tsx src/utils/__tests__/ai_shadow_firestore.test.ts && tsx src/utils/__tests__/ai_shadow_decision.test.ts && tsx src/components/__tests__/shadowAISection.test.tsx",
+    "test:ai-shadow": "tsx src/utils/__tests__/ai_shadow_log.test.ts && tsx src/utils/__tests__/ai_shadow_log_coverage.test.ts && tsx src/utils/__tests__/ai_shadow_p2_p3_p4.test.ts && tsx src/utils/__tests__/ai_shadow_runid.test.ts && tsx src/utils/__tests__/ai_shadow_scan_gates.test.ts && tsx src/utils/__tests__/ai_shadow_firestore.test.ts && tsx src/utils/__tests__/ai_shadow_decision.test.ts && tsx src/components/__tests__/shadowAISection.test.tsx && tsx src/components/__tests__/shadowAiSectionDecision.test.tsx",
     "test:specialization": "tsx src/utils/__tests__/specialization_reasons.test.ts",
     "test:strategy-fixes": "tsx src/utils/__tests__/strategy_fixes.test.ts",
     "test:veto-outcomes": "tsx src/utils/__tests__/veto_outcome_log.test.ts",

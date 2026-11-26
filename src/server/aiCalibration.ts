@@ -78,16 +78,17 @@ export function classifyAiOutcome(raw: string | null | undefined): AiDecisionCla
 /**
  * Classifica una RIGA del log, non un testo qualsiasi.
  *
- * Precedenza:
- * 1. `decision` chiusa scritta dall'handler (fonte di verita');
- * 2. per le sole righe storiche senza `decision`, classificazione testuale
- *    dell'`aiOutcome`;
- * 3. prosa (`specialize`/`desk` senza `candidateKey`): sempre `SCONOSCIUTO`,
- *    anche se contiene "non comprare" o "attendi".
+ * Precedenza (l'ordine conta):
+ * 1. riga non-candidato (prosa senza `candidateKey`) => `SCONOSCIUTO`,
+ *    qualunque cosa contenga, `decision` compresa. Una decisione chiusa su una
+ *    direttiva e' un dato incoerente: non deve entrare nei bucket;
+ * 2. `decision` chiusa scritta dall'handler (fonte di verita');
+ * 3. per le sole righe storiche senza `decision`, classificazione testuale
+ *    dell'`aiOutcome`.
  */
 export function classifyEntryDecision(entry: AiCalibrationEntry): AiDecisionClass {
-  if (isAiShadowDecision(entry.decision)) return entry.decision;
   if (!isCandidateRow(entry)) return 'SCONOSCIUTO';
+  if (isAiShadowDecision(entry.decision)) return entry.decision;
   return classifyAiOutcome(entry.aiOutcome);
 }
 
@@ -145,6 +146,8 @@ export interface AiCalibrationResponse {
     dedupedEntries: number;
     forwardPoints: number;
     matched: number;
+    /** Abbinamenti con una decisione utilizzabile (tutti tranne SCONOSCIUTO). */
+    classified: number;
     unmatchedAiEntries: number;
     forwardWithoutDecision: number;
     skippedAiEntries: number;
@@ -344,9 +347,15 @@ export function buildAiCalibration(input: {
 
   const forwardPoints = [...forwardIndex.values()].reduce((n, list) => n + list.length, 0);
   const matched = joined.length;
+  // La soglia si applica alle sole decisioni classificabili: una riga in
+  // SCONOSCIUTO e' abbinata ma non e' un giudizio, e non deve avvicinare il
+  // campione alla soglia.
+  const classified = buckets
+    .filter((bucket) => bucket.decision !== 'SCONOSCIUTO')
+    .reduce((total, bucket) => total + bucket.n, 0);
   const available = deduped.length > 0 && forwardPoints > 0;
   const verdict: AiCalibrationResponse['verdict'] =
-    matched >= minSample ? 'evidence' : 'insufficient';
+    classified >= minSample ? 'evidence' : 'insufficient';
 
   return {
     version: AI_CALIBRATION_VERSION,
@@ -364,6 +373,7 @@ export function buildAiCalibration(input: {
       dedupedEntries: deduped.length,
       forwardPoints,
       matched,
+      classified,
       unmatchedAiEntries,
       forwardWithoutDecision: Math.max(0, forwardPoints - usedPointKeys.size),
       skippedAiEntries,
@@ -375,8 +385,8 @@ export function buildAiCalibration(input: {
     verdict,
     note:
       verdict === 'evidence'
-        ? `Campione abbinato ${matched} >= ${minSample}: edgeR calcolato.`
-        : `Campione abbinato ${matched} < ${minSample}: nessuna conclusione, edgeR non e' un risultato.`,
+        ? `Campione classificato ${classified} >= ${minSample} (${matched} abbinati, ${matched - classified} in SCONOSCIUTO): edgeR calcolato.`
+        : `Campione classificato ${classified} < ${minSample} (${matched} abbinati, ${matched - classified} in SCONOSCIUTO): nessuna conclusione, edgeR non e' un risultato.`,
     limitations: [
       'Sola lettura: nessuna scrittura, nessun cambio di memoria AI, gate o selezione setup.',
       'Il join e\' per ticker e prossimita\' temporale (finestra fissa); non dimostra che la decisione AI abbia causato l\'esito.',

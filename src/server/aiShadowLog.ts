@@ -34,9 +34,15 @@ export type AiShadowDecision = 'AZIONE' | 'ATTESA' | 'SCARTO';
 
 export const AI_SHADOW_DECISIONS: readonly AiShadowDecision[] = ['AZIONE', 'ATTESA', 'SCARTO'];
 
-/** Unico modo ammesso per riconoscere una decisione: uguaglianza esatta. */
+/**
+ * Unico modo ammesso per riconoscere una decisione: uguaglianza esatta contro
+ * l'elenco chiuso. `AI_SHADOW_DECISIONS` e' anche la sorgente usata nel prompt
+ * dei batch, cosi' prompt e validatore non possono divergere.
+ */
 export function isAiShadowDecision(value: unknown): value is AiShadowDecision {
-  return value === 'AZIONE' || value === 'ATTESA' || value === 'SCARTO';
+  return (
+    typeof value === 'string' && (AI_SHADOW_DECISIONS as readonly string[]).includes(value)
+  );
 }
 
 /**

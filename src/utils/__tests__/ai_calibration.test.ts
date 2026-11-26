@@ -367,6 +367,59 @@ describe('aiCalibration — le direttive in prosa non sono esiti', () => {
   });
 });
 
+describe('aiCalibration — la soglia conta solo le decisioni classificabili', () => {
+  it('le righe in SCONOSCIUTO non avvicinano il campione alla soglia', () => {
+    const entries: AiCalibrationEntry[] = [
+      entry({ id: 'k1', timestamp: iso(0), ticker: 'ENI.MI', candidateKey: 'r:ENI', aiOutcome: null }),
+      entry({ id: 'k2', timestamp: iso(0), ticker: 'ISP.MI', candidateKey: 'r:ISP', aiOutcome: null }),
+      entry({ id: 'k3', timestamp: iso(0), ticker: 'TSLA', candidateKey: 'r:TSLA', aiOutcome: null }),
+    ];
+    const forward = [
+      point({ key: 'k1p', ticker: 'ENI.MI', r: 1 }),
+      point({ key: 'k2p', ticker: 'ISP.MI', r: 2 }),
+      point({ key: 'k3p', ticker: 'TSLA', r: -1, status: 'STOP' }),
+    ];
+    const out = buildAiCalibration({
+      entries,
+      forward,
+      nowMs: NOW,
+      generatedAt: iso(0),
+      minSample: 1,
+    });
+
+    assert.equal(out.counts.matched, 3);
+    assert.equal(out.counts.classified, 0);
+    assert.equal(out.buckets.find((b) => b.decision === 'SCONOSCIUTO')?.n, 3);
+    assert.equal(out.verdict, 'insufficient', 'tre righe non classificabili non sono un campione');
+    assert.match(out.note, /classificato 0 < 1/);
+    assert.equal(
+      out.buckets.reduce((total, bucket) => total + bucket.n, 0),
+      out.counts.matched
+    );
+  });
+
+  it('con abbinamenti misti la soglia usa i soli classificati', () => {
+    const entries: AiCalibrationEntry[] = [
+      entry({ id: 'q1', timestamp: iso(0), ticker: 'ENI.MI', candidateKey: 'r:ENI', aiOutcome: 'BUY', decision: 'AZIONE' }),
+      entry({ id: 'q2', timestamp: iso(0), ticker: 'ISP.MI', candidateKey: 'r:ISP', aiOutcome: null }),
+    ];
+    const forward = [
+      point({ key: 'q1p', ticker: 'ENI.MI', r: 2 }),
+      point({ key: 'q2p', ticker: 'ISP.MI', r: 1 }),
+    ];
+    const out = buildAiCalibration({
+      entries,
+      forward,
+      nowMs: NOW,
+      generatedAt: iso(0),
+      minSample: 2,
+    });
+    assert.equal(out.counts.matched, 2);
+    assert.equal(out.counts.classified, 1);
+    assert.equal(out.verdict, 'insufficient');
+  });
+});
+
 describe('aiCalibration — flag e handler', () => {
   it('accesa di default, spenta solo con 0/false', () => {
     assert.equal(isAiCalibrationEnabled({}), true);

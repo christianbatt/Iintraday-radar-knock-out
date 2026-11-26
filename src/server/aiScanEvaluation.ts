@@ -17,7 +17,7 @@ import type {
   AiShadowLogCandidateSource,
   AiShadowLogEntry,
 } from './aiShadowLog';
-import { AI_SHADOW_DISCARD_REASONS, isAiShadowDecision } from './aiShadowLog';
+import { AI_SHADOW_DECISIONS, AI_SHADOW_DISCARD_REASONS, isAiShadowDecision } from './aiShadowLog';
 
 export interface ScanCandidateSnapshot {
   ticker: string;
@@ -533,7 +533,7 @@ export function buildScanEvaluationPrompt(
 ${buildScanCandidatesSection(candidates)}
 
 Restituisci solo JSON valido in questo formato esatto:
-{"scanEvaluations":[{"ticker":"<ticker>","aiOutcome":"<giudizio sintetico>","aiCategory":"<categoria sintetica>","decision":"AZIONE|ATTESA|SCARTO"}]}
+{"scanEvaluations":[{"ticker":"<ticker>","aiOutcome":"<giudizio sintetico>","aiCategory":"<categoria sintetica>","decision":"${AI_SHADOW_DECISIONS.join('|')}"}]}
 
 Regole: una voce per ogni ticker elencato, ticker identici a quelli della sezione, nessun ticker inventato, "aiOutcome" non vuoto, "decision" uno solo dei tre valori ammessi (AZIONE = il candidato ha un edge, ATTESA = serve altra conferma, SCARTO = da non operare). Fuori da quei valori il campo viene ignorato.`;
 }
