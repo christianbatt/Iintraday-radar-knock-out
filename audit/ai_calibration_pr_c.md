@@ -59,7 +59,9 @@ finestra la valutazione è `unmatchedAiEntries`, mai zero.
 `SCARTO`, campo `counts.classified`). Le righe in `SCONOSCIUTO` sono abbinate ma
 non sono un giudizio: non avvicinano il campione alla soglia. Sotto soglia il
 verdetto è `insufficient`, `edgeR` resta calcolabile ma non è presentato come
-risultato (nel pannello: "non un risultato").
+risultato (nel pannello: "non un risultato"). Il pannello mostra `classificati: X /
+min 30` come riga della soglia e, separatamente, `abbinamenti esclusi
+(SCONOSCIUTO): N su M`: gli abbinati non vengono mai confrontati con la soglia.
 
 ## `edgeR`
 

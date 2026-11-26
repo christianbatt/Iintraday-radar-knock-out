@@ -9,11 +9,12 @@ const EVIDENCE = {
   verdict: 'evidence' as const,
   edgeR: 0.42,
   minSample: 30,
-  counts: { matched: 34 },
+  counts: { matched: 34, classified: 34 },
   buckets: [
     { decision: 'AZIONE', n: 20 },
     { decision: 'ATTESA', n: 4 },
     { decision: 'SCARTO', n: 10 },
+    { decision: 'SCONOSCIUTO', n: 0 },
   ],
   skippedWinners: [{ ticker: 'ISP.MI' }, { ticker: 'UCG.MI' }],
 };
@@ -23,11 +24,27 @@ const INSUFFICIENT = {
   verdict: 'insufficient' as const,
   edgeR: null,
   minSample: 30,
-  counts: { matched: 3 },
+  counts: { matched: 3, classified: 3 },
   buckets: [
     { decision: 'AZIONE', n: 0 },
     { decision: 'ATTESA', n: 1 },
     { decision: 'SCARTO', n: 2 },
+    { decision: 'SCONOSCIUTO', n: 0 },
+  ],
+  skippedWinners: [],
+};
+
+const MIXED = {
+  available: true,
+  verdict: 'insufficient' as const,
+  edgeR: null,
+  minSample: 30,
+  counts: { matched: 5, classified: 1 },
+  buckets: [
+    { decision: 'AZIONE', n: 1 },
+    { decision: 'ATTESA', n: 0 },
+    { decision: 'SCARTO', n: 0 },
+    { decision: 'SCONOSCIUTO', n: 4 },
   ],
   skippedWinners: [],
 };
@@ -37,7 +54,8 @@ describe('ShadowAiCalibrationBlock — render', () => {
     const out = renderToStaticMarkup(React.createElement(ShadowAiCalibrationBlock, { calibration: EVIDENCE }));
     assert.ok(out.includes('data-testid="shadow-ai-calibration"'));
     assert.ok(out.includes('campione sufficiente'));
-    assert.ok(out.includes('abbinate: 34 / min 30'));
+    assert.ok(out.includes('classificati: 34 / min 30'));
+    assert.ok(!out.includes('abbinamenti esclusi'), 'nessun escluso quando tutti sono classificati');
     assert.ok(out.includes('AZIONE 20'));
     assert.ok(out.includes('ATTESA 4'));
     assert.ok(out.includes('SCARTO 10'));
@@ -51,9 +69,32 @@ describe('ShadowAiCalibrationBlock — render', () => {
       React.createElement(ShadowAiCalibrationBlock, { calibration: INSUFFICIENT })
     );
     assert.ok(out.includes('campione insufficiente'));
+    assert.ok(out.includes('classificati: 3 / min 30'));
+    assert.ok(!out.includes('abbinamenti esclusi'));
     assert.ok(out.includes('edgeR: non calcolabile'));
     assert.ok(out.includes('(non un risultato)'));
     assert.ok(!out.includes('scarti andati in positivo'));
+  });
+});
+
+describe('ShadowAiCalibrationBlock — classificati vs esclusi', () => {
+  it('mostra classificati sulla soglia e gli abbinamenti esclusi a parte', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, { calibration: MIXED })
+    );
+    assert.ok(out.includes('data-testid="shadow-ai-calibration-classified"'));
+    assert.ok(out.includes('classificati: 1 / min 30'));
+    assert.ok(out.includes('abbinamenti esclusi (SCONOSCIUTO): 4 su 5'));
+    assert.ok(!out.includes('classificati: 5'), 'gli abbinati non sono la soglia');
+  });
+
+  it('senza counts.classified ricava i classificati dai bucket', () => {
+    const legacy = { ...MIXED, counts: { matched: 5 } };
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, { calibration: legacy })
+    );
+    assert.ok(out.includes('classificati: 1 / min 30'));
+    assert.ok(out.includes('abbinamenti esclusi (SCONOSCIUTO): 4 su 5'));
   });
 });
 

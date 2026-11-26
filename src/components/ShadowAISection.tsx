@@ -76,7 +76,7 @@ export interface ShadowAiCalibrationView {
   verdict?: 'insufficient' | 'evidence';
   edgeR?: number | null;
   minSample?: number;
-  counts?: { matched?: number };
+  counts?: { matched?: number; classified?: number };
   buckets?: { decision: string; n: number }[];
   skippedWinners?: unknown[];
 }
@@ -85,17 +85,43 @@ export interface ShadowAiCalibrationView {
  * Blocco di calibrazione (PR-C), separato dal componente con fetch per poter
  * essere reso e verificato con `renderToStaticMarkup`, senza effetti.
  */
+/**
+ * Conteggi coerenti con il verdetto: la soglia si applica ai CLASSIFICATI
+ * (`AZIONE`+`ATTESA`+`SCARTO`). Gli abbinamenti finiti in `SCONOSCIUTO` sono
+ * mostrati a parte, mai sommati alla soglia.
+ *
+ * `classified` manca nei payload prodotti prima di questo campo: in quel caso
+ * si ricava dai bucket, cosi' la vista non mostra numeri incoerenti con il
+ * verdetto (che il server calcola gia' sui classificati).
+ */
+function calibrationCounts(calibration: ShadowAiCalibrationView) {
+  const matched = calibration.counts?.matched ?? 0;
+  const sconosciuto = calibration.buckets?.find((bucket) => bucket.decision === 'SCONOSCIUTO')?.n ?? 0;
+  const classified =
+    typeof calibration.counts?.classified === 'number'
+      ? calibration.counts.classified
+      : Math.max(0, matched - sconosciuto);
+  return { matched, classified, excluded: Math.max(0, matched - classified) };
+}
+
 export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrationView }> = ({
   calibration,
-}) => (
+}) => {
+  const { matched, classified, excluded } = calibrationCounts(calibration);
+  return (
   <div data-testid="shadow-ai-calibration" className="border-t border-slate-700 pt-2 space-y-1">
     <p className="text-[10px] font-bold text-slate-300">
       Calibrazione AI (esplorativa) —{' '}
       {calibration.verdict === 'evidence' ? 'campione sufficiente' : 'campione insufficiente'}
     </p>
-    <p className="text-[10px] text-slate-400" data-testid="shadow-ai-calibration-matched">
-      abbinate: {calibration.counts?.matched ?? 0} / min {calibration.minSample ?? 0}
+    <p className="text-[10px] text-slate-400" data-testid="shadow-ai-calibration-classified">
+      classificati: {classified} / min {calibration.minSample ?? 0}
     </p>
+    {excluded > 0 && (
+      <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-excluded">
+        abbinamenti esclusi (SCONOSCIUTO): {excluded} su {matched}
+      </p>
+    )}
     <p className="text-[10px] text-slate-400">
       {calibration.buckets?.map((b) => `${b.decision} ${b.n}`).join(' · ')}
     </p>
@@ -111,7 +137,8 @@ export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrati
       </p>
     )}
   </div>
-);
+  );
+};
 
 export interface ShadowAISectionProps {
   entries?: AiShadowLogEntry[] | null;
