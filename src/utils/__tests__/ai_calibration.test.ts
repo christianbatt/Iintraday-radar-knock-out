@@ -9,9 +9,11 @@ import {
   classifyEntryDecision,
   createAiCalibrationHandler,
   isAiCalibrationEnabled,
+  mapNearMissForwardPoints,
   registerAiCalibrationRoute,
   type AiCalibrationEntry,
   type AiCalibrationForwardPoint,
+  type AiCalibrationNearMissRecord,
 } from '../../server/aiCalibration';
 
 const NOW = Date.UTC(2026, 10, 25, 12, 0, 0);
@@ -656,5 +658,125 @@ describe('aiCalibration — flag e handler', () => {
     });
     assert.equal(captured.code, 200);
     assert.equal(captured.body.counts.matched, 3);
+  });
+});
+
+describe('aiCalibration — esiti near-miss per i candidati scartati', () => {
+  const nearMissRecord = (
+    partial: Partial<AiCalibrationNearMissRecord> & { id: string }
+  ): AiCalibrationNearMissRecord => ({
+    ticker: 'ISP.MI',
+    decidedAtMs: NOW,
+    r: 0.5,
+    status: 'EXPIRED',
+    ...partial,
+  });
+
+  it('mappa solo gli stati terminali con R finito e prefissa la chiave', () => {
+    const points = mapNearMissForwardPoints([
+      nearMissRecord({ id: 'a', status: 'EXPIRED', r: 0.537 }),
+      nearMissRecord({ id: 'b', status: 'TARGET', r: 1.6 }),
+      nearMissRecord({ id: 'c', status: 'STOP', r: -1 }),
+      nearMissRecord({ id: 'd', status: 'NOT_FILLED', r: null }),
+      nearMissRecord({ id: 'e', status: 'OPEN', r: null }),
+      nearMissRecord({ id: 'f', status: 'PENDING_FILL', r: null }),
+      nearMissRecord({ id: 'g', status: 'TARGET', r: Number.NaN }),
+    ]);
+
+    assert.deepEqual(
+      points.map((p) => p.key),
+      ['near_miss:a', 'near_miss:b', 'near_miss:c'],
+      'solo stati terminali con R finito'
+    );
+    assert.ok(points.every((p) => p.source === 'near_miss'));
+    assert.equal(points[1].status, 'TARGET');
+    assert.equal(points[2].r, -1);
+  });
+
+  it('un esito near-miss da un R allo SCARTO e rende calcolabile edgeR', () => {
+    const entries: AiCalibrationEntry[] = [
+      entry({ id: 'e1', ticker: 'ENI.MI', candidateKey: 'r1:ENI.MI', aiOutcome: 'BUY', decision: 'AZIONE' }),
+      entry({ id: 'e2', ticker: 'ISP.MI', candidateKey: 'r1:ISP.MI', aiOutcome: 'SKIP', decision: 'SCARTO' }),
+    ];
+    const forward: AiCalibrationForwardPoint[] = [
+      point({ key: 'sig:ENI', ticker: 'ENI.MI', decidedAtMs: NOW, r: 2, status: 'TARGET' }),
+      ...mapNearMissForwardPoints([
+        nearMissRecord({ id: 'EU|ISP.MI|2026-11-25|G11_SCORE', ticker: 'ISP.MI', r: -0.5 }),
+      ]),
+    ];
+
+    const out = buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0), minSample: 2 });
+    const skip = out.buckets.find((bucket) => bucket.decision === 'SCARTO');
+
+    assert.equal(skip?.n, 1, 'lo scarto ora ha un esito');
+    assert.equal(skip?.meanR, -0.5);
+    assert.equal(out.edgeR, 2.5, 'edgeR = 2 - (-0.5)');
+    assert.equal(out.verdict, 'evidence');
+    assert.equal(out.counts.nearMissMatched, 1);
+    assert.equal(out.counts.nearMissForwardPoints, 1);
+    assert.equal(
+      out.sources.forward,
+      'artifacts/shadow_v1_live/signals.jsonl + near_miss.jsonl (controfattuale)'
+    );
+    assert.ok(
+      out.limitations.some((line) => line.includes('controfattuale') && line.includes('mai stato emesso')),
+      'il limite dichiara la natura controfattuale'
+    );
+    assert.equal(
+      out.buckets.reduce((total, bucket) => total + bucket.n, 0),
+      out.counts.matched,
+      'invariante dei bucket'
+    );
+  });
+
+  it('near-miss forniti ma non abbinati: la fonte resta signals-only', () => {
+    const entries: AiCalibrationEntry[] = [
+      entry({ id: 'n1', ticker: 'ENI.MI', candidateKey: 'r1:ENI.MI', aiOutcome: 'BUY', decision: 'AZIONE' }),
+    ];
+    const forward: AiCalibrationForwardPoint[] = [
+      point({ key: 'sig:ENI', ticker: 'ENI.MI', r: 1, status: 'TARGET' }),
+      ...mapNearMissForwardPoints([nearMissRecord({ id: 'x', ticker: 'UCG.MI', r: 0.2 })]),
+    ];
+
+    const out = buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0) });
+    assert.equal(out.counts.nearMissForwardPoints, 1);
+    assert.equal(out.counts.nearMissMatched, 0);
+    assert.equal(out.sources.forward, 'artifacts/shadow_v1_live/signals.jsonl');
+  });
+
+  it('il handler unisce le due fonti: sui duplicati vince la chiave dei segnali', async () => {
+    const out = await createAiCalibrationHandler({
+      env: {},
+      now: () => NOW,
+      readEntries: () => [
+        entry({ id: 'h1', ticker: 'ENI.MI', candidateKey: 'r:ENI', aiOutcome: 'BUY', decision: 'AZIONE' }),
+      ],
+      readForward: () => [point({ key: 'same', ticker: 'ENI.MI', r: 2 })],
+      readNearMissForward: () => [point({ key: 'same', ticker: 'ENI.MI', r: -5, source: 'near_miss' })],
+    });
+    const body = out.body as any;
+
+    assert.equal(out.status, 200);
+    assert.equal(body.counts.forwardPoints, 1, 'chiave duplicata unita');
+    assert.equal(body.buckets.find((b: any) => b.decision === 'AZIONE')?.sumR, 2);
+  });
+
+  it('lettura near-miss in errore: restano gli esiti dei segnali', async () => {
+    const out = await createAiCalibrationHandler({
+      env: {},
+      now: () => NOW,
+      readEntries: () => [
+        entry({ id: 'h2', ticker: 'ENI.MI', candidateKey: 'r:ENI', aiOutcome: 'BUY', decision: 'AZIONE' }),
+      ],
+      readForward: () => [point({ key: 'sig', ticker: 'ENI.MI', r: 1.5 })],
+      readNearMissForward: () => {
+        throw new Error('near_miss.jsonl illeggibile');
+      },
+    });
+    const body = out.body as any;
+
+    assert.equal(out.status, 200);
+    assert.equal(body.counts.matched, 1);
+    assert.equal(body.counts.nearMissForwardPoints, 0);
   });
 });

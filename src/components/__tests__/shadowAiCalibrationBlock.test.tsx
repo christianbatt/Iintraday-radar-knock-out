@@ -246,6 +246,22 @@ describe('ShadowAISection — calibrazione nel pannello', () => {
     assert.ok(!out.includes('data-testid="shadow-ai-calibration"'));
   });
 
+  it('dichiara gli esiti controfattuali near-miss solo quando sono usati', () => {
+    const withNearMiss = {
+      ...EVIDENCE,
+      counts: { ...EVIDENCE.counts, nearMissMatched: 3 },
+    };
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, { calibration: withNearMiss })
+    );
+    assert.ok(out.includes('esiti controfattuali (near-miss): 3 su 34'));
+
+    const plain = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, { calibration: EVIDENCE })
+    );
+    assert.ok(!plain.includes('shadow-ai-calibration-near-miss'));
+  });
+
   it('flag off resta vuoto anche con calibrazione disponibile', () => {
     const out = renderToStaticMarkup(
       React.createElement(ShadowAISection, { flag: 'off', entries: [], calibration: EVIDENCE })

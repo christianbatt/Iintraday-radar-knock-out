@@ -91,10 +91,12 @@ import { loadRecords, SHADOW_V1_LIVE_SIGNALS_PATH } from './src/server/shadowV1L
 import { listArchivePaths, mergeRecordFiles } from './src/server/shadowV1LiveRetention';
 import {
   AI_CALIBRATION_MAX_ENTRIES,
+  mapNearMissForwardPoints,
   registerAiCalibrationRoute,
   type AiCalibrationEntry,
   type AiCalibrationForwardPoint,
 } from './src/server/aiCalibration';
+import { loadNearMissRecords, SHADOW_V1_NEAR_MISS_PATH } from './src/server/shadowV1LiveNearMiss';
 import { existsSync } from 'node:fs';
 import { logVetoOutcomes, VETO_LOG_RELATIVE_PATH } from './src/server/vetoOutcomeLog';
 import {
@@ -4265,7 +4267,8 @@ async function startServer() {
   });
   // ADDITIVO (PR-C): calibrazione read-only decisione AI -> esito forward.
   // Nessuna scrittura, nessun cambio di memoria o gate: legge il log AI shadow
-  // e gli esiti gia' persistiti da Shadow V1-live e li abbina per ticker + tempo.
+  // e gli esiti gia' persistiti da Shadow V1-live (segnali emessi + near-miss)
+  // e li abbina per ticker + tempo.
   registerAiCalibrationRoute(app, {
     // Stesse voci del pannello: file locale + fallback Firestore quando il flag
     // SHADOW_AI_LOG_FIRESTORE e' acceso. Su disco effimero il file puo' essere
@@ -4303,6 +4306,13 @@ async function startServer() {
       }
       return points;
     },
+    // I near-miss gia' persistiti (setup bloccati da un solo gate e mai emessi)
+    // forniscono l'esito che manca ai candidati scartati: nessun nuovo
+    // macchinario, solo la lettura del file che il tracker aggiorna gia'.
+    readNearMissForward: () =>
+      mapNearMissForwardPoints(
+        loadNearMissRecords(path.join(process.cwd(), SHADOW_V1_NEAR_MISS_PATH))
+      ),
   });
   // L'auth viaggia con la registrazione della route (non come middleware
   // registrato a parte): la garanzia non dipende dall'ordine di registrazione e

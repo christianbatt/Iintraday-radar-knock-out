@@ -147,14 +147,50 @@ valutazione abbinata con esito illeggibile non sparisca dal rendiconto.
 - Il join è per ticker e prossimità temporale: non dimostra causalità fra
   decisione AI ed esito.
 - L'R di Shadow V1-live è di prezzo (senza costi né leva) e riguarda solo setup
-  emessi con decisione `TRADE`: i candidati mai emessi non hanno esito forward e
-  restano non abbinati.
+  emessi con decisione `TRADE`: gli altri candidati restano non abbinati, tranne
+  i near-miss (esito controfattuale, dichiarato in `limitations`).
 - `SCONOSCIUTO` non è un giudizio: se cresce, il problema è nel formato
   dell'`aiOutcome` o nelle direttive scritte in prosa, non nel desk.
 - Il desk resta `NON_VALIDATO` finché il validatore deterministico non conferma:
   questa vista è esplorativa e non cambia gate, memoria AI o selezione dei setup.
 - La calibrazione non ha ancora prodotto numeri reali: `shadow_ai_log.jsonl` era
   vuoto al momento della stesura, quindi `available: false` ed `edgeR: null`.
+
+## Seconda fonte forward: i near-miss
+
+Il tracker `src/server/shadowV1LiveNearMiss.ts` registra gia' i candidati bloccati
+da **un solo** gate selezionabile (`ADX_BORDERLINE`, `G4_EXTENDED`,
+`G5_EXPIRED`, `G7_ADR_HIGH`, `G8_STOP_WIDE`, `G11_SCORE`) e ne segue l'esito
+reale sulle barre chiuse con lo stesso motore deterministico di V1-live. Sono
+esattamente gli esiti che mancavano al bucket `SCARTO`: setup mai emessi, quindi
+assenti da `signals.jsonl`.
+
+La calibrazione li legge dallo stesso file gia' persistito
+(`artifacts/shadow_v1_live/near_miss.jsonl`, via `loadNearMissRecords`) e li
+converte con `mapNearMissForwardPoints`:
+
+- solo `TARGET`/`STOP`/`EXPIRED` con `r` finito; `PENDING_FILL`, `OPEN` e
+  `NOT_FILLED` non hanno esito e restano fuori (non sono zero);
+- chiave `near_miss:<id>`, prefissata per non collidere con le chiavi dei
+  segnali; in caso di chiave duplicata vince il segnale emesso;
+- nessun nuovo file, nessuna nuova scansione, nessuna scrittura: si riusa il
+  macchinario gia' esistente.
+
+La risposta lo dichiara sui **fatti**, non sulla disponibilita' del file:
+`counts.nearMissForwardPoints` sono i punti forniti, `counts.nearMissMatched`
+quelli davvero usati in un abbinamento. `sources.forward` diventa
+`artifacts/shadow_v1_live/signals.jsonl + near_miss.jsonl (controfattuale)` solo
+se `nearMissMatched > 0`, e in quel caso una riga di `limitations` ricorda che
+l'esito e' controfattuale (il setup non e' mai stato emesso) e che l'R e' di
+prezzo, senza costi ne' leva. Il pannello mostra `esiti controfattuali
+(near-miss): N su M` solo quando N > 0.
+
+Se la lettura dei near-miss fallisce, la calibrazione resta quella dei segnali
+(un `console.warn`, nessuna 500).
+
+Limite che resta: i near-miss coprono solo i blocchi da singolo gate della
+whitelist, con livelli validi e al massimo 400 record; gli altri candidati
+scartati continuano a non avere esito forward.
 
 ## Come verificare
 

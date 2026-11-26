@@ -76,11 +76,11 @@ export interface ShadowAiCalibrationView {
   verdict?: 'insufficient' | 'evidence';
   edgeR?: number | null;
   minSample?: number;
-  counts?: { matched?: number; classified?: number; remoteEntries?: number };
+  counts?: { matched?: number; classified?: number; remoteEntries?: number; nearMissMatched?: number };
   buckets?: { decision: string; n: number }[];
   skippedWinners?: unknown[];
-  /** Fonte effettiva del log (`sources.aiLog`), fallback Firestore compreso. */
-  sources?: { aiLog?: string };
+  /** Fonte effettiva del log (`sources.aiLog`) e degli esiti (`sources.forward`). */
+  sources?: { aiLog?: string; forward?: string };
   /** Lettura fermata al tetto: il campione puo' essere incompleto. */
   truncated?: boolean;
   readLimit?: number;
@@ -110,18 +110,21 @@ function calibrationCounts(calibration: ShadowAiCalibrationView) {
       : Math.max(0, matched - sconosciuto);
   // Il fallback si dichiara sulle voci REMOTE davvero usate, non sul flag.
   const remoteEntries = calibration.counts?.remoteEntries ?? 0;
+  // Esiti controfattuali near-miss davvero usati negli abbinamenti.
+  const nearMissMatched = calibration.counts?.nearMissMatched ?? 0;
   return {
     matched,
     classified,
     excluded: Math.max(0, matched - classified),
     remoteEntries: remoteEntries > 0 ? remoteEntries : 0,
+    nearMissMatched: nearMissMatched > 0 ? nearMissMatched : 0,
   };
 }
 
 export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrationView }> = ({
   calibration,
 }) => {
-  const { matched, classified, excluded, remoteEntries } = calibrationCounts(calibration);
+  const { matched, classified, excluded, remoteEntries, nearMissMatched } = calibrationCounts(calibration);
   return (
   <div data-testid="shadow-ai-calibration" className="border-t border-slate-700 pt-2 space-y-1">
     <p className="text-[10px] font-bold text-slate-300">
@@ -135,8 +138,13 @@ export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrati
       fonte: {calibration.sources?.aiLog ?? 'shadow_ai_log.jsonl'}
       {remoteEntries > 0 ? ` · fallback attivo (${remoteEntries} voci)` : ''}
     </p>
-    {calibration.truncated === true && (
-      <p className="text-[10px] text-amber-300" data-testid="shadow-ai-calibration-truncated">
+    {nearMissMatched > 0 && (
+      <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-near-miss">
+        esiti controfattuali (near-miss): {nearMissMatched} su {matched} — setup mai emessi, R di
+        prezzo
+      </p>
+    )}
+    {calibration.truncated === true && (      <p className="text-[10px] text-amber-300" data-testid="shadow-ai-calibration-truncated">
         lettura troncata a {calibration.readLimit ?? '—'} voci: il campione può essere incompleto
       </p>
     )}

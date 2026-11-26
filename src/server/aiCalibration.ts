@@ -139,6 +139,57 @@ export interface AiCalibrationForwardPoint {
   decidedAtMs: number;
   r: number;
   status: 'STOP' | 'TARGET' | 'EXPIRED';
+  /**
+   * Origine dell'esito: `signals` (setup emesso; default per le righe senza
+   * campo) oppure `near_miss` (setup bloccato da un solo gate e mai emesso:
+   * esito controfattuale). Non cambia il join, serve a dichiarare i numeri.
+   */
+  source?: 'signals' | 'near_miss';
+}
+
+/** Campi dei record near-miss usati come esito (strutturale: nessun import). */
+export interface AiCalibrationNearMissRecord {
+  id: string;
+  ticker: string;
+  decidedAtMs: number;
+  r: number | null;
+  status: string;
+}
+
+const NEAR_MISS_RESOLVED_STATUSES = new Set(['TARGET', 'STOP', 'EXPIRED']);
+
+/**
+ * Converte i record near-miss GIA' persistiti in punti forward.
+ *
+ * Nessun nuovo macchinario: il tracker near-miss calcola gia' l'esito reale
+ * sulle barre chiuse con lo stesso motore deterministico di Shadow V1-live.
+ * Qui si leggono solo gli stati terminali con R finito: `PENDING_FILL`, `OPEN`
+ * e `NOT_FILLED` non hanno un esito e restano fuori (non sono zero). La chiave
+ * e' prefissata per non collidere con quelle di `signals.jsonl`.
+ */
+export function mapNearMissForwardPoints(
+  records: readonly AiCalibrationNearMissRecord[]
+): AiCalibrationForwardPoint[] {
+  const points: AiCalibrationForwardPoint[] = [];
+  for (const record of Array.isArray(records) ? records : []) {
+    if (!record || typeof record.ticker !== 'string' || record.ticker.length === 0) continue;
+    if (!NEAR_MISS_RESOLVED_STATUSES.has(record.status)) continue;
+    if (typeof record.r !== 'number' || !Number.isFinite(record.r)) continue;
+    if (typeof record.decidedAtMs !== 'number' || !Number.isFinite(record.decidedAtMs)) continue;
+    points.push({
+      key: `near_miss:${
+        typeof record.id === 'string' && record.id.length > 0
+          ? record.id
+          : `${record.ticker}@${record.decidedAtMs}`
+      }`,
+      ticker: record.ticker,
+      decidedAtMs: record.decidedAtMs,
+      r: record.r,
+      status: record.status as AiCalibrationForwardPoint['status'],
+      source: 'near_miss',
+    });
+  }
+  return points;
 }
 
 export interface AiCalibrationBucket {
@@ -175,6 +226,10 @@ export interface AiCalibrationResponse {
     aiEntries: number;
     dedupedEntries: number;
     forwardPoints: number;
+    /** Punti forward controfattuali forniti dal tracker near-miss. */
+    nearMissForwardPoints: number;
+    /** Abbinamenti che hanno usato un esito near-miss. */
+    nearMissMatched: number;
     matched: number;
     /** Abbinamenti con una decisione utilizzabile (tutti tranne SCONOSCIUTO). */
     classified: number;
@@ -299,7 +354,11 @@ export function buildAiCalibration(input: {
   const rawEntries = Array.isArray(input.entries) ? input.entries : [];
   const cappedEntries = rawEntries.slice(-AI_CALIBRATION_MAX_ENTRIES);
   const deduped = dedupeEntries(cappedEntries);
-  const forwardIndex = indexForward(Array.isArray(input.forward) ? input.forward : []);
+  const forwardList = Array.isArray(input.forward) ? input.forward : [];
+  const forwardIndex = indexForward(forwardList);
+  const nearMissForwardPoints = forwardList.filter(
+    (point) => point && point.source === 'near_miss'
+  ).length;
 
   // Solo valutazioni di candidato; la prosa resta fuori e viene dichiarata.
   interface Candidate {
@@ -350,11 +409,13 @@ export function buildAiCalibration(input: {
   const matchedOrders = new Set<number>();
   const usedPointKeys = new Set<string>();
   const joined: AiCalibrationJoin[] = [];
+  let nearMissMatched = 0;
   for (const pair of pairs) {
     if (matchedOrders.has(pair.candidate.order)) continue;
     if (usedPointKeys.has(pair.point.key)) continue;
     matchedOrders.add(pair.candidate.order);
     usedPointKeys.add(pair.point.key);
+    if (pair.point.source === 'near_miss') nearMissMatched += 1;
     const { entry, ticker, atMs } = pair.candidate;
     joined.push({
       candidateKey:
@@ -456,12 +517,19 @@ export function buildAiCalibration(input: {
         remoteEntries > 0
           ? 'shadow_ai_log.jsonl + Firestore (fallback)'
           : 'shadow_ai_log.jsonl',
-      forward: 'artifacts/shadow_v1_live/signals.jsonl',
+      // Il near-miss entra nella dicitura solo se un suo esito e' stato usato:
+      // fornirne senza abbinarli non rende la calibrazione "controfattuale".
+      forward:
+        nearMissMatched > 0
+          ? 'artifacts/shadow_v1_live/signals.jsonl + near_miss.jsonl (controfattuale)'
+          : 'artifacts/shadow_v1_live/signals.jsonl',
     },
     counts: {
       aiEntries: rawEntries.length,
       dedupedEntries: deduped.length,
       forwardPoints,
+      nearMissForwardPoints,
+      nearMissMatched,
       matched,
       classified,
       remoteEntries,
@@ -482,7 +550,12 @@ export function buildAiCalibration(input: {
     limitations: [
       'Sola lettura: nessuna scrittura, nessun cambio di memoria AI, gate o selezione setup.',
       'Il join e\' per ticker e prossimita\' temporale (finestra fissa); non dimostra che la decisione AI abbia causato l\'esito.',
-      'L\'R di V1-live e\' di prezzo (senza costi ne\' leva) e solo su setup emessi con decisione TRADE: i candidati mai emessi non hanno esito forward e restano non abbinati.',
+      'L\'R di V1-live e\' di prezzo (senza costi ne\' leva) e solo su setup emessi con decisione TRADE: gli altri candidati restano non abbinati, tranne i near-miss.',
+      ...(nearMissForwardPoints > 0
+        ? [
+            `${nearMissMatched} abbinamenti usano un esito near-miss controfattuale: il setup era bloccato da un solo gate (ADX borderline, G4, G5, G7, G8/G9, G11) e non e' mai stato emesso. L'esito e' calcolato sulle barre chiuse con lo stesso motore di V1-live, ma non e' un trade reale.`,
+          ]
+        : []),
       `Righe AI senza esito entro ${Math.round(windowMs / 60000)} minuti sono contate come non abbinate, non come zero.`,
       '`counts.matched` e\' sempre la somma dei `buckets`: le valutazioni abbinate con esito illeggibile stanno in `SCONOSCIUTO`, non spariscono.',
       'Il desk resta NON_VALIDATO finche\' il validatore deterministico non conferma: questa vista e\' esplorativa.',
@@ -513,6 +586,12 @@ export interface AiCalibrationRegistrationDeps {
     | AiCalibrationEntriesInput
     | Promise<AiCalibrationEntry[] | AiCalibrationEntriesInput>;
   readForward: () => AiCalibrationForwardPoint[] | Promise<AiCalibrationForwardPoint[]>;
+  /**
+   * Esiti controfattuali dei near-miss gia' persistiti: opzionale. Se manca o
+   * lancia, la calibrazione resta quella di `signals.jsonl` (niente dati
+   * inventati, nessuna 500).
+   */
+  readNearMissForward?: () => AiCalibrationForwardPoint[] | Promise<AiCalibrationForwardPoint[]>;
 
   env?: Record<string, string | undefined>;
   now?: () => number;
@@ -546,6 +625,22 @@ function normalizeEntriesInput(
   return { entries: [], truncated: false, readLimit: 0, remoteEntries: 0 };
 }
 
+/**
+ * Unione per chiave dei punti forward: la prima occorrenza vince, cosi' i
+ * segnali emessi (`signals.jsonl`) non vengono mai sovrascritti dai near-miss.
+ */
+function mergeForwardPoints(
+  first: readonly AiCalibrationForwardPoint[],
+  second: readonly AiCalibrationForwardPoint[]
+): AiCalibrationForwardPoint[] {
+  const byKey = new Map<string, AiCalibrationForwardPoint>();
+  for (const point of [...first, ...second]) {
+    if (!point || typeof point.key !== 'string' || point.key.length === 0) continue;
+    if (!byKey.has(point.key)) byKey.set(point.key, point);
+  }
+  return [...byKey.values()];
+}
+
 export async function createAiCalibrationHandler(
   deps: AiCalibrationRegistrationDeps
 ): Promise<{ status: number; body: Record<string, unknown> | AiCalibrationResponse }> {
@@ -558,11 +653,21 @@ export async function createAiCalibrationHandler(
   const nowMs = now();
   try {
     const read = normalizeEntriesInput(await deps.readEntries());
+    const signals = await deps.readForward();
+    let nearMiss: AiCalibrationForwardPoint[] = [];
+    if (deps.readNearMissForward) {
+      try {
+        nearMiss = [...(await deps.readNearMissForward())];
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[AI Calibration] near-miss non disponibili: ${message}`);
+      }
+    }
     return {
       status: 200,
       body: buildAiCalibration({
         entries: read.entries,
-        forward: await deps.readForward(),
+        forward: mergeForwardPoints(signals, nearMiss),
         nowMs,
         generatedAt: new Date(nowMs).toISOString(),
         remoteEntries: read.remoteEntries,
