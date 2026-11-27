@@ -1099,3 +1099,104 @@ describe('aiCalibration — ordinalita, policy e strati', () => {
     );
   });
 });
+
+describe('aiCalibration — tagli per promptVersion e per modello', () => {
+  function buildTagged(
+    sets: {
+      decision: 'AZIONE' | 'ATTESA' | 'SCARTO';
+      r: number;
+      n: number;
+      promptVersion?: string | null;
+      model?: string | null;
+    }[]
+  ) {
+    const entries: AiCalibrationEntry[] = [];
+    const forward: AiCalibrationForwardPoint[] = [];
+    let index = 0;
+    for (const set of sets) {
+      for (let i = 0; i < set.n; i += 1) {
+        index += 1;
+        const ticker = `T${index}`;
+        entries.push(
+          entry({
+            id: `e${index}`,
+            ticker,
+            candidateKey: `k:${ticker}`,
+            decision: set.decision,
+            promptVersion: set.promptVersion,
+            model: set.model,
+          })
+        );
+        forward.push(point({ key: `p:${ticker}`, ticker, r: set.r }));
+      }
+    }
+    return buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0) });
+  }
+
+  it('separa le versioni di prompt senza cambiare il verdetto aggregato', () => {
+    const curvature = {
+      promptVersion: 'ai-specialize@1',
+      model: 'openrouter:m1',
+    };
+    const tagged = buildTagged([
+      { decision: 'AZIONE', r: 1, n: 10, ...curvature },
+      { decision: 'SCARTO', r: -1, n: 10, ...curvature },
+      { decision: 'AZIONE', r: -1, n: 10, promptVersion: 'ai-specialize@2', model: 'openrouter:m1' },
+      { decision: 'SCARTO', r: 1, n: 10, promptVersion: 'ai-specialize@2', model: 'openrouter:m1' },
+    ]);
+    const untagged = buildTagged([
+      { decision: 'AZIONE', r: 1, n: 10 },
+      { decision: 'SCARTO', r: -1, n: 10 },
+      { decision: 'AZIONE', r: -1, n: 10 },
+      { decision: 'SCARTO', r: 1, n: 10 },
+    ]);
+
+    assert.equal(tagged.verdict, untagged.verdict, 'i tagli non cambiano il verdetto');
+    assert.equal(tagged.edgeRNet, untagged.edgeRNet);
+    assert.equal(tagged.counts.matched, 40);
+
+    const v1 = tagged.byPromptVersion.find((row) => row.value === 'ai-specialize@1')!;
+    const v2 = tagged.byPromptVersion.find((row) => row.value === 'ai-specialize@2')!;
+    assert.equal(v1.matched, 20);
+    assert.equal(v1.classified, 20);
+    assert.equal(v1.edgeRNet, 2, '1.00 lordo - (-1.00) = 2.00 R');
+    assert.equal(v1.contradicts, false);
+    assert.equal(v2.edgeRNet, -2);
+    assert.equal(v2.contradicts, true, 'versione con entrambi i lati sufficienti e edge negativo');
+    // Le versioni sono ordinate e il valore non viene inventato.
+    assert.deepEqual(
+      tagged.byPromptVersion.map((row) => row.value),
+      ['ai-specialize@1', 'ai-specialize@2']
+    );
+  });
+
+  it('il taglio per modello mette in fondo le righe non attribuibili', () => {
+    const out = buildTagged([
+      { decision: 'AZIONE', r: 1, n: 3, model: 'openrouter:m2' },
+      { decision: 'AZIONE', r: 1, n: 3, model: 'gemini:g1' },
+      { decision: 'AZIONE', r: 1, n: 3, model: null },
+      { decision: 'AZIONE', r: 1, n: 3, model: '   ' },
+    ]);
+
+    assert.deepEqual(
+      out.byModel.map((row) => row.value),
+      ['gemini:g1', 'openrouter:m2', null],
+      'stringa vuota = non attribuibile, non un modello'
+    );
+    const unknown = out.byModel.find((row) => row.value === null)!;
+    assert.equal(unknown.matched, 6, 'le righe senza modello restano insieme e dichiarate');
+    assert.equal(unknown.edgeRNet, null, 'senza SCARTO l edge non si calcola');
+  });
+
+  it('senza tag nel log i due elenchi restano presenti e vuoti', () => {
+    const out = buildTagged([{ decision: 'AZIONE', r: 1, n: 2 }]);
+    assert.equal(out.byPromptVersion.length, 1);
+    assert.equal(out.byPromptVersion[0].value, null);
+    assert.equal(out.byModel.length, 1);
+    assert.equal(out.byModel[0].value, null);
+    assert.ok(
+      out.limitations.some((line) => line.includes('promptVersion') && line.includes('diagnostici')),
+      'la risposta dichiara che i tagli non entrano nel verdetto'
+    );
+  });
+});

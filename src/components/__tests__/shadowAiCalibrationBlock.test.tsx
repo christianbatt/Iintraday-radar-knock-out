@@ -392,3 +392,87 @@ describe('ShadowAiCalibrationBlock — incertezza, copertura e policy', () => {
     assert.ok(out.includes('strati in contraddizione: market US'));
   });
 });
+
+describe('ShadowAiCalibrationBlock — tagli per prompt e modello', () => {
+  const TAGGED = {
+    ...EVIDENCE,
+    byPromptVersion: [
+      { value: 'ai-specialize@1', matched: 20, actionN: 10, skipN: 10, edgeRNet: 0.31, contradicts: false },
+      { value: 'ai-specialize@2', matched: 14, actionN: 6, skipN: 8, edgeRNet: -0.4, contradicts: true },
+      { value: null, matched: 3, actionN: 1, skipN: 1, edgeRNet: null, contradicts: false },
+    ],
+    byModel: [
+      { value: 'openrouter:m1', matched: 30, actionN: 14, skipN: 12, edgeRNet: 0.22, contradicts: false },
+    ],
+  };
+
+  it('mostra i due tagli con R netto e le righe non attribuibili come n.d.', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, { calibration: TAGGED })
+    );
+    assert.ok(out.includes('data-testid="shadow-ai-calibration-prompt-versions"'));
+    assert.ok(out.includes('per prompt (R netto):'));
+    assert.ok(out.includes('ai-specialize@1 n=20 edgeR=0.31'));
+    assert.ok(out.includes('ai-specialize@2 n=14 edgeR=-0.4'));
+    assert.ok(out.includes('n.d. n=3 edgeR=—'));
+    assert.ok(out.includes('data-testid="shadow-ai-calibration-models"'));
+    assert.ok(out.includes('openrouter:m1 n=30 edgeR=0.22'));
+  });
+
+  it('senza tagli non inventa righe', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, { calibration: EVIDENCE })
+    );
+    assert.ok(!out.includes('shadow-ai-calibration-prompt-versions'));
+    assert.ok(!out.includes('shadow-ai-calibration-models'));
+  });
+
+  it('ogni riga del log mostra promptVersion e model solo quando ci sono', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAISection, {
+        flag: 'on',
+        entries: [
+          {
+            id: 'tagged',
+            timestamp: '2026-11-25T09:00:00.000Z',
+            ticker: 'ENI.MI',
+            market: 'EU',
+            direction: 'LONG',
+            setup: 'ORB',
+            aiOutcome: 'APPROVATO: momentum',
+            aiCategory: 'orb',
+            source: 'specialize',
+            status: 'NON_VALIDATO',
+            outcome: null,
+            decision: 'AZIONE',
+            promptVersion: 'ai-specialize@1',
+            model: 'openrouter:m1',
+          },
+          {
+            id: 'untagged',
+            timestamp: '2026-11-25T09:05:00.000Z',
+            ticker: 'ISP.MI',
+            market: 'EU',
+            direction: 'SHORT',
+            setup: null,
+            aiOutcome: 'SKIP',
+            aiCategory: null,
+            source: 'specialize',
+            status: 'NON_VALIDATO',
+            outcome: null,
+            decision: 'SCARTO',
+            promptVersion: null,
+            model: null,
+          },
+        ],
+        calibration: null,
+      })
+    );
+    const versions = out.match(/shadow-ai-row-prompt-version/g) ?? [];
+    const models = out.match(/shadow-ai-row-model/g) ?? [];
+    assert.equal(versions.length, 1, 'solo la riga con promptVersion');
+    assert.equal(models.length, 1, 'solo la riga con model');
+    assert.ok(out.includes('ai-specialize@1'));
+    assert.ok(out.includes('openrouter:m1'));
+  });
+});

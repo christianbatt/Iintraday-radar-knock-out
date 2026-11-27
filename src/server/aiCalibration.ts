@@ -187,6 +187,10 @@ export interface AiCalibrationEntry {
   durationMs?: number | null;
   /** Campo chiuso scritto dall'handler; assente nelle righe storiche. */
   decision?: string | null;
+  /** ADDITIVO (P6): versione del prompt che ha prodotto la valutazione. */
+  promptVersion?: string | null;
+  /** ADDITIVO (P6): modello che ha risposto (`openrouter:<id>` / `gemini:<id>`). */
+  model?: string | null;
 }
 
 export interface AiCalibrationForwardPoint {
@@ -298,6 +302,10 @@ export interface AiCalibrationJoin {
   rNet: number;
   forwardStatus: string;
   deltaMs: number;
+  /** Versione del prompt della decisione; `null` per le righe storiche. */
+  promptVersion: string | null;
+  /** Modello che ha risposto; `null` quando non e' attribuibile. */
+  model: string | null;
 }
 
 /** Intervallo percentile di un bootstrap deterministico. */
@@ -340,6 +348,32 @@ export interface AiCalibrationCoverage {
 export interface AiCalibrationOrdinality {
   status: 'ordinato' | 'non_ordinato' | 'non_valutabile';
   detail: string;
+}
+
+/**
+ * Taglio diagnostico della calibrazione per prompt o per modello.
+ *
+ * Perche' esiste: un cambio di prompt o di modello sembra un cambio di bravura
+ * del desk. Separare i campioni rende visibile che il numero aggregato e' la
+ * media di popolazioni diverse. NON entra nel verdetto: i campioni per singola
+ * versione o modello sono piccoli, e un taglio non e' una prova.
+ *
+ * `value: null` raccoglie le righe senza il campo (storiche o non
+ * attribuibili): non sono ne' una versione ne' un modello, quindi non vengono
+ * mescolate con un valore inventato.
+ */
+export interface AiCalibrationSliceRow {
+  value: string | null;
+  matched: number;
+  classified: number;
+  actionN: number;
+  skipN: number;
+  meanRNet: number | null;
+  winRateNetPct: number | null;
+  /** meanR(AZIONE) − meanR(SCARTO) dentro la slice. */
+  edgeRNet: number | null;
+  /** Entrambi i lati sufficienti ed edge netto negativo. */
+  contradicts: boolean;
 }
 
 /** Valore di una policy di selezione, in R netto per trade. */
@@ -427,6 +461,10 @@ export interface AiCalibrationResponse {
   policies: AiCalibrationPolicyRow[];
   /** Edge per mercato e per direzione, con le contraddizioni dichiarate. */
   strata: AiCalibrationStratum[];
+  /** Calibrazione separata per versione di prompt (diagnostica). */
+  byPromptVersion: AiCalibrationSliceRow[];
+  /** Calibrazione separata per modello (diagnostica). */
+  byModel: AiCalibrationSliceRow[];
   /** Decisioni di scarto su setup che poi sono andati in positivo. */
   skippedWinners: AiCalibrationJoin[];
   /** Allarmi di formato: vuoto quando la quota e' sotto soglia. */
@@ -624,6 +662,57 @@ function buildStrata(rows: readonly AiCalibrationJoin[]): AiCalibrationStratum[]
     }
   }
   return strata;
+}
+
+function buildSlices(
+  rows: readonly AiCalibrationJoin[],
+  dimension: 'promptVersion' | 'model'
+): AiCalibrationSliceRow[] {
+  const groups = new Map<string, { value: string | null; rows: AiCalibrationJoin[] }>();
+  for (const row of rows) {
+    const raw = dimension === 'promptVersion' ? row.promptVersion : row.model;
+    const value = typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : null;
+    const key = value === null ? '\u0000unknown' : `v:${value}`;
+    const group = groups.get(key) ?? { value, rows: [] };
+    group.rows.push(row);
+    groups.set(key, group);
+  }
+  const slices: AiCalibrationSliceRow[] = [];
+  for (const { value, rows: group } of groups.values()) {
+    const action = group.filter((row) => row.decision === 'AZIONE');
+    const skip = group.filter((row) => row.decision === 'SCARTO');
+    const actionValues = action.map((row) => row.rNet);
+    const skipValues = skip.map((row) => row.rNet);
+    const classifiedRows = group.filter((row) => row.decision !== 'SCONOSCIUTO');
+    const netValues = classifiedRows.map((row) => row.rNet);
+    const edgeRNet =
+      actionValues.length > 0 && skipValues.length > 0
+        ? round(mean(actionValues) - mean(skipValues), 4)
+        : null;
+    slices.push({
+      value,
+      matched: group.length,
+      classified: classifiedRows.length,
+      actionN: actionValues.length,
+      skipN: skipValues.length,
+      meanRNet: netValues.length > 0 ? round(mean(netValues), 4) : null,
+      winRateNetPct: netValues.length > 0 ? round(winSharePct(netValues), 2) : null,
+      edgeRNet,
+      contradicts:
+        edgeRNet !== null &&
+        edgeRNet < 0 &&
+        actionValues.length >= AI_DESK_VALIDATION_MIN_PER_BUCKET &&
+        skipValues.length >= AI_DESK_VALIDATION_MIN_PER_BUCKET,
+    });
+  }
+  // Le righe senza campo stanno in fondo: non sono un valore come gli altri.
+  slices.sort((a, b) => {
+    if (a.value === null && b.value === null) return 0;
+    if (a.value === null) return 1;
+    if (b.value === null) return -1;
+    return a.value < b.value ? -1 : a.value > b.value ? 1 : 0;
+  });
+  return slices;
 }
 
 function buildPolicies(rows: readonly AiCalibrationJoin[]): AiCalibrationPolicyRow[] {
@@ -890,6 +979,14 @@ export function buildAiCalibration(input: {
       rNet: round(pair.point.r - AI_CALIBRATION_NET_COST_R, 4),
       forwardStatus: pair.point.status,
       deltaMs: Math.round(pair.point.decidedAtMs - atMs),
+      promptVersion:
+        typeof entry.promptVersion === 'string' && entry.promptVersion.trim().length > 0
+          ? entry.promptVersion.trim()
+          : null,
+      model:
+        typeof entry.model === 'string' && entry.model.trim().length > 0
+          ? entry.model.trim()
+          : null,
     });
   }
   const unmatchedAiEntries = candidates.length - joined.length;
@@ -904,6 +1001,10 @@ export function buildAiCalibration(input: {
   const uncertainty = buildUncertainty(actionNetR, skipNetR);
   const strata = buildStrata(joined);
   const policies = buildPolicies(joined);
+  // Tagli diagnostici: stessa popolazione del verdetto, separata per prompt e
+  // modello. Non entrano in `validateAiDeskSample`.
+  const byPromptVersion = buildSlices(joined, 'promptVersion');
+  const byModel = buildSlices(joined, 'model');
   const ordinality = buildOrdinality(buckets);
   const action = buckets.find((b) => b.decision === 'AZIONE');
   const skip = buckets.find((b) => b.decision === 'SCARTO');
@@ -1060,6 +1161,8 @@ export function buildAiCalibration(input: {
     ordinality,
     policies,
     strata,
+    byPromptVersion,
+    byModel,
     skippedWinners,
     alerts,
     verdict,
@@ -1099,6 +1202,8 @@ export function buildAiCalibration(input: {
       'Le policy sono R netti per trade, senza capitalizzazione ne leva: non sono un P&L.',
       'Gli strati (mercato, direzione) sono esplorativi: non entrano nel verdetto e non dimostrano causalita. ' +
         'Un edge aggregato puo non valere in ogni strato.',
+      'I tagli per promptVersion e per modello sono diagnostici: separano popolazioni diverse ma restano fuori dal verdetto. ' +
+        'Un campione per singola versione o modello e normalmente piccolo; le righe senza campo stanno in `value: null` e non sono attribuibili.',
       validation.verdict === 'CONFERMATO'
         ? `Validatore ${AI_DESK_VALIDATION_VERSION}: CONFERMATO (${validation.checks
             .filter((check) => check.status === 'pass')

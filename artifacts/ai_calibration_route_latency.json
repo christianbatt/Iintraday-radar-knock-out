@@ -1,15 +1,15 @@
 {
   "kind": "ai-calibration-route-latency",
-  "measuredAt": "2026-11-27T00:09:49.357Z",
+  "measuredAt": "2026-11-27T00:25:13.080Z",
   "route": "GET /api/shadow/ai-calibration (nucleo puro buildAiCalibration)",
   "entries": 2000,
   "forwardPoints": 2000,
   "iterations": 20,
   "ms": {
-    "min": 103.45,
-    "p50": 119.27,
-    "p95": 177.95,
-    "max": 193.51
+    "min": 107.47,
+    "p50": 118.18,
+    "p95": 197.38,
+    "max": 214.19
   },
   "sampleResult": {
     "matched": 1800,

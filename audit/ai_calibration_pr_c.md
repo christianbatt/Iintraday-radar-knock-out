@@ -440,10 +440,43 @@ escluse):
 | versione | p50 | p95 | max |
 | --- | --- | --- | --- |
 | prima | 132.9 ms | 203.0 ms | 214.9 ms |
-| dopo | 119.3 ms | 178.0 ms | 193.5 ms |
+| dopo P5 | 119.3 ms | 178.0 ms | 193.5 ms |
+| dopo P6 (tagli per prompt/modello) | 118.2 ms | 197.4 ms | 214.2 ms |
 
 Il costo e' tutto nel bootstrap deterministico (2000 iterazioni x 2 statistiche)
 e scala con il campione, non con la rete. Le aggiunte di questo passaggio non
 introducono lavoro nel percorso caldo della calibrazione (il versionamento e'
 sul log, la sezione e' nel pack): la differenza fra le due misure e' rumore di
 macchina. Il riepilogo e' in `artifacts/ai_calibration_route_latency.json`.
+
+## Calibrazione separata per prompt e modello (P6)
+
+Con `promptVersion` e `model` su ogni riga il campione aggregato mescola
+popolazioni diverse: un cambio di prompt o di modello sembra un cambio di
+bravura del desk. La risposta espone due tagli diagnostici, **fuori dal
+verdetto**:
+
+- `byPromptVersion` e `byModel`, ciascuno con `value` (la versione o il
+  modello), `matched`, `classified`, `actionN`, `skipN`, `meanRNet`,
+  `winRateNetPct`, `edgeRNet` e `contradicts`;
+- `edgeRNet` e' `meanR(AZIONE) − meanR(SCARTO)` dentro la slice, sul R netto;
+  `contradicts` richiede entrambi i lati >= 10 casi (stessa soglia degli strati)
+  ed edge negativo;
+- `value: null` raccoglie le righe senza campo (storiche, placeholder, o
+  valutazioni senza modello): stanno in fondo e non vengono fuse con un valore
+  inventato. Una stringa di soli spazi vale `null`;
+- i tagli sono costruiti sugli stessi abbinamenti del verdetto, quindi la loro
+  somma di `matched` e' `counts.matched`, ma non entrano in
+  `validateAiDeskSample`: nessun check, nessuna soglia, nessuna promozione;
+- un test verifica che aggiungere i tag non cambi ne' `verdict` ne' `edgeRNet`
+  aggregato.
+
+Il pannello Shadow AI mostra sotto la calibrazione due righe, `per prompt (R
+netto)` e `per modello (R netto)`, nel formato `valore n=… edgeR=…` con `n.d.`
+per le righe non attribuibili e `⚠` sugli edge negativi con lati sufficienti.
+Ogni riga dell'elenco log porta due badge `promptVersion` e `model` quando i
+campi sono presenti (nessun badge e nessun `—` quando sono `null`: un campo
+assente non e' un valore).
+
+Nessun tocco a gate, `tradingParams`, selezione dei setup o memoria AI: la
+modifica e' confinata alla risposta di calibrazione e alla vista.

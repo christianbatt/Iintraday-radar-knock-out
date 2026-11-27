@@ -26,6 +26,10 @@ export interface AiShadowLogEntry {
   candidateSource?: 'body' | 'snapshot' | 'none' | null;
   /** Decisione chiusa scritta dall'handler; assente o `null` nelle righe in prosa. */
   decision?: 'AZIONE' | 'ATTESA' | 'SCARTO' | null;
+  /** ADDITIVO (P6): versione del prompt che ha prodotto la valutazione. */
+  promptVersion?: string | null;
+  /** ADDITIVO (P6): modello che ha risposto (`openrouter:<id>` / `gemini:<id>`). */
+  model?: string | null;
 }
 
 export interface ShadowLogSummary {
@@ -122,6 +126,29 @@ export interface ShadowAiCalibrationView {
   policies?: { code?: string; trades?: number; meanRNet?: number | null }[];
   /** Edge per mercato/direzione e contraddizioni dichiarate. */
   strata?: { dimension?: string; value?: string; contradicts?: boolean }[];
+  /** Calibrazione separata per versione di prompt (diagnostica). */
+  byPromptVersion?: ShadowAiCalibrationSlice[];
+  /** Calibrazione separata per modello (diagnostica). */
+  byModel?: ShadowAiCalibrationSlice[];
+}
+
+/** Taglio diagnostico della calibrazione: prompt o modello, mai verdetto. */
+export interface ShadowAiCalibrationSlice {
+  value?: string | null;
+  matched?: number;
+  actionN?: number;
+  skipN?: number;
+  edgeRNet?: number | null;
+  contradicts?: boolean;
+}
+
+/** Riga di un taglio per prompt/model: `n.d.` per le righe senza il campo. */
+export function formatCalibrationSlice(slice: ShadowAiCalibrationSlice): string {
+  const value = typeof slice.value === 'string' && slice.value.length > 0 ? slice.value : 'n.d.';
+  const edge =
+    slice.edgeRNet === null || slice.edgeRNet === undefined ? '—' : String(slice.edgeRNet);
+  const flag = slice.contradicts === true ? ' ⚠' : '';
+  return `${value} n=${slice.matched ?? 0} edgeR=${edge}${flag}`;
 }
 
 /**
@@ -278,6 +305,24 @@ export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrati
                 policy.meanRNet === null || policy.meanRNet === undefined ? '—' : policy.meanRNet
               }`
           )
+          .join(' · ')}
+      </p>
+    )}
+    {(calibration.byPromptVersion ?? []).some((slice) => (slice.matched ?? 0) > 0) && (
+      <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-prompt-versions">
+        per prompt (R netto):{' '}
+        {(calibration.byPromptVersion ?? [])
+          .filter((slice) => (slice.matched ?? 0) > 0)
+          .map(formatCalibrationSlice)
+          .join(' · ')}
+      </p>
+    )}
+    {(calibration.byModel ?? []).some((slice) => (slice.matched ?? 0) > 0) && (
+      <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-models">
+        per modello (R netto):{' '}
+        {(calibration.byModel ?? [])
+          .filter((slice) => (slice.matched ?? 0) > 0)
+          .map(formatCalibrationSlice)
           .join(' · ')}
       </p>
     )}
@@ -450,6 +495,24 @@ export const ShadowAISection: React.FC<ShadowAISectionProps> = ({
                     {e.decision ?? '—'}
                   </span>
                   <span>{e.ticker ?? '—'} · {e.market} · {e.aiCategory ?? '—'}</span>
+                  {(e.promptVersion ?? null) !== null && (
+                    <span
+                      data-testid="shadow-ai-row-prompt-version"
+                      className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono"
+                      title="promptVersion: versione del prompt che ha prodotto la riga"
+                    >
+                      {e.promptVersion}
+                    </span>
+                  )}
+                  {(e.model ?? null) !== null && (
+                    <span
+                      data-testid="shadow-ai-row-model"
+                      className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono truncate"
+                      title="model: modello che ha risposto"
+                    >
+                      {e.model}
+                    </span>
+                  )}
                   <span className="text-slate-500 truncate">{e.aiOutcome ?? '—'}</span>
                 </li>
               ))}
