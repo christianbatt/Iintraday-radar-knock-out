@@ -376,3 +376,74 @@ sarebbe formalmente calcolabile e sostanzialmente vuoto.
 Il pannello mostra, quando presenti: `IC95% R netto: edgeR [a, b] · divario [c,
 d] punti`, `copertura LLM: x/y candidati valutati (z%)`, la riga delle policy e
 l'eventuale riga `strati in contraddizione`.
+
+## Versionamento di prompt e modello (P5)
+
+Una riga di `shadow_ai_log.jsonl` diceva *cosa* ha deciso il desk, non *con quale
+prompt* e *con quale modello*. Due valutazioni prodotte da istruzioni diverse
+finivano nello stesso bucket: un cambio di prompt sembrava un cambio di bravura.
+
+- `promptVersion`: versione del testo che ha prodotto la riga. Gli handler la
+  scrivono esplicitamente — `ai-specialize@1`, `ai-desk-postmortem@1`, e la
+  forma `<handler>@1+ai-desk@1` quando nel prompt entra il contratto del
+  fascicolo; i batch dei candidati usano `ai-scan@1`
+  (`AI_SHADOW_SCAN_PROMPT_VERSION`). La costante va cambiata quando cambia il
+  testo, non quando cambia il codice.
+- `model`: modello che ha davvero risposto, nella forma `openrouter:<id>` o
+  `gemini:<id>`. Lo riporta la funzione di chiamata (`callOpenRouterModel`,
+  `callOpenRouterRawText`, `callGeminiModel`), non si deduce dal testo
+  dell'output. `null` quando nessun modello ha risposto: una valutazione senza
+  modello non e' attribuibile.
+- Righe storiche, placeholder di scansione e righe senza valutazione restano
+  `null` su entrambi i campi: nessun valore inventato, nessun default
+  "probabile". Stringhe vuote o spazi diventano `null` in normalizzazione.
+- Il modello e' per batch, non per singola risposta: il parser accetta sia la
+  forma storica `string` sia `{ text, model }`, quindi i test esistenti che
+  restituiscono solo testo continuano a funzionare.
+
+## Calibrazione nel fascicolo probatorio
+
+Il post-mortem leggeva diario, veti e near-miss: sapeva cosa aveva fatto il
+mercato, non come erano andate le decisioni del desk. Ora il fascicolo
+(`ai-evidence@1`) ha una sezione `calibration` costruita dalla risposta gia'
+calcolata di `/api/shadow/ai-calibration`:
+
+- `calibration.available`, `.verdict`, `.validationVerdict`, `.classified`,
+  `.matched`, `.edgeRNet`, `.edgeRCI.low`/`.high`, `.costR`,
+  `.coverage.evaluatedPct`, `.alertCount` e una chiave booleana per allarme;
+- `calibration.policy.<code>.{trades,meanRNet,winRateNetPct}` (massimo 3);
+- `calibration.stratum.<dimensione>.<valore>.{matched,edgeRNet,contradicts}`
+  (massimo 12, valori vuoti esclusi);
+- le `limitations` della calibrazione, troncate a 6.
+
+Regole: il pack non ricalcola nulla e non fa join; `n` sulle chiavi e'
+`classified`/`matched`/`trades`, quindi la marcatura `insufficient` scatta sotto
+30 come per le altre sezioni. Se la calibrazione non e' disponibile la sezione
+resta dichiarata (`available: false`) e il pack lo annota; se il verdetto e'
+`insufficient` una nota dice che `edgeRNet` e gli intervalli non sono risultati;
+se uno strato contraddice l'edge aggregato il pack lo dichiara. La sezione e'
+la prima nel testo serializzato, cosi' il budget di caratteri non puo' tagliare
+il track record prima del diario.
+
+La calibrazione arriva al pack come dipendenza del chiamante (`aiDesk` non legge
+log ne' esiti). Nel server le deps di lettura sono una sola definizione
+condivisa fra la route e il fascicolo, quindi la sezione non puo' descrivere un
+campione diverso da quello del pannello.
+
+## Latenza della route con campione pieno
+
+Misurata **prima** delle modifiche con `scripts/ai_calibration_latency.ts`
+(campione sintetico deterministico di 2000 valutazioni + 2000 esiti, 20
+iterazioni, solo nucleo puro `buildAiCalibration`: letture file/Firestore
+escluse):
+
+| versione | p50 | p95 | max |
+| --- | --- | --- | --- |
+| prima | 132.9 ms | 203.0 ms | 214.9 ms |
+| dopo | 119.3 ms | 178.0 ms | 193.5 ms |
+
+Il costo e' tutto nel bootstrap deterministico (2000 iterazioni x 2 statistiche)
+e scala con il campione, non con la rete. Le aggiunte di questo passaggio non
+introducono lavoro nel percorso caldo della calibrazione (il versionamento e'
+sul log, la sezione e' nel pack): la differenza fra le due misure e' rumore di
+macchina. Il riepilogo e' in `artifacts/ai_calibration_route_latency.json`.

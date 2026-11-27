@@ -33,8 +33,13 @@ export const AI_EVIDENCE_MIN_SAMPLE = 30;
 export const AI_EVIDENCE_DEFAULT_MAX_CHARS = 12_000;
 /** Tetto difensivo sui candidati inclusi (in produzione sono 40). */
 export const AI_EVIDENCE_MAX_SCAN_CANDIDATES = 60;
+/** Tetti della sezione calibrazione: il fascicolo deve restare leggibile. */
+export const AI_EVIDENCE_MAX_CALIBRATION_POLICIES = 3;
+export const AI_EVIDENCE_MAX_CALIBRATION_STRATA = 12;
+export const AI_EVIDENCE_MAX_CALIBRATION_LIMITATIONS = 6;
 
 export type AiEvidenceSectionKey =
+  | 'calibration'
   | 'scan'
   | 'vetoOutcomes'
   | 'nearMiss'
@@ -152,6 +157,49 @@ export interface AiEvidenceShadowV2Section {
   limitations: readonly string[];
 }
 
+/**
+ * CALIBRAZIONE DEL DESK. Il post-mortem oggi legge diario, veti e near-miss,
+ * ma non il proprio track record: sa cosa ha fatto il mercato, non come sono
+ * andate le decisioni dell'AI. Questa sezione porta nel fascicolo l'aggregato
+ * gia' calcolato dalla route di calibrazione (nessun ricalcolo, nessun join).
+ *
+ * I valori negativi e l'assenza di campione sono dati, non errori: se
+ * `verdict` e' `insufficient` l'AI non puo' usare `edgeRNet` per concludere.
+ */
+export interface AiEvidenceCalibrationPolicy {
+  code: string;
+  trades: number;
+  meanRNet: number | null;
+  winRateNetPct: number | null;
+}
+
+export interface AiEvidenceCalibrationStratum {
+  dimension: string;
+  value: string;
+  matched: number;
+  edgeRNet: number | null;
+  contradicts: boolean;
+}
+
+export interface AiEvidenceCalibrationSection {
+  available: boolean;
+  verdict: string;
+  validationVerdict: string;
+  classified: number;
+  matched: number;
+  edgeRNet: number | null;
+  costR: number | null;
+  uncertaintyLow: number | null;
+  uncertaintyHigh: number | null;
+  coverageEvaluatedPct: number | null;
+  coverageCandidates: number;
+  alertCount: number;
+  alerts: readonly string[];
+  policies: readonly AiEvidenceCalibrationPolicy[];
+  strata: readonly AiEvidenceCalibrationStratum[];
+  limitations: readonly string[];
+}
+
 export interface AiEvidenceJournalSection {
   n: number;
   wins: number;
@@ -174,6 +222,7 @@ export interface AiEvidenceJournalSection {
 }
 
 export interface AiEvidenceSections {
+  calibration: AiEvidenceCalibrationSection | null;
   scan: AiEvidenceScanSection | null;
   vetoOutcomes: AiEvidenceVetoOutcomesSection | null;
   nearMiss: AiEvidenceNearMissSection | null;
@@ -185,6 +234,8 @@ export interface AiEvidenceSections {
 export interface AiEvidencePackInput {
   /** Istante di costruzione, iniettato: nessun orologio implicito. */
   generatedAtMs: number;
+  /** Risposta gia' calcolata di `/api/shadow/ai-calibration` (sola lettura). */
+  calibration?: unknown;
   scan?: {
     runId?: unknown;
     candidates?: readonly unknown[];
@@ -318,6 +369,91 @@ function normalizeNearMissBucket(raw: unknown): AiEvidenceNearMissBucket | null 
     resolved: count(raw.resolved),
     winRatePct: num(raw.winRatePct, 2),
     meanR: num(raw.meanR),
+  };
+}
+
+/**
+ * Normalizza la risposta della calibrazione. Accetta solo cio' che e' gia'
+ * aggregato: nessun join, nessuna soglia ricalcolata. Gli esiti non
+ * classificati restano dichiarati (`classified` <= `matched`) perche' la
+ * differenza e' esattamente cio' che il validatore non puo' giudicare.
+ */
+function normalizeCalibration(raw: unknown): AiEvidenceCalibrationSection | null {
+  if (!isRecord(raw)) return null;
+  const uncertainty = isRecord(raw.uncertainty) ? raw.uncertainty : {};
+  const edgeCi = isRecord(uncertainty.edgeR) ? uncertainty.edgeR : {};
+  const coverage = isRecord(raw.coverage) ? raw.coverage : {};
+  const validation = isRecord(raw.validation) ? raw.validation : {};
+  const matched = count(raw.counts && isRecord(raw.counts) ? raw.counts.matched : null);
+  const classified = count(raw.counts && isRecord(raw.counts) ? raw.counts.classified : null);
+
+  const policies: AiEvidenceCalibrationPolicy[] = [];
+  const rawPolicies = Array.isArray(raw.policies) ? raw.policies : [];
+  for (const item of rawPolicies) {
+    if (policies.length >= AI_EVIDENCE_MAX_CALIBRATION_POLICIES) break;
+    if (!isRecord(item)) continue;
+    const code = text(item.code);
+    if (code === null) continue;
+    policies.push({
+      code,
+      trades: count(item.trades),
+      meanRNet: num(item.meanRNet),
+      winRateNetPct: num(item.winRateNetPct, 2),
+    });
+  }
+
+  const strata: AiEvidenceCalibrationStratum[] = [];
+  const rawStrata = Array.isArray(raw.strata) ? raw.strata : [];
+  for (const item of rawStrata) {
+    if (strata.length >= AI_EVIDENCE_MAX_CALIBRATION_STRATA) break;
+    if (!isRecord(item)) continue;
+    const dimension = text(item.dimension);
+    const value = text(item.value);
+    if (dimension === null || value === null) continue;
+    strata.push({
+      dimension,
+      value,
+      matched: count(item.matched),
+      edgeRNet: num(item.edgeRNet),
+      contradicts: item.contradicts === true,
+    });
+  }
+  strata.sort((a, b) => `${a.dimension}.${a.value}`.localeCompare(`${b.dimension}.${b.value}`));
+
+  const alerts: string[] = [];
+  const rawAlerts = Array.isArray(raw.alerts) ? raw.alerts : [];
+  for (const item of rawAlerts) {
+    if (!isRecord(item)) continue;
+    const code = text(item.code);
+    if (code !== null) alerts.push(code);
+  }
+
+  const limitations = Array.isArray(raw.limitations)
+    ? raw.limitations
+        .map((item) => oneLine(item))
+        .filter((item): item is string => item !== null)
+        .slice(0, AI_EVIDENCE_MAX_CALIBRATION_LIMITATIONS)
+        .map((item) => clip(item, 240))
+    : [];
+
+  return {
+    available: raw.available === true,
+    verdict: text(raw.verdict) ?? 'insufficient',
+    validationVerdict:
+      text(validation.verdict) ?? (raw.verdict === 'evidence' ? 'unknown' : 'INSUFFICIENTE'),
+    classified,
+    matched,
+    edgeRNet: num(raw.edgeRNet),
+    costR: num(raw.costR),
+    uncertaintyLow: num(edgeCi.lower),
+    uncertaintyHigh: num(edgeCi.upper),
+    coverageEvaluatedPct: num(coverage.evaluatedSharePct, 2),
+    coverageCandidates: count(coverage.candidates),
+    alertCount: alerts.length,
+    alerts,
+    policies,
+    strata,
+    limitations,
   };
 }
 
@@ -478,6 +614,35 @@ function vetoKey(row: AiEvidenceVetoOutcomeRow, suffix: string): string {
 
 function buildEvidence(sections: AiEvidenceSections): AiEvidenceEntry[] {
   const out: AiEvidenceEntry[] = [];
+
+  if (sections.calibration) {
+    const c = sections.calibration;
+    out.push(entry('calibration', 'calibration.available', c.available));
+    out.push(entry('calibration', 'calibration.verdict', c.verdict, c.classified));
+    out.push(entry('calibration', 'calibration.validationVerdict', c.validationVerdict, c.classified));
+    out.push(entry('calibration', 'calibration.classified', c.classified, c.classified));
+    out.push(entry('calibration', 'calibration.matched', c.matched, c.matched));
+    out.push(entry('calibration', 'calibration.edgeRNet', c.edgeRNet, c.classified));
+    out.push(entry('calibration', 'calibration.edgeRCI.low', c.uncertaintyLow, c.classified));
+    out.push(entry('calibration', 'calibration.edgeRCI.high', c.uncertaintyHigh, c.classified));
+    out.push(entry('calibration', 'calibration.costR', c.costR, null));
+    out.push(entry('calibration', 'calibration.coverage.evaluatedPct', c.coverageEvaluatedPct, c.coverageCandidates));
+    out.push(entry('calibration', 'calibration.alertCount', c.alertCount, null));
+    for (const alert of [...c.alerts].sort()) {
+      out.push(entry('calibration', `calibration.alert.${alert}`, true, null));
+    }
+    for (const policy of c.policies) {
+      out.push(entry('calibration', `calibration.policy.${policy.code}.trades`, policy.trades, policy.trades));
+      out.push(entry('calibration', `calibration.policy.${policy.code}.meanRNet`, policy.meanRNet, policy.trades));
+      out.push(entry('calibration', `calibration.policy.${policy.code}.winRateNetPct`, policy.winRateNetPct, policy.trades));
+    }
+    for (const stratum of c.strata) {
+      const key = `calibration.stratum.${stratum.dimension}.${stratum.value}`;
+      out.push(entry('calibration', `${key}.matched`, stratum.matched, stratum.matched));
+      out.push(entry('calibration', `${key}.edgeRNet`, stratum.edgeRNet, stratum.matched));
+      out.push(entry('calibration', `${key}.contradicts`, stratum.contradicts, null));
+    }
+  }
 
   if (sections.scan) {
     out.push(entry('scan', 'scan.runId', sections.scan.runId));
@@ -640,15 +805,43 @@ export function buildAiEvidencePack(input: AiEvidencePackInput): AiEvidencePack 
     }
   }
 
+  const calibration = normalizeCalibration(input?.calibration);
+  if (calibration !== null && !calibration.available) {
+    notes.push('Calibrazione del desk non disponibile: la sezione e dichiarata ma non porta un campione utilizzabile.');
+  } else if (calibration !== null && calibration.verdict !== 'evidence') {
+    notes.push(
+      `Calibrazione del desk insufficiente (${calibration.classified} classificati): edgeRNet e intervalli non sono risultati.`
+    );
+  }
+  if (calibration !== null && calibration.strata.some((stratum) => stratum.contradicts)) {
+    notes.push('Almeno uno strato della calibrazione contraddice l edge aggregato (contradicts: true).');
+  }
+
   const shadowV1Live = normalizeShadowV1Live(input?.shadowV1Live);
   const shadowV2 = normalizeShadowV2(input?.shadowV2);
   const journal = isRecord(input?.journal)
     ? summarizeJournalEvidence(input.journal.trades, input.journal.excluded)
     : null;
 
-  const sections: AiEvidenceSections = { scan, vetoOutcomes, nearMiss, shadowV1Live, shadowV2, journal };
+  const sections: AiEvidenceSections = {
+    calibration,
+    scan,
+    vetoOutcomes,
+    nearMiss,
+    shadowV1Live,
+    shadowV2,
+    journal,
+  };
   const missing: AiEvidenceSectionKey[] = [];
-  for (const key of ['scan', 'vetoOutcomes', 'nearMiss', 'shadowV1Live', 'shadowV2', 'journal'] as const) {
+  for (const key of [
+    'calibration',
+    'scan',
+    'vetoOutcomes',
+    'nearMiss',
+    'shadowV1Live',
+    'shadowV2',
+    'journal',
+  ] as const) {
     if (sections[key] === null) missing.push(key);
   }
   if (missing.length > 0) {
@@ -701,6 +894,9 @@ function sectionPayload(pack: AiEvidencePack, section: AiEvidenceSectionKey): un
 }
 
 const SECTION_ORDER: readonly AiEvidenceSectionKey[] = [
+  // La calibrazione viene per prima: e' il track record del desk, il dato che
+  // il post-mortem non deve poter ignorare per budget di caratteri.
+  'calibration',
   'journal',
   'vetoOutcomes',
   'nearMiss',

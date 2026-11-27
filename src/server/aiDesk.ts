@@ -54,6 +54,12 @@ export interface DeskEvidenceSources {
   trades?: readonly TradeJournalEntry[] | null;
   excluded?: readonly ExcludedSetupRecord[] | null;
   rootDir?: string;
+  /**
+   * Risposta gia' calcolata di `/api/shadow/ai-calibration`. Arriva dal
+   * chiamante perche' aiDesk non deve leggere log ne' esiti: il fascicolo
+   * normalizza, non ricalcola.
+   */
+  calibration?: unknown;
 }
 
 function readJsonFile(filePath: string): unknown {
@@ -78,6 +84,9 @@ export function collectDeskEvidenceInput(sources: DeskEvidenceSources): AiEviden
     generatedAtMs: sources.nowMs,
     journal: { trades: sources.trades ?? [], excluded: sources.excluded ?? [] },
   };
+  if (sources.calibration && typeof sources.calibration === 'object') {
+    input.calibration = sources.calibration;
+  }
 
   try {
     const candidates = getLastScanCandidates();

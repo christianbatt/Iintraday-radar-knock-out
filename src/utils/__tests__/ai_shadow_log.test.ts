@@ -370,4 +370,51 @@ describe('aiShadowLog — endpoint /api/shadow/ai-log', () => {
     assert.equal(withScan.total, 2);
     fs.rmSync(dir, { recursive: true, force: true });
   });
+
+  it('versiona prompt e modello per riga e non li inventa quando mancano', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-shadow-log-'));
+    const file = path.join(dir, 'log.jsonl');
+    appendAiShadowLog(
+      [
+        {
+          ticker: 'AAA',
+          market: 'EU',
+          source: 'specialize',
+          aiOutcome: 'BUY',
+          evaluated: true,
+          discarded: false,
+          promptVersion: ' ai-specialize@1 ',
+          model: 'openrouter:test-model',
+        },
+        {
+          ticker: 'BBB',
+          market: 'US',
+          source: 'specialize',
+          aiOutcome: null,
+          evaluated: false,
+          discarded: true,
+          discardReason: 'llm: nessuna direttiva',
+        },
+        {
+          ticker: 'CCC',
+          market: 'US',
+          source: 'specialize',
+          aiOutcome: null,
+          evaluated: true,
+          discarded: false,
+          promptVersion: '',
+          model: '   ',
+        },
+      ],
+      file
+    );
+    const entries = readAiShadowLog(undefined, file);
+    assert.equal(entries[0].promptVersion, 'ai-specialize@1', 'trim della versione');
+    assert.equal(entries[0].model, 'openrouter:test-model');
+    assert.equal(entries[1].promptVersion, null, 'riga senza versione: null, non stringa vuota');
+    assert.equal(entries[1].model, null);
+    assert.equal(entries[2].promptVersion, null, 'stringa vuota non e una versione');
+    assert.equal(entries[2].model, null);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 });

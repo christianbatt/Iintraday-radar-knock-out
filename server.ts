@@ -65,6 +65,7 @@ import {
   buildNoCandidateEntry,
   applyScanGateDiagnostics,
   AI_SHADOW_BATCH_SIZE,
+  AI_SHADOW_SCAN_PROMPT_VERSION,
 } from './src/server/aiScanEvaluation';
 
 // ADDITIVO (v9, Parte 3.2): enum dei predicati esposto alla LLM.
@@ -91,11 +92,13 @@ import { loadRecords, SHADOW_V1_LIVE_SIGNALS_PATH } from './src/server/shadowV1L
 import { listArchivePaths, mergeRecordFiles } from './src/server/shadowV1LiveRetention';
 import {
   AI_CALIBRATION_MAX_ENTRIES,
+  createAiCalibrationHandler,
   mapNearMissForwardPoints,
   mapRejectedForwardPoints,
   registerAiCalibrationRoute,
   type AiCalibrationEntry,
   type AiCalibrationForwardPoint,
+  type AiCalibrationRegistrationDeps,
 } from './src/server/aiCalibration';
 import { loadNearMissRecords, SHADOW_V1_NEAR_MISS_PATH } from './src/server/shadowV1LiveNearMiss';
 import { loadRejectedRecords, SHADOW_V1_REJECTED_PATH } from './src/server/shadowV1LiveRejected';
@@ -106,7 +109,7 @@ import {
   buildDeskEvidencePack,
   type DeskEvidenceSources,
 } from './src/server/aiDesk';
-import { buildEvidencePromptAddendum } from './src/knowledge/aiDeskContract';
+import { AI_DESK_CONTRACT_VERSION, buildEvidencePromptAddendum } from './src/knowledge/aiDeskContract';
 import type { AiEvidencePack } from './src/knowledge/aiEvidencePack';
 import { isAiDeskEvidenceEnabled } from './src/config/aiDesk';
 import {
@@ -476,6 +479,9 @@ function isGeminiAvailable(): boolean {
   if (Date.now() < geminiQuotaExhaustedUntil) return false;
   return true;
 }
+
+/** ADDITIVO (P5): unico punto in cui il modello Gemini e' dichiarato. */
+const GEMINI_MODEL = 'gemini-4-hydrogen';
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({
@@ -2864,10 +2870,94 @@ app.get(['/api/ai/memory', '/api/ai-memory'], requireApiAuth, async (_req: Reque
  * validazione. Con `AI_DESK_EVIDENCE` spento restituisce `null`: nessuna
  * lettura e risposta identica. Non lancia mai.
  */
-function prepareDeskEvidence(sources: DeskEvidenceSources): AiEvidencePack | null {
+/**
+ * ADDITIVO (P5): versione del prompt di ciascun handler. Non e' un'etichetta
+ * decorativa: la calibrazione raggruppa per versione, quindi un cambio di
+ * testo deve cambiare il numero.
+ */
+const AI_SPECIALIZE_PROMPT_VERSION = 'ai-specialize@1';
+const AI_DESK_POSTMORTEM_PROMPT_VERSION = 'ai-desk-postmortem@1';
+
+/**
+ * ADDITIVO (P5): dipendenze di lettura della calibrazione, condivise fra la
+ * route `GET /api/shadow/ai-calibration` e il fascicolo del post-mortem. Una
+ * sola definizione: la sezione `calibration` del fascicolo non puo' descrivere
+ * un campione diverso da quello che il pannello mostra.
+ */
+const aiCalibrationDeps: AiCalibrationRegistrationDeps = {
+  // Stesse voci del pannello: file locale + fallback Firestore quando il flag
+  // SHADOW_AI_LOG_FIRESTORE e' acceso. Su disco effimero il file puo' essere
+  // vuoto mentre i documenti restano su Firestore.
+  readEntries: async () => {
+    const read = await readAiShadowLogFallbackDetailed({
+      filePath: path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH),
+      limit: AI_CALIBRATION_MAX_ENTRIES,
+    });
+    return {
+      entries: read.entries as AiCalibrationEntry[],
+      truncated: read.truncated,
+      readLimit: read.readLimit,
+      remoteEntries: read.remoteEntries,
+    };
+  },
+  readForward: () => {
+    const signalsPath = path.join(process.cwd(), SHADOW_V1_LIVE_SIGNALS_PATH);
+    const files = [signalsPath, ...listArchivePaths(signalsPath)].filter((file) => existsSync(file));
+    if (files.length === 0) return [];
+    const merged = mergeRecordFiles(files, loadRecords);
+    const points: AiCalibrationForwardPoint[] = [];
+    for (const record of merged.records) {
+      if (record.status !== 'STOP' && record.status !== 'TARGET' && record.status !== 'EXPIRED') continue;
+      if (typeof record.r !== 'number' || !Number.isFinite(record.r)) continue;
+      points.push({
+        key: record.key,
+        ticker: record.ticker,
+        decidedAtMs: record.decidedAtMs,
+        r: record.r,
+        status: record.status,
+      });
+    }
+    return points;
+  },
+  // I near-miss gia' persistiti (setup bloccati da un solo gate e mai emessi)
+  // forniscono l'esito che manca ai candidati scartati: nessun nuovo
+  // macchinario, solo la lettura del file che il tracker aggiorna gia'.
+  readNearMissForward: () =>
+    mapNearMissForwardPoints(
+      loadNearMissRecords(path.join(process.cwd(), SHADOW_V1_NEAR_MISS_PATH))
+    ),
+  // ADDITIVO: gli scarti fuori whitelist near-miss (due o piu' gate, veti)
+  // hanno lo stesso esito deterministico sulle barre chiuse, in un file
+  // dedicato: e' la popolazione che mancava al bucket SCARTO.
+  readRejectedForward: () =>
+    mapRejectedForwardPoints(
+      loadRejectedRecords(path.join(process.cwd(), SHADOW_V1_REJECTED_PATH))
+    ),
+};
+
+/**
+ * ADDITIVO (P5): calibrazione gia' aggregata da consegnare al fascicolo. Non
+ * lancia mai: in errore la sezione e' assente e il pack lo dichiara, invece di
+ * far fallire un post-mortem che non dipende dalla calibrazione.
+ */
+async function loadDeskCalibration(): Promise<unknown | null> {
+  try {
+    const out = await createAiCalibrationHandler(aiCalibrationDeps);
+    return out.status === 200 ? out.body : null;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[AI Desk Evidence] calibrazione non disponibile: ${message}`);
+    return null;
+  }
+}
+
+async function prepareDeskEvidence(sources: DeskEvidenceSources): Promise<AiEvidencePack | null> {
   if (!isAiDeskEvidenceEnabled()) return null;
   try {
-    return buildDeskEvidencePack(sources);
+    // La calibrazione entra nel fascicolo: il post-mortem deve poter vedere il
+    // proprio track record, non solo il diario e i veti.
+    const calibration = await loadDeskCalibration();
+    return buildDeskEvidencePack({ ...sources, calibration });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`[AI Desk Evidence] fascicolo non disponibile: ${message}`);
@@ -2927,8 +3017,11 @@ function buildDeskEvidenceAnalysis(pack: AiEvidencePack | null, response: unknow
 function buildAiShadowLogEntries(
   rawDirectives: any[],
   source: 'specialize' | 'desk',
-  market: string
+  market: string,
+  meta: { promptVersion?: string | null; model?: string | null } = {}
 ): any[] {
+  const promptVersion = meta.promptVersion ?? null;
+  const model = meta.model ?? null;
   if (!Array.isArray(rawDirectives) || rawDirectives.length === 0) {
     return [
       {
@@ -2942,6 +3035,8 @@ function buildAiShadowLogEntries(
         evaluated: false,
         discarded: true,
         discardReason: 'llm: nessuna direttiva restituita (newDirectives assente o vuoto)',
+        promptVersion,
+        model,
       },
     ];
   }
@@ -2955,6 +3050,8 @@ function buildAiShadowLogEntries(
     return {
       ...item,
       source,
+      promptVersion,
+      model,
       market: typeof item?.market === 'string' ? item.market : market,
       evaluated: shapeOk,
       discarded: !shapeOk || !predicateOk,
@@ -2974,7 +3071,7 @@ function buildAiShadowLogEntries(
 async function callScanBatchLlm(
   systemInstruction: string,
   userPrompt: string
-): Promise<string | null> {
+): Promise<{ text: string; model: string | null } | null> {
   const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
   if (openRouterKey) {
     const raw = await callOpenRouterRawText(
@@ -2984,11 +3081,16 @@ async function callScanBatchLlm(
       openRouterKey,
       15000
     );
-    if (raw != null && raw.trim().length > 0) return raw;
+    if (raw != null && raw.text.trim().length > 0) return raw;
   }
   if (isGeminiAvailable()) {
     const gemRes = await callGeminiModel(systemInstruction, userPrompt);
-    if (gemRes?.data) return JSON.stringify(gemRes.data);
+    if (gemRes?.data) {
+      return {
+        text: JSON.stringify(gemRes.data),
+        model: gemRes.model ?? null,
+      };
+    }
   }
   return null;
 }
@@ -3021,7 +3123,10 @@ async function logScanCandidateEvaluations(
     );
     if (candidates.length === 0) {
       safeAppendAiShadowLog(
-        buildNoCandidateEntry(source),
+        buildNoCandidateEntry(source, {
+          promptVersion: AI_SHADOW_SCAN_PROMPT_VERSION,
+          model: null,
+        }),
         path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
       );
       return;
@@ -3126,7 +3231,7 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
 
     // ADDITIVO (PR-B): il contratto (fascicolo + campi obbligatori) entra nella
     // STESSA chiamata LLM, prima del modello. Nessun secondo giro.
-    const deskEvidencePack = prepareDeskEvidence({
+    const deskEvidencePack = await prepareDeskEvidence({
       nowMs: Date.now(),
       trades,
       excluded,
@@ -3139,9 +3244,14 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
     }
 
     const systemInstruction = `Sei un Risk Manager quantitativo rigoroso. Estrai solo regole concrete, empiriche e non banali basate esclusivamente sui dati forniti. Rispondi solo in formato JSON.`;
+    // ADDITIVO (P5): versione del prompt e modello viaggiano con la riga di log.
+    const specializePromptVersion = deskEvidencePack
+      ? `${AI_SPECIALIZE_PROMPT_VERSION}+${AI_DESK_CONTRACT_VERSION}`
+      : AI_SPECIALIZE_PROMPT_VERSION;
 
     let generated: any = null;
     let llmErrorDetail: string | null = null;
+    let usedModel: string | null = null;
     if (openRouterKey) {
       const openRouterRes = await callOpenRouterModel(
         [OPENROUTER_PRIMARY_MODEL, OPENROUTER_FALLBACK_MODEL],
@@ -3152,6 +3262,7 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
       );
       if (openRouterRes?.data?.newDirectives) {
         generated = openRouterRes.data;
+        usedModel = openRouterRes.model ?? null;
       } else if (openRouterRes?.keyInvalid) {
         llmErrorDetail = 'openrouter:401';
       } else if (openRouterRes?.creditsExhausted) {
@@ -3165,6 +3276,7 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
       const gemRes = await callGeminiModel(systemInstruction, promptText);
       if (gemRes?.data?.newDirectives) {
         generated = gemRes.data;
+        usedModel = gemRes.model ?? null;
       } else if (gemRes?.quotaExhausted) {
         llmErrorDetail = 'gemini:402/429';
       }
@@ -3175,7 +3287,10 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
     // ADDITIVO (Fase 1): log shadow di TUTTE le proposte valutate, prima di qualunque filtro.
     // safeAppend non lancia mai: un errore di I/O non altera la risposta.
     safeAppendAiShadowLog(
-      buildAiShadowLogEntries(rawDirectives, 'specialize', 'GLOBAL'),
+      buildAiShadowLogEntries(rawDirectives, 'specialize', 'GLOBAL', {
+        promptVersion: specializePromptVersion,
+        model: usedModel,
+      }),
       path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
     );
     // ADDITIVO (Fasi 1-2, P2): valutazione asincrona in background con passaggio
@@ -3356,7 +3471,7 @@ ${LEARNING_PREDICATE_PROMPT}
 Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "directive": string, "confidence": null, "sampleEvidence": string }).`;
 
     // ADDITIVO (PR-B): contratto dentro la stessa e unica chiamata LLM.
-    const deskEvidencePack = prepareDeskEvidence({
+    const deskEvidencePack = await prepareDeskEvidence({
       nowMs: Date.now(),
       trades: sessionTrades,
       excluded: [],
@@ -3370,8 +3485,14 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
 
     const systemInstruction = `Sei un Senior Risk Officer rigoroso ed esperto. Analizza con occhio clinico e linguaggio istituzionale da hedge fund. Non inventare dati. Rispondi solo in formato JSON.`;
 
+    // ADDITIVO (P5): versione del prompt e modello viaggiano con la riga di log.
+    const deskPromptVersion = deskEvidencePack
+      ? `${AI_DESK_POSTMORTEM_PROMPT_VERSION}+${AI_DESK_CONTRACT_VERSION}`
+      : AI_DESK_POSTMORTEM_PROMPT_VERSION;
+
     let generated: any = null;
     let llmErrorDetail: string | null = null;
+    let usedModel: string | null = null;
     if (openRouterKey) {
       const openRouterRes = await callOpenRouterModel(
         [OPENROUTER_PRIMARY_MODEL, OPENROUTER_FALLBACK_MODEL],
@@ -3382,6 +3503,7 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
       );
       if (openRouterRes?.data?.executiveSummary) {
         generated = openRouterRes.data;
+        usedModel = openRouterRes.model ?? null;
       } else if (openRouterRes?.keyInvalid) {
         llmErrorDetail = 'openrouter:401';
       } else if (openRouterRes?.creditsExhausted) {
@@ -3395,6 +3517,7 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
       const gemRes = await callGeminiModel(systemInstruction, promptText);
       if (gemRes?.data?.executiveSummary) {
         generated = gemRes.data;
+        usedModel = gemRes.model ?? null;
       } else if (gemRes?.quotaExhausted) {
         llmErrorDetail = 'gemini:402/429';
       }
@@ -3423,7 +3546,10 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
     const rawDirectives = Array.isArray(generated.newDirectives) ? generated.newDirectives : [];
     // ADDITIVO (Fase 1): log shadow di TUTTE le proposte valutate, prima di qualunque filtro.
     safeAppendAiShadowLog(
-      buildAiShadowLogEntries(rawDirectives, 'desk', typeof market === 'string' ? market : 'GLOBAL'),
+      buildAiShadowLogEntries(rawDirectives, 'desk', typeof market === 'string' ? market : 'GLOBAL', {
+        promptVersion: deskPromptVersion,
+        model: usedModel,
+      }),
       path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
     );
     // ADDITIVO (Fasi 1-2, P2): valutazione asincrona in background con passaggio
@@ -3555,7 +3681,14 @@ async function callOpenRouterModel(
   userPrompt: string,
   apiKey: string,
   timeoutMs: number = 10000
-): Promise<{ data: any; keyInvalid?: boolean; creditsExhausted?: boolean; status?: number } | null> {
+): Promise<{
+  data: any;
+  keyInvalid?: boolean;
+  creditsExhausted?: boolean;
+  status?: number;
+  /** ADDITIVO (P5): modello che ha davvero risposto, per il log shadow. */
+  model?: string;
+} | null> {
   if (Date.now() < openRouterRateLimitedUntil) {
     return null;
   }
@@ -3633,7 +3766,10 @@ async function callOpenRouterModel(
         if (!Array.isArray(parsed.fonti)) parsed.fonti = [];
         if (typeof parsed.newsBonusScore !== 'number') parsed.newsBonusScore = 0;
       }
-      return { data: parsed };
+      // Il modello usato viaggia con la risposta: senza questo, il log shadow
+      // non puo' dire quale modello ha prodotto una decisione. Stessa forma
+      // della variante raw text: `openrouter:<id>`.
+      return { data: parsed, model: `openrouter:${String(usedModel)}` };
     }
     return null;
   } catch (err: any) {
@@ -3656,7 +3792,7 @@ async function callOpenRouterRawText(
   userPrompt: string,
   apiKey: string,
   timeoutMs: number = 15000
-): Promise<string | null> {
+): Promise<{ text: string; model: string | null } | null> {
   if (Date.now() < openRouterRateLimitedUntil) {
     return null;
   }
@@ -3708,7 +3844,11 @@ async function callOpenRouterRawText(
     const json = await res.json();
     const rawContent = json?.choices?.[0]?.message?.content;
     if (typeof rawContent !== 'string' || rawContent.trim().length === 0) return null;
-    return rawContent;
+    const usedModel = json?.model ?? (Array.isArray(modelOrModels) ? modelOrModels[0] : modelOrModels);
+    return {
+      text: rawContent,
+      model: typeof usedModel === 'string' && usedModel.length > 0 ? `openrouter:${usedModel}` : null,
+    };
   } catch (err: any) {
     clearTimeout(timeoutId);
     const isAbort = err?.name === 'AbortError' || err?.cause?.name === 'AbortError';
@@ -3724,7 +3864,7 @@ async function callGeminiModel(
   systemInstruction: string,
   userPrompt: string,
   responseSchema?: any
-): Promise<{ data: any; quotaExhausted?: boolean } | null> {
+): Promise<{ data: any; quotaExhausted?: boolean; model?: string } | null> {
   if (!isGeminiAvailable()) {
     return null;
   }
@@ -3739,7 +3879,7 @@ async function callGeminiModel(
     }
 
     const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
+      model: GEMINI_MODEL,
       contents: userPrompt,
       config,
     });
@@ -3750,7 +3890,8 @@ async function callGeminiModel(
       .trim();
 
     const parsed = JSON.parse(clean || '{}');
-    return { data: parsed };
+    // ADDITIVO (P5): anche Gemini dichiara il proprio modello nel log.
+    return { data: parsed, model: `gemini:${GEMINI_MODEL}` };
   } catch (err: any) {
     const status = err?.status || err?.code;
     const msg = String(err?.message || '');
@@ -4271,58 +4412,7 @@ async function startServer() {
   // Nessuna scrittura, nessun cambio di memoria o gate: legge il log AI shadow
   // e gli esiti gia' persistiti da Shadow V1-live (segnali emessi + near-miss)
   // e li abbina per ticker + tempo.
-  registerAiCalibrationRoute(app, {
-    // Stesse voci del pannello: file locale + fallback Firestore quando il flag
-    // SHADOW_AI_LOG_FIRESTORE e' acceso. Su disco effimero il file puo' essere
-    // vuoto mentre i documenti restano su Firestore.
-    readEntries: async () => {
-      const read = await readAiShadowLogFallbackDetailed({
-        filePath: path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH),
-        limit: AI_CALIBRATION_MAX_ENTRIES,
-      });
-      return {
-        entries: read.entries as AiCalibrationEntry[],
-        truncated: read.truncated,
-        readLimit: read.readLimit,
-        remoteEntries: read.remoteEntries,
-      };
-    },
-    readForward: () => {
-      const signalsPath = path.join(process.cwd(), SHADOW_V1_LIVE_SIGNALS_PATH);
-      const files = [signalsPath, ...listArchivePaths(signalsPath)].filter((file) =>
-        existsSync(file)
-      );
-      if (files.length === 0) return [];
-      const merged = mergeRecordFiles(files, loadRecords);
-      const points: AiCalibrationForwardPoint[] = [];
-      for (const record of merged.records) {
-        if (record.status !== 'STOP' && record.status !== 'TARGET' && record.status !== 'EXPIRED') continue;
-        if (typeof record.r !== 'number' || !Number.isFinite(record.r)) continue;
-        points.push({
-          key: record.key,
-          ticker: record.ticker,
-          decidedAtMs: record.decidedAtMs,
-          r: record.r,
-          status: record.status,
-        });
-      }
-      return points;
-    },
-    // I near-miss gia' persistiti (setup bloccati da un solo gate e mai emessi)
-    // forniscono l'esito che manca ai candidati scartati: nessun nuovo
-    // macchinario, solo la lettura del file che il tracker aggiorna gia'.
-    readNearMissForward: () =>
-      mapNearMissForwardPoints(
-        loadNearMissRecords(path.join(process.cwd(), SHADOW_V1_NEAR_MISS_PATH))
-      ),
-    // ADDITIVO: gli scarti fuori whitelist near-miss (due o piu' gate, veti)
-    // hanno lo stesso esito deterministico sulle barre chiuse, in un file
-    // dedicato: e' la popolazione che mancava al bucket SCARTO.
-    readRejectedForward: () =>
-      mapRejectedForwardPoints(
-        loadRejectedRecords(path.join(process.cwd(), SHADOW_V1_REJECTED_PATH))
-      ),
-  });
+  registerAiCalibrationRoute(app, aiCalibrationDeps);
   // L'auth viaggia con la registrazione della route (non come middleware
   // registrato a parte): la garanzia non dipende dall'ordine di registrazione e
   // la stessa logica resta unica (resolveApiAuth).

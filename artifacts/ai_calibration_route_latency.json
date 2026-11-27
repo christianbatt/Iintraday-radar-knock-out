@@ -1,0 +1,22 @@
+{
+  "kind": "ai-calibration-route-latency",
+  "measuredAt": "2026-11-27T00:09:49.357Z",
+  "route": "GET /api/shadow/ai-calibration (nucleo puro buildAiCalibration)",
+  "entries": 2000,
+  "forwardPoints": 2000,
+  "iterations": 20,
+  "ms": {
+    "min": 103.45,
+    "p50": 119.27,
+    "p95": 177.95,
+    "max": 193.51
+  },
+  "sampleResult": {
+    "matched": 1800,
+    "classified": 1800,
+    "verdict": "evidence",
+    "validation": "NON_CONFERMATO",
+    "edgeRNet": -0.0034
+  },
+  "note": "Misura solo il costo CPU dell aggregato: le letture (file/Firestore) sono fuori. Campione sintetico deterministico, non dati reali."
+}

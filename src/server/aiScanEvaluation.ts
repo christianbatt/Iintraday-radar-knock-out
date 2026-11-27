@@ -69,6 +69,8 @@ export interface ScanEvaluationBatchResult {
   ignoredDuplicateTickers: number;
   /** ADDITIVO (P4): durata misurata del batch LLM, in millisecondi. */
   durationMs: number;
+  /** ADDITIVO (P5): modello che ha risposto per questo batch (`null` se nessuno). */
+  model: string | null;
 }
 
 /** ADDITIVO (P2/P3): metadati comuni alle voci prodotte da una valutazione. */
@@ -94,6 +96,12 @@ export const AI_SHADOW_BATCH_SIZE = 10;
 export const AI_SHADOW_CONCURRENCY = 2;
 /** Titolo della sezione informativa aggiunta al prompt. */
 export const AI_SHADOW_SCAN_SECTION = 'CANDIDATI_SCANSIONE';
+/**
+ * ADDITIVO (P5): versione del prompt dei batch di valutazione. Cambia quando
+ * cambia il testo del prompt: la calibrazione per versione non deve mescolare
+ * valutazioni prodotte da istruzioni diverse.
+ */
+export const AI_SHADOW_SCAN_PROMPT_VERSION = 'ai-scan@1';
 /** Tetto difensivo: oltre, i candidati vengono troncati (mai in produzione: 40 titoli). */
 export const AI_SHADOW_MAX_SCAN_CANDIDATES = 500;
 
@@ -611,6 +619,8 @@ function buildEntry(
     runId: string | null;
     candidateSource: AiShadowLogCandidateSource | null;
     durationMs: number | null;
+    promptVersion: string | null;
+    model: string | null;
   }
 ): AiShadowLogEntry {
   const scorePart =
@@ -636,6 +646,8 @@ function buildEntry(
     candidateKey: meta.runId ? `${meta.runId}:${candidate.ticker}` : null,
     runId: meta.runId,
     durationMs: meta.durationMs,
+    promptVersion: meta.promptVersion,
+    model: meta.model,
   };
 }
 
@@ -643,7 +655,10 @@ function buildEntry(
  * ADDITIVO (P2): voce unica scritta quando né il body né l'istantanea
  * forniscono candidati. Nessuna chiamata LLM viene effettuata.
  */
-export function buildNoCandidateEntry(source: 'specialize' | 'desk'): AiShadowLogEntry {
+export function buildNoCandidateEntry(
+  source: 'specialize' | 'desk',
+  meta: { promptVersion?: string | null; model?: string | null } = {}
+): AiShadowLogEntry {
   return {
     id: randomUUID(),
     timestamp: new Date().toISOString(),
@@ -664,6 +679,8 @@ export function buildNoCandidateEntry(source: 'specialize' | 'desk'): AiShadowLo
     candidateKey: null,
     runId: null,
     durationMs: null,
+    promptVersion: meta.promptVersion ?? null,
+    model: meta.model ?? null,
   };
 }
 
@@ -686,6 +703,7 @@ export function combineScanEvaluations(
       status: ScanEvaluationBatchStatus;
       evaluation: ScanEvaluation | null;
       durationMs: number | null;
+      model: string | null;
     }
   >();
   for (const batch of batches) {
@@ -705,13 +723,20 @@ export function combineScanEvaluations(
           typeof batch.durationMs === 'number' && Number.isFinite(batch.durationMs)
             ? batch.durationMs
             : null,
+        model: typeof batch.model === 'string' && batch.model.length > 0 ? batch.model : null,
       });
     }
   }
 
   return candidates.map((candidate) => {
     const hit = byTicker.get(candidate.ticker);
-    const rowMeta = { runId, candidateSource, durationMs: hit?.durationMs ?? null };
+    const rowMeta = {
+      runId,
+      candidateSource,
+      durationMs: hit?.durationMs ?? null,
+      promptVersion: AI_SHADOW_SCAN_PROMPT_VERSION,
+      model: hit?.model ?? null,
+    };
     if (!hit) {
       return buildEntry(
         candidate,
@@ -777,15 +802,37 @@ export function combineScanEvaluations(
  * Esegue la valutazione di tutti i candidati con la LLM fornita dal chiamante.
  * Non lancia mai: un errore di chiamata produce `llm_missing` per il batch.
  */
+/**
+ * ADDITIVO (P5): la LLM puo' restituire solo il testo (forma storica, usata dai
+ * test) oppure testo + modello. Il modello non si deduce dal testo: o lo
+ * riporta il chiamante o resta `null`.
+ */
+export type ScanEvaluationLlmResult =
+  | string
+  | null
+  | { text: string | null; model?: string | null };
+
+export type ScanEvaluationLlmCall = (
+  systemInstruction: string,
+  userPrompt: string
+) => Promise<ScanEvaluationLlmResult>;
+
 async function evaluateSingleBatch(
   index: number,
   batch: ReadonlyArray<ScanCandidateSnapshot>,
-  callLlm: (systemInstruction: string, userPrompt: string) => Promise<string | null>
+  callLlm: ScanEvaluationLlmCall
 ): Promise<ScanEvaluationBatchResult> {
   const startedAt = performance.now();
   let raw: string | null = null;
+  let model: string | null = null;
   try {
-    raw = await callLlm(AI_SHADOW_SCAN_SYSTEM_INSTRUCTION, buildScanEvaluationPrompt(batch));
+    const out = await callLlm(AI_SHADOW_SCAN_SYSTEM_INSTRUCTION, buildScanEvaluationPrompt(batch));
+    if (typeof out === 'string' || out === null) {
+      raw = out;
+    } else if (out && typeof out.text === 'string') {
+      raw = out.text;
+      model = typeof out.model === 'string' && out.model.length > 0 ? out.model : null;
+    }
   } catch {
     raw = null;
   }
@@ -795,6 +842,9 @@ async function evaluateSingleBatch(
   let evaluations: ScanEvaluation[] = [];
   if (raw == null || raw.trim().length === 0) {
     status = 'llm_missing';
+    // Nessuna risposta: nessun modello attribuibile, anche se il chiamante lo
+    // conosceva per altre chiamate.
+    model = null;
   } else {
     const parsed = parseScanEvaluations(raw);
     if (!parsed.ok) {
@@ -831,13 +881,14 @@ async function evaluateSingleBatch(
     ignoredUnknownTickers,
     ignoredDuplicateTickers,
     durationMs,
+    model,
   };
 }
 
 export async function evaluateScanCandidates(
   candidates: ReadonlyArray<ScanCandidateSnapshot>,
   source: 'specialize' | 'desk',
-  callLlm: (systemInstruction: string, userPrompt: string) => Promise<string | null>,
+  callLlm: ScanEvaluationLlmCall,
   batchSize: number = AI_SHADOW_BATCH_SIZE,
   meta: ScanEvaluationMeta = {}
 ): Promise<ScanEvaluationRunResult> {

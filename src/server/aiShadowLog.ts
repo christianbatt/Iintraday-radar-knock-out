@@ -83,6 +83,19 @@ export interface AiShadowLogEntry {
   runId?: string | null;
   /** ADDITIVO (P4): durata del batch LLM che ha prodotto la valutazione. */
   durationMs?: number | null;
+  /**
+   * ADDITIVO (P5): versione del prompt che ha prodotto la riga. Senza questo
+   * campo due valutazioni con prompt diversi finiscono nello stesso bucket di
+   * calibrazione, e un cambio di prompt sembra un cambio di bravura del desk.
+   * `null` per le righe storiche e per i placeholder di scansione.
+   */
+  promptVersion?: string | null;
+  /**
+   * ADDITIVO (P5): modello che ha risposto (`openrouter:<id>` / `gemini:<id>`).
+   * `null` quando nessun modello ha risposto o la riga e' storica: una
+   * valutazione senza modello non e' attribuibile, non e' "il desk".
+   */
+  model?: string | null;
 }
 
 export interface AiShadowLogWriteResult {
@@ -182,6 +195,12 @@ function normalizeEntries(input: unknown): AiShadowLogEntry[] {
           typeof r.durationMs === 'number' && Number.isFinite(r.durationMs)
             ? r.durationMs
             : null,
+        promptVersion:
+          typeof r.promptVersion === 'string' && r.promptVersion.trim().length > 0
+            ? r.promptVersion.trim()
+            : null,
+        model:
+          typeof r.model === 'string' && r.model.trim().length > 0 ? r.model.trim() : null,
       });
       continue;
     }
@@ -223,6 +242,13 @@ function normalizeEntries(input: unknown): AiShadowLogEntry[] {
       outcome: null,
       // Proposta in prosa: nessuna decisione chiusa, mai dedotta dal testo.
       decision: null,
+      // La versione del prompt e il modello li decide il chiamante che ha
+      // costruito il testo; qui non si indovinano.
+      promptVersion:
+        typeof r.promptVersion === 'string' && r.promptVersion.trim().length > 0
+          ? r.promptVersion.trim()
+          : null,
+      model: typeof r.model === 'string' && r.model.trim().length > 0 ? r.model.trim() : null,
     });
   }
   return out;
@@ -298,6 +324,9 @@ export function buildScanCandidateEntries(
       normalizedRunId && c.ticker != null ? `${normalizedRunId}:${String(c.ticker)}` : null,
     runId: normalizedRunId,
     durationMs: null,
+    // Placeholder di scansione: nessun prompt e nessun modello hanno valutato.
+    promptVersion: null,
+    model: null,
   }));
 }
 

@@ -10,6 +10,7 @@ import {
   readAiShadowLog,
 } from '../../server/aiShadowLog';
 import {
+  AI_SHADOW_SCAN_PROMPT_VERSION,
   buildScanEvaluationPrompt,
   combineScanEvaluations,
   parseScanEvaluations,
@@ -129,6 +130,7 @@ describe('aiScanEvaluation — decision nel prompt, nel parser e nelle voci', ()
           ignoredUnknownTickers: 0,
           ignoredDuplicateTickers: 0,
           durationMs: 5,
+          model: 'openrouter:test-model',
         },
       ],
       'specialize'
@@ -138,6 +140,12 @@ describe('aiScanEvaluation — decision nel prompt, nel parser e nelle voci', ()
     assert.equal(byTicker.get('B')?.decision, null);
     assert.equal(byTicker.get('B')?.evaluated, false);
     assert.equal(byTicker.get('A')?.candidateKey, null, 'senza runId non c\'e\' candidateKey');
+    // ADDITIVO (P5): prompt e modello viaggiano con la riga, anche se il
+    // candidato non e' stato restituito dal batch.
+    assert.equal(byTicker.get('A')?.promptVersion, AI_SHADOW_SCAN_PROMPT_VERSION);
+    assert.equal(byTicker.get('A')?.model, 'openrouter:test-model');
+    assert.equal(byTicker.get('B')?.model, 'openrouter:test-model');
+    assert.equal(byTicker.get('B')?.promptVersion, AI_SHADOW_SCAN_PROMPT_VERSION);
   });
 });
 

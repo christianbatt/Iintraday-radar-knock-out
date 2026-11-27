@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
+  AI_EVIDENCE_MAX_CALIBRATION_POLICIES,
   AI_EVIDENCE_MAX_SCAN_CANDIDATES,
   AI_EVIDENCE_MIN_SAMPLE,
   AI_EVIDENCE_PACK_VERSION,
@@ -200,6 +201,7 @@ describe('aiEvidencePack — determinismo e input sporchi', () => {
     const pack = buildAiEvidencePack({ generatedAtMs: T0 });
     assert.equal(pack.sections.scan, null);
     assert.deepEqual([...pack.missing].sort(), [
+      'calibration',
       'journal',
       'nearMiss',
       'scan',
@@ -312,6 +314,86 @@ describe('aiEvidencePack — near miss, Shadow V1-live, Shadow V2', () => {
     assert.equal(pack.sections.shadowV2?.limitations.length, 2);
     assert.equal(pack.sections.shadowV2?.nResolved, 70);
     assert.ok(pack.notes.some((note) => note.includes('non sono confrontabili')));
+  });
+});
+
+describe('aiEvidencePack — calibrazione del desk', () => {
+  const calibration = {
+    version: 'ai-calibration@1',
+    available: true,
+    verdict: 'evidence',
+    counts: { matched: 44, classified: 40 },
+    edgeRNet: 0.21,
+    costR: 0.36,
+    uncertainty: { edgeR: { lower: 0.02, upper: 0.4 } },
+    coverage: { candidates: 160, evaluated: 80, evaluatedSharePct: 50 },
+    validation: { verdict: 'CONFERMATO' },
+    alerts: [{ code: 'COVERAGE_LOW' }],
+    policies: [
+      { code: 'SOLO_AZIONE', trades: 22, meanRNet: 0.31, winRateNetPct: 54.55 },
+      { code: 'AZIONE_E_ATTESA', trades: 30, meanRNet: 0.12, winRateNetPct: 50 },
+      { code: 'TUTTI_I_CLASSIFICATI', trades: 40, meanRNet: -0.02, winRateNetPct: 45 },
+      { code: 'QUARTA_IGNORATA', trades: 1, meanRNet: 9, winRateNetPct: 100 },
+    ],
+    strata: [
+      { dimension: 'market', value: 'EU', matched: 20, edgeRNet: 0.3, contradicts: false },
+      { dimension: 'market', value: 'US', matched: 20, edgeRNet: -0.12, contradicts: true },
+      { dimension: 'direction', value: '', matched: 2, edgeRNet: 1, contradicts: false },
+    ],
+    limitations: ['Sola lettura', 'Join temporale'],
+  };
+
+  it('porta nel fascicolo il track record gia calcolato, senza ricalcolarlo', () => {
+    const pack = buildAiEvidencePack({ generatedAtMs: T0, calibration });
+    const index = indexAiEvidence(pack);
+    assert.ok(pack.sections.calibration);
+    assert.equal(pack.sections.calibration?.classified, 40);
+    assert.equal(pack.sections.calibration?.matched, 44);
+    assert.equal(index.get('calibration.edgeRNet')?.value, 0.21);
+    assert.equal(index.get('calibration.edgeRNet')?.n, 40);
+    assert.equal(index.get('calibration.validationVerdict')?.value, 'CONFERMATO');
+    assert.equal(index.get('calibration.edgeRCI.low')?.value, 0.02);
+    assert.equal(index.get('calibration.coverage.evaluatedPct')?.value, 50);
+  });
+
+  it('limita policy e strati e dichiara le contraddizioni', () => {
+    const pack = buildAiEvidencePack({ generatedAtMs: T0, calibration });
+    assert.equal(pack.sections.calibration?.policies.length, AI_EVIDENCE_MAX_CALIBRATION_POLICIES);
+    assert.equal(pack.sections.calibration?.strata.length, 2, 'strato senza valore escluso');
+    assert.ok(pack.sections.calibration?.strata.some((stratum) => stratum.contradicts));
+    assert.ok(pack.notes.some((note) => note.includes('contraddice')));
+  });
+
+  it('sotto soglia la chiave e insufficiente e la nota lo dice', () => {
+    const pack = buildAiEvidencePack({
+      generatedAtMs: T0,
+      calibration: {
+        ...calibration,
+        verdict: 'insufficient',
+        counts: { matched: 4, classified: 4 },
+        validation: { verdict: 'INSUFFICIENTE' },
+      },
+    });
+    const index = indexAiEvidence(pack);
+    assert.equal(index.get('calibration.edgeRNet')?.insufficient, true);
+    assert.ok(pack.notes.some((note) => note.includes('Calibrazione del desk insufficiente')));
+  });
+
+  it('calibrazione non disponibile resta dichiarata e non blocca il pack', () => {
+    const pack = buildAiEvidencePack({
+      generatedAtMs: T0,
+      calibration: { available: false, reason: 'nessuna valutazione AI nel log' },
+    });
+    const index = indexAiEvidence(pack);
+    assert.equal(index.get('calibration.available')?.value, false);
+    assert.ok(pack.notes.some((note) => note.includes('non disponibile')));
+  });
+
+  it('va nel testo del prompt prima del diario', () => {
+    const out = serializeAiEvidencePack(buildAiEvidencePack({ generatedAtMs: T0, calibration }));
+    const calibrationAt = out.text.indexOf('SECTION calibration ');
+    assert.ok(calibrationAt > -1);
+    assert.ok(out.text.includes('calibration.policy.SOLO_AZIONE.meanRNet'));
   });
 });
 
