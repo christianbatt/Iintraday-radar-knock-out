@@ -212,13 +212,25 @@ export async function triggerAISpecialization(
   excludedSetups: any[],
   scanCandidates?: ScanCandidatePayload[],
   scanRunId?: string | null
-): Promise<{ success: boolean; newInsightsCount: number; memory: AILearnedInsight[]; message?: string; reason?: string; reasonDetail?: string; addedCount?: number; sampleDecisive?: number; minSample?: number }> {
+): Promise<{
+  success: boolean;
+  newInsightsCount: number;
+  memory: AILearnedInsight[];
+  message?: string;
+  reason?: string;
+  reasonDetail?: string;
+  addedCount?: number;
+  sampleDecisive?: number;
+  minSample?: number;
+  deskAnalysis?: DeskAnalysisPayload;
+}> {
   try {
     const res = await fetchWithFirebaseAuth('/api/ai/specialize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         trades,
+        excluded: excludedSetups,
         excludedSetups,
         // ADDITIVO (P2): candidati della scansione del client e relativo runId.
         ...(Array.isArray(scanCandidates) && scanCandidates.length > 0

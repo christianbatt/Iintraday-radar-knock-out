@@ -279,4 +279,116 @@ describe('Veto outcome log', () => {
     assert.ok(entry.decision.levels.stopDistancePct != null && entry.decision.levels.stopDistancePct > 0);
     fs.rmSync(dir, { recursive: true, force: true });
   });
+
+  it('V10: normalizzazione in R corretta quando riskMarket != 1 (mark, MFE, MAE e rMarket)', () => {
+    const dec = decision({
+      levels: { markerPrice: 200, entry: 202, stop: 196, target1: 211.6, stopDistancePct: 2.97 },
+    });
+    // riskMarket = |200 - 196| = 4; riskTrigger = |202 - 196| = 6; targetR = 9.6/6 = 1.6; targetMarket = 206.4
+    const bars = [
+      { t: T0 + 5 * MIN, h: 204, l: 198, c: 202 },
+      { t: T0 + 15 * MIN, h: 208, l: 201, c: 206 },
+    ];
+    const state = simulateVetoForward(dec, bars, T0 + 20 * MIN);
+    assert.strictEqual(state.status, 'TARGET');
+    assert.strictEqual(state.rMarket, 1.6);
+    assert.strictEqual(state.marks['15'], 1.5, '(206-200)/4 = +1.5R, non +6');
+    assert.strictEqual(state.mfeR, 2, '(208-200)/4 = +2R');
+    assert.strictEqual(state.maeR, -0.5, '(198-200)/4 = -0.5R');
+  });
+
+  it('V11: SHORT MFE/MAE calcolati su low favorevole e high avverso', () => {
+    const dec = decision({
+      direction: 'SHORT',
+      levels: { markerPrice: 100, entry: 99, stop: 102, target1: 94.2, stopDistancePct: 3.03 },
+    });
+    // riskMarket = 2; favourable move down to 96 => +2R; adverse move up to 101 => -0.5R
+    const bars = [{ t: T0 + 15 * MIN, h: 101, l: 96, c: 97 }];
+    const state = simulateVetoForward(dec, bars, T0 + 20 * MIN);
+    assert.strictEqual(state.marks['15'], 1.5);
+    assert.strictEqual(state.mfeR, 2);
+    assert.strictEqual(state.maeR, -0.5);
+  });
+
+  it('V12: logVetoOutcomes ignora candidati senza veto o con warmupIncomplete e preserva market US', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'veto-log-us-'));
+    const logPath = path.join(dir, 'veto_outcome_log.jsonl');
+    const makeQuote = (ticker: string, market: 'EU' | 'US') =>
+      ({
+        ticker,
+        name: ticker,
+        market,
+        currency: market === 'US' ? 'USD' : 'EUR',
+        prevClose: 100,
+        currentPrice: 101,
+        todayOpen: 100.5,
+        todayHigh: 101.2,
+        todayLow: 100.2,
+        vwap: 100.8,
+        atr14: 1.5,
+        adr14: 3.0,
+        orbHigh: 101,
+        orbLow: 100.2,
+        gapPercent: 1.0,
+        rvol: 1.8,
+        rsi14: 55,
+        setupIndicators: {
+          barsUsed: 40,
+          adx: { status: 'OK', reason: null, value: 14, plusDI: 18, minusDI: 22 },
+          supertrend: { status: 'OK', reason: null, direction: -1, barsSinceFlip: 2, value: 102 },
+          recentBars: [],
+        },
+        vwapState: { state: 'BELOW', distAtr: -0.3, volumeRatio: 1.5 },
+        timestamp: new Date(T0).toISOString(),
+      }) as unknown as RawQuoteData;
+
+    const res = logVetoOutcomes({
+      nowMs: T0,
+      logPath,
+      scored: [
+        { quote: makeQuote('CLEAN.US', 'US'), score: { total: 80, veto: null, vetoReasons: [], warmupIncomplete: false } as unknown as ScoreBreakdown },
+        { quote: makeQuote('WARMUP.US', 'US'), score: { total: 40, veto: 'VWAP_OPPOSED', vetoReasons: ['VWAP_OPPOSED'], warmupIncomplete: true } as unknown as ScoreBreakdown },
+        { quote: makeQuote('NVDA', 'US'), score: { total: 55, veto: 'VWAP_OPPOSED', vetoReasons: ['VWAP_OPPOSED'], warmupIncomplete: false } as unknown as ScoreBreakdown },
+      ],
+    });
+    assert.strictEqual(res.added, 1, 'solo il candidato con veto reale e warmup completo');
+    const entry = [...res.fold.values()][0];
+    assert.strictEqual(entry.decision.ticker, 'NVDA');
+    assert.strictEqual(entry.decision.market, 'US');
+    assert.strictEqual(entry.decision.context.adxThreshold, 20, 'soglia ADX US reale');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('V13: record terminali NON vengono cancellati al giro successivo e veto_state usa gli id reali', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'veto-log-term-'));
+    const logPath = path.join(dir, 'veto_outcome_log.jsonl');
+    const statePath = path.join(dir, 'veto_state.json');
+    const dec = decision();
+    fs.writeFileSync(logPath, JSON.stringify(dec) + '\n', 'utf8');
+
+    const barsByTicker = new Map([
+      ['TEST.MI', [{ t: T0 + 5 * MIN, h: 105, l: 98.5, c: 99 }]],
+    ]);
+    const step1 = logVetoOutcomes({ nowMs: T0 + 10 * MIN, scored: [], logPath, barsByTicker });
+    assert.strictEqual(step1.fold.get(dec.id)?.latest.status, 'STOP');
+
+    // Seconda scansione vuota: il record STOP deve restare nel JSONL e in veto_state.json
+    const step2 = logVetoOutcomes({ nowMs: T0 + 20 * MIN, scored: [], logPath });
+    assert.strictEqual(step2.fold.size, 1);
+    assert.strictEqual(step2.fold.get(dec.id)?.latest.status, 'STOP');
+    const persistedFold = foldVetoLog(fs.readFileSync(logPath, 'utf8'));
+    assert.strictEqual(persistedFold.size, 1);
+    assert.strictEqual(persistedFold.get(dec.id)?.latest.status, 'STOP');
+    const stateJson = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    assert.ok(dec.id in stateJson, 'veto_state.json indicizzato per id reale');
+    assert.strictEqual('record' in stateJson, false);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('V14: foldVetoLog scarta righe corrotte con id o ticker vuoto', () => {
+    const corrupt = JSON.stringify({ type: 'decide', id: '', ticker: '', market: 'EU', veto: 'SUPERTREND_OPPOSED' });
+    const fold = foldVetoLog(`${corrupt}\n${JSON.stringify(decision())}\n`);
+    assert.strictEqual(fold.size, 1);
+  });
 });
+

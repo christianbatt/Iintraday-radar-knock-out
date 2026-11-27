@@ -1,6 +1,6 @@
 {
-  "record": {
-    "status": "OPEN",
+  "EU|RACE.MI|2026-11-27|ADX_BELOW_MARKET_THRESHOLD|LONG|E375.75|S372.75": {
+    "status": "PENDING_FILL",
     "triggerFilled": false,
     "fillBarTs": null,
     "rTrigger": null,
@@ -15,6 +15,60 @@
     "mfeR": null,
     "maeR": null,
     "barsSeen": 0,
-    "updatedAtMs": 0
+    "updatedAtMs": 1795770819228
+  },
+  "EU|ALV.DE|2026-11-27|SUPERTREND_OPPOSED|LONG|E461.40|S458.38": {
+    "status": "PENDING_FILL",
+    "triggerFilled": false,
+    "fillBarTs": null,
+    "rTrigger": null,
+    "rMarket": null,
+    "exitBarTs": null,
+    "exitPrice": null,
+    "marks": {
+      "15": null,
+      "30": null,
+      "60": null
+    },
+    "mfeR": null,
+    "maeR": null,
+    "barsSeen": 0,
+    "updatedAtMs": 1795770819228
+  },
+  "EU|BAYN.DE|2026-11-27|SUPERTREND_OPPOSED|LONG|E52.92|S52.26": {
+    "status": "PENDING_FILL",
+    "triggerFilled": false,
+    "fillBarTs": null,
+    "rTrigger": null,
+    "rMarket": null,
+    "exitBarTs": null,
+    "exitPrice": null,
+    "marks": {
+      "15": null,
+      "30": null,
+      "60": null
+    },
+    "mfeR": null,
+    "maeR": null,
+    "barsSeen": 0,
+    "updatedAtMs": 1795771033605
+  },
+  "EU|RHM.DE|2026-11-27|SUPERTREND_OPPOSED|LONG|E807.00|S779.94": {
+    "status": "PENDING_FILL",
+    "triggerFilled": false,
+    "fillBarTs": null,
+    "rTrigger": null,
+    "rMarket": null,
+    "exitBarTs": null,
+    "exitPrice": null,
+    "marks": {
+      "15": null,
+      "30": null,
+      "60": null
+    },
+    "mfeR": null,
+    "maeR": null,
+    "barsSeen": 0,
+    "updatedAtMs": 1795771117490
   }
 }

@@ -1,12 +1,12 @@
 {
   "version": 1,
-  "lastScanAt": "2026-11-24T13:44:50.247Z",
+  "lastScanAt": "2026-11-27T09:19:02.327Z",
   "scannedTickers": 40,
   "evaluatedTickers": 40,
-  "emittedThisScan": 0,
+  "emittedThisScan": 2,
   "persistedThisScan": 0,
-  "blockedThisScan": 40,
-  "topEU": "ENEL.MI",
+  "blockedThisScan": 38,
+  "topEU": "STLAM.MI",
   "topUS": null,
   "gateCounts": [
     {
@@ -15,45 +15,60 @@
       "count": 20
     },
     {
-      "gate": "G4",
-      "label": "Prezzo gia' esteso oltre +0,40%",
-      "count": 7
+      "gate": "G11",
+      "label": "Punteggio sotto soglia minima",
+      "count": 4
     },
     {
-      "gate": "G5",
-      "label": "Breakout scaduto oltre 60 minuti",
-      "count": 5
+      "gate": "G7",
+      "label": "Range giornaliero ADR esaurito",
+      "count": 3
+    },
+    {
+      "gate": "G8",
+      "label": "Stop troppo distante per leva KO",
+      "count": 3
     },
     {
       "gate": "SUPERTREND_OPPOSED",
       "label": "Veto Supertrend contrario alla direzione",
-      "count": 5
+      "count": 3
+    },
+    {
+      "gate": "G4",
+      "label": "Prezzo gia' esteso oltre +0,40%",
+      "count": 2
     },
     {
       "gate": "ADX_BELOW_MARKET_THRESHOLD",
       "label": "Veto ADX: trend sotto soglia minima",
-      "count": 2
+      "count": 1
     },
     {
-      "gate": "G11",
-      "label": "Punteggio sotto soglia minima",
+      "gate": "G10",
+      "label": "Stop gia' toccato dal prezzo attuale",
+      "count": 1
+    },
+    {
+      "gate": "G12",
+      "label": "Target oltre lo spazio ADR residuo",
       "count": 1
     }
   ],
   "sampleCandidates": [
     {
-      "ticker": "ENEL.MI",
+      "ticker": "SIE.DE",
       "market": "EU",
-      "score": 59,
-      "isTopPick": true,
-      "decision": "BLOCKED",
-      "gate": "G5",
-      "reason": "Breakout scaduto oltre 60 minuti"
+      "score": 52,
+      "isTopPick": false,
+      "decision": "TRADE",
+      "gate": null,
+      "reason": null
     },
     {
-      "ticker": "NVDA",
+      "ticker": "SPCX",
       "market": "US",
-      "score": 8,
+      "score": 31,
       "isTopPick": false,
       "decision": "BLOCKED",
       "gate": "MARKET_CLOSED_OR_STALE",
@@ -62,70 +77,34 @@
     {
       "ticker": "ISP.MI",
       "market": "EU",
-      "score": 47,
+      "score": 51,
       "isTopPick": false,
-      "decision": "BLOCKED",
-      "gate": "G4",
-      "reason": "Prezzo gia' esteso oltre +0,40%"
+      "decision": "TRADE",
+      "gate": null,
+      "reason": null
     },
     {
-      "ticker": "AAPL",
+      "ticker": "MU",
       "market": "US",
-      "score": 8,
+      "score": 31,
       "isTopPick": false,
       "decision": "BLOCKED",
       "gate": "MARKET_CLOSED_OR_STALE",
       "reason": "Mercato chiuso o feed in attesa della seduta"
     },
     {
-      "ticker": "MBG.DE",
+      "ticker": "STLAM.MI",
       "market": "EU",
-      "score": 46,
-      "isTopPick": false,
+      "score": 65,
+      "isTopPick": true,
       "decision": "BLOCKED",
-      "gate": "G5",
-      "reason": "Breakout scaduto oltre 60 minuti"
+      "gate": "G8",
+      "reason": "Stop troppo distante per leva KO"
     },
     {
-      "ticker": "TSLA",
+      "ticker": "ARM",
       "market": "US",
-      "score": 8,
-      "isTopPick": false,
-      "decision": "BLOCKED",
-      "gate": "MARKET_CLOSED_OR_STALE",
-      "reason": "Mercato chiuso o feed in attesa della seduta"
-    },
-    {
-      "ticker": "SIE.DE",
-      "market": "EU",
-      "score": 46,
-      "isTopPick": false,
-      "decision": "BLOCKED",
-      "gate": "G4",
-      "reason": "Prezzo gia' esteso oltre +0,40%"
-    },
-    {
-      "ticker": "MSFT",
-      "market": "US",
-      "score": 8,
-      "isTopPick": false,
-      "decision": "BLOCKED",
-      "gate": "MARKET_CLOSED_OR_STALE",
-      "reason": "Mercato chiuso o feed in attesa della seduta"
-    },
-    {
-      "ticker": "ASML.AS",
-      "market": "EU",
-      "score": 44,
-      "isTopPick": false,
-      "decision": "BLOCKED",
-      "gate": "G4",
-      "reason": "Prezzo gia' esteso oltre +0,40%"
-    },
-    {
-      "ticker": "AMZN",
-      "market": "US",
-      "score": 8,
+      "score": 31,
       "isTopPick": false,
       "decision": "BLOCKED",
       "gate": "MARKET_CLOSED_OR_STALE",
@@ -134,16 +113,52 @@
     {
       "ticker": "STMMI.MI",
       "market": "EU",
-      "score": 43,
+      "score": 60,
       "isTopPick": false,
       "decision": "BLOCKED",
       "gate": "G4",
       "reason": "Prezzo gia' esteso oltre +0,40%"
     },
     {
-      "ticker": "META",
+      "ticker": "AVGO",
       "market": "US",
-      "score": 8,
+      "score": 29,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "MARKET_CLOSED_OR_STALE",
+      "reason": "Mercato chiuso o feed in attesa della seduta"
+    },
+    {
+      "ticker": "LDO.MI",
+      "market": "EU",
+      "score": 57,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "G7",
+      "reason": "Range giornaliero ADR esaurito"
+    },
+    {
+      "ticker": "MSTR",
+      "market": "US",
+      "score": 28,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "MARKET_CLOSED_OR_STALE",
+      "reason": "Mercato chiuso o feed in attesa della seduta"
+    },
+    {
+      "ticker": "UCG.MI",
+      "market": "EU",
+      "score": 52,
+      "isTopPick": false,
+      "decision": "BLOCKED",
+      "gate": "G7",
+      "reason": "Range giornaliero ADR esaurito"
+    },
+    {
+      "ticker": "COIN",
+      "market": "US",
+      "score": 28,
       "isTopPick": false,
       "decision": "BLOCKED",
       "gate": "MARKET_CLOSED_OR_STALE",

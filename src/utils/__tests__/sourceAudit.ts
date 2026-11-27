@@ -571,7 +571,7 @@ export function findUnreadParams(source: string, callee: string): UnreadParamsAu
 export const APP_REGIONS = {
   rerank: {
     anchor: '// Re-rank instantly when RSI Filter or parameters are changed',
-    end: '\n  }, [rsiFilterActive, parameters]);',
+    end: '\n  }, [rsiFilterActive, parameters, accountCapital]);',
     allowed: [
       {
         token: 'catalystCache',

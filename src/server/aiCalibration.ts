@@ -191,6 +191,8 @@ export interface AiCalibrationEntry {
   promptVersion?: string | null;
   /** ADDITIVO (P6): modello che ha risposto (`openrouter:<id>` / `gemini:<id>`). */
   model?: string | null;
+  /** ADDITIVO: categoria strutturata (es. `newsBonus=10;dirMatch=aligned;regime=aligned` per source='catalyst'). */
+  aiCategory?: string | null;
 }
 
 export interface AiCalibrationForwardPoint {
@@ -401,6 +403,26 @@ export interface AiCalibrationStratum {
   contradicts: boolean;
 }
 
+export interface AiCalibrationCatalystBucket {
+  n: number;
+  meanR: number | null;
+  meanRNet: number | null;
+  winRateNetPct: number | null;
+}
+
+export interface AiCalibrationCatalystLift {
+  matchedCatalysts: number;
+  withBonus: AiCalibrationCatalystBucket;
+  withoutBonus: AiCalibrationCatalystBucket;
+  aligned: AiCalibrationCatalystBucket;
+  opposed: AiCalibrationCatalystBucket;
+  bonusLiftR: number | null;
+  bonusLiftRNet: number | null;
+  alignmentLiftR: number | null;
+  alignmentLiftRNet: number | null;
+  verdict: 'insufficient' | 'evidence';
+}
+
 export interface AiCalibrationResponse {
   version: typeof AI_CALIBRATION_VERSION;
   generatedAt: string;
@@ -465,6 +487,11 @@ export interface AiCalibrationResponse {
   byPromptVersion: AiCalibrationSliceRow[];
   /** Calibrazione separata per modello (diagnostica). */
   byModel: AiCalibrationSliceRow[];
+  /**
+   * Lift empirico dei catalizzatori (`source: 'catalyst'`) abbinati ad esiti forward reali:
+   * confronta `newsBonus > 0` vs `newsBonus === 0` e direzione allineata vs opposta.
+   */
+  catalystLift: AiCalibrationCatalystLift;
   /** Decisioni di scarto su setup che poi sono andati in positivo. */
   skippedWinners: AiCalibrationJoin[];
   /** Allarmi di formato: vuoto quando la quota e' sotto soglia. */
@@ -952,6 +979,7 @@ export function buildAiCalibration(input: {
   const matchedOrders = new Set<number>();
   const usedPointKeys = new Set<string>();
   const joined: AiCalibrationJoin[] = [];
+  const catalystMatchedRows: Array<{ r: number; rNet: number; newsBonus: number; dirMatch: string | null }> = [];
   let nearMissMatched = 0;
   let rejectedMatched = 0;
   for (const pair of pairs) {
@@ -962,6 +990,18 @@ export function buildAiCalibration(input: {
     if (pair.point.source === 'near_miss') nearMissMatched += 1;
     if (pair.point.source === 'rejected') rejectedMatched += 1;
     const { entry, ticker, atMs } = pair.candidate;
+    const rNetVal = round(pair.point.r - AI_CALIBRATION_NET_COST_R, 4);
+    if (entry.source === 'catalyst') {
+      const catMeta = typeof entry.aiCategory === 'string' ? entry.aiCategory : '';
+      const bonusMatch = catMeta.match(/newsBonus=(\d+)/i);
+      const dirMatch = catMeta.match(/dirMatch=(aligned|opposed|neutral)/i);
+      catalystMatchedRows.push({
+        r: pair.point.r,
+        rNet: rNetVal,
+        newsBonus: bonusMatch ? Number(bonusMatch[1]) : 0,
+        dirMatch: dirMatch ? dirMatch[1].toLowerCase() : null,
+      });
+    }
     joined.push({
       candidateKey:
         typeof entry.candidateKey === 'string' && entry.candidateKey.length > 0
@@ -976,7 +1016,7 @@ export function buildAiCalibration(input: {
       decision: classifyEntryDecision(entry),
       aiOutcome: entry.aiOutcome ?? null,
       r: pair.point.r,
-      rNet: round(pair.point.r - AI_CALIBRATION_NET_COST_R, 4),
+      rNet: rNetVal,
       forwardStatus: pair.point.status,
       deltaMs: Math.round(pair.point.decidedAtMs - atMs),
       promptVersion:
@@ -990,6 +1030,51 @@ export function buildAiCalibration(input: {
     });
   }
   const unmatchedAiEntries = candidates.length - joined.length;
+
+  const summarizeCatalystBucket = (
+    rows: ReadonlyArray<{ r: number; rNet: number }>
+  ): AiCalibrationCatalystBucket => {
+    if (rows.length === 0) {
+      return { n: 0, meanR: null, meanRNet: null, winRateNetPct: null };
+    }
+    const rs = rows.map((row) => row.r);
+    const rNets = rows.map((row) => row.rNet);
+    return {
+      n: rows.length,
+      meanR: round(mean(rs), 4),
+      meanRNet: round(mean(rNets), 4),
+      winRateNetPct: round(winSharePct(rNets), 1),
+    };
+  };
+  const catWithBonus = summarizeCatalystBucket(catalystMatchedRows.filter((row) => row.newsBonus > 0));
+  const catWithoutBonus = summarizeCatalystBucket(catalystMatchedRows.filter((row) => row.newsBonus <= 0));
+  const catAligned = summarizeCatalystBucket(catalystMatchedRows.filter((row) => row.dirMatch === 'aligned'));
+  const catOpposed = summarizeCatalystBucket(catalystMatchedRows.filter((row) => row.dirMatch === 'opposed'));
+  const catalystLift: AiCalibrationCatalystLift = {
+    matchedCatalysts: catalystMatchedRows.length,
+    withBonus: catWithBonus,
+    withoutBonus: catWithoutBonus,
+    aligned: catAligned,
+    opposed: catOpposed,
+    bonusLiftR:
+      catWithBonus.meanR !== null && catWithoutBonus.meanR !== null
+        ? round(catWithBonus.meanR - catWithoutBonus.meanR, 4)
+        : null,
+    bonusLiftRNet:
+      catWithBonus.meanRNet !== null && catWithoutBonus.meanRNet !== null
+        ? round(catWithBonus.meanRNet - catWithoutBonus.meanRNet, 4)
+        : null,
+    alignmentLiftR:
+      catAligned.meanR !== null && catOpposed.meanR !== null
+        ? round(catAligned.meanR - catOpposed.meanR, 4)
+        : null,
+    alignmentLiftRNet:
+      catAligned.meanRNet !== null && catOpposed.meanRNet !== null
+        ? round(catAligned.meanRNet - catOpposed.meanRNet, 4)
+        : null,
+    verdict:
+      catWithBonus.n >= minSample && catWithoutBonus.n >= minSample ? 'evidence' : 'insufficient',
+  };
 
   const buckets = bucketOf(joined);
   const actionNetR = joined
@@ -1163,6 +1248,7 @@ export function buildAiCalibration(input: {
     strata,
     byPromptVersion,
     byModel,
+    catalystLift,
     skippedWinners,
     alerts,
     verdict,

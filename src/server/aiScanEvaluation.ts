@@ -79,6 +79,13 @@ export interface ScanEvaluationMeta {
   candidateSource?: AiShadowLogCandidateSource | null;
   /** ADDITIVO (P4): concorrenza dei batch (default `AI_SHADOW_CONCURRENCY`). */
   concurrency?: number;
+  /**
+   * Timestamp reale (ms epoch) della scansione a cui i candidati si riferiscono.
+   * Ancora la voce del log shadow all'istante di decisione invece che all'orario
+   * differito in cui l'utente apre il post-mortem, evitando look-ahead bias e
+   * mancati abbinamenti con i segnali Shadow V1-live.
+   */
+  evaluatedAtMs?: number | null;
 }
 
 export interface ScanEvaluationRunResult {
@@ -113,10 +120,17 @@ export const AI_SHADOW_SCAN_SYSTEM_INSTRUCTION =
 let lastScanCandidates: ScanCandidateSnapshot[] = [];
 /** ADDITIVO (P3): runId dell'ultima scansione di processo. */
 let lastScanRunId: string | null = null;
+/** Timestamp (ms epoch) dell'ultima scansione salvata in memoria di processo. */
+let lastScanTimestampMs: number | null = null;
 
 /** ADDITIVO (P3): runId dell'ultima scansione salvata in memoria di processo. */
 export function getLastScanRunId(): string | null {
   return lastScanRunId;
+}
+
+/** Timestamp (ms epoch) dell'ultima scansione salvata in memoria di processo. */
+export function getLastScanTimestampMs(): number | null {
+  return lastScanTimestampMs;
 }
 
 /** ADDITIVO (P3): registra il runId della scansione corrente. */
@@ -152,7 +166,10 @@ export function beginScanRun(
 }
 
 /** Salva l'istantanea dei candidati prodotta dalla scansione (sola memoria di processo). */
-export function setLastScanCandidates(candidates: ReadonlyArray<ScanCandidateSnapshot>): void {
+export function setLastScanCandidates(
+  candidates: ReadonlyArray<ScanCandidateSnapshot>,
+  scanTimestampMs?: number | null
+): void {
   const normalized: ScanCandidateSnapshot[] = [];
   for (const raw of candidates) {
     if (!raw || typeof raw !== 'object') continue;
@@ -182,6 +199,10 @@ export function setLastScanCandidates(candidates: ReadonlyArray<ScanCandidateSna
     if (normalized.length >= AI_SHADOW_MAX_SCAN_CANDIDATES) break;
   }
   lastScanCandidates = normalized;
+  lastScanTimestampMs =
+    typeof scanTimestampMs === 'number' && Number.isFinite(scanTimestampMs) && scanTimestampMs > 0
+      ? scanTimestampMs
+      : Date.now();
 }
 
 /** Copia dei candidati dell'ultima scansione. */
@@ -193,6 +214,7 @@ export function getLastScanCandidates(): ScanCandidateSnapshot[] {
 export function resetLastScanCandidates(): void {
   lastScanCandidates = [];
   lastScanRunId = null;
+  lastScanTimestampMs = null;
   pendingHandlerScanInput = null;
   scanGateByRunTicker = new Map();
   scanGateRunIds = [];
@@ -609,7 +631,7 @@ export function parseScanEvaluations(raw: string): { ok: boolean; evaluations: S
 
 function buildEntry(
   candidate: ScanCandidateSnapshot,
-  source: 'specialize' | 'desk',
+  source: 'scan' | 'specialize' | 'desk',
   evaluated: boolean,
   aiOutcome: string | null,
   aiCategory: string | null,
@@ -621,14 +643,19 @@ function buildEntry(
     durationMs: number | null;
     promptVersion: string | null;
     model: string | null;
+    evaluatedAtMs?: number | null;
   }
 ): AiShadowLogEntry {
   const scorePart =
     typeof candidate.scoreTotal === 'number' ? `scan score ${candidate.scoreTotal}/100` : 'scan';
   const vetoPart = candidate.veto ? ` | veto ${candidate.veto}` : '';
+  const tsIso =
+    typeof meta.evaluatedAtMs === 'number' && Number.isFinite(meta.evaluatedAtMs) && meta.evaluatedAtMs > 0
+      ? new Date(meta.evaluatedAtMs).toISOString()
+      : new Date().toISOString();
   return {
     id: randomUUID(),
-    timestamp: new Date().toISOString(),
+    timestamp: tsIso,
     ticker: candidate.ticker,
     market: candidate.market,
     direction: candidate.direction,
@@ -692,11 +719,15 @@ export function buildNoCandidateEntry(
 export function combineScanEvaluations(
   candidates: ReadonlyArray<ScanCandidateSnapshot>,
   batches: ReadonlyArray<ScanEvaluationBatchResult>,
-  source: 'specialize' | 'desk',
+  source: 'scan' | 'specialize' | 'desk',
   meta: ScanEvaluationMeta = {}
 ): AiShadowLogEntry[] {
   const runId = typeof meta.runId === 'string' && meta.runId.length > 0 ? meta.runId : null;
   const candidateSource = meta.candidateSource ?? null;
+  const evaluatedAtMs =
+    typeof meta.evaluatedAtMs === 'number' && Number.isFinite(meta.evaluatedAtMs) && meta.evaluatedAtMs > 0
+      ? meta.evaluatedAtMs
+      : null;
   const byTicker = new Map<
     string,
     {
@@ -736,6 +767,7 @@ export function combineScanEvaluations(
       durationMs: hit?.durationMs ?? null,
       promptVersion: AI_SHADOW_SCAN_PROMPT_VERSION,
       model: hit?.model ?? null,
+      evaluatedAtMs,
     };
     if (!hit) {
       return buildEntry(
@@ -887,7 +919,7 @@ async function evaluateSingleBatch(
 
 export async function evaluateScanCandidates(
   candidates: ReadonlyArray<ScanCandidateSnapshot>,
-  source: 'specialize' | 'desk',
+  source: 'scan' | 'specialize' | 'desk',
   callLlm: ScanEvaluationLlmCall,
   batchSize: number = AI_SHADOW_BATCH_SIZE,
   meta: ScanEvaluationMeta = {}

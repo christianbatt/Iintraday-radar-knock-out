@@ -1322,8 +1322,7 @@ export default function App() {
     if (!catalystCache[ticker]) {
       setIsLoadingCatalyst(true);
       try {
-        const currentFut = cand.quote.market === 'EU' ? futures?.europe : futures?.usa;
-        const res = await analyzeCatalystWithGemini(cand.quote, newsItems, currentFut);
+        const res = await analyzeCatalystWithGemini(cand.quote, newsItems, futures);
         setCatalystCache((prev) => ({ ...prev, [ticker]: res }));
       } catch (err) {
         console.error('Errore catalyst Gemini:', err);
@@ -1340,10 +1339,9 @@ export default function App() {
     const ticker = cand.quote.ticker;
     setIsLoadingCatalyst(true);
     try {
-      const currentFut = cand.quote.market === 'EU' ? futures?.europe : futures?.usa;
       const newsItems = await fetchTickerNews(ticker, cand.quote.name);
       setNewsCache((prev) => ({ ...prev, [ticker]: newsItems }));
-      const res = await analyzeCatalystWithGemini(cand.quote, newsItems, currentFut);
+      const res = await analyzeCatalystWithGemini(cand.quote, newsItems, futures);
       setCatalystCache((prev) => ({ ...prev, [ticker]: res }));
 
       // Update setups if active candidate is either top EU or top US
@@ -1374,8 +1372,7 @@ export default function App() {
     const market = cand.quote.market;
 
     if (!existingCat) {
-      const activeFut = market === 'EU' ? futures?.europe : futures?.usa;
-      existingCat = await resolveCandidateCatalyst(cand, activeFut);
+      existingCat = await resolveCandidateCatalyst(cand, futures);
     }
 
     const newSetup = buildExecutionSetup(cand, existingCat, market, parameters, {

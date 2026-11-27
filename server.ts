@@ -55,6 +55,8 @@ import {
 import {
   setLastScanCandidates,
   getLastScanCandidates,
+  getLastScanRunId,
+  getLastScanTimestampMs,
   evaluateScanCandidates,
   resolveScanCandidateInput,
   consumeHandlerScanInput,
@@ -103,7 +105,13 @@ import {
 import { loadNearMissRecords, SHADOW_V1_NEAR_MISS_PATH } from './src/server/shadowV1LiveNearMiss';
 import { loadRejectedRecords, SHADOW_V1_REJECTED_PATH } from './src/server/shadowV1LiveRejected';
 import { existsSync } from 'node:fs';
-import { logVetoOutcomes, VETO_LOG_RELATIVE_PATH } from './src/server/vetoOutcomeLog';
+import {
+  foldVetoLog,
+  logVetoOutcomes,
+  summarizeVetoOutcomes,
+  VETO_LOG_RELATIVE_PATH,
+} from './src/server/vetoOutcomeLog';
+import { filterRelevantFreshNews, normalizeFuturesPayload } from './src/utils/newsFilter';
 import {
   analyzeDeskEvidencePack,
   buildDeskEvidencePack,
@@ -120,12 +128,25 @@ import {
 import { observeShadowV1LiveScan } from './src/server/shadowV1LiveScanner';
 import {
   filterUnderlyingsForActiveMarkets,
+  getActiveMarketsAt,
   SHADOW_MARKET_SCAN_INTERVAL_MS,
 } from './src/server/shadowMarketScheduler';
 import { DEFAULT_TRADE_REPUBLIC_UNDERLYINGS } from './src/data/defaultUnderlyings';
 import { formatShadowV2SignalsCsv, formatShadowV2SignalsJsonl, ShadowV2Record } from './src/knowledge/shadowV2';
 
 dotenv.config();
+
+// Attiva di default in produzione/dev il fascicolo probatorio anti-allucinazione
+// e la persistenza Firestore del log Shadow AI (rimangono disattivabili con '0'/'false'
+// e spenti nei test unitari che controllano il default di modulo).
+if (process.env.NODE_ENV !== 'test') {
+  if (process.env.AI_DESK_EVIDENCE === undefined) {
+    process.env.AI_DESK_EVIDENCE = '1';
+  }
+  if (process.env.SHADOW_AI_LOG_FIRESTORE === undefined) {
+    process.env.SHADOW_AI_LOG_FIRESTORE = '1';
+  }
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -470,12 +491,10 @@ class CacheStore {
 
 const cache = new CacheStore();
 let geminiQuotaExhaustedUntil: number = 0;
-let geminiCreditsDepleted: boolean = false;
 let openRouterRateLimitedUntil: number = 0;
 
 function isGeminiAvailable(): boolean {
   if (!process.env.GEMINI_API_KEY) return false;
-  if (geminiCreditsDepleted) return false;
   if (Date.now() < geminiQuotaExhaustedUntil) return false;
   return true;
 }
@@ -494,11 +513,11 @@ const ai = new GoogleGenAI({
 });
 
 // Non-blocking availability probe on startup to preemptively catch 402/depleted credits
-if (process.env.GEMINI_API_KEY) {
+if (process.env.GEMINI_API_KEY && process.env.NODE_ENV !== 'test') {
   (async () => {
     try {
       await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
+        model: GEMINI_MODEL,
         contents: 'ping',
       });
       console.info('[AI Gemini] API attiva e verificata con successo.');
@@ -506,12 +525,12 @@ if (process.env.GEMINI_API_KEY) {
       const status = startupErr?.status || startupErr?.code;
       const msg = String(startupErr?.message || '');
       if (status === 402 || msg.includes('402') || msg.includes('prepayment credits are depleted')) {
-        geminiCreditsDepleted = true;
-        geminiQuotaExhaustedUntil = Date.now() + 24 * 60 * 60 * 1000;
-        console.info('[AI Gemini] Crediti prepagati esauriti (HTTP 402). Transizione trasparente su OpenRouter e regole deterministiche.');
-      } else if (status === 429 || msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
+        // Cooldown temporaneo (30m) anziche' blocco permanente: se i crediti vengono ricaricati si riattiva senza riavvio.
         geminiQuotaExhaustedUntil = Date.now() + 30 * 60 * 1000;
-        console.info('[AI Gemini] Quota temporaneamente esaurita (HTTP 429). Attivato cooldown 30m.');
+        console.info('[AI Gemini] Crediti prepagati esauriti (HTTP 402). Cooldown 30m e transizione su OpenRouter e regole deterministiche.');
+      } else if (status === 429 || msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
+        geminiQuotaExhaustedUntil = Date.now() + 15 * 60 * 1000;
+        console.info('[AI Gemini] Quota temporaneamente esaurita (HTTP 429). Attivato cooldown 15m.');
       }
     }
   })();
@@ -743,9 +762,11 @@ const EXTERNAL_FETCH_TIMEOUT_MS = positiveIntFromEnv(
 const YAHOO_CACHE_TTL_MS = positiveIntFromEnv('YAHOO_CACHE_TTL_MS', 25000);
 
 // PUNTO 3 (config): modelli OpenRouter leggibili da ambiente.
-// Default = valori storici hardcoded: senza variabili il comportamento non cambia.
-const OPENROUTER_PRIMARY_MODEL = (process.env.OPENROUTER_PRIMARY_MODEL || '').trim() || 'nvidia/nemotron-3-ultra-550b-a55b:free';
-const OPENROUTER_FALLBACK_MODEL = (process.env.OPENROUTER_FALLBACK_MODEL || '').trim() || 'openrouter/free';
+// Default scelti tra i modelli :free verificati su OpenRouter con supporto nativo response_format json_object
+// e disattivazione esplicita del reasoning interno (che altrimenti brucia max_tokens producendo content: null).
+const OPENROUTER_PRIMARY_MODEL = (process.env.OPENROUTER_PRIMARY_MODEL || '').trim() || 'google/gemma-4-26b-a4b-it:free';
+const OPENROUTER_FALLBACK_MODEL = (process.env.OPENROUTER_FALLBACK_MODEL || '').trim() || 'google/gemma-4-31b-it:free';
+const OPENROUTER_ENABLE_REASONING = process.env.OPENROUTER_ENABLE_REASONING === 'true';
 
 async function fetchWithTimeout(
   url: string,
@@ -1994,34 +2015,37 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
   if (upper === 'LEO.MI' || upper === 'LEO' || upper === 'LDO') queryTicker = 'LDO.MI';
   const searchName = isSpaceX ? 'Space Exploration Technologies Corp' : (queryTicker === 'LDO.MI' ? 'Leonardo' : name);
 
-  const newsList: NewsItem[] = [];
+  const nowMs = Date.now();
+  let newsList: NewsItem[] = [];
 
   // 1. Try Finnhub if key provided
   const finnhubKey = process.env.FINNHUB_API_KEY;
   if (finnhubKey) {
     try {
       const cleanTicker = queryTicker.split('.')[0];
-      const today = new Date().toISOString().split('T')[0];
-      const yesterday = new Date(Date.now() - 86400000 * 2).toISOString().split('T')[0];
+      const today = new Date(nowMs).toISOString().split('T')[0];
+      const yesterday = new Date(nowMs - 86400000 * 3).toISOString().split('T')[0];
       const resp = await fetchWithTimeout(
         `https://finnhub.io/api/v1/company-news?symbol=${cleanTicker}&from=${yesterday}&to=${today}&token=${finnhubKey}`
       );
       if (resp.ok) {
         const items = await resp.json();
         if (Array.isArray(items)) {
-          for (let i = 0; i < Math.min(items.length, 4); i++) {
+          const rawFinnhub: NewsItem[] = [];
+          for (let i = 0; i < Math.min(items.length, 8); i++) {
             const item = items[i];
-            if (item.headline) {
-              newsList.push({
+            if (item.headline && typeof item.datetime === 'number' && item.datetime > 0) {
+              rawFinnhub.push({
                 id: `finnhub-${cleanTicker}-${i}`,
                 title: item.headline,
-                summary: item.summary || 'Notizia da fonte finanziaria accreditata',
+                summary: item.summary || item.headline,
                 source: item.source || 'Finnhub Wire',
                 url: item.url || 'https://finnhub.io',
                 publishedAt: new Date(item.datetime * 1000).toISOString(),
               });
             }
           }
+          newsList = filterRelevantFreshNews(rawFinnhub, ticker, searchName, nowMs, 72).fresh.slice(0, 5);
         }
       }
     } catch {
@@ -2029,10 +2053,10 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
     }
   }
 
-  // 2. Fetch real live articles from Google News RSS feed (Italian financial coverage)
+  // 2. Fetch real live articles from Google News RSS feed (Italian financial coverage, recent window)
   if (newsList.length === 0) {
     try {
-      const query = encodeURIComponent(`${searchName} ${isSpaceX ? 'SpaceX' : ticker} borsa`);
+      const query = encodeURIComponent(`${searchName} ${isSpaceX ? 'SpaceX' : ticker} borsa when:3d`);
       const rssUrl = `https://news.google.com/rss/search?q=${query}&hl=it&gl=IT&ceid=IT:it`;
       const rssResp = await fetchWithTimeout(rssUrl, {
         headers: {
@@ -2045,8 +2069,9 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
         const itemRegex = /<item>([\s\S]*?)<\/item>/g;
         let match;
         let idx = 0;
+        const rawItList: NewsItem[] = [];
 
-        while ((match = itemRegex.exec(text)) !== null && idx < 5) {
+        while ((match = itemRegex.exec(text)) !== null && idx < 10) {
           const itemBlock = match[1];
           const titleM = itemBlock.match(/<title>([\s\S]*?)<\/title>/);
           const linkM = itemBlock.match(/<link>([\s\S]*?)<\/link>/);
@@ -2054,7 +2079,10 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
           const pubDateM = itemBlock.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
           const descM = itemBlock.match(/<description>([\s\S]*?)<\/description>/);
 
-          if (titleM) {
+          if (titleM && pubDateM) {
+            const parsedPubMs = Date.parse(pubDateM[1].trim());
+            if (!Number.isFinite(parsedPubMs)) continue;
+
             const cleanTitle = titleM[1]
               .replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1')
               .replace(/&quot;/g, '"')
@@ -2067,7 +2095,7 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
             const source = sourceM
               ? sourceM[1].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim()
               : 'Fonte Notiziosa';
-            const publishedAt = pubDateM ? new Date(pubDateM[1].trim()).toISOString() : new Date().toISOString();
+            const publishedAt = new Date(parsedPubMs).toISOString();
             const rawDesc = descM
               ? descM[1]
                   .replace(/&lt;.*?&gt;/gi, '')
@@ -2080,7 +2108,7 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
                   .trim()
               : cleanTitle;
 
-            newsList.push({
+            rawItList.push({
               id: `rss-${ticker}-${idx}`,
               title: cleanTitle,
               summary: rawDesc.slice(0, 200),
@@ -2091,16 +2119,17 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
             idx++;
           }
         }
+        newsList = filterRelevantFreshNews(rawItList, ticker, searchName, nowMs, 72).fresh.slice(0, 5);
       }
     } catch (e: any) {
       console.error(`Errore fetch RSS per ${ticker}:`, e.message);
     }
   }
 
-  // 3. For US stocks or when Italian coverage is empty, query real English/US financial RSS
+  // 3. For US stocks or when Italian coverage has zero fresh/relevant items, query English/US financial RSS
   if (newsList.length === 0) {
     try {
-      const usQuery = encodeURIComponent(`${searchName} ${isSpaceX ? 'SpaceX' : ticker} stock`);
+      const usQuery = encodeURIComponent(`${searchName} ${isSpaceX ? 'SpaceX' : ticker} stock when:3d`);
       const usRssUrl = `https://news.google.com/rss/search?q=${usQuery}&hl=en-US&gl=US&ceid=US:en`;
       const usResp = await fetchWithTimeout(usRssUrl, {
         headers: {
@@ -2113,8 +2142,9 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
         const itemRegex = /<item>([\s\S]*?)<\/item>/g;
         let match;
         let idx = 0;
+        const rawUsList: NewsItem[] = [];
 
-        while ((match = itemRegex.exec(text)) !== null && idx < 5) {
+        while ((match = itemRegex.exec(text)) !== null && idx < 10) {
           const itemBlock = match[1];
           const titleM = itemBlock.match(/<title>([\s\S]*?)<\/title>/);
           const linkM = itemBlock.match(/<link>([\s\S]*?)<\/link>/);
@@ -2122,7 +2152,10 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
           const pubDateM = itemBlock.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
           const descM = itemBlock.match(/<description>([\s\S]*?)<\/description>/);
 
-          if (titleM) {
+          if (titleM && pubDateM) {
+            const parsedPubMs = Date.parse(pubDateM[1].trim());
+            if (!Number.isFinite(parsedPubMs)) continue;
+
             const cleanTitle = titleM[1]
               .replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1')
               .replace(/&quot;/g, '"')
@@ -2135,7 +2168,7 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
             const source = sourceM
               ? sourceM[1].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim()
               : 'Financial Wire';
-            const publishedAt = pubDateM ? new Date(pubDateM[1].trim()).toISOString() : new Date().toISOString();
+            const publishedAt = new Date(parsedPubMs).toISOString();
             const rawDesc = descM
               ? descM[1]
                   .replace(/&lt;.*?&gt;/gi, '')
@@ -2148,7 +2181,7 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
                   .trim()
               : cleanTitle;
 
-            newsList.push({
+            rawUsList.push({
               id: `rss-us-${ticker}-${idx}`,
               title: cleanTitle,
               summary: rawDesc.slice(0, 200),
@@ -2159,6 +2192,7 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
             idx++;
           }
         }
+        newsList = filterRelevantFreshNews(rawUsList, ticker, searchName, nowMs, 72).fresh.slice(0, 5);
       }
     } catch (e: any) {
       console.error(`Errore fetch US RSS per ${ticker}:`, e.message);
@@ -2417,6 +2451,7 @@ async function executeMarketDataScan(
   // ADDITIVO (P3-fix): runId locale alla richiesta, generato prima di ogni await
   // e assegnato all'handle della richiesta stessa.
   const scanRunId = beginScanRun(runIdHandle);
+  const scanStartedAtMs = Date.now();
   if (startupShadowHydrationState !== 'ready') {
     await startupShadowHydrationPromise;
   }
@@ -2507,7 +2542,8 @@ async function executeMarketDataScan(
         // indicizzata per `runId:ticker`; senza il runId della scansione i gate
         // non vengono applicati.
         runId: scanRunId,
-      }))
+      })),
+      scanStartedAtMs
     );
     if (process.env.DEBUG_SCAN_LOGS === 'true') {
       for (const { quote, score } of scanScores) {
@@ -2627,9 +2663,8 @@ async function executeMarketDataScan(
     try {
       logVetoOutcomes({
         scored: scanScores,
-        nowMs: Date.now(),
+        nowMs: scanStartedAtMs,
         logPath: path.join(process.cwd(), VETO_LOG_RELATIVE_PATH),
-        market: 'EU',
       });
     } catch (vetoErr: any) {
       console.warn(`[Veto outcome] log non disponibile: ${vetoErr?.message || vetoErr}`);
@@ -2654,6 +2689,10 @@ async function executeMarketDataScan(
     console.warn(`[Shadow V1 Live Scanner] diagnostica gate non disponibile: ${message}`);
   }
   applyScanGateDiagnostics(scanRunId, () => shadowV1ScanDiag?.allCandidateDiags ?? null);
+  // Valutazione AI shadow automatica in background durante gli orari di mercato attivo
+  // (con cooldown 15m e timestamp ancorato alla scansione per allineamento temporale
+  // reale con Shadow V1-live senza look-ahead bias).
+  void logAutoScanCandidateEvaluations(scanRunId, scanStartedAtMs).catch(() => undefined);
   const scanCompletedAt = Date.now();
   const scannedMarkets = new Set<'EU' | 'US'>();
   for (const item of underlyings) {
@@ -3095,14 +3134,102 @@ async function callScanBatchLlm(
   return null;
 }
 
-const inFlightScanEvalKeys = new Set<string>();
-const completedScanEvalKeys: string[] = [];
-const MAX_COMPLETED_SCAN_EVAL_KEYS = 20;
+const inFlightScanRunIds = new Set<string>();
+const completedScanRunIds: string[] = [];
+const MAX_COMPLETED_SCAN_RUN_IDS = 30;
+// Cooldown di 45 minuti sulle valutazioni background: preserva la quota giornaliera :free
+// su OpenRouter mantenendo 2-3 campionamenti distribuiti per sessione operativa.
+const AUTO_SCAN_EVAL_COOLDOWN_MS = 45 * 60_000;
+let lastAutoScanEvalAtMs = 0;
+let autoScanEvalInFlight = false;
+
+function markScanRunEvaluated(runId: string): void {
+  if (!completedScanRunIds.includes(runId)) {
+    completedScanRunIds.push(runId);
+    if (completedScanRunIds.length > MAX_COMPLETED_SCAN_RUN_IDS) {
+      completedScanRunIds.shift();
+    }
+  }
+}
 
 /**
- * ADDITIVO (Fasi 1-2): valuta tutti i candidati dell'ultima scansione e li
- * registra nel log shadow. Non lancia mai, deduplica per `source:runId` ed
- * e' invocata in background (non-blocking) per non saturare il timeout HTTP.
+ * Valutazione AI shadow automatica in background durante gli orari di mercato
+ * attivo: ancora i timestamp all'istante reale della scansione (`scanStartedAtMs`)
+ * cosi' la calibrazione puo' abbinare le decisioni AI agli esiti Shadow V1-live
+ * senza look-ahead bias e senza richiedere click manuali su Specialize/Post-Mortem.
+ */
+async function logAutoScanCandidateEvaluations(
+  scanRunId: string,
+  scanStartedAtMs: number
+): Promise<void> {
+  if (process.env.NODE_ENV === 'test' || process.env.DISABLE_AUTO_AI_SCAN_EVAL === 'true') {
+    return;
+  }
+  const activeMarkets = getActiveMarketsAt(scanStartedAtMs);
+  if (activeMarkets.length === 0) return;
+  if (autoScanEvalInFlight) return;
+  if (scanStartedAtMs - lastAutoScanEvalAtMs < AUTO_SCAN_EVAL_COOLDOWN_MS) return;
+
+  const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
+  if (!openRouterKey && !isGeminiAvailable()) return;
+
+  if (inFlightScanRunIds.has(scanRunId) || completedScanRunIds.includes(scanRunId)) {
+    return;
+  }
+
+  // Invia al batch LLM solo i candidati attivi con punteggio calcolato (inclusi near-miss e veti),
+  // escludendo i titoli inattivi/senza barre (scoreTotal === null) per dimezzare il consumo di token.
+  const candidates = getLastScanCandidates().filter(
+    (c) =>
+      c.runId === scanRunId &&
+      (c.market === 'EU' || c.market === 'US') &&
+      activeMarkets.includes(c.market) &&
+      c.scoreTotal !== null
+  );
+  if (candidates.length === 0) return;
+
+  autoScanEvalInFlight = true;
+  inFlightScanRunIds.add(scanRunId);
+  lastAutoScanEvalAtMs = scanStartedAtMs;
+  try {
+    const result = await evaluateScanCandidates(
+      candidates,
+      'scan',
+      (system, user) => callScanBatchLlm(system, user),
+      AI_SHADOW_BATCH_SIZE,
+      {
+        runId: scanRunId,
+        candidateSource: 'snapshot',
+        evaluatedAtMs: scanStartedAtMs,
+      }
+    );
+    console.info(
+      `[AI Shadow Log] auto-scan (${activeMarkets.join('/')}, run ${scanRunId}): ${result.evaluated}/${result.entries.length} valutati in ${result.batches
+        .map((batch) => `${batch.durationMs}ms`)
+        .join(' + ')}`
+    );
+    if (result.entries.length > 0) {
+      safeAppendAiShadowLog(
+        result.entries,
+        path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+      );
+    }
+    if (result.evaluated > 0) {
+      markScanRunEvaluated(scanRunId);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn('[AI Shadow Log] valutazione automatica scansione non riuscita:', message);
+  } finally {
+    inFlightScanRunIds.delete(scanRunId);
+    autoScanEvalInFlight = false;
+  }
+}
+
+/**
+ * ADDITIVO (Fasi 1-2): valuta i candidati dell'ultima scansione e li registra
+ * nel log shadow. Deduplica globalmente per `runId` tra `scan`, `specialize` e
+ * `desk` cosi' due azioni sul medesimo snapshot non bruciano due volte la quota LLM.
  */
 async function logScanCandidateEvaluations(
   source: 'specialize' | 'desk',
@@ -3111,12 +3238,8 @@ async function logScanCandidateEvaluations(
   const { bodyCandidates, bodyRunId } = input
     ? { bodyCandidates: input.bodyCandidates, bodyRunId: input.bodyRunId }
     : consumeHandlerScanInput();
-  let dedupKey: string | null = null;
+  let trackedRunId: string | null = null;
   try {
-    // ADDITIVO (P2): priorita' al campo `scanCandidates` del body (scansione del
-    // client, valida anche se la richiesta arriva su un'altra istanza); in
-    // mancanza si usa l'istantanea di processo. Nessuna delle due => una riga
-    // NESSUN_CANDIDATO_DISPONIBILE, senza chiamate LLM.
     const { candidates, candidateSource, runId } = resolveScanCandidateInput(
       bodyCandidates,
       bodyRunId
@@ -3132,26 +3255,33 @@ async function logScanCandidateEvaluations(
       return;
     }
     if (runId) {
-      dedupKey = `${source}:${runId}`;
-      if (inFlightScanEvalKeys.has(dedupKey) || completedScanEvalKeys.includes(dedupKey)) {
+      if (inFlightScanRunIds.has(runId) || completedScanRunIds.includes(runId)) {
         return;
       }
-      inFlightScanEvalKeys.add(dedupKey);
+      trackedRunId = runId;
+      inFlightScanRunIds.add(runId);
     }
+    const activeCandidates = candidates.filter((c) => c.scoreTotal !== null);
+    const batchCandidates = activeCandidates.length > 0 ? activeCandidates : candidates;
+
+    const lastScanTs = getLastScanTimestampMs();
+    const anchoredAtMs =
+      lastScanTs != null && (candidateSource === 'snapshot' || (runId != null && runId === getLastScanRunId()))
+        ? lastScanTs
+        : null;
     try {
       const result = await evaluateScanCandidates(
-        candidates,
+        batchCandidates,
         source,
         (system, user) => callScanBatchLlm(system, user),
         AI_SHADOW_BATCH_SIZE,
-        { runId, candidateSource }
+        { runId, candidateSource, evaluatedAtMs: anchoredAtMs }
       );
       if (result.ignoredUnknownTickers > 0 || result.ignoredDuplicateTickers > 0) {
         console.warn(
           `[AI Shadow Log] valutazioni ignorate (${source}): ticker sconosciuti ${result.ignoredUnknownTickers}, duplicati ${result.ignoredDuplicateTickers}`
         );
       }
-      // ADDITIVO (P4): durata per batch e totale, solo per diagnostica nei log.
       console.info(
         `[AI Shadow Log] ${source} (${candidateSource}, run ${runId ?? 'n.d.'}): ${result.evaluated}/${result.entries.length} valutati in ${result.batches
           .map((batch) => `${batch.durationMs}ms`)
@@ -3163,18 +3293,15 @@ async function logScanCandidateEvaluations(
           path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
         );
       }
-      if (dedupKey) {
-        completedScanEvalKeys.push(dedupKey);
-        if (completedScanEvalKeys.length > MAX_COMPLETED_SCAN_EVAL_KEYS) {
-          completedScanEvalKeys.shift();
-        }
+      if (trackedRunId && result.evaluated > 0) {
+        markScanRunEvaluated(trackedRunId);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.warn('[AI Shadow Log] valutazione candidati non riuscita:', message);
     }
   } finally {
-    if (dedupKey) inFlightScanEvalKeys.delete(dedupKey);
+    if (trackedRunId) inFlightScanRunIds.delete(trackedRunId);
     if (!input) resetHandlerScanInput();
   }
 }
@@ -3185,7 +3312,11 @@ app.post('/api/ai/specialize', requireApiAuth, async (req: Request, res: Respons
     const userId = typeof res.locals.authenticatedUid === 'string' ? res.locals.authenticatedUid : 'legacy';
     const sharedAppState = getSharedAppState(userId);
     const trades: any[] = Array.isArray(req.body?.trades) ? req.body.trades : (sharedAppState.journalEntries || []);
-    const excluded: any[] = Array.isArray(req.body?.excluded) ? req.body.excluded : (sharedAppState.excludedRecords || []);
+    const excluded: any[] = Array.isArray(req.body?.excluded)
+      ? req.body.excluded
+      : Array.isArray(req.body?.excludedSetups)
+        ? req.body.excludedSetups
+        : (sharedAppState.excludedRecords || []);
 
     if (trades.length === 0 && excluded.length === 0) {
       return res.status(400).json({
@@ -3303,12 +3434,18 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
       (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
     );
     const proposedDirectives = shapeValidDirectives;
+    // ADDITIVO (PR-B): analisi AI ancorata al fascicolo, dietro AI_DESK_EVIDENCE=1.
+    const deskAnalysisPayload = buildDeskEvidenceAnalysis(deskEvidencePack, generated);
+    const validatedDeskDirectives =
+      deskAnalysisPayload && deskAnalysisPayload.available && deskAnalysisPayload.analysis
+        ? deskAnalysisPayload.analysis.proposedDirectives
+        : [];
     // ADDITIVO (v10, Parte 3.2): la LLM fornisce solo il testo; il predicato lo decide la scansione.
+    // Quando il fascicolo probatorio e' attivo, usa solo testo e refs validati dal contratto anti-allucinazione.
     const directiveTextByPredicate = new Map<string, string>();
-    // ADDITIVO (P8): chiavi del fascicolo citate dalla proposta, per predicato.
-    // Servono solo a rendere attribuibile la regola in memoria: nessun gate le legge.
     const evidenceRefsByPredicate = new Map<string, string[]>();
-    for (const item of shapeValidDirectives) {
+    const directiveSourceList = deskEvidencePack !== null ? validatedDeskDirectives : shapeValidDirectives;
+    for (const item of directiveSourceList) {
       if (isLearningPredicateId(item?.predicateId) && !directiveTextByPredicate.has(item.predicateId)) {
         directiveTextByPredicate.set(item.predicateId, String(item.directive));
       }
@@ -3345,7 +3482,9 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
     }));
 
     let persistedCount = 0;
-    if (winnerResults.length > 0) {
+    // Non scrivere regole in memoria quando nessun modello AI ha risposto (evita
+    // direttive non attribuibili con model=null su disco/Firestore).
+    if (winnerResults.length > 0 && usedModel !== null) {
       // R3: persistenza tramite le funzioni esistenti; i gate (n, q, avgR, profitFactor) sono dentro updateAIMemory.
       updateAIMemory(winnerResults);
       aiLearnedMemory = loadAIMemoryFromDisk();
@@ -3392,9 +3531,6 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
     });
     const reason = outcome.reason;
     const reasonDetail = outcome.reasonDetail;
-
-    // ADDITIVO (PR-B): analisi AI ancorata al fascicolo, dietro AI_DESK_EVIDENCE=1.
-    const deskAnalysisPayload = buildDeskEvidenceAnalysis(deskEvidencePack, generated);
 
     return res.json({
       success: true,
@@ -3486,11 +3622,16 @@ Restituisci un JSON rigoroso con questi campi:
 ${LEARNING_PREDICATE_PROMPT}
 Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "directive": string, "confidence": null, "sampleEvidence": string }).`;
 
-    // ADDITIVO (PR-B): contratto dentro la stessa e unica chiamata LLM.
+    // ADDITIVO (PR-B): contratto dentro la stessa e unica chiamata LLM, passando anche gli esclusi reali.
+    const deskExcluded: any[] = Array.isArray(req.body?.excluded)
+      ? req.body.excluded
+      : Array.isArray(sharedAppState.excludedRecords)
+        ? sharedAppState.excludedRecords
+        : [];
     const deskEvidencePack = await prepareDeskEvidence({
       nowMs: Date.now(),
       trades: sessionTrades,
-      excluded: [],
+      excluded: deskExcluded,
       rootDir: process.cwd(),
     });
     if (deskEvidencePack !== null) {
@@ -3499,7 +3640,7 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
       });
     }
 
-    const systemInstruction = `Sei un Senior Risk Officer rigoroso ed esperto. Analizza con occhio clinico e linguaggio istituzionale da hedge fund. Non inventare dati. Rispondi solo in formato JSON.`;
+    const systemInstruction = `Sei un Senior Risk Officer rigoroso ed esperto. Analizza con occhio clinico e linguaggio istituzionale da hedge fund. Non inventare dati e cita sempre le chiavi del fascicolo probatorio (inclusi nearMiss.*, veto.* e calibration.catalystLift.* quando disponibili e con campione sufficiente). Rispondi solo in formato JSON.`;
 
     // ADDITIVO (P5): versione del prompt e modello viaggiano con la riga di log.
     const deskPromptVersion = deskEvidencePack
@@ -3515,10 +3656,13 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
         systemInstruction,
         promptText,
         openRouterKey,
-        15000
+        18000
       );
-      if (openRouterRes?.data?.executiveSummary) {
-        generated = openRouterRes.data;
+      if (openRouterRes?.data?.executiveSummary || openRouterRes?.data?.summary) {
+        generated = {
+          ...openRouterRes.data,
+          executiveSummary: openRouterRes.data.executiveSummary || openRouterRes.data.summary,
+        };
         usedModel = openRouterRes.model ?? null;
       } else if (openRouterRes?.keyInvalid) {
         llmErrorDetail = 'openrouter:401';
@@ -3531,8 +3675,11 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
 
     if (!generated && isGeminiAvailable()) {
       const gemRes = await callGeminiModel(systemInstruction, promptText);
-      if (gemRes?.data?.executiveSummary) {
-        generated = gemRes.data;
+      if (gemRes?.data?.executiveSummary || gemRes?.data?.summary) {
+        generated = {
+          ...gemRes.data,
+          executiveSummary: gemRes.data.executiveSummary || gemRes.data.summary,
+        };
         usedModel = gemRes.model ?? null;
       } else if (gemRes?.quotaExhausted) {
         llmErrorDetail = 'gemini:402/429';
@@ -3540,19 +3687,38 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
     }
 
     // Nessuna prosa inventata: se nessun modello risponde, il post-mortem
-    // riporta solo le metriche gia' calcolate e lo dichiara. Le cause non sono
-    // deducibili dai soli aggregati, quindi non vengono affermate.
+    // riporta solo le metriche gia' calcolate e ancorate esattamente alle chiavi
+    // del fascicolo probatorio (`journal.*`) cosi' `summaryVerified` resta true.
     if (!generated) {
+      const packJournal = deskEvidencePack?.sections.journal;
+      const fbN = packJournal ? packJournal.n : total;
+      const fbWins = packJournal ? packJournal.wins : wins.length;
+      const fbLosses = packJournal ? packJournal.losses : losses.length;
+      const fbBe = packJournal ? packJournal.breakevens : breakevens.length;
+      const fbExp = packJournal ? packJournal.expired : expired.length;
+      const fbWrAll =
+        packJournal && packJournal.winRateAllPct !== null ? packJournal.winRateAllPct : Number(winRate);
+      const fbNetPnl =
+        packJournal && packJournal.netPnlEur !== null ? packJournal.netPnlEur : Number(netPnl);
+      const fbAvgR =
+        packJournal && packJournal.avgR !== null ? Number(packJournal.avgR.toFixed(2)) : Number(avgR);
+      const fallbackSummary =
+        `LLM non disponibile: riepilogo deterministico delle sessioni ${market}. ` +
+        `${fbN} trade chiusi analizzati (${fbWins} win, ${fbLosses} loss, ${fbBe} BE, ${fbExp} scaduti), ` +
+        `win rate ${fbWrAll}% sui trade chiusi, P&L netto ${fbNetPnl} €, R medio ${fbAvgR}R. ` +
+        `Nessuna interpretazione qualitativa: da soli questi aggregati non identificano le cause.`;
       generated = {
-        executiveSummary:
-          `LLM non disponibile: riepilogo deterministico delle sessioni ${market}. ` +
-          `${total} trade analizzati (${wins.length} win, ${losses.length} loss, ${breakevens.length} BE, ${expired.length} scaduti), ` +
-          `win rate ${winRate}% sui trade analizzati, P&L netto ${netPnl} €, R medio ${avgR}R. ` +
-          `Nessuna interpretazione qualitativa: da soli questi aggregati non identificano le cause.`,
+        summary: fallbackSummary,
+        executiveSummary: fallbackSummary,
+        summaryRefs: packJournal
+          ? ['journal.n', 'journal.winRateAllPct', 'journal.netPnlEur', 'journal.avgR']
+          : [],
+        claims: [],
+        dataGaps: ['Modello LLM temporaneamente non disponibile o in cooldown di quota API.'],
         strengths: [],
         failurePatterns: [],
         tacticalAdvice:
-          'Rilanciare il post-mortem quando il modello AI e\' disponibile; nel frattempo usare solo le metriche riportate.',
+          'Rilanciare il post-mortem quando il modello AI e\' disponibile; nel frattempo attenersi esclusivamente alle metriche verificate dal diario e dai gate deterministici.',
         newDirectives: [],
         llmUnavailable: true,
       };
@@ -3578,11 +3744,18 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
       (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
     );
     const proposedDirectives = shapeValidDirectives;
+    // ADDITIVO (PR-B): analisi AI ancorata al fascicolo, dietro AI_DESK_EVIDENCE=1.
+    const deskAnalysisPayload = buildDeskEvidenceAnalysis(deskEvidencePack, generated);
+    const deskValidatedDirectives =
+      deskAnalysisPayload && deskAnalysisPayload.available && deskAnalysisPayload.analysis
+        ? deskAnalysisPayload.analysis.proposedDirectives
+        : [];
     const directiveTextByPredicate = new Map<string, string>();
     // ADDITIVO (P8): chiavi del fascicolo citate dalla proposta, per predicato.
-    // Servono solo a rendere attribuibile la regola in memoria: nessun gate le legge.
+    // Quando il fascicolo probatorio e' attivo, usa solo direttive/refs validati dal contratto.
     const evidenceRefsByPredicate = new Map<string, string[]>();
-    for (const item of shapeValidDirectives) {
+    const deskDirectiveSource = deskEvidencePack !== null ? deskValidatedDirectives : shapeValidDirectives;
+    for (const item of deskDirectiveSource) {
       if (isLearningPredicateId(item?.predicateId) && !directiveTextByPredicate.has(item.predicateId)) {
         directiveTextByPredicate.set(item.predicateId, String(item.directive));
       }
@@ -3596,8 +3769,8 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
     aiLearnedMemory = await loadPersistentAIMemory();
     const deskMemoryBefore = new Map(aiLearnedMemory.map((entry) => [entry.topic, entry.learnedAt]));
 
-    // ADDITIVO (v10, Parte 3.6): stessa scansione deterministica su sessionTrades, excluded = [].
-    const deskScan = scanLearningPredicates(sessionTrades, []);
+    // ADDITIVO (v10, Parte 3.6): stessa scansione deterministica su sessionTrades + deskExcluded reali.
+    const deskScan = scanLearningPredicates(sessionTrades, deskExcluded);
     const deskTestedPredicates = deskScan.filter((entry) => entry.tested);
     const deskWinningPredicates = deskScan.filter((entry) => entry.passesGates);
     const deskDecisiveSample = Math.max(0, ...deskScan.map((entry) => entry.n));
@@ -3618,7 +3791,7 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
     }));
 
     let deskPersistedCount = 0;
-    if (deskWinnerResults.length > 0) {
+    if (deskWinnerResults.length > 0 && usedModel !== null) {
       updateAIMemory(deskWinnerResults);
       aiLearnedMemory = loadAIMemoryFromDisk();
       if (firebaseAdminFirestore) {
@@ -3661,9 +3834,6 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
       gateDetail: deskGateDetail,
     });
 
-    // ADDITIVO (PR-B): analisi AI ancorata al fascicolo, dietro AI_DESK_EVIDENCE=1.
-    const deskAnalysisPayload = buildDeskEvidenceAnalysis(deskEvidencePack, generated);
-
     return res.json({
       success: true,
       market,
@@ -3705,13 +3875,26 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
   }
 });
 
+function applyOpenRouterCooldown(status: number, errBody: string, modelDesc: string): void {
+  const lower = String(errBody || '').toLowerCase();
+  const isDailyOrCredits =
+    status === 402 ||
+    lower.includes('free-models-per-day') ||
+    lower.includes('per-day') ||
+    lower.includes('credits');
+  const cooldownMs = isDailyOrCredits ? 60 * 60 * 1000 : 90 * 1000;
+  openRouterRateLimitedUntil = Date.now() + cooldownMs;
+  const label = isDailyOrCredits ? 'quota giornaliera/crediti (cooldown 60m)' : 'rate limit RPM temporaneo (cooldown 90s)';
+  console.info(`[OpenRouter] HTTP ${status} per ${modelDesc} — ${label}. Transizione a fallback.`);
+}
+
 // Helper: Invoca OpenRouter con timeout, parse JSON e gestione errori/crediti
 async function callOpenRouterModel(
   modelOrModels: string | string[],
   systemInstruction: string,
   userPrompt: string,
   apiKey: string,
-  timeoutMs: number = 10000
+  timeoutMs: number = 15000
 ): Promise<{
   data: any;
   keyInvalid?: boolean;
@@ -3735,8 +3918,9 @@ async function callOpenRouterModel(
         { role: 'user', content: userPrompt },
       ],
       response_format: { type: 'json_object' },
-      max_tokens: 1500,
+      max_tokens: 2500,
       temperature: 0.1,
+      reasoning: { enabled: OPENROUTER_ENABLE_REASONING },
     };
 
     if (Array.isArray(modelOrModels)) {
@@ -3765,8 +3949,8 @@ async function callOpenRouterModel(
     }
 
     if (res.status === 402 || res.status === 429) {
-      openRouterRateLimitedUntil = Date.now() + 10 * 60 * 1000; // Cooldown 10 minuti
-      console.info(`[OpenRouter] HTTP ${res.status} per ${modelDesc} (crediti esauriti o rate limit). Attivato cooldown 10m e transizione a fallback immediato.`);
+      const errBody = await res.text().catch(() => '');
+      applyOpenRouterCooldown(res.status, errBody, modelDesc);
       return { data: null, creditsExhausted: true, status: res.status };
     }
 
@@ -3778,7 +3962,11 @@ async function callOpenRouterModel(
 
     const json = await res.json();
     const rawContent = json.choices?.[0]?.message?.content;
-    if (!rawContent) return null;
+    if (!rawContent || typeof rawContent !== 'string' || rawContent.trim().length === 0) {
+      const finishReason = json.choices?.[0]?.finish_reason ?? 'unknown';
+      console.info(`[OpenRouter] Risposta vuota (finish_reason=${finishReason}) per ${json.model || modelDesc}.`);
+      return null;
+    }
 
     const cleaned = rawContent
       .replace(/^```(?:json)?\s*/i, '')
@@ -3797,9 +3985,6 @@ async function callOpenRouterModel(
         if (!Array.isArray(parsed.fonti)) parsed.fonti = [];
         if (typeof parsed.newsBonusScore !== 'number') parsed.newsBonusScore = 0;
       }
-      // Il modello usato viaggia con la risposta: senza questo, il log shadow
-      // non puo' dire quale modello ha prodotto una decisione. Stessa forma
-      // della variante raw text: `openrouter:<id>`.
       return { data: parsed, model: `openrouter:${String(usedModel)}` };
     }
     return null;
@@ -3839,8 +4024,9 @@ async function callOpenRouterRawText(
         { role: 'user', content: userPrompt },
       ],
       response_format: { type: 'json_object' },
-      max_tokens: 2000,
+      max_tokens: 2800,
       temperature: 0.1,
+      reasoning: { enabled: OPENROUTER_ENABLE_REASONING },
     };
     if (Array.isArray(modelOrModels)) {
       payload.models = modelOrModels;
@@ -3863,7 +4049,8 @@ async function callOpenRouterRawText(
     clearTimeout(timeoutId);
 
     if (res.status === 402 || res.status === 429) {
-      openRouterRateLimitedUntil = Date.now() + 10 * 60 * 1000;
+      const errBody = await res.text().catch(() => '');
+      applyOpenRouterCooldown(res.status, errBody, modelDesc);
       return null;
     }
     if (!res.ok) {
@@ -3930,15 +4117,14 @@ async function callGeminiModel(
     const is429 = status === 429 || msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota');
 
     if (is402) {
-      geminiCreditsDepleted = true;
-      geminiQuotaExhaustedUntil = Date.now() + 24 * 60 * 60 * 1000;
-      console.info('[AI Gemini] Crediti prepagati esauriti (HTTP 402). Transizione automatica a OpenRouter e regole deterministiche.');
+      geminiQuotaExhaustedUntil = Date.now() + 30 * 60 * 1000;
+      console.info('[AI Gemini] Crediti prepagati esauriti (HTTP 402). Cooldown 30m e transizione a OpenRouter e regole deterministiche.');
       return { data: null, quotaExhausted: true };
     }
 
     if (is429) {
-      geminiQuotaExhaustedUntil = Date.now() + 30 * 60 * 1000;
-      console.info('[AI Gemini] Rate limit o quota raggiunta (HTTP 429). Cooldown 30m e transizione a fallback.');
+      geminiQuotaExhaustedUntil = Date.now() + 15 * 60 * 1000;
+      console.info('[AI Gemini] Rate limit o quota raggiunta (HTTP 429). Cooldown 15m e transizione a fallback.');
       return { data: null, quotaExhausted: true };
     }
 
@@ -3981,7 +4167,9 @@ app.post('/api/test-openrouter', requireServerApiKey, async (req: Request, res: 
             model,
             messages: [{ role: 'user', content: testPrompt }],
             response_format: { type: 'json_object' },
+            max_tokens: 300,
             temperature: 0.1,
+            reasoning: { enabled: OPENROUTER_ENABLE_REASONING },
           }),
         });
 
@@ -3997,11 +4185,13 @@ app.post('/api/test-openrouter', requireServerApiKey, async (req: Request, res: 
           });
         } else {
           const data = await resp.json();
+          const contentReply = data.choices?.[0]?.message?.content;
           modelResults.push({
             model,
-            status: 'ok',
+            status: contentReply ? 'ok' : 'empty_content',
             latencyMs: elapsed,
-            reply: data.choices?.[0]?.message?.content?.slice(0, 100),
+            finishReason: data.choices?.[0]?.finish_reason ?? null,
+            reply: typeof contentReply === 'string' ? contentReply.slice(0, 120) : null,
           });
         }
       } catch (e: any) {
@@ -4024,7 +4214,48 @@ app.post('/api/test-openrouter', requireServerApiKey, async (req: Request, res: 
   }
 });
 
-// Analyze Catalyst (Gerarchia: OpenRouter Nemotron 3 Ultra -> DeepSeek Free -> Fallback Gemini -> Regole Determistiche)
+// Analyze Catalyst (Gerarchia: Guardrail deterministici -> OpenRouter -> Fallback Gemini; zero risposte simulate)
+const AI_CATALYST_PROMPT_VERSION = 'ai-catalyst@3';
+
+function readEmpiricalVetoContext(market: 'EU' | 'US', vetoCode: string | null | undefined): string {
+  if (!vetoCode) return 'nessun veto attivo';
+  try {
+    const vetoLogPath = path.join(process.cwd(), VETO_LOG_RELATIVE_PATH);
+    if (!fs.existsSync(vetoLogPath)) return `${vetoCode} (storico controfattuale non ancora presente)`;
+    const stat = fs.statSync(vetoLogPath);
+    if (!stat.isFile() || stat.size > 2 * 1024 * 1024) return vetoCode;
+    const rows = summarizeVetoOutcomes(foldVetoLog(fs.readFileSync(vetoLogPath, 'utf8')));
+    const matched = rows.find((r) => r.market === market && r.veto === vetoCode);
+    if (!matched || matched.n === 0) {
+      return `${vetoCode} (campione storico locale n=0)`;
+    }
+    return `${vetoCode} (storico locale ${market}: n=${matched.n}, target=${matched.target}, stop=${matched.stop}, meanRMarket=${matched.meanRMarket ?? 'n.d.'})`;
+  } catch {
+    return vetoCode;
+  }
+}
+
+function buildMechanicalInvalidations(candidate: any): string[] {
+  const ccy = typeof candidate?.currency === 'string' && candidate.currency ? candidate.currency : '';
+  const fmt = (v: unknown) =>
+    typeof v === 'number' && Number.isFinite(v) ? `${v.toFixed(2)}${ccy ? ` ${ccy}` : ''}` : null;
+  const out: string[] = [];
+  const vwap = fmt(candidate?.vwapState?.vwapLevel ?? candidate?.vwap);
+  if (vwap) out.push(`Chiusura 5m avversa oltre VWAP di sessione (${vwap})`);
+  const isShort = (candidate?.gapPercent ?? 0) < 0;
+  const orbBound = fmt(isShort ? candidate?.orbHigh : candidate?.orbLow);
+  if (orbBound) {
+    out.push(
+      isShort
+        ? `Rottura al rialzo del massimo ORB (${orbBound})`
+        : `Rottura al ribasso del minimo ORB (${orbBound})`
+    );
+  }
+  const prevClose = fmt(candidate?.prevClose);
+  if (prevClose) out.push(`Riassorbimento completo del gap verso chiusura precedente (${prevClose})`);
+  return out;
+}
+
 app.post('/api/analyze-catalyst', requireApiAuth, async (req: Request, res: Response) => {
   try {
     const { candidate, news, futures } = req.body;
@@ -4033,8 +4264,17 @@ app.post('/api/analyze-catalyst', requireApiAuth, async (req: Request, res: Resp
       return res.status(400).json({ error: 'Candidato mancante per analisi' });
     }
 
-    // Rule: Absence of news is NOT an exclusion reason, EXCEPT today's real earnings release
     const realNews: NewsItem[] = Array.isArray(news) ? news : [];
+    const nowMs = Date.now();
+    const freshCheck = filterRelevantFreshNews(
+      realNews,
+      String(candidate.ticker),
+      String(candidate.name || ''),
+      nowMs,
+      72
+    );
+    const verifiedNews = freshCheck.fresh;
+
     const hasTodayEarnings = candidate.daysToEarnings === 0 && Boolean(candidate.nextEarningsDate);
     const hasImminentEarnings =
       typeof candidate.daysToEarnings === 'number' &&
@@ -4042,82 +4282,134 @@ app.post('/api/analyze-catalyst', requireApiAuth, async (req: Request, res: Resp
       candidate.daysToEarnings <= 2 &&
       Boolean(candidate.nextEarningsDate);
 
-    if (realNews.length === 0) {
-      if (hasTodayEarnings) {
-        return res.json({
-          decisione: 'NESSUN_TRADE',
-          direzione: 'NESSUNA',
-          catalizzatore: `Giorno di pubblicazione trimestrale (${candidate.nextEarningsDate}) per ${candidate.ticker}: rischio estremo di gap, spike bid/ask e knock-out anticipato sui certificati a leva.`,
-          punti_a_favore: [],
-          rischi: [
-            `Trimestrale odierna (${candidate.nextEarningsDate}): allargamento spread emittente e volatilità non prezzabile intraday`,
-          ],
-          condizioni_invalidazione: [
-            'Attendere il giorno successivo alla pubblicazione dei conti e la normalizzazione di spread e VWAP',
-          ],
-          fonti: [],
-          newsBonusScore: 0,
-        });
-      }
-      const isPositive = (candidate.gapPercent ?? 0) >= 0;
+    // Normalizza il payload futures sia quando arriva completo ({ europe, usa }) sia come slice ({ dax } / { sp500 })
+    const normalizedFutures = normalizeFuturesPayload(futures, candidate.market);
+    const futuresChangeForCandidate = normalizedFutures.changePercent;
+    const candidateSetupScore = calculateCandidateScore(candidate, futuresChangeForCandidate, null, {
+      volume: candidate.lastBarVolume ?? null,
+      barTime: candidate.lastBarTime ?? null,
+    });
+    const mechanicalInvalidations = buildMechanicalInvalidations(candidate);
+    const hasFeedError =
+      Array.isArray(candidate?.vwapState?.flags) &&
+      candidate.vwapState.flags.includes('DATA_QUALITY:FEED_ERROR');
+
+    // Guardrail 1: Trimestrale odierna sempre bloccante (prima di ogni chiamata LLM)
+    if (hasTodayEarnings) {
       return res.json({
-        decisione: 'TRADE',
-        direzione: isPositive ? 'LONG' : 'SHORT',
-        catalizzatore: 'Setup Tecnico Momentum: Nessuna notizia straordinaria reperibile nelle ultime 24 ore. L\'opportunità è convalidata dalla dinamica di prezzo, ampiezza del gap e volume relativo.',
-        punti_a_favore: [
-          'Setup tecnico puro guidato da apertura in gap e volume relativo senza rumore informativo',
-          'Assenza di interferenze o rischi da annunci imprevisti',
-          'Livelli chiave e VWAP intatti e operabili'
-        ],
+        decisione: 'NESSUN_TRADE',
+        direzione: 'NESSUNA',
+        catalizzatore: `Giorno di pubblicazione trimestrale (${candidate.nextEarningsDate}) per ${candidate.ticker}: rischio estremo di gap, spike bid/ask e knock-out anticipato sui certificati a leva.`,
+        punti_a_favore: [],
         rischi: [
-          'Assenza di catalizzatore fondamentale ad alto impatto: monitorare rigorosamente la persistenza dei volumi e la tenuta del VWAP',
-          ...(hasImminentEarnings
-            ? [`Attenzione: trimestrale imminente il ${candidate.nextEarningsDate} (tra ${candidate.daysToEarnings} gg) — evitare esposizione aggressiva su leva KO.`]
-            : []),
+          `Trimestrale odierna (${candidate.nextEarningsDate}): allargamento spread emittente e volatilità non prezzabile intraday`,
         ],
         condizioni_invalidazione: [
-          'Rottura del VWAP intraday nella prima ora',
-          'Riassorbimento totale del gap in apertura',
-          'Inversione improvvisa dei futures dell\'indice di riferimento'
+          'Attendere il giorno successivo alla pubblicazione dei conti e la normalizzazione di spread e VWAP',
+          ...mechanicalInvalidations,
         ],
+        fonti: verifiedNews.map((n) => ({ title: n.title, url: n.url, source: n.source, time: n.publishedAt })),
+        newsBonusScore: 0,
+      });
+    }
+
+    // Guardrail 2: Dati intraday incompleti o feed error — evita di consumare quota LLM su dati corrotti
+    if (hasFeedError || candidateSetupScore.warmupIncomplete) {
+      return res.json({
+        decisione: 'NESSUN_TRADE',
+        direzione: 'NESSUNA',
+        catalizzatore: `Dati intraday incompleti o feed non affidabile per ${candidate.ticker} (${hasFeedError ? 'DATA_QUALITY:FEED_ERROR' : 'warmup indicatori 5m incompleto'}).`,
+        punti_a_favore: [],
+        rischi: [
+          'Serie 5m incompleta o degradata: impossibile validare il catalizzatore rispetto a VWAP/struttura intraday.',
+        ],
+        condizioni_invalidazione: [
+          'Attendere il ripristino della copertura barre intraday e il completamento del warm-up',
+          ...mechanicalInvalidations,
+        ],
+        fonti: verifiedNews.map((n) => ({ title: n.title, url: n.url, source: n.source, time: n.publishedAt })),
+        newsBonusScore: 0,
+      });
+    }
+
+    // Guardrail 3: Assenza di notizie fresche (<=72h) e pertinenti al ticker -> rigoroso NESSUN_TRADE lato catalizzatore
+    // senza consumare chiamate LLM (mantiene la dicitura "Assenza di notizie verificate" per calculator.ts).
+    if (verifiedNews.length === 0) {
+      const discardDetail =
+        freshCheck.staleCount > 0 || freshCheck.offTickerCount > 0
+          ? ` (scartati ${freshCheck.staleCount} articoli obsoleti >72h e ${freshCheck.offTickerCount} articoli fuori-ticker)`
+          : '';
+      return res.json({
+        decisione: 'NESSUN_TRADE',
+        direzione: 'NESSUNA',
+        catalizzatore:
+          `Assenza di notizie verificate nelle ultime 72 ore per ${candidate.ticker}${discardDetail}: nessun catalizzatore fondamentale confermato.`,
+        punti_a_favore: [],
+        rischi: [
+          `Assenza di notizie verificate e pertinenti nelle ultime 72 ore${discardDetail}.`,
+          ...(hasImminentEarnings
+            ? [
+                `Attenzione: trimestrale imminente il ${candidate.nextEarningsDate} (tra ${candidate.daysToEarnings} gg) — evitare esposizione aggressiva su leva KO.`,
+              ]
+            : []),
+        ],
+        condizioni_invalidazione:
+          mechanicalInvalidations.length > 0
+            ? mechanicalInvalidations
+            : ['Rottura del VWAP intraday nella prima ora', 'Riassorbimento totale del gap in apertura'],
         fonti: [],
         newsBonusScore: 0,
       });
     }
 
+    let macroContextLine = 'nessun blackout macro attivo';
+    let activeMacroWarning: string | null = null;
+    try {
+      const macroState = await getMacroCalendarState();
+      if (macroState?.isBlackoutActive && macroState?.activeBlackoutEvent) {
+        const evt = macroState.activeBlackoutEvent;
+        macroContextLine = `BLACKOUT MACRO ATTIVO: ${evt.event} (${evt.currency}, ore ${evt.timeCET} CET, impatto ${evt.impact})`;
+        activeMacroWarning = `Blackout macroeconomico attivo (${evt.event} ${evt.timeCET} CET): rischio allargamento spread certificati Knock-Out.`;
+      } else if (Array.isArray(macroState?.events) && macroState.events.length > 0) {
+        const upcoming = macroState.events
+          .filter((e: any) => typeof e?.minutesToEvent === 'number' && e.minutesToEvent > 15 && e.minutesToEvent <= 90)
+          .map((e: any) => `${e.event} (${e.timeCET} CET, tra ${e.minutesToEvent}m)`);
+        if (upcoming.length > 0) {
+          macroContextLine = `Rilascio macro imminente entro 90m: ${upcoming.join('; ')}`;
+        }
+      }
+    } catch {
+      // non bloccante
+    }
+
+    const candMarket: 'EU' | 'US' = candidate.market === 'US' ? 'US' : 'EU';
+    const vetoContextLine = readEmpiricalVetoContext(candMarket, candidateSetupScore.veto);
+
     aiLearnedMemory = await loadPersistentAIMemory();
     const activeDirectives = aiLearnedMemory
       .filter((directive) => directive.confidence != null)
       .slice(-6)
-      .map((directive, index) =>
-        `[Pattern statistico ${index + 1} - ${directive.topic} (${directive.market})]: ${directive.directive} ` +
-        `(score 1-q: ${directive.confidence}%; evidenza: ${directive.sampleEvidence})`
+      .map(
+        (directive, index) =>
+          `[Pattern statistico ${index + 1} - ${directive.topic} (${directive.market})]: ${directive.directive} ` +
+          `(score 1-q: ${directive.confidence}%; evidenza: ${directive.sampleEvidence})`
       )
       .join('\n');
 
-    const systemInstruction = `Sei un analista di trading intraday rigoroso. Ricevi dati di mercato già calcolati dal codice e notizie con fonti.
+    const systemInstruction = `Sei un analista di trading intraday rigoroso. Ricevi dati di mercato già calcolati dal codice e notizie reali con fonti.
 REGOLE TASSATIVE:
 - Usa esclusivamente i dati forniti. Non inventare prezzi, notizie, livelli o statistiche.
 - Non fornire prezzi obiettivo, target o numeri non presenti nei dati.
-- REGOLE SULLE NOTIZIE: L'assenza di notizie o la presenza di notizie generali NON è motivo di esclusione. La notizia positiva/catalizzatore attribuisce punti di forza e bonus di score (+10/+15pt).
-- Rispondi "NESSUN_TRADE" ESCLUSIVAMENTE se ci sono fattori ostativi critici e verificati (es. giorno di pubblicazione utili/trimestrale durante la seduta, bilanci contestati, rischi giudiziari o notizie fortemente avverse). In assenza di tali blocchi, la decisione è "TRADE" allineata alla direzione del gap e dei parametri tecnici.
-- Valuta il catalizzatore: tipo, direzione probabile, freschezza, affidabilità della fonte, rischi (es. utili imminenti nello stesso giorno, notizie già scontate, futures opposti).
-- Indica sempre cosa invalida la tesi operativa.
+- Valuta SOLO il catalizzatore: tipo, direzione, freschezza, affidabilità della fonte, rischi (utili imminenti, notizie già scontate, mercato/futures opposti al titolo).
+- Preferisci rispondere "NESSUN_TRADE" piuttosto che forzare un segnale se le notizie sono generiche, contraddittorie, già scontate, stantie o opposte al regime di mercato/gap.
+- Rispondi "TRADE" solo se esiste un catalizzatore chiaro, fresco e coerente con la direzione operativa e senza rischi ostativi (es. trimestrale odierna, contenziosi, downgrade severo).
+- Indica sempre cosa invalida operativamente la tesi usando i livelli reali forniti.
 - Non promettere mai rendimenti.
 - Rispondi in italiano, rispettando esattamente la struttura JSON specificata.${
       activeDirectives
-        ? `\n\nDIRETTIVE SPECIALIZZATE APPRESE DALLA MEMORIA STORICA DEL SISTEMA (SPECIALIZZAZIONE CONTINUA E ACCUMULO DI ESPERIENZA):\n${activeDirectives}`
+        ? `\n\nDIRETTIVE STATISTICHE VALIDATE DALLA MEMORIA DEL SISTEMA:\n${activeDirectives}`
         : ''
     }`;
-
-    const futuresChangeForCandidate =
-      candidate.market === 'EU'
-        ? (typeof futures?.europe?.dax?.changePercent === 'number' ? futures.europe.dax.changePercent : null)
-        : (typeof futures?.usa?.sp500?.changePercent === 'number' ? futures.usa.sp500.changePercent : null);
-    const candidateSetupScore = calculateCandidateScore(candidate, futuresChangeForCandidate, null, {
-      volume: candidate.lastBarVolume ?? null,
-      barTime: candidate.lastBarTime ?? null,
-    });
 
     const userPrompt = `Analizza questo candidato per la sessione odierna basandoti ESCLUSIVAMENTE sulle notizie reali fornite:
 DATI SOTTOSTANTE:
@@ -4129,7 +4421,8 @@ DATI SOTTOSTANTE:
 - Relative Volume (RVOL): ${candidate.rvol ?? 'dato non disponibile'}
 - ATR(14) Giornaliero: ${candidate.atr14 ?? 'dato non disponibile'}
 - Range Ieri: Min ${candidate.prevLow ?? 'nd'} - Max ${candidate.prevHigh ?? 'nd'}
-- VWAP di sessione: ${candidate.vwapState ? `${candidate.vwapState.state} | distanza ${candidate.vwapState.distAtr ?? 'nd'} ATR | pendenza ${candidate.vwapState.slopeAtr ?? 'nd'} ATR | coverage ${candidate.vwapState.coverage ?? 'nd'} | volume ${candidate.vwapState.volumeRatio ?? 'nd'}x media 5m | flag ${(candidate.vwapState.flags || []).join(',') || 'nessuno'}` : 'dato non disponibile'}
+- ORB Intraday: Min ${candidate.orbLow ?? 'nd'} - Max ${candidate.orbHigh ?? 'nd'}
+- VWAP di sessione: ${candidate.vwapState ? `${candidate.vwapState.state} (livello ${candidate.vwapState.vwapLevel ?? candidate.vwap ?? 'nd'}) | distanza ${candidate.vwapState.distAtr ?? 'nd'} ATR | pendenza ${candidate.vwapState.slopeAtr ?? 'nd'} ATR | coverage ${candidate.vwapState.coverage ?? 'nd'} | volume ${candidate.vwapState.volumeRatio ?? 'nd'}x media 5m | flag ${(candidate.vwapState.flags || []).join(',') || 'nessuno'}` : 'dato non disponibile'}
 - Supertrend 5m: ${candidate.setupIndicators?.supertrend
         ? `${candidate.setupIndicators.supertrend.status}${candidate.setupIndicators.supertrend.status === 'OK' ? ` | direction ${candidate.setupIndicators.supertrend.direction} | flip ${candidate.setupIndicators.supertrend.barsSinceFlip ?? 'nd'} barre fa` : ` | motivo ${candidate.setupIndicators.supertrend.reason}`}`
         : 'dato non disponibile'}
@@ -4143,12 +4436,13 @@ DATI SOTTOSTANTE:
         ? `${candidate.setupIndicators.psar.status}${candidate.setupIndicators.psar.status === 'OK' ? ` | value ${candidate.setupIndicators.psar.value} | direction ${candidate.setupIndicators.psar.direction}` : ` | motivo ${candidate.setupIndicators.psar.reason}`}`
         : 'dato non disponibile'}
 - Score breakdown: ${JSON.stringify(candidateSetupScore.scoreBreakdown)} | totale ${candidateSetupScore.total}/100
-- Veto setup: ${candidateSetupScore.veto ?? 'nessuno'}
+- Veto setup e storico controfattuale: ${vetoContextLine}
+- Stato Calendario Macroeconomico Live: ${macroContextLine}
 - Prossima Trimestrale (Calendario Reale): ${candidate.nextEarningsDate ? `${candidate.nextEarningsDate} (tra ${candidate.daysToEarnings ?? 'nd'} giorni, livello ${candidate.earningsRiskLevel ?? 'nd'})` : 'non segnalata / non disponibile'}
-- Futures Indice Riferimento: ${JSON.stringify(futures || {})}
+- Futures Indice Riferimento (${normalizedFutures.benchmarkLabel}): ${futuresChangeForCandidate !== null ? `${futuresChangeForCandidate >= 0 ? '+' : ''}${futuresChangeForCandidate.toFixed(2)}%` : 'dato non disponibile'} | dettaglio ${JSON.stringify(normalizedFutures.normalized)}
 
-NOTIZIE REALI RACCOLTE:
-${realNews
+NOTIZIE REALI VERIFICATE (<=72h, pertinenti a ${candidate.ticker}):
+${verifiedNews
   .map(
     (n, i) =>
       `[${i + 1}] Titolo: "${n.title}" | Fonte: ${n.source} | Data: ${n.publishedAt} | URL: ${n.url}\nRiassunto: ${n.summary}`
@@ -4158,35 +4452,46 @@ ${realNews
 ${VWAP_PROMPT_BLOCK}
 
 ${SETUP_PROMPT_BLOCK}
-Istruzione: Valuta il catalizzatore qualitativo e rispondi in JSON:
-decisione: "TRADE" oppure "NESSUN_TRADE" (usa NESSUN_TRADE solo per fattori ostativi gravi come utili imminenti o rischi fatali)
+Istruzione: Valuta il catalizzatore qualitativo e rispondi ESCLUSIVAMENTE in JSON valido con questi campi:
+decisione: "TRADE" oppure "NESSUN_TRADE"
 direzione: "LONG" oppure "SHORT" oppure "NESSUNA"
-catalizzatore: tipo e descrizione del catalizzatore basato sui titoli forniti
+catalizzatore: tipo, freschezza, affidabilità e descrizione del catalizzatore basata solo sulle notizie fornite
 punti_a_favore: array di stringhe
-rischi: array di stringhe (es. volatilità da news, futures opposti)
-condizioni_invalidazione: array di stringhe (es. rottura VWAP, riassorbimento del gap)
+rischi: array di stringhe (es. utili imminenti, notizie già scontate, futures opposti, rilasci macro imminenti)
+condizioni_invalidazione: array di stringhe con condizioni concrete basate sui dati forniti
 fonti: array di oggetti { title, url, source, time }
-newsBonusScore: numero intero da 0 a 15 (punti bonus aggiuntivi per forza del catalizzatore: 15 per upgrade/contratti/catalizzatori forti, 8-10 per news ordinarie, 0 per news assenti/neutre)`;
+newsBonusScore: numero intero da 0 a 15 (15 per upgrade/contratti/catalizzatori freschi <24h da agenzia primaria; 5-10 per news rilevanti ma moderate; 0 se NESSUN_TRADE o news neutre/scontate)
+confidenza: numero intero da 0 a 100 sulla solidità del catalizzatore nel contesto tecnico/futures fornito`;
 
     let parsed: any = null;
+    let usedCatalystModel: string | null = null;
+    let llmErrorDetail: string | null = null;
     const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
+    const catalystStartedAt = Date.now();
 
-    // 1. TIER 1 & 2: OpenRouter (Primario: NVIDIA Nemotron 3 Ultra Free, Fallback: OpenRouter Free router)
+    // 1. TIER 1 & 2: OpenRouter
     if (openRouterKey) {
       const openRouterRes = await callOpenRouterModel(
         [OPENROUTER_PRIMARY_MODEL, OPENROUTER_FALLBACK_MODEL],
         systemInstruction,
         userPrompt,
         openRouterKey,
-        8000
+        15000
       );
 
       if (openRouterRes?.data?.decisione) {
         parsed = openRouterRes.data;
+        usedCatalystModel = openRouterRes.model ?? null;
+      } else if (openRouterRes?.keyInvalid) {
+        llmErrorDetail = 'openrouter:401';
+      } else if (openRouterRes?.creditsExhausted) {
+        llmErrorDetail = 'openrouter:402/429';
+      } else if (typeof openRouterRes?.status === 'number' && openRouterRes.status > 0) {
+        llmErrorDetail = `openrouter:${openRouterRes.status}`;
       }
     }
 
-    // 3. TIER 3: Fallback Gemini (se OpenRouter non ha chiave, crediti esauriti, o modelli gratuiti falliscono)
+    // 2. TIER 3: Fallback Gemini
     if ((!parsed || !parsed.decisione) && isGeminiAvailable()) {
       const gemRes = await callGeminiModel(systemInstruction, userPrompt, {
         type: Type.OBJECT,
@@ -4201,7 +4506,7 @@ newsBonusScore: numero intero da 0 a 15 (punti bonus aggiuntivi per forza del ca
           },
           catalizzatore: {
             type: Type.STRING,
-            description: 'Tipo e valutazione del catalizzatore qualitativo',
+            description: 'Tipo, freschezza, affidabilita e valutazione del catalizzatore qualitativo',
           },
           punti_a_favore: {
             type: Type.ARRAY,
@@ -4211,7 +4516,7 @@ newsBonusScore: numero intero da 0 a 15 (punti bonus aggiuntivi per forza del ca
           rischi: {
             type: Type.ARRAY,
             items: { type: Type.STRING },
-            description: 'Rischi e criticità del catalizzatore o contesto',
+            description: 'Rischi e criticita del catalizzatore o contesto',
           },
           condizioni_invalidazione: {
             type: Type.ARRAY,
@@ -4237,8 +4542,7 @@ newsBonusScore: numero intero da 0 a 15 (punti bonus aggiuntivi per forza del ca
           },
           confidenza: {
             type: Type.INTEGER,
-            description:
-              'Confidenza 0-100 sul setup: abbassala se lo stato VWAP e contrario, non rifiutare il setup',
+            description: 'Confidenza 0-100 sulla solidita del catalizzatore nel contesto tecnico/futures fornito',
           },
         },
         required: [
@@ -4254,90 +4558,207 @@ newsBonusScore: numero intero da 0 a 15 (punti bonus aggiuntivi per forza del ca
 
       if (gemRes?.data?.decisione) {
         parsed = gemRes.data;
-        parsed.aiProvider = 'gemini:gemini-4-hydrogen';
+        usedCatalystModel = gemRes.model || `gemini:${GEMINI_MODEL}`;
+      } else if (gemRes?.quotaExhausted) {
+        llmErrorDetail = 'gemini:402/429';
       }
     }
 
-    // Deterministic catalyst evaluation strictly based on real news items when AI is offline/throttled
+    const catalystDurationMs = Date.now() - catalystStartedAt;
+    const activeRunId = getLastScanRunId();
+    // Chiave prefissata `catalyst:` per non sovrascrivere la riga `scan` dello stesso
+    // `runId:ticker` in `dedupeEntries`, pur restando una candidateRow valida per `catalystLift`.
+    const catalystCandidateKey = activeRunId
+      ? `catalyst:${activeRunId}:${candidate.ticker}`
+      : `catalyst-${Date.now()}:${candidate.ticker}`;
+
+    // Propagazione trasparente dell'errore upstream: nessuna risposta AI simulata
     if (!parsed || !parsed.decisione) {
-      const gap = candidate.gapPercent ?? 0;
-      const isPositive = gap >= 0;
-      const sources = realNews.map((n) => ({
+      safeAppendAiShadowLog(
+        {
+          ticker: String(candidate.ticker),
+          market: candMarket,
+          direction: (candidate.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT',
+          setup: `catalyst news=${verifiedNews.length}`,
+          aiOutcome: null,
+          aiCategory: null,
+          source: 'catalyst',
+          evaluated: false,
+          discarded: false,
+          discardReason: 'LLM_NON_DISPONIBILE',
+          decision: null,
+          candidateSource: 'body',
+          candidateKey: catalystCandidateKey,
+          runId: activeRunId,
+          durationMs: catalystDurationMs,
+          promptVersion: AI_CATALYST_PROMPT_VERSION,
+          model: null,
+        },
+        path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+      );
+      return res.status(503).json({
+        error:
+          'Modello AI temporaneamente non disponibile per valutare le notizie del catalizzatore. Riprova tra qualche istante.',
+        code: 'AI_UNAVAILABLE',
+        llmErrorDetail: llmErrorDetail ?? 'no_provider_response',
+      });
+    }
+
+    // Normalizzazione & guardrail deterministici post-LLM
+    if (String(parsed.decisione).trim().toUpperCase() === 'NESSUN TRADE') {
+      parsed.decisione = 'NESSUN_TRADE';
+    } else if (String(parsed.decisione).trim().toUpperCase() !== 'TRADE') {
+      parsed.decisione = 'NESSUN_TRADE';
+    } else {
+      parsed.decisione = 'TRADE';
+    }
+
+    const rawDir = String(parsed.direzione ?? '').trim().toUpperCase();
+    parsed.direzione =
+      parsed.decisione === 'NESSUN_TRADE'
+        ? 'NESSUNA'
+        : rawDir === 'LONG' || rawDir === 'SHORT'
+          ? rawDir
+          : (candidate.gapPercent ?? 0) >= 0
+            ? 'LONG'
+            : 'SHORT';
+
+    const rawBonus = Number(parsed.newsBonusScore);
+    let normalizedBonus =
+      parsed.decisione === 'TRADE' && Number.isFinite(rawBonus)
+        ? Math.max(0, Math.min(15, Math.round(rawBonus)))
+        : 0;
+    const rawConf = Number(parsed.confidenza);
+    const normalizedConf = Number.isFinite(rawConf)
+      ? Math.max(0, Math.min(100, Math.round(rawConf)))
+      : null;
+
+    // Tetto deterministico di credibilita': se nessuna notizia e' <24h E nessuna proviene da wire primario,
+    // limita newsBonusScore a max +5 (o 0 se confidenza < 55) per impedire gonfiaggi da RSS secondari datati.
+    if (parsed.decisione === 'TRADE' && !freshCheck.hasRecent24h && !freshCheck.hasPrimaryWire && normalizedBonus > 0) {
+      const capped = normalizedConf !== null && normalizedConf < 55 ? 0 : Math.min(normalizedBonus, 5);
+      if (capped < normalizedBonus) {
+        normalizedBonus = capped;
+        const existingRisks = Array.isArray(parsed.rischi) ? parsed.rischi : [];
+        parsed.rischi = [
+          ...existingRisks,
+          `Tetto prudenziale bonus notizia (+${capped}): articoli tra 24h e 72h da fonti secondarie.`,
+        ];
+      }
+    }
+
+    // Filtro anti-overtrading contro-regime: se il catalizzatore e' opposto SIA al gap reale
+    // (>= 0.3%) SIA ai futures di riferimento (>= 0.4%) con confidenza bassa (< 65), declassa a NESSUN_TRADE.
+    const gapVal = typeof candidate.gapPercent === 'number' && Number.isFinite(candidate.gapPercent) ? candidate.gapPercent : null;
+    const gapSign = gapVal != null && Math.abs(gapVal) >= 0.3 ? (gapVal > 0 ? 'LONG' : 'SHORT') : null;
+    const futSign =
+      futuresChangeForCandidate != null && Math.abs(futuresChangeForCandidate) >= 0.4
+        ? futuresChangeForCandidate > 0
+          ? 'LONG'
+          : 'SHORT'
+        : null;
+    const dirMatch: 'aligned' | 'opposed' | 'neutral' =
+      parsed.direzione === 'NESSUNA' || gapSign === null
+        ? 'neutral'
+        : parsed.direzione === gapSign
+          ? 'aligned'
+          : 'opposed';
+    const regimeMatch: 'aligned' | 'opposed' | 'neutral' =
+      parsed.direzione === 'NESSUNA' || futSign === null
+        ? 'neutral'
+        : parsed.direzione === futSign
+          ? 'aligned'
+          : 'opposed';
+
+    if (
+      parsed.decisione === 'TRADE' &&
+      dirMatch === 'opposed' &&
+      regimeMatch === 'opposed' &&
+      (normalizedConf !== null ? normalizedConf < 65 : normalizedBonus < 10)
+    ) {
+      parsed.decisione = 'NESSUN_TRADE';
+      parsed.direzione = 'NESSUNA';
+      normalizedBonus = 0;
+      const existingRisks = Array.isArray(parsed.rischi) ? parsed.rischi : [];
+      parsed.rischi = [
+        ...existingRisks,
+        `Filtro anti-overtrading: direzione del catalizzatore opposta sia al gap intraday (${gapVal?.toFixed(2)}%) sia ai futures ${normalizedFutures.benchmarkLabel} (${futuresChangeForCandidate?.toFixed(2)}%) con confidenza insufficiente.`,
+      ];
+    }
+
+    // Arricchisci con avviso blackout macro attivo, trimestrale imminente e livelli meccanici reali di invalidazione
+    if (activeMacroWarning) {
+      const existingRisks = Array.isArray(parsed.rischi) ? parsed.rischi : [];
+      if (!existingRisks.some((r: unknown) => String(r).toLowerCase().includes('blackout macro'))) {
+        parsed.rischi = [...existingRisks, activeMacroWarning];
+      }
+    }
+
+    if (hasImminentEarnings) {
+      const existingRisks = Array.isArray(parsed.rischi) ? parsed.rischi : [];
+      const alreadyMentioned = existingRisks.some((r: unknown) =>
+        String(r).toLowerCase().includes('trimestrale')
+      );
+      if (!alreadyMentioned) {
+        parsed.rischi = [
+          ...existingRisks,
+          `Trimestrale imminente il ${candidate.nextEarningsDate} (tra ${candidate.daysToEarnings} gg): ridurre aggressività su leva KO.`,
+        ];
+      }
+    }
+
+    const existingInvalidations: string[] = Array.isArray(parsed.condizioni_invalidazione)
+      ? parsed.condizioni_invalidazione.filter((s: unknown): s is string => typeof s === 'string' && s.trim().length > 0)
+      : [];
+    for (const mech of mechanicalInvalidations) {
+      if (!existingInvalidations.some((line) => line.includes(mech.slice(0, 20)))) {
+        existingInvalidations.push(mech);
+      }
+    }
+    parsed.condizioni_invalidazione = existingInvalidations;
+    parsed.newsBonusScore = normalizedBonus;
+    if (normalizedConf !== null) parsed.confidenza = normalizedConf;
+    if (usedCatalystModel) parsed.aiProvider = usedCatalystModel;
+    if (!Array.isArray(parsed.fonti) || parsed.fonti.length === 0) {
+      parsed.fonti = verifiedNews.map((n) => ({
         title: n.title,
         url: n.url,
         source: n.source,
         time: n.publishedAt,
       }));
-
-      const topTitle = realNews[0]?.title || '';
-      const topSummary = realNews[0]?.summary || '';
-      const allText = `${topTitle} ${topSummary}`.toLowerCase();
-
-      const isEarnings = allText.includes('utili') || allText.includes('trimestrale') || allText.includes('conti') || allText.includes('risultati');
-
-      let catalizzatoreDesc = '';
-      let puntiAFavore: string[] = [];
-      let rischi: string[] = [];
-      let decisione: 'TRADE' | 'NESSUN_TRADE' = 'TRADE';
-      let direzione: 'LONG' | 'SHORT' | 'NESSUNA' = isPositive ? 'LONG' : 'SHORT';
-      let newsBonusScore = 0;
-
-      if (isEarnings || hasTodayEarnings) {
-        decisione = 'NESSUN_TRADE';
-        direzione = 'NESSUNA';
-        catalizzatoreDesc = hasTodayEarnings
-          ? `Giorno di pubblicazione trimestrale (${candidate.nextEarningsDate}) per ${candidate.ticker}. Rischio spread e spike bid/ask su leva Knock-Out.`
-          : `Giorno di rilascio utili/trimestrale per ${candidate.ticker} (${realNews[0]?.source}: "${topTitle}"). Rischio spread e spike bid/ask su leva Knock-Out.`;
-        rischi.push('Giorno di rilascio utili: rischio elevato di spike opposto e knock-out anticipato.');
-      } else if (realNews.length > 0) {
-        decisione = 'TRADE';
-        direzione = isPositive ? 'LONG' : 'SHORT';
-        newsBonusScore = 0;
-        catalizzatoreDesc = `Notizie presenti da ${realNews[0]?.source}: "${topTitle}". Dinamica da valutare con i parametri tecnici.`;
-        puntiAFavore.push('Notizie presenti ma non valutate qualitativamente: nessun bonus automatico');
-        rischi.push('Flusso informativo ordinario: mantenere rigore sulla tenuta del VWAP');
-        if (hasImminentEarnings) {
-          rischi.push(`Trimestrale imminente il ${candidate.nextEarningsDate} (tra ${candidate.daysToEarnings} gg): evitare leva KO aggressiva.`);
-        }
-      } else {
-        decisione = 'TRADE';
-        direzione = isPositive ? 'LONG' : 'SHORT';
-        newsBonusScore = 0;
-        catalizzatoreDesc = 'Setup Tecnico Momentum: Nessuna notizia specifica reperibile. Operatività convalidata da gap e volume.';
-        puntiAFavore.push('Setup puramente quantitativo e privo di rumore di mercato');
-      }
-
-      parsed = {
-        decisione,
-        direzione,
-        catalizzatore: catalizzatoreDesc,
-        punti_a_favore: puntiAFavore,
-        rischi,
-        condizioni_invalidazione: [
-          'Rottura del VWAP intraday nella prima ora',
-          'Riassorbimento completo del range di apertura',
-          'Inversione improvvisa dei futures di riferimento',
-        ],
-        fonti: sources,
-        newsBonusScore,
-      };
-    } else if (parsed) {
-      // Normalize decisione if Gemini outputs "NESSUN TRADE" instead of "NESSUN_TRADE"
-      if (parsed.decisione === 'NESSUN TRADE') {
-        parsed.decisione = 'NESSUN_TRADE';
-      }
     }
 
-    res.json(parsed);
+    // Registra la valutazione del catalizzatore nel log Shadow AI per misurare empiricamente
+    // il lift reale di newsBonusScore e dell'allineamento direzionale in /api/shadow/ai-calibration.
+    safeAppendAiShadowLog(
+      {
+        ticker: String(candidate.ticker),
+        market: candMarket,
+        direction: parsed.direzione === 'NESSUNA' ? ((candidate.gapPercent ?? 0) >= 0 ? 'LONG' : 'SHORT') : parsed.direzione,
+        setup: `catalyst score=${candidateSetupScore.total}/100 news=${verifiedNews.length} bonus=+${normalizedBonus}`,
+        aiOutcome: String(parsed.catalizzatore || '').slice(0, 280),
+        aiCategory: `newsBonus=${normalizedBonus};dirMatch=${dirMatch};regime=${regimeMatch}`,
+        source: 'catalyst',
+        evaluated: true,
+        discarded: false,
+        discardReason: null,
+        decision: parsed.decisione === 'TRADE' ? 'AZIONE' : 'SCARTO',
+        candidateSource: 'body',
+        candidateKey: catalystCandidateKey,
+        runId: activeRunId,
+        durationMs: catalystDurationMs,
+        promptVersion: AI_CATALYST_PROMPT_VERSION,
+        model: usedCatalystModel,
+      },
+      path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
+    );
+
+    return res.json(parsed);
   } catch (error: any) {
-    res.json({
-      decisione: 'NESSUN_TRADE',
-      direzione: 'NESSUNA',
-      catalizzatore: 'Dati o notizie insufficienti per convalidare il catalizzatore.',
-      punti_a_favore: [],
-      rischi: ['Dati non disponibili o errore temporaneo di verifica fonti.'],
-      condizioni_invalidazione: ['Catalizzatore non verificabile'],
-      fonti: [],
+    console.error('[Analyze Catalyst] Errore interno:', error?.message || error);
+    return res.status(500).json({
+      error: 'Errore interno durante la valutazione del catalizzatore.',
+      code: 'CATALYST_INTERNAL_ERROR',
     });
   }
 });

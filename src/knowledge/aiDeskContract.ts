@@ -150,7 +150,8 @@ export function buildEvidencePromptAddendum(
     '',
     '=== CAMPI OBBLIGATORI AGGIUNTIVI, NELLO STESSO JSON ===',
     '{',
-    '  "summary": "sintesi: ogni numero con decimali o unita deve esistere nel fascicolo",',
+    '  "summary": "sintesi operativa: ogni numero con decimali o unita deve esistere nel fascicolo",',
+    '  "executiveSummary": "stessa sintesi (o versione estesa coerente con il fascicolo) per compatibilita UI",',
     '  "summaryRefs": ["almeno una chiave del fascicolo, es. journal.n"],',
     '  "newDirectives": [{ "topic": "...", "market": "EU|US|GLOBAL", "predicateId": "...", "directive": "...", "evidenceRefs": ["chiave"] }],',
     '  "claims": [{ "statement": "...", "evidenceRefs": ["chiave"] }],',
@@ -163,6 +164,7 @@ export function buildEvidencePromptAddendum(
     '- Ogni numero con decimali o con %/€/R deve comparire in una chiave del fascicolo (tolleranza 2%, minimo 0.005).',
     '- Le chiavi elencate in INSUFFICIENT vanno nei dataGaps, mai usate per conclusioni.',
     predicateIds.length > 0 ? `- predicateId ammessi: ${predicateIds.join(', ')}.` : '',
+    '- Mantieni intatti eventuali campi richiesti dal prompt principale (es. strengths, failurePatterns, tacticalAdvice) nello stesso oggetto JSON.',
     '- Nessun testo fuori dal JSON.',
   ];
   return lines.filter((line) => line.length > 0).join('\n');
@@ -195,7 +197,7 @@ export function buildDeskPrompt(
 
   const rules = [
     `- Ogni claim deve avere da 1 a ${AI_DESK_MAX_REFS_PER_CLAIM} evidenceRefs, scelte SOLO fra le chiavi del fascicolo.`,
-    '- Un numero con decimali o con %/€/R deve comparire identico (tolleranza 0.05) in almeno un valore citato; se non c e, non scriverlo.',
+    '- Un numero con decimali o con %/€/R deve comparire identico (tolleranza 2%, minimo 0.005) in almeno un valore citato; se non c e, non scriverlo.',
     '- Se una chiave e elencata in INSUFFICIENT, dichiarala nei dataGaps e non farci una conclusione.',
     '- Al massimo ' + AI_DESK_MAX_CLAIMS + ' claim e ' + AI_DESK_MAX_DIRECTIVES + ' direttive.',
     '- Non scrivere promesse di rendimento, garanzie o confidenza statistica.',

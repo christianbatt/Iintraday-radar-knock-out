@@ -14,7 +14,7 @@ export interface AiShadowLogEntry {
   setup: string | null;
   aiOutcome: string | null;
   aiCategory: string | null;
-  source: 'scan' | 'specialize' | 'desk';
+  source: 'scan' | 'specialize' | 'desk' | 'catalyst';
   status: 'NON_VALIDATO';
   outcome: null | unknown;
   evaluated?: boolean;
@@ -130,6 +130,15 @@ export interface ShadowAiCalibrationView {
   byPromptVersion?: ShadowAiCalibrationSlice[];
   /** Calibrazione separata per modello (diagnostica). */
   byModel?: ShadowAiCalibrationSlice[];
+  /** Lift empirico dei catalizzatori abbinati a esiti forward reali. */
+  catalystLift?: {
+    matchedCatalysts?: number;
+    withBonus?: { n?: number; meanRNet?: number | null };
+    withoutBonus?: { n?: number; meanRNet?: number | null };
+    bonusLiftRNet?: number | null;
+    alignmentLiftRNet?: number | null;
+    verdict?: 'insufficient' | 'evidence';
+  } | null;
 }
 
 /** Taglio diagnostico della calibrazione: prompt o modello, mai verdetto. */
@@ -324,6 +333,20 @@ export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrati
           .filter((slice) => (slice.matched ?? 0) > 0)
           .map(formatCalibrationSlice)
           .join(' · ')}
+      </p>
+    )}
+    {(calibration.catalystLift?.matchedCatalysts ?? 0) > 0 && (
+      <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-catalyst-lift">
+        lift catalizzatore (n={calibration.catalystLift?.matchedCatalysts ?? 0},{' '}
+        {calibration.catalystLift?.verdict === 'evidence' ? 'campione sufficiente' : 'esplorativo'}):{' '}
+        bonus ΔR netto{' '}
+        {calibration.catalystLift?.bonusLiftRNet == null
+          ? '—'
+          : calibration.catalystLift.bonusLiftRNet}{' '}
+        · allineamento ΔR netto{' '}
+        {calibration.catalystLift?.alignmentLiftRNet == null
+          ? '—'
+          : calibration.catalystLift.alignmentLiftRNet}
       </p>
     )}
     {(calibration.strata ?? []).some((stratum) => stratum.contradicts === true) && (

@@ -21,7 +21,7 @@ import {
   type AiShadowLogFirestoreReadItem,
 } from './aiShadowLogFirestore';
 
-export type AiShadowLogSource = 'scan' | 'specialize' | 'desk';
+export type AiShadowLogSource = 'scan' | 'specialize' | 'desk' | 'catalyst';
 
 export type AiShadowLogStatus = 'NON_VALIDATO';
 
@@ -153,7 +153,13 @@ function normalizeEntries(input: unknown): AiShadowLogEntry[] {
     const market = typeof r.market === 'string' ? r.market : 'GLOBAL';
     const direction = r.direction == null ? null : String(r.direction);
     const source: AiShadowLogSource =
-      r.source === 'desk' ? 'desk' : r.source === 'scan' ? 'scan' : 'specialize';
+      r.source === 'desk'
+        ? 'desk'
+        : r.source === 'scan'
+          ? 'scan'
+          : r.source === 'catalyst'
+            ? 'catalyst'
+            : 'specialize';
 
     // Entry gia' normalizzata: contiene la chiave aiOutcome (anche null).
     if ('aiOutcome' in r) {

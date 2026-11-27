@@ -30,6 +30,9 @@ import {
   summarizeNearMissRecords,
   SHADOW_V1_NEAR_MISS_PATH,
 } from './shadowV1LiveNearMiss';
+import { loadRecords, SHADOW_V1_LIVE_SIGNALS_PATH } from './shadowV1LiveStore';
+import { listArchivePaths, mergeRecordFiles } from './shadowV1LiveRetention';
+import { buildShadowV1LiveView } from './shadowV1LiveView';
 import { foldVetoLog, summarizeVetoOutcomes, VETO_LOG_RELATIVE_PATH } from './vetoOutcomeLog';
 
 /** Percorso del summary gia' prodotto da Shadow V2. */
@@ -143,6 +146,27 @@ export function collectDeskEvidenceInput(sources: DeskEvidenceSources): AiEviden
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`[AI Desk Evidence] near-miss non disponibili: ${message}`);
+  }
+
+  try {
+    const signalsPath = path.join(rootDir, SHADOW_V1_LIVE_SIGNALS_PATH);
+    const archives = listArchivePaths(signalsPath).filter(isReadableEvidenceFile);
+    const files = [...(isReadableEvidenceFile(signalsPath) ? [signalsPath] : []), ...archives];
+    if (files.length > 0) {
+      const loaded = mergeRecordFiles(files, loadRecords);
+      if (loaded.records.length > 0) {
+        input.shadowV1Live = buildShadowV1LiveView({
+          records: loaded.records,
+          skippedLines: loaded.skipped,
+          nowMs: sources.nowMs,
+          generatedAt: new Date(sources.nowMs).toISOString(),
+          limit: loaded.records.length,
+        });
+      }
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[AI Desk Evidence] Shadow V1-live non disponibile: ${message}`);
   }
 
   const shadowV2 = readJsonFile(path.join(rootDir, SHADOW_V2_SUMMARY_RELATIVE_PATH));

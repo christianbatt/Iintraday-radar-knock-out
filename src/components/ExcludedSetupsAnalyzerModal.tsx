@@ -35,7 +35,9 @@ import {
   fetchAIMemory,
   triggerAISpecialization,
   getLastMarketScanRunId,
+  type DeskAnalysisPayload,
 } from '../services/api';
+import { DeskPostMortemCard } from './DeskPostMortemCard';
 // ADDITIVO (P2): candidati della scansione forniti da App.tsx.
 import type { ScanCandidatePayload } from '../utils/scanCandidatesPayload';
 
@@ -80,6 +82,7 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
   const [specializeReason, setSpecializeReason] = useState<string | null>(null);
   // ADDITIVO (v6, Parte 5): conteggio reale del campione decisivo.
   const [specializeSample, setSpecializeSample] = useState<string | null>(null);
+  const [specializeDeskAnalysis, setSpecializeDeskAnalysis] = useState<DeskAnalysisPayload>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -104,6 +107,7 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
     setSpecializeFeedback(null);
     setSpecializeReason(null);
     setSpecializeSample(null);
+    setSpecializeDeskAnalysis(null);
     try {
       const res = await triggerAISpecialization(
         trades,
@@ -113,6 +117,7 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
       );
       if (res.success && res.memory) {
         setAiMemory(res.memory);
+        setSpecializeDeskAnalysis(res.deskAnalysis ?? null);
         setSpecializeReason(
           res.reason
             ? `${res.reason}${res.reasonDetail ? `: ${res.reasonDetail}` : ''}`
@@ -674,11 +679,11 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
                     Ciclo di Auto-Miglioramento & Specializzazione Continua delle AI
                   </span>
                   <span className="text-[10px] px-2 py-0.5 rounded bg-purple-900/60 text-purple-300 font-mono">
-                    Loop Quantitativo Attivo (100% Reale)
+                    Validazione Statistica Rigorosa (n &ge; 30)
                   </span>
                 </div>
                 <p className="text-slate-300 font-sans leading-relaxed">
-                  Le AI del sistema (OpenRouter con NVIDIA Nemotron 3 Ultra 550B, DeepSeek Chat e Gemini Flash) non operano a compartimenti stagni: analizzano regolarmente l'intero storico di esecuzione (trade a profitto, trade a stop loss e falsi negativi dei titoli scartati dal counterfactual tracking). Da questi dati reali sintetizzano direttive qualitative che vengono salvate nella memoria persistente del server (<code className="text-purple-300">ai_specialization_memory.json</code>) e iniettate in ogni futura analisi di catalizzatore.
+                  I modelli AI (OpenRouter NVIDIA Nemotron 3 Ultra 550B / OpenRouter Free con fallback Gemini 4 Hydrogen) ricevono il fascicolo probatorio ancorato ai dati reali del sistema e propongono direttive su un enum chiuso di predicati. Solo le regole che superano la validazione statistica deterministica sui trade reali (<code className="text-purple-300">n &ge; 30</code>, correzione FDR Benjamini-Hochberg) vengono salvate in <code className="text-purple-300">ai_specialization_memory.json</code> e iniettate nell&apos;analisi dei catalizzatori.
                 </p>
               </div>
 
@@ -686,8 +691,11 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
               <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <div className="grid grid-cols-3 gap-3 text-xs w-full sm:w-auto">
                   <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
-                    <span className="text-[10px] text-slate-400 uppercase block">Direttive Attive</span>
-                    <span className="text-lg font-bold text-purple-400">{aiMemory.length}</span>
+                    <span className="text-[10px] text-slate-400 uppercase block">Direttive Validate</span>
+                    <span className="text-lg font-bold text-purple-400">
+                      {aiMemory.filter((d) => d.confidence != null).length}
+                      <span className="text-[10px] text-slate-500 font-normal ml-1">/ {aiMemory.length}</span>
+                    </span>
                   </div>
                   <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
                     <span className="text-[10px] text-slate-400 uppercase block">Trade a Diario</span>
@@ -742,13 +750,32 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
                 </div>
               )}
 
+              {/* Analisi ancorata al fascicolo probatorio (`ai-desk@1`) quando restituita dal server */}
+              {specializeDeskAnalysis && (
+                <DeskPostMortemCard
+                  report={{
+                    executiveSummary:
+                      specializeDeskAnalysis.available && specializeDeskAnalysis.analysis?.summary
+                        ? specializeDeskAnalysis.analysis.summary
+                        : 'Analisi ancorata al fascicolo probatorio.',
+                    strengths: [],
+                    failurePatterns: [],
+                    tacticalAdvice: '',
+                    generatedAt: new Date().toISOString(),
+                    deskAnalysis: specializeDeskAnalysis,
+                  }}
+                />
+              )}
+
               {/* Directives List */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between text-xs text-slate-400">
                   <span className="font-bold text-slate-300 uppercase tracking-wide">
-                    Direttive di Specializzazione Attualmente Iniettate nell'Analisi
+                    Memoria Direttive AI (solo quelle validate vengono iniettate nei prompt)
                   </span>
-                  <span>{aiMemory.length} regole registrate</span>
+                  <span>
+                    {aiMemory.filter((d) => d.confidence != null).length} attive / {aiMemory.length} totali
+                  </span>
                 </div>
 
                 {aiMemory.length === 0 ? (

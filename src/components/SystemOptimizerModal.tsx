@@ -216,7 +216,7 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
 
             <div className="text-[11px] text-slate-400 font-mono flex items-center gap-1.5 self-end sm:self-auto">
               <Globe2 className="w-3.5 h-3.5 text-slate-500" />
-              <span>Soglia minima di attivazione: <strong>5 trade chiusi</strong></span>
+              <span>Soglia minima di attivazione: <strong>15 trade chiusi</strong> (30 per memoria AI)</span>
             </div>
           </div>
 

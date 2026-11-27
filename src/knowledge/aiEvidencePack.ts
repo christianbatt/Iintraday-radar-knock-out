@@ -30,7 +30,7 @@ export const AI_EVIDENCE_PACK_VERSION = 'ai-evidence@1';
 /** Soglia di campione, allineata a `MIN_REAL_TRADE_SAMPLE`. */
 export const AI_EVIDENCE_MIN_SAMPLE = 30;
 /** Budget di caratteri per il testo destinato al prompt. */
-export const AI_EVIDENCE_DEFAULT_MAX_CHARS = 12_000;
+export const AI_EVIDENCE_DEFAULT_MAX_CHARS = 20_000;
 /** Tetto difensivo sui candidati inclusi (in produzione sono 40). */
 export const AI_EVIDENCE_MAX_SCAN_CANDIDATES = 60;
 /** Tetti della sezione calibrazione: il fascicolo deve restare leggibile. */
@@ -214,6 +214,13 @@ export interface AiEvidenceCalibrationSection {
   byPromptVersion: readonly AiEvidenceCalibrationSlice[];
   /** Track record separato per modello (diagnostica). */
   byModel: readonly AiEvidenceCalibrationSlice[];
+  /** Lift empirico dei catalizzatori abbinati a esiti forward (opzionale). */
+  catalystLift?: {
+    matchedCatalysts: number;
+    verdict: string;
+    bonusLiftRNet: number | null;
+    alignmentLiftRNet: number | null;
+  } | null;
   limitations: readonly string[];
 }
 
@@ -225,6 +232,10 @@ export interface AiEvidenceJournalSection {
   expired: number;
   /** Denominatore: solo esiti decisivi (WIN + LOSS). */
   winRatePct: number | null;
+  /** Denominatore: tutti i trade chiusi conteggiati (`n`). */
+  winRateAllPct: number | null;
+  /** Somma P&L netto in EUR sui trade chiusi conteggiati (`n`). */
+  netPnlEur: number | null;
   avgR: number | null;
   sumR: number | null;
   profitFactor: number | null;
@@ -470,6 +481,16 @@ function normalizeCalibration(raw: unknown): AiEvidenceCalibrationSection | null
         .map((item) => clip(item, 240))
     : [];
 
+  const rawCatLift = isRecord(raw.catalystLift) ? raw.catalystLift : null;
+  const catalystLift = rawCatLift
+    ? {
+        matchedCatalysts: count(rawCatLift.matchedCatalysts),
+        verdict: text(rawCatLift.verdict) ?? 'insufficient',
+        bonusLiftRNet: num(rawCatLift.bonusLiftRNet),
+        alignmentLiftRNet: num(rawCatLift.alignmentLiftRNet),
+      }
+    : null;
+
   return {
     available: raw.available === true,
     verdict: text(raw.verdict) ?? 'insufficient',
@@ -489,6 +510,7 @@ function normalizeCalibration(raw: unknown): AiEvidenceCalibrationSection | null
     strata,
     byPromptVersion: slices('promptVersion'),
     byModel: slices('model'),
+    catalystLift,
     limitations,
   };
 }
@@ -566,6 +588,7 @@ export function summarizeJournalEvidence(
   let breakevens = 0;
   let expired = 0;
   let sumR = 0;
+  let sumPnlEur = 0;
   let sumWinsR = 0;
   let sumLossesR = 0;
   let nPaper = 0;
@@ -582,6 +605,9 @@ export function summarizeJournalEvidence(
     if (rMultiple === null) continue;
     n += 1;
     sumR += rMultiple;
+    if (typeof trade.pnlEur === 'number' && Number.isFinite(trade.pnlEur)) {
+      sumPnlEur += trade.pnlEur;
+    }
     if (outcome === 'WIN') {
       wins += 1;
       sumWinsR += rMultiple;
@@ -596,6 +622,8 @@ export function summarizeJournalEvidence(
 
   const decisive = wins + losses;
   const winRatePct = decisive > 0 ? num((wins / decisive) * 100, 2) : null;
+  const winRateAllPct = n > 0 ? num((wins / n) * 100, 2) : null;
+  const netPnlEur = n > 0 ? num(sumPnlEur, 2) : null;
   const avgR = n > 0 ? num(sumR / n) : null;
 
   let profit = 0;
@@ -615,6 +643,8 @@ export function summarizeJournalEvidence(
     breakevens,
     expired,
     winRatePct,
+    winRateAllPct,
+    netPnlEur,
     avgR,
     sumR: n > 0 ? num(sumR) : null,
     // Senza perdite il rapporto non e' definito: mai `Infinity` nel pack.
@@ -690,6 +720,12 @@ function buildEvidence(sections: AiEvidenceSections): AiEvidenceEntry[] {
     };
     for (const slice of c.byPromptVersion) pushSlice('calibration.promptVersion', slice);
     for (const slice of c.byModel) pushSlice('calibration.model', slice);
+    if (c.catalystLift) {
+      const nCat = c.catalystLift.matchedCatalysts;
+      out.push(entry('calibration', 'calibration.catalystLift.matched', nCat, nCat));
+      out.push(entry('calibration', 'calibration.catalystLift.bonusLiftRNet', c.catalystLift.bonusLiftRNet, nCat));
+      out.push(entry('calibration', 'calibration.catalystLift.alignmentLiftRNet', c.catalystLift.alignmentLiftRNet, nCat));
+    }
   }
 
   if (sections.scan) {
@@ -776,6 +812,8 @@ function buildEvidence(sections: AiEvidenceSections): AiEvidenceEntry[] {
     out.push(entry('journal', 'journal.breakevens', s.breakevens, s.n));
     out.push(entry('journal', 'journal.expired', s.expired, s.n));
     out.push(entry('journal', 'journal.winRatePct', s.winRatePct, s.n));
+    out.push(entry('journal', 'journal.winRateAllPct', s.winRateAllPct, s.n));
+    out.push(entry('journal', 'journal.netPnlEur', s.netPnlEur, s.n));
     out.push(entry('journal', 'journal.avgR', s.avgR, s.n));
     out.push(entry('journal', 'journal.sumR', s.sumR, s.n));
     out.push(entry('journal', 'journal.profitFactor', s.profitFactor, s.n));
@@ -952,13 +990,15 @@ function sectionPayload(pack: AiEvidencePack, section: AiEvidenceSectionKey): un
 const SECTION_ORDER: readonly AiEvidenceSectionKey[] = [
   // La calibrazione viene per prima: e' il track record del desk, il dato che
   // il post-mortem non deve poter ignorare per budget di caratteri.
+  // Gli esiti aggregati (journal, shadowV1Live, shadowV2, vetoOutcomes, nearMiss)
+  // precedono sempre l'elenco esteso dei candidati della scansione (`scan`).
   'calibration',
   'journal',
+  'shadowV1Live',
+  'shadowV2',
   'vetoOutcomes',
   'nearMiss',
   'scan',
-  'shadowV1Live',
-  'shadowV2',
 ];
 
 /**
