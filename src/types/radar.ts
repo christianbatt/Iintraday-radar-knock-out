@@ -300,6 +300,21 @@ export interface GeminiCatalystAnalysis {
   confidenza?: number; // 0-100: abbassata da uno stato VWAP contrario, non rifiuta mai il setup
 }
 
+/**
+ * ADDITIVO (P8): provenienza di una direttiva appresa.
+ *
+ * Chiude la catena proposta -> validazione -> memoria: una regola attiva si
+ * puo' ricondurre al prompt e al modello che l'hanno generata, e alle chiavi
+ * del fascicolo che la LLM aveva citato. `null` per le regole storiche o
+ * deterministiche: non si inventa un'attribuzione.
+ */
+export interface AILearnedProvenance {
+  promptVersion: string | null;
+  model: string | null;
+  /** Chiavi del fascicolo citate dalla proposta, deduplicate e limitate. */
+  evidenceRefs: string[];
+}
+
 export interface AILearnedInsight {
   id: string;
   learnedAt: string;
@@ -308,6 +323,8 @@ export interface AILearnedInsight {
   directive: string;
   confidence: number | null;
   sampleEvidence: string;
+  /** ADDITIVO (P8): provenienza della direttiva, assente nelle regole storiche. */
+  provenance?: AILearnedProvenance | null;
 }
 
 /**

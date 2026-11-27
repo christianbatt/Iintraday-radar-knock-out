@@ -3305,9 +3305,18 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
     const proposedDirectives = shapeValidDirectives;
     // ADDITIVO (v10, Parte 3.2): la LLM fornisce solo il testo; il predicato lo decide la scansione.
     const directiveTextByPredicate = new Map<string, string>();
+    // ADDITIVO (P8): chiavi del fascicolo citate dalla proposta, per predicato.
+    // Servono solo a rendere attribuibile la regola in memoria: nessun gate le legge.
+    const evidenceRefsByPredicate = new Map<string, string[]>();
     for (const item of shapeValidDirectives) {
       if (isLearningPredicateId(item?.predicateId) && !directiveTextByPredicate.has(item.predicateId)) {
         directiveTextByPredicate.set(item.predicateId, String(item.directive));
+      }
+      if (isLearningPredicateId(item?.predicateId) && Array.isArray(item?.evidenceRefs)) {
+        evidenceRefsByPredicate.set(
+          item.predicateId,
+          item.evidenceRefs.filter((ref: unknown): ref is string => typeof ref === 'string')
+        );
       }
     }
     aiLearnedMemory = await loadPersistentAIMemory();
@@ -3326,6 +3335,13 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
         directiveTextByPredicate.get(entry.predicateId) ??
         `Predicato ${entry.predicateId}: n=${entry.n}, q=${entry.qValue.toFixed(4)}, avgR=${entry.avgR.toFixed(2)}, profitFactor=${entry.profitFactor.toFixed(2)}`,
       confidence: 1 - entry.qValue,
+      // ADDITIVO (P8): la regola scritta sa da quale prompt, modello e chiavi
+      // viene. `model` resta null se nessun modello ha risposto.
+      provenance: {
+        promptVersion: specializePromptVersion,
+        model: usedModel,
+        evidenceRefs: evidenceRefsByPredicate.get(entry.predicateId) ?? [],
+      },
     }));
 
     let persistedCount = 0;
@@ -3563,9 +3579,18 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
     );
     const proposedDirectives = shapeValidDirectives;
     const directiveTextByPredicate = new Map<string, string>();
+    // ADDITIVO (P8): chiavi del fascicolo citate dalla proposta, per predicato.
+    // Servono solo a rendere attribuibile la regola in memoria: nessun gate le legge.
+    const evidenceRefsByPredicate = new Map<string, string[]>();
     for (const item of shapeValidDirectives) {
       if (isLearningPredicateId(item?.predicateId) && !directiveTextByPredicate.has(item.predicateId)) {
         directiveTextByPredicate.set(item.predicateId, String(item.directive));
+      }
+      if (isLearningPredicateId(item?.predicateId) && Array.isArray(item?.evidenceRefs)) {
+        evidenceRefsByPredicate.set(
+          item.predicateId,
+          item.evidenceRefs.filter((ref: unknown): ref is string => typeof ref === 'string')
+        );
       }
     }
     aiLearnedMemory = await loadPersistentAIMemory();
@@ -3584,6 +3609,12 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
         directiveTextByPredicate.get(entry.predicateId) ??
         `Predicato ${entry.predicateId}: n=${entry.n}, q=${entry.qValue.toFixed(4)}, avgR=${entry.avgR.toFixed(2)}, profitFactor=${entry.profitFactor.toFixed(2)}`,
       confidence: 1 - entry.qValue,
+      // ADDITIVO (P8): stessa attribuzione del flusso di specializzazione.
+      provenance: {
+        promptVersion: deskPromptVersion,
+        model: usedModel,
+        evidenceRefs: evidenceRefsByPredicate.get(entry.predicateId) ?? [],
+      },
     }));
 
     let deskPersistedCount = 0;

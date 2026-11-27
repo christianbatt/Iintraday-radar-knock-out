@@ -513,3 +513,31 @@ buttato via nel mapping client (`setPostMortemReport(res.postMortem)`).
   contraddittorio produce una nota. Restano diagnostici e fuori dal verdetto.
 
 Nessun tocco a gate, `tradingParams`, selezione dei setup o memoria AI.
+
+## Memoria dell'IA attribuibile (P8)
+
+La catena proposta -> validazione -> memoria si fermava all'ultimo passo: una
+regola in `ai_specialization_memory.json` diceva cosa fare e con quale campione
+statistico, ma non **da quale prompt, quale modello e quali chiavi del
+fascicolo** veniva la proposta che l'aveva originata.
+
+- `AILearnedProvenance` (`src/types/radar.ts`): `promptVersion`, `model`,
+  `evidenceRefs`. `AILearnedInsight.provenance` e' opzionale: le regole
+  storiche e quelle deterministiche non cambiano forma e non ricevono
+  un'attribuzione inventata.
+- `LearningResult.provenance` (opzionale) e' il canale con cui l'handler passa
+  la provenienza a `updateAIMemory`; `memoryUpdater` la sanifica (trim, stringhe
+  vuote -> `null`, chiavi deduplicate e limitate a 8) e la scrive solo quando
+  esiste.
+- Gli handler di specializzazione e post-mortem costruiscono la mappa
+  `predicateId -> evidenceRefs` dalle direttive della LLM e allegano
+  `{ promptVersion, model, evidenceRefs }` a ogni regola che supera i gate
+  esistenti. I gate non cambiano: la provenienza e' un campo in piu' scritto
+  dopo la validazione, non un criterio.
+- Con la LLM non disponibile `model` e' `null` e `evidenceRefs` vuoto: la
+  regola deterministica resta dichiaratamente non attribuibile.
+- La persistenza (file locale, Firestore server, sync client) trasporta
+  l'oggetto cosi' com'e'; i filtri di validazione esistenti non lo richiedono,
+  quindi un documento vecchio continua a essere letto.
+
+Nessun tocco a gate, `tradingParams`, selezione dei setup o punteggi.

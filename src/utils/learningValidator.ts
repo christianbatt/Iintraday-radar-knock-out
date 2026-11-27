@@ -1,4 +1,4 @@
-import { ExcludedSetupRecord, TradeJournalEntry } from '../types/radar';
+import { AILearnedProvenance, ExcludedSetupRecord, TradeJournalEntry } from '../types/radar';
 import type { DeflatedSharpeResult, ExpectancyBootstrapResult } from '../knowledge/shadowAlgorithms';
 import { deflatedSharpeRatio, expectancyBootstrap } from '../knowledge/shadowAlgorithms';
 import { benjaminiHochberg } from '../../scripts/nightly_learning';
@@ -101,6 +101,8 @@ export interface LearningValidationOptions {
 }
 
 export interface LearningResult {
+  /** ADDITIVO (P8): provenienza propagata alla memoria dal chiamante. */
+  provenance?: AILearnedProvenance | null;
   topic: string;
   market: 'EU' | 'US' | 'GLOBAL';
   directive: string;

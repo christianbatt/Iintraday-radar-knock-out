@@ -137,6 +137,69 @@ try {
   fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 }
 
+// ---- ADDITIVO (P8): provenienza della direttiva in memoria ----
+const provenanceDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'learning-provenance-'));
+try {
+  const memoryPath = path.join(provenanceDirectory, 'memory.json');
+  updateAIMemory(
+    [
+      {
+        ...result,
+        provenance: {
+          promptVersion: ' ai-specialize@1 ',
+          model: 'openrouter:m1',
+          evidenceRefs: [
+            'calibration.edgeRNet',
+            'calibration.edgeRNet',
+            '  ',
+            'veto.EU.SUPERTREND_OPPOSED.meanRMarket',
+          ],
+        },
+      },
+    ],
+    memoryPath
+  );
+  type Stored = {
+    topic: string;
+    provenance?: { promptVersion: string | null; model: string | null; evidenceRefs: string[] };
+  };
+  const withProvenance = JSON.parse(fs.readFileSync(memoryPath, 'utf8')) as Stored[];
+  const stored = withProvenance.find((item) => item.topic === result.topic)!;
+  assert(stored.provenance !== undefined && stored.provenance !== null, 'La regola scritta deve portare la provenienza');
+  assert(stored.provenance!.promptVersion === 'ai-specialize@1', 'Versione del prompt trimmata');
+  assert(stored.provenance!.model === 'openrouter:m1', 'Modello conservato');
+  assert(
+    JSON.stringify(stored.provenance!.evidenceRefs) ===
+      JSON.stringify([
+        'calibration.edgeRNet',
+        'veto.EU.SUPERTREND_OPPOSED.meanRMarket',
+      ]),
+    'Chiavi citate deduplicate e senza stringhe vuote'
+  );
+  console.log('Test 5b - provenienza di prompt, modello e chiavi citate: PASS');
+
+  // Provenienza assente: la regola resta nello schema storico, senza campi finti.
+  updateAIMemory([{ ...result, provenance: null }], memoryPath);
+  const withoutProvenance = JSON.parse(fs.readFileSync(memoryPath, 'utf8')) as Stored[];
+  assert(
+    withoutProvenance.find((item) => item.topic === result.topic)?.provenance === undefined,
+    'Senza provenienza non si scrive un oggetto vuoto'
+  );
+
+  // Versione vuota e modello vuoto diventano null, non stringhe vuote.
+  updateAIMemory(
+    [{ ...result, provenance: { promptVersion: '   ', model: '', evidenceRefs: [] } }],
+    memoryPath
+  );
+  const emptyProvenance = JSON.parse(fs.readFileSync(memoryPath, 'utf8')) as Stored[];
+  const empty = emptyProvenance.find((item) => item.topic === result.topic)!.provenance!;
+  assert(empty.promptVersion === null && empty.model === null, 'Stringhe vuote = non attribuibile');
+  assert(empty.evidenceRefs.length === 0, 'Nessuna chiave inventata');
+  console.log('Test 5c - provenienza assente o non attribuibile: PASS');
+} finally {
+  fs.rmSync(provenanceDirectory, { recursive: true, force: true });
+}
+
 // ---- ADDITIVO (v10, Parte 4.1): scansione deterministica dei predicati ----
 const weakTrades: TradeJournalEntry[] = Array.from({ length: 15 }, (_, index) => ({
   ...createTrade(index, index % 2 === 0 ? 'WIN' : 'LOSS'),

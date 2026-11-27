@@ -29,6 +29,31 @@ export function updateAIMemory(
       continue;
     }
 
+    // ADDITIVO (P8): provenienza sanificata (nessuna eccezione su input sporchi).
+    // Si conserva solo cio' che il chiamante ha davvero: niente valori dedotti.
+    const rawProvenance = result.provenance;
+    const provenance =
+      rawProvenance && typeof rawProvenance === 'object'
+        ? {
+            promptVersion:
+              typeof rawProvenance.promptVersion === 'string' &&
+              rawProvenance.promptVersion.trim().length > 0
+                ? rawProvenance.promptVersion.trim()
+                : null,
+            model:
+              typeof rawProvenance.model === 'string' && rawProvenance.model.trim().length > 0
+                ? rawProvenance.model.trim()
+                : null,
+            evidenceRefs: Array.isArray(rawProvenance.evidenceRefs)
+              ? [...new Set(
+                  rawProvenance.evidenceRefs.filter(
+                    (ref): ref is string => typeof ref === 'string' && ref.trim().length > 0
+                  )
+                )].slice(0, 8)
+              : [],
+          }
+        : null;
+
     const insight: AILearnedInsight = {
       id: `ai-${result.topic.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
       learnedAt: new Date().toISOString(),
@@ -46,6 +71,9 @@ export function updateAIMemory(
         `(WIN ${result.stats.counterfactual.wins}, LOSS ${result.stats.counterfactual.losses}, ` +
         `EXPIRED ${result.stats.counterfactual.expired}); non inclusi nel campione statistico.`,
     };
+    // Presente solo quando c'e' una provenienza reale: le regole storiche non
+    // cambiano forma e chi legge non deve distinguere due schemi.
+    if (provenance !== null) insight.provenance = provenance;
 
     const existingIndex = memory.findIndex((entry) => entry.topic === result.topic);
     if (existingIndex >= 0) memory[existingIndex] = insight;
