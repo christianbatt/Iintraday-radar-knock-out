@@ -480,3 +480,36 @@ assente non e' un valore).
 
 Nessun tocco a gate, `tradingParams`, selezione dei setup o memoria AI: la
 modifica e' confinata alla risposta di calibrazione e alla vista.
+
+## Ruolo dell'IA visibile: analisi ancorata e track record citabile (P7)
+
+Il contratto `ai-desk@1` validava la risposta del post-mortem (claim ancorate a
+chiavi del fascicolo, refusi e numeri inventati scartati), ma l'app mostrava
+solo la prosa non verificata: `deskAnalysis` veniva restituito dal server e
+buttato via nel mapping client (`setPostMortemReport(res.postMortem)`).
+
+- **Tipi** (`src/services/api.ts`): `DeskEvidenceAnalysisPayload` descrive
+  cio' che il server gia' produce — `contractVersion`, `evidencePackVersion`,
+  `evidenceKeys`, `missingSections`, `summaryVerified` e l'analisi validata
+  (`claims[]` con `evidenceRefs` e `insufficient`, `dataGaps[]`,
+  `rejected[]` con codice stabile, `complete`, `verified`). Il caso "flag
+  spento" resta `null`; il caso errore interno resta `{available: false}`.
+- **Wiring**: `fetchDeskPostMortem` propaga `deskAnalysis` e il modal lo
+  conserva accanto al report (`{ ...res.postMortem, deskAnalysis }`). Nessuna
+  seconda chiamata: e' la stessa risposta.
+- **Card** (`DeskPostMortemCard`): blocco "Analisi ancorata al fascicolo" con
+  badge `verificata` / `non verificata` (verde/ambra), contratto e fascicolo
+  con il numero di chiavi citabili, sezioni mancanti, claim con le chiavi
+  citate come chip (e "(campione insufficiente)" quando tutte le chiavi sono
+  sotto soglia), conteggio e codici delle affermazioni scartate, dati mancanti.
+  Quando l'analisi non e' disponibile una sola riga lo dichiara: nessuna card
+  vuota. Il blocco e' additivo: con `deskAnalysis` assente l'HTML non cambia.
+- **Track record citabile**: la sezione `calibration` del fascicolo ora porta
+  anche i tagli `byPromptVersion` e `byModel` come chiavi
+  `calibration.promptVersion.<valore>.{matched,edgeRNet,contradicts}` e
+  `calibration.model.<valore>.…`, con `unknown` per le righe non attribuibili.
+  Cosi' una claim del desk puo' citare "il prompt v1 ha edge 0.31 con 24 casi"
+  invece di attribuire a se stesso un cambio dovuto alle istruzioni. Un taglio
+  contraddittorio produce una nota. Restano diagnostici e fuori dal verdetto.
+
+Nessun tocco a gate, `tradingParams`, selezione dei setup o memoria AI.

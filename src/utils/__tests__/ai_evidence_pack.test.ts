@@ -340,6 +340,12 @@ describe('aiEvidencePack — calibrazione del desk', () => {
       { dimension: 'market', value: 'US', matched: 20, edgeRNet: -0.12, contradicts: true },
       { dimension: 'direction', value: '', matched: 2, edgeRNet: 1, contradicts: false },
     ],
+    byPromptVersion: [
+      { value: 'ai-specialize@1', matched: 24, edgeRNet: 0.31, contradicts: false },
+      { value: 'ai-specialize@2', matched: 16, edgeRNet: -0.18, contradicts: true },
+      { value: null, matched: 4, edgeRNet: null, contradicts: false },
+    ],
+    byModel: [{ value: 'openrouter:m1', matched: 30, edgeRNet: 0.22, contradicts: false }],
     limitations: ['Sola lettura', 'Join temporale'],
   };
 
@@ -387,6 +393,21 @@ describe('aiEvidencePack — calibrazione del desk', () => {
     const index = indexAiEvidence(pack);
     assert.equal(index.get('calibration.available')?.value, false);
     assert.ok(pack.notes.some((note) => note.includes('non disponibile')));
+  });
+
+  it('espone i tagli per prompt e modello come chiavi citabili', () => {
+    const index = indexAiEvidence(buildAiEvidencePack({ generatedAtMs: T0, calibration }));
+    assert.equal(index.get('calibration.promptVersion.ai-specialize@1.edgeRNet')?.value, 0.31);
+    assert.equal(index.get('calibration.promptVersion.ai-specialize@1.matched')?.n, 24);
+    assert.equal(index.get('calibration.promptVersion.ai-specialize@2.edgeRNet')?.value, -0.18);
+    assert.equal(index.get('calibration.promptVersion.ai-specialize@2.contradicts')?.value, true);
+    assert.equal(index.get('calibration.promptVersion.unknown.matched')?.value, 4);
+    assert.equal(index.get('calibration.model.openrouter:m1.edgeRNet')?.value, 0.22);
+  });
+
+  it('un taglio contraddittorio produce una nota esplicita', () => {
+    const pack = buildAiEvidencePack({ generatedAtMs: T0, calibration });
+    assert.ok(pack.notes.some((note) => note.includes('per prompt o modello')));
   });
 
   it('va nel testo del prompt prima del diario', () => {

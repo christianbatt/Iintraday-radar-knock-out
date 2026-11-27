@@ -96,7 +96,9 @@ export const SystemOptimizerModal: React.FC<SystemOptimizerModalProps> = ({
         getLastMarketScanRunId()
       );
       if (res.success && res.postMortem) {
-        setPostMortemReport(res.postMortem);
+        // ADDITIVO (P7): l'analisi ancorata al fascicolo vive accanto al report,
+        // non dentro: la si conserva invece di perderla nel mapping.
+        setPostMortemReport({ ...res.postMortem, deskAnalysis: res.deskAnalysis ?? null });
         setPostMortemDirectivesAdded(res.newDirectivesAdded);
         setPostMortemReason(
           res.reason

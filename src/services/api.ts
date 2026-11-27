@@ -247,6 +247,48 @@ export interface DeskPostMortemMetrics {
   avgR: number;
 }
 
+/** Affermazione ancorata a chiavi del fascicolo probatorio. */
+export interface DeskEvidenceClaim {
+  statement: string;
+  evidenceRefs: string[];
+  /** Tutte le chiavi citate sono sotto soglia di campione. */
+  insufficient: boolean;
+}
+
+/** Affermazione scartata dal validatore (codice stabile, non prosa). */
+export interface DeskEvidenceRejection {
+  kind: 'claim' | 'directive';
+  index: number;
+  code: string;
+  detail: string;
+}
+
+/** Risposta del contratto `ai-desk@1` gia' validata dal server. */
+export interface DeskEvidenceAnalysisPayload {
+  available: true;
+  contractVersion: string;
+  evidencePackVersion: string;
+  analysis: {
+    summary: string;
+    summaryVerified: boolean;
+    claims: DeskEvidenceClaim[];
+    dataGaps: string[];
+    rejected: DeskEvidenceRejection[];
+    complete: boolean;
+    verified: boolean;
+  };
+  rejectedCount: number;
+  summaryVerified: boolean;
+  evidenceKeys: number;
+  missingSections: string[];
+}
+
+/** `null` quando il flag e' spento; forma `available: false` in errore interno. */
+export type DeskAnalysisPayload =
+  | DeskEvidenceAnalysisPayload
+  | { available: false; error?: string }
+  | null;
+
 export interface DeskPostMortemReport {
   executiveSummary: string;
   strengths: string[];
@@ -257,6 +299,11 @@ export interface DeskPostMortemReport {
   llmUnavailable?: boolean;
   /** ADDITIVO: metriche gia' calcolate dal server, sempre presenti. */
   metrics?: DeskPostMortemMetrics;
+  /**
+   * ADDITIVO (P7): analisi ancorata al fascicolo restituita dal server. Prima
+   * veniva scartata dal client e l'utente vedeva solo la prosa non verificata.
+   */
+  deskAnalysis?: DeskAnalysisPayload;
 }
 
 export async function fetchDeskPostMortem(
@@ -270,6 +317,8 @@ export async function fetchDeskPostMortem(
   postMortem: DeskPostMortemReport;
   newDirectivesAdded: number;
   totalRules: number;
+  /** ADDITIVO (P7): contratto `ai-desk@1` validato dal server. */
+  deskAnalysis?: DeskAnalysisPayload;
   error?: string;
   reason?: string;
   reasonDetail?: string;

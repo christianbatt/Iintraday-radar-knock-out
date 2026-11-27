@@ -173,6 +173,19 @@ export interface AiEvidenceCalibrationPolicy {
   winRateNetPct: number | null;
 }
 
+/**
+ * Taglio per prompt o per modello: quanti abbinamenti, con quale edge netto,
+ * e se contraddice l'edge aggregato. E' il dato che permette al desk di
+ * distinguere "il desk ha smesso di funzionare" da "e' cambiato il prompt".
+ */
+export interface AiEvidenceCalibrationSlice {
+  /** `null` = righe senza il campo: non attribuibili, non un valore. */
+  value: string | null;
+  matched: number;
+  edgeRNet: number | null;
+  contradicts: boolean;
+}
+
 export interface AiEvidenceCalibrationStratum {
   dimension: string;
   value: string;
@@ -197,6 +210,10 @@ export interface AiEvidenceCalibrationSection {
   alerts: readonly string[];
   policies: readonly AiEvidenceCalibrationPolicy[];
   strata: readonly AiEvidenceCalibrationStratum[];
+  /** Track record separato per versione di prompt (diagnostica). */
+  byPromptVersion: readonly AiEvidenceCalibrationSlice[];
+  /** Track record separato per modello (diagnostica). */
+  byModel: readonly AiEvidenceCalibrationSlice[];
   limitations: readonly string[];
 }
 
@@ -420,6 +437,23 @@ function normalizeCalibration(raw: unknown): AiEvidenceCalibrationSection | null
   }
   strata.sort((a, b) => `${a.dimension}.${a.value}`.localeCompare(`${b.dimension}.${b.value}`));
 
+  const slices = (dimension: 'promptVersion' | 'model'): AiEvidenceCalibrationSlice[] => {
+    const field = dimension === 'promptVersion' ? 'byPromptVersion' : 'byModel';
+    const rawSlices = Array.isArray(raw[field]) ? (raw[field] as unknown[]) : [];
+    const out: AiEvidenceCalibrationSlice[] = [];
+    for (const item of rawSlices) {
+      if (out.length >= AI_EVIDENCE_MAX_CALIBRATION_STRATA) break;
+      if (!isRecord(item)) continue;
+      out.push({
+        value: text(item.value),
+        matched: count(item.matched),
+        edgeRNet: num(item.edgeRNet),
+        contradicts: item.contradicts === true,
+      });
+    }
+    return out;
+  };
+
   const alerts: string[] = [];
   const rawAlerts = Array.isArray(raw.alerts) ? raw.alerts : [];
   for (const item of rawAlerts) {
@@ -453,6 +487,8 @@ function normalizeCalibration(raw: unknown): AiEvidenceCalibrationSection | null
     alerts,
     policies,
     strata,
+    byPromptVersion: slices('promptVersion'),
+    byModel: slices('model'),
     limitations,
   };
 }
@@ -642,6 +678,18 @@ function buildEvidence(sections: AiEvidenceSections): AiEvidenceEntry[] {
       out.push(entry('calibration', `${key}.edgeRNet`, stratum.edgeRNet, stratum.matched));
       out.push(entry('calibration', `${key}.contradicts`, stratum.contradicts, null));
     }
+    // Tagli per prompt e modello: citabili, cosi' il desk puo' attribuire un
+    // cambiamento di edge a un cambio di istruzioni invece che a se stesso.
+    const pushSlice = (prefix: string, slice: AiEvidenceCalibrationSlice) => {
+      const value =
+        slice.value === null ? 'unknown' : slice.value.replace(/\s+/g, '_');
+      const key = `${prefix}.${value}`;
+      out.push(entry('calibration', `${key}.matched`, slice.matched, slice.matched));
+      out.push(entry('calibration', `${key}.edgeRNet`, slice.edgeRNet, slice.matched));
+      out.push(entry('calibration', `${key}.contradicts`, slice.contradicts, null));
+    };
+    for (const slice of c.byPromptVersion) pushSlice('calibration.promptVersion', slice);
+    for (const slice of c.byModel) pushSlice('calibration.model', slice);
   }
 
   if (sections.scan) {
@@ -815,6 +863,14 @@ export function buildAiEvidencePack(input: AiEvidencePackInput): AiEvidencePack 
   }
   if (calibration !== null && calibration.strata.some((stratum) => stratum.contradicts)) {
     notes.push('Almeno uno strato della calibrazione contraddice l edge aggregato (contradicts: true).');
+  }
+  if (
+    calibration !== null &&
+    [...calibration.byPromptVersion, ...calibration.byModel].some((slice) => slice.contradicts)
+  ) {
+    notes.push(
+      'Almeno un taglio per prompt o modello contraddice l edge aggregato: il campione mescola popolazioni diverse.'
+    );
   }
 
   const shadowV1Live = normalizeShadowV1Live(input?.shadowV1Live);

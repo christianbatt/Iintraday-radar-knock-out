@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { DeskPostMortemCard } from '../DeskPostMortemCard';
-import type { DeskPostMortemReport } from '../../services/api';
+import type { DeskEvidenceAnalysisPayload, DeskPostMortemReport } from '../../services/api';
 
 function report(partial: Partial<DeskPostMortemReport> = {}): DeskPostMortemReport {
   return {
@@ -92,5 +92,89 @@ describe('DeskPostMortemCard — nessuna sezione vuota', () => {
     assert.equal(zero.includes('nuove direttive qualitative'), false);
     const two = renderToStaticMarkup(<DeskPostMortemCard report={report()} directivesAdded={2} />);
     assert.ok(two.includes('2 nuove direttive qualitative'));
+  });
+});
+
+describe('DeskPostMortemCard — analisi ancorata al fascicolo', () => {
+  const ANCHORED: DeskEvidenceAnalysisPayload = {
+    available: true,
+    contractVersion: 'ai-desk@1',
+    evidencePackVersion: 'ai-evidence@1',
+    analysis: {
+      summary: 'Sintesi',
+      summaryVerified: true,
+      claims: [
+        {
+          statement: 'Il veto di tendenza ha media negativa',
+          evidenceRefs: ['veto.EU.SUPERTREND_OPPOSED.meanRMarket'],
+          insufficient: false,
+        },
+        {
+          statement: 'L edge del desk e positivo',
+          evidenceRefs: ['calibration.edgeRNet'],
+          insufficient: true,
+        },
+      ],
+      dataGaps: ['copertura LLM bassa'],
+      rejected: [
+        { kind: 'claim', index: 2, code: 'unsupported_number', detail: '61,4%' },
+        { kind: 'directive', index: 0, code: 'no_ref', detail: 'nessun riferimento' },
+      ],
+      complete: false,
+      verified: false,
+    },
+    rejectedCount: 2,
+    summaryVerified: true,
+    evidenceKeys: 42,
+    missingSections: ['shadowV1Live'],
+  };
+
+  it('mostra stato, chiavi citate, rifiuti e dati mancanti', () => {
+    const html = renderToStaticMarkup(
+      <DeskPostMortemCard report={report({ deskAnalysis: ANCHORED })} />
+    );
+    assert.ok(html.includes('data-testid="desk-anchored-analysis"'));
+    assert.ok(html.includes('Analisi ancorata al fascicolo'));
+    assert.ok(html.includes('non verificata'));
+    assert.ok(html.includes('contratto ai-desk@1'));
+    assert.ok(html.includes('42 chiavi citabili'));
+    assert.ok(html.includes('sezioni mancanti: shadowV1Live'));
+    assert.ok(html.includes('Il veto di tendenza ha media negativa'));
+    assert.ok(html.includes('veto.EU.SUPERTREND_OPPOSED.meanRMarket'));
+    assert.ok(html.includes('(campione insufficiente)'));
+    assert.ok(html.includes('scartate dal validatore: 2'));
+    assert.ok(html.includes('unsupported_number'));
+    assert.ok(html.includes('dati mancanti o insufficienti: copertura LLM bassa'));
+  });
+
+  it('verificata quando il server lo dichiara', () => {
+    const html = renderToStaticMarkup(
+      <DeskPostMortemCard
+        report={report({
+          deskAnalysis: {
+            ...ANCHORED,
+            analysis: { ...ANCHORED.analysis, verified: true, rejected: [] },
+          },
+        })}
+      />
+    );
+    assert.ok(html.includes('verificata'));
+    assert.equal(html.includes('scartate dal validatore'), false);
+  });
+
+  it('senza analisi ancorata non inventa sezioni', () => {
+    const html = renderToStaticMarkup(<DeskPostMortemCard report={report()} />);
+    assert.equal(html.includes('desk-anchored-analysis'), false);
+    assert.equal(html.includes('desk-anchored-unavailable'), false);
+  });
+
+  it('analisi non disponibile: una riga lo dichiara, nessuna card vuota', () => {
+    const html = renderToStaticMarkup(
+      <DeskPostMortemCard report={report({ deskAnalysis: { available: false, error: 'internal_error' } })} />
+    );
+    assert.ok(html.includes('data-testid="desk-anchored-unavailable"'));
+    assert.ok(html.includes('non disponibile in questa risposta'));
+    assert.equal(html.includes('desk-anchored-analysis'), false);
+    assert.ok(html.includes('Sintesi delle sessioni EU.'), 'la prosa resta visibile');
   });
 });
