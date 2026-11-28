@@ -57,7 +57,7 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 
 - [x] **3.1 Provenienza estesa:** `writerUid`, `runId`, `datasetHash` (SHA-256 degli `id` unici ordinati). *(fatto 2026-11-28; `minRealizedAt` non ancora)*
 - [x] **3.2 Memoria per-utente** `users/{uid}/ai_specialization_memory/current` con regole storiche visibili come `legacy: true`, mai riscritte nel documento dell'utente. *(fatto 2026-11-28: `src/server/aiMemoryScope.ts`, migrazione idempotente, file locale per uid)*
-- [ ] **3.3 Campione canonico** *(parziale)*: il `datasetHash` ignora i duplicati e firma il campione usato, ma la fonte resta `req.body.trades` quando presente: manca il rifiuto dei timestamp non plausibili, `datasetSource` e il test di poisoning end-to-end.
+- [x] **3.3 Campione canonico.** *(fatto 2026-11-28)* Il campione viene solo da `sharedAppState.journalEntries`; `req.body.trades` non è più una fonte. `buildCanonicalSample` scarta e conta righe senza `id`, duplicati e chiusure oltre 5 minuti nel futuro; la risposta dichiara `datasetSource`, `datasetHash` e `rejectedTrades`. Test di poisoning fra due utenti. Resta aperto solo l'aggiornamento della UI, che ora mostra il 400 quando il diario canonico è vuoto.
 
 ## Fase 4 — Ciclo di vita delle regole
 
@@ -107,4 +107,5 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 | 2026-11-28 | 1.2 UI onesta (tre frasi + test) | `965c511` | CI verde |
 | 2026-11-28 | 2.5 `memoryRuleIds` + prompt senza "score" | `682b1ce` | CI verde |
 | 2026-11-28 | 2.6 veto strutturato (`NO_NEWS`/`COUNTER_REGIME`) | `74cd645` | CI verde |
-| 2026-11-28 | 3.1-3.2 memoria per-utente + autore + dataset | vedi commit | tsc, lint, ai_memory_scope (17), attribuzione, ai-desk, learningValidator, specialization, ai_shadow_log |
+| 2026-11-28 | 3.3 campione canonico + runId reale | vedi commit |
+| 2026-11-28 | 3.1-3.2 memoria per-utente + autore + dataset | `258aaa4` | tsc, lint, ai_memory_scope (17), attribuzione, ai-desk, learningValidator, specialization, ai_shadow_log |

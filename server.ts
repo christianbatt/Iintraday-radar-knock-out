@@ -42,6 +42,7 @@ import {
   LearningResult,
 } from './src/utils/learningValidator';
 import { updateAIMemory } from './src/utils/memoryUpdater';
+import { buildCanonicalSample } from './src/server/canonicalTradeSample';
 import {
   aiMemoryFirestorePath,
   aiMemoryLocalFileName,
@@ -3356,7 +3357,14 @@ app.post('/api/ai/specialize', requireApiAuth, async (req: Request, res: Respons
   try {
     const userId = typeof res.locals.authenticatedUid === 'string' ? res.locals.authenticatedUid : 'legacy';
     const sharedAppState = getSharedAppState(userId);
-    const trades: any[] = Array.isArray(req.body?.trades) ? req.body.trades : (sharedAppState.journalEntries || []);
+    // Fase 3.3: il campione che puo' scrivere memoria viene dal diario canonico
+    // del server, non dal body. Un client non puo' piu' fabbricare i 30 trade
+    // che servono a superare i gate statistici di un altro utente.
+    const canonicalSample = buildCanonicalSample(sharedAppState.journalEntries, Date.now());
+    const trades: any[] = canonicalSample.trades;
+    // Id dell'esecuzione che scrive: non il runId dell'ultima scansione, che
+    // appartiene a un'altra operazione.
+    const memoryRunId = randomUUID();
     const excluded: any[] = Array.isArray(req.body?.excluded)
       ? req.body.excluded
       : Array.isArray(req.body?.excludedSetups)
@@ -3366,7 +3374,13 @@ app.post('/api/ai/specialize', requireApiAuth, async (req: Request, res: Respons
     if (trades.length === 0 && excluded.length === 0) {
       return res.status(400).json({
         success: false,
-        error: 'Dati storici insufficienti per eseguire l\'auto-specializzazione AI (richiesti almeno trade o setup esclusi registrati).',
+        runId: memoryRunId,
+        datasetSource: canonicalSample.source,
+        datasetHash: canonicalSample.datasetHash,
+        rejectedTrades: canonicalSample.rejected,
+        error:
+          'Nessun trade nel diario canonico del server: il campione non puo\' essere preso dalla richiesta. ' +
+          'Sincronizza il diario (POST /api/sync/state) oppure registra almeno un trade concluso.',
       });
     }
 
@@ -3539,7 +3553,7 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
       updateAIMemory(winnerResults, aiMemoryFilePathFor(memoryScopeUid), {
         ownerUid: memoryScopeUid,
         datasetHash: memoryDatasetHash,
-        runId: getLastScanRunId() ?? null,
+        runId: memoryRunId,
       });
       aiLearnedMemory = loadAIMemoryFromDisk(memoryScopeUid);
       if (firebaseAdminFirestore) {
@@ -3590,6 +3604,11 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
 
     return res.json({
       success: true,
+      // Fase 3.3: la risposta dichiara su quale campione e' stata scritta la regola.
+      runId: memoryRunId,
+      datasetSource: canonicalSample.source,
+      datasetHash: memoryDatasetHash,
+      rejectedTrades: canonicalSample.rejected,
       reason,
       reasonDetail,
       addedCount: persistedCount,
@@ -3620,7 +3639,10 @@ app.post('/api/ai/desk-post-mortem', requireApiAuth, async (req: Request, res: R
   try {
     const userId = typeof res.locals.authenticatedUid === 'string' ? res.locals.authenticatedUid : 'legacy';
     const sharedAppState = getSharedAppState(userId);
-    const rawTrades: any[] = Array.isArray(req.body?.trades) ? req.body.trades : (sharedAppState.journalEntries || []);
+    // Fase 3.3: stesso campione canonico del flusso di specializzazione.
+    const deskCanonicalSample = buildCanonicalSample(sharedAppState.journalEntries, Date.now());
+    const deskMemoryRunId = randomUUID();
+    const rawTrades: any[] = deskCanonicalSample.trades;
     const market = req.body?.market || 'GLOBAL';
 
     let sessionTrades = market === 'GLOBAL'
@@ -3854,7 +3876,7 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
       updateAIMemory(deskWinnerResults, aiMemoryFilePathFor(deskMemoryScopeUid), {
         ownerUid: deskMemoryScopeUid,
         datasetHash: deskDatasetHash,
-        runId: getLastScanRunId() ?? null,
+        runId: deskMemoryRunId,
       });
       aiLearnedMemory = loadAIMemoryFromDisk(deskMemoryScopeUid);
       if (firebaseAdminFirestore) {
@@ -3924,6 +3946,11 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
           avgR: Number(avgR),
         },
       },
+      // Fase 3.3: campione dichiarato anche nel post-mortem.
+      runId: deskMemoryRunId,
+      datasetSource: deskCanonicalSample.source,
+      datasetHash: deskDatasetHash,
+      rejectedTrades: deskCanonicalSample.rejected,
       newDirectivesAdded: deskPersistedCount,
       proposedDirectives,
       discardedCount: deskDiscardedCount,
