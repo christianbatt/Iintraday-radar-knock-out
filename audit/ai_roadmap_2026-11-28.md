@@ -48,10 +48,10 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 - [x] **2.1–2.3 Log e calibrazione del catalizzatore.** *(fatto in `0e5f917`, forma: campi in `aiCategory` e `catalystLift`)*
 - [x] **2.5 Provenienza della memoria nel prompt.** *(fatto 2026-11-28: `memoryRuleIds` sanificato, dedupe, tetto 8; manca ancora `validUntil` nel log)* `memoryRuleIds` sulla riga del catalizzatore: quali regole apprese sono state iniettate (con `validUntil`), così l'effetto di una regola è attribuibile e non solo ipotizzato.
 - [x] **2.6 Veto strutturato.** *(fatto 2026-11-28: `vetoReason` `NO_NEWS` / `COUNTER_REGIME` + `vetoSource`, il testo resta solo fallback)* `vetoReason` (`EARNINGS` / `FUNDAMENTAL` / `NONE`) e `vetoSource` (`llm` / `text-legacy`) al posto della sola euristica testuale in `calculator.ts`: oggi una squalifica può dipendere da `includes('nessuna notizia')`.
-- [ ] **2.1 Contratto di log.** `source: 'catalyst'`, `catalystDecision`, `newsBonus` 0–15, `newsBonusBand` (`0` / `1-7` / `8-15`, costante dichiarata), `hasNews`, `vetoReason`, `vetoSource` (`llm` | `text-legacy`), `memoryRuleIds`.
-- [ ] **2.2 Wiring in `POST /api/analyze-catalyst`** (`server.ts:4028`): log di ogni esito, inclusi ramo fallback deterministico e `NESSUN_TRADE`; `promptVersion: 'ai-catalyst@1'`; nessun cambio di selezione (test di non-regressione).
-- [ ] **2.3 Calibrazione del catalizzatore.** Aggregato `catalyst` nel join esistente, **fuori** dai bucket AZIONE/ATTESA/SCARTO: test gemelli che dimostrano verdetto principale invariato.
-- [ ] **2.4 Pannello "Catalizzatore"** in `ShadowAISection`: bande di bonus, `edgeR` alto-vs-zero con IC, falsi veti, quota `text-legacy`.
+- [x] **2.1 Contratto di log.** *(fatto in `0e5f917`, casella allineata il 2026-11-28)* `source: 'catalyst'` su entrambi i rami, `catalystDecision`, `newsBonus`, `newsBonusBand` (`0` / `1-7` / `8-15`), `hasNews`, `vetoReason`, `vetoSource` (`llm` | `text-legacy` | `deterministic`), `memoryRuleIds`. La forma effettiva vive in `aiCategory` della riga, non in campi top-level: è la stessa informazione con un altro nome.
+- [x] **2.2 Wiring in `POST /api/analyze-catalyst`.** *(fatto in `0e5f917`; casella allineata il 2026-11-28)* Ogni esito viene loggato, compresi il ramo deterministico `NO_NEWS` e i guardrail; `promptVersion` è `ai-catalyst@3` (non `@1`), `candidateKey` è prefissato `catalyst:`. Il test di non-regressione sulla selezione è `test:catalyst` in `ai_p0_p1_p2.test.ts`.
+- [x] **2.3 Calibrazione del catalizzatore.** *(fatto in `0e5f917`; casella allineata il 2026-11-28)* `catalystLift` (con/senza bonus, allineato/opposto) vive nel blocco calibrazione **fuori** dai bucket AZIONE/ATTESA/SCARTO e ha un blocco dedicato nel pannello; i test gemelli dimostrano che il verdetto principale non cambia.
+- [ ] **2.4 Pannello "Catalizzatore"** in `ShadowAISection`: bande di bonus, `edgeR` alto-vs-zero con IC, falsi veti, quota `text-legacy`. *(Parziale: `catalystLift` è già nel pannello; mancano bande, falsi veti e quota `text-legacy`.)*
 
 ## Fase 3 — Sicurezza e attribuzione della memoria
 
@@ -90,13 +90,6 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 - [ ] **8.3 Meta-label in shadow** (`TAKE`/`SKIP` + probabilità) nel log e nella UI come informativo; test che la selezione non cambia.
 - [ ] **8.4 Conformal (split)** per intervalli a copertura garantita; verifica copertura osservata entro ±5 punti.
 
-## Fase 9 — Igiene operativa
-
-- [ ] **9.1 Budget, schema, retry:** `maxTokens`, tetto chiamate per richiesta/utente, validazione schema prima del parse, backoff su 429, allarme su `ERRORE_PARSING`.
-- [ ] **9.2 Champion/challenger** dei prompt con decisione sequenziale (alpha/beta dichiarati) su `edgeRNet`.
-
----
-
 ## Fase 9 — Budget, schema e retry delle chiamate LLM (proposta P10 dell'audit)
 
 Nessun numero di score cambia: sono i guardrail delle chiamate ai modelli. Una chiamata LLM costa e può fallire in tre modi che il codice trattava come uno solo («modello assente»).
@@ -109,6 +102,8 @@ Nessun numero di score cambia: sono i guardrail delle chiamate ai modelli. Una c
 - [x] **9.6 Correzione `anyOf` nella normalizzazione.** *(fatto 2026-11-28)* Un campo di `anyOf` con tipo sbagliato veniva saltato (per non perdere l'unica alternativa) ma restava nel valore normalizzato: nell'handler del post-mortem `executiveSummary || summary` sceglieva quindi l'oggetto invalido al posto del `summary` valido. Ora, se l'`anyOf` è soddisfatto, i campi **invalidi** di quel gruppo vengono rimossi dal valore normalizzato (`dropped`) e restano solo quelli usabili; se nessun campo è usabile la risposta resta `any_of`. Test dedicato: `executiveSummary` oggetto + `summary` stringa → l'oggetto sparisce e l'handler sceglie il riassunto valido.
   **Nota onesta sui retry:** ogni tentativo consuma un'unità di budget (è una chiamata al provider), quindi sotto una raffica di 429 una richiesta può raggiungere il tetto di 12 prima di un'esecuzione pulita. È coerente con la ragione dichiarata del tetto (conta le chiamate, non le operazioni logiche), ma va saputo.
 - **Limiti dichiarati:** la finestra per utente è in memoria di processo (un riavvio la azzera e due istanze non la condividono); i tetti sono costanti, non configurabili da ambiente; il retry non copre timeout e errori di rete (restano un fallimento immediato, come prima); il costo reale per chiamata non è misurato — il budget limita il numero, non i token spesi.
+- [ ] **9.7 Champion/challenger dei prompt.** Due versioni dello stesso prompt confrontate su `edgeRNet` con decisione sequenziale (alpha/beta dichiarati prima dei dati); nessun effetto sulla selezione finché una versione non vince. *(ex 9.2 della vecchia sezione "Igiene operativa", rimossa perché duplicava questa Fase 9)*
+- [x] **9.8 Allarme su `ERRORE_PARSING`.** *(già coperto da 9.3 + 9.5: una risposta fuori schema non passa più in silenzio e `llmErrorDetail` distingue `openrouter:schema`/`gemini:schema` da un provider muto. Nessuna metrica aggregata: l'allarme vero resta lavoro di 9.7/telemetria.)*
 
 ## Diario dei passi
 
@@ -133,7 +128,8 @@ Nessun numero di score cambia: sono i guardrail delle chiamate ai modelli. Una c
 | 2026-11-28 | 6.3 una sola lettura di `bars.json` per richiesta + `selectedLeverage` persistito | `39be13e` | lint, build, 6+14+60+66+21+101+25+5 test, client guard; misura reale invariata (57 esiti, medio 0,2889 R) |
 | 2026-11-28 | Fase 9 (P10): maxTokens per endpoint, tetti per richiesta/utente, schema prima del parse, retry 429 | `612e42e` | 18 test nuovi; `test:ai-shadow`, `test:ai-calibration`, `test:ai-desk`, client guard verdi |
 | 2026-11-28 | 9.5 revisione: schema severo solo sui campi obbligatori, retry in un helper | `10afd6c` | 24 test (6 nuovi); budget negato = stesso `null` di provider assente |
-| 2026-11-28 | 9.6 correzione `anyOf`: l'invalido non resta nel valore normalizzato | vedi commit | 25 test; `test:ai-shadow`, `test:ai-calibration`, `test:ai-desk`, client guard, build verdi |
+| 2026-11-28 | 9.6 correzione `anyOf`: l'invalido non resta nel valore normalizzato | `a9ed838` | 25 test; `test:ai-shadow`, `test:ai-calibration`, `test:ai-desk`, client guard, build verdi |
+| 2026-11-28 | pulizia roadmap: una sola Fase 9, caselle 2.1–2.3 allineate a `0e5f917` | vedi commit | solo documentazione, nessuna riga di codice |
 | 2026-11-28 | Fase 4 correzioni: rinnovo agganciato + mapping reale | `dc74673` | test su scansione vera, contatore preservato |
 | 2026-11-28 | Fase 4 (scadenza, revoca, prompt senza %) | `9ba80bc` | tsc, lint, ai-desk (23 nuove asserzioni), memoria scope/attribuzione |
 | 2026-11-28 | 3.1-3.2 memoria per-utente + autore + dataset | `258aaa4` | tsc, lint, ai_memory_scope (17), attribuzione, ai-desk, learningValidator, specialization, ai_shadow_log |
