@@ -148,7 +148,17 @@ import {
   summarizeVetoOutcomes,
   VETO_LOG_RELATIVE_PATH,
 } from './src/server/vetoOutcomeLog';
-import { filterRelevantFreshNews, normalizeFuturesPayload } from './src/utils/newsFilter';
+import {
+  filterRelevantFreshNews,
+  formatNewsAge,
+  hasNewsWithinHours,
+  mergeNewsByRecency,
+  NEWS_TODAY_AGE_HOURS,
+  newsAgeHours,
+  newsBonusPolicy,
+  newsRecencyBand,
+  normalizeFuturesPayload,
+} from './src/utils/newsFilter';
 import {
   analyzeDeskEvidencePack,
   buildDeskEvidencePack,
@@ -2116,7 +2126,11 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
               });
             }
           }
-          newsList = filterRelevantFreshNews(rawFinnhub, ticker, searchName, nowMs, 72).fresh.slice(0, 5);
+          newsList = mergeNewsByRecency(
+            newsList,
+            filterRelevantFreshNews(rawFinnhub, ticker, searchName, nowMs, 72).fresh,
+            5
+          );
         }
       }
     } catch {
@@ -2124,8 +2138,10 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
     }
   }
 
-  // 2. Fetch real live articles from Google News RSS feed (Italian financial coverage, recent window)
-  if (newsList.length === 0) {
+  // 2. Fetch real live articles from Google News RSS feed (Italian financial coverage, recent window).
+  // Non basta che il pool sia non vuoto: se Finnhub ha portato solo articoli vecchi, il pool si
+  // arricchisce con i feed live invece di fermarsi al primo che risponde (notizie in tempo reale).
+  if (!hasNewsWithinHours(newsList, nowMs, NEWS_TODAY_AGE_HOURS)) {
     try {
       const query = encodeURIComponent(`${searchName} ${isSpaceX ? 'SpaceX' : ticker} borsa when:3d`);
       const rssUrl = `https://news.google.com/rss/search?q=${query}&hl=it&gl=IT&ceid=IT:it`;
@@ -2190,15 +2206,19 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
             idx++;
           }
         }
-        newsList = filterRelevantFreshNews(rawItList, ticker, searchName, nowMs, 72).fresh.slice(0, 5);
+        newsList = mergeNewsByRecency(
+          newsList,
+          filterRelevantFreshNews(rawItList, ticker, searchName, nowMs, 72).fresh,
+          5
+        );
       }
     } catch (e: any) {
       console.error(`Errore fetch RSS per ${ticker}:`, e.message);
     }
   }
 
-  // 3. For US stocks or when Italian coverage has zero fresh/relevant items, query English/US financial RSS
-  if (newsList.length === 0) {
+  // 3. For US stocks or when the pool still has nothing within 24h, query English/US financial RSS
+  if (!hasNewsWithinHours(newsList, nowMs, NEWS_TODAY_AGE_HOURS)) {
     try {
       const usQuery = encodeURIComponent(`${searchName} ${isSpaceX ? 'SpaceX' : ticker} stock when:3d`);
       const usRssUrl = `https://news.google.com/rss/search?q=${usQuery}&hl=en-US&gl=US&ceid=US:en`;
@@ -2263,15 +2283,19 @@ async function fetchNewsForTicker(ticker: string, name: string): Promise<NewsIte
             idx++;
           }
         }
-        newsList = filterRelevantFreshNews(rawUsList, ticker, searchName, nowMs, 72).fresh.slice(0, 5);
+        newsList = mergeNewsByRecency(
+          newsList,
+          filterRelevantFreshNews(rawUsList, ticker, searchName, nowMs, 72).fresh,
+          5
+        );
       }
     } catch (e: any) {
       console.error(`Errore fetch US RSS per ${ticker}:`, e.message);
     }
   }
 
-  // Cache for 600s
-  cache.set(cacheKey, newsList, 600);
+  // Cache breve: le notizie devono essere fresche, non una fotografia di 10 minuti fa.
+  cache.set(cacheKey, newsList, 120);
   return newsList;
 }
 
@@ -4695,6 +4719,9 @@ app.post('/api/analyze-catalyst', requireApiAuth, async (req: Request, res: Resp
       72
     );
     const verifiedNews = freshCheck.fresh;
+    // Tetto del bonus calcolato su eta' e importanza delle notizie del pool:
+    // solo un evento recente puo' valere punti, una notizia vecchia vale 0.
+    const bonusPolicy = newsBonusPolicy(verifiedNews, nowMs);
 
     const hasTodayEarnings = candidate.daysToEarnings === 0 && Boolean(candidate.nextEarningsDate);
     const hasImminentEarnings =
@@ -4870,11 +4897,19 @@ DATI SOTTOSTANTE:
 
 NOTIZIE REALI VERIFICATE (<=72h, pertinenti a ${candidate.ticker}):
 ${verifiedNews
-  .map(
-    (n, i) =>
-      `[${i + 1}] Titolo: "${n.title}" | Fonte: ${n.source} | Data: ${n.publishedAt} | URL: ${n.url}\nRiassunto: ${n.summary}`
-  )
+  .map((n, i) => {
+    const ageHours = newsAgeHours(n, nowMs);
+    const band = newsRecencyBand(ageHours ?? Number.POSITIVE_INFINITY);
+    return `[${i + 1}] Titolo: "${n.title}" | Fonte: ${n.source} | Data: ${n.publishedAt} | Eta: ${formatNewsAge(ageHours)} | Banda: ${band} | URL: ${n.url}\nRiassunto: ${n.summary}`;
+  })
   .join('\n\n')}
+
+REGOLE SUL PESO DELLE NOTIZIE (obbligatorie):
+- Dai punti solo a notizie con eta inferiore a 24h che contengono un evento capace di muovere il prezzo oggi: sorpresa sugli utili, upgrade/downgrade o prezzo obiettivo, contratto/commessa, guidance, M&A/OPA, azione legale o regolatoria, sospensione, aumento di capitale o dividendo straordinario.
+- Una notizia piu vecchia di 24 ore vale 0 punti, anche se molto pertinente: non e' un catalizzatore di oggi.
+- Rassegne, commenti, analisi tecniche e articoli che ripetono notizie gia note valgono 0: sono gia prezzate.
+- Se nessun articolo e' entro 24h, il bonus deve essere 0.
+Tetto di bonus calcolato dal server per questo pool: ${bonusPolicy.ceiling} punti (${bonusPolicy.reason}).
 
 ${VWAP_PROMPT_BLOCK}
 
@@ -5081,16 +5116,20 @@ confidenza: numero intero da 0 a 100 sulla solidità del catalizzatore nel conte
       ? Math.max(0, Math.min(100, Math.round(rawConf)))
       : null;
 
-    // Tetto deterministico di credibilita': se nessuna notizia e' <24h E nessuna proviene da wire primario,
-    // limita newsBonusScore a max +5 (o 0 se confidenza < 55) per impedire gonfiaggi da RSS secondari datati.
-    if (parsed.decisione === 'TRADE' && !freshCheck.hasRecent24h && !freshCheck.hasPrimaryWire && normalizedBonus > 0) {
-      const capped = normalizedConf !== null && normalizedConf < 55 ? 0 : Math.min(normalizedBonus, 5);
+    // Tetto deterministico di credibilita' (P11): il bonus non puo' superare il tetto
+    // calcolato dall'eta' e dall'importanza delle notizie del pool. Prima valeva 5 per
+    // qualunque articolo tra 24h e 72h, anche senza wire primario: cosi' una notizia
+    // vecchia pesava ancora sul punteggio. Ora la soglia la decide `bonusPolicy`:
+    // niente entro 24h => 0 punti, evento rilevante entro 6h => tetto pieno.
+    if (parsed.decisione === 'TRADE' && normalizedBonus > 0) {
+      const confDiscount = normalizedConf !== null && normalizedConf < 55 ? 0 : normalizedBonus;
+      const capped = Math.min(confDiscount, bonusPolicy.ceiling);
       if (capped < normalizedBonus) {
         normalizedBonus = capped;
         const existingRisks = Array.isArray(parsed.rischi) ? parsed.rischi : [];
         parsed.rischi = [
           ...existingRisks,
-          `Tetto prudenziale bonus notizia (+${capped}): articoli tra 24h e 72h da fonti secondarie.`,
+          `Tetto prudenziale bonus notizia (+${capped}): ${bonusPolicy.reason} (notizia piu' fresca del pool: ${formatNewsAge(bonusPolicy.freshestAgeHours)}).`,
         ];
       }
     }
