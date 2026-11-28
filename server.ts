@@ -119,10 +119,11 @@ import {
 import {
   AI_LLM_ENDPOINT_MAX_TOKENS,
   AI_LLM_RETRY_MAX_ATTEMPTS,
-  aiLlmRetryDelayMs,
+  aiLlmRetryRequest,
   isRetryableLlmStatus,
   openAiLlmRequest,
   parseRetryAfterMs,
+  runWithLlmRetry,
   type AiLlmEndpoint,
   type AiLlmRequestBudget,
 } from './src/server/aiLlmBudget';
@@ -3568,6 +3569,9 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
         llmErrorDetail = 'openrouter:402/429';
       } else if (typeof openRouterRes?.status === 'number' && openRouterRes.status > 0) {
         llmErrorDetail = `openrouter:${openRouterRes.status}`;
+      } else if (openRouterRes?.schemaError) {
+        // P10 (revisione): un rifiuto per schema non e' "provider assente".
+        llmErrorDetail = 'openrouter:schema';
       }
     }
 
@@ -3581,6 +3585,8 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
         usedModel = gemRes.model ?? null;
       } else if (gemRes?.quotaExhausted) {
         llmErrorDetail = 'gemini:402/429';
+      } else if (gemRes?.schemaError) {
+        llmErrorDetail = 'gemini:schema';
       }
     }
 
@@ -3926,6 +3932,9 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
         llmErrorDetail = 'openrouter:402/429';
       } else if (typeof openRouterRes?.status === 'number' && openRouterRes.status > 0) {
         llmErrorDetail = `openrouter:${openRouterRes.status}`;
+      } else if (openRouterRes?.schemaError) {
+        // P10 (revisione): un rifiuto per schema non e' "provider assente".
+        llmErrorDetail = 'openrouter:schema';
       }
     }
 
@@ -3942,6 +3951,8 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
         usedModel = gemRes.model ?? null;
       } else if (gemRes?.quotaExhausted) {
         llmErrorDetail = 'gemini:402/429';
+      } else if (gemRes?.schemaError) {
+        llmErrorDetail = 'gemini:schema';
       }
     }
 
@@ -4190,8 +4201,17 @@ async function callOpenRouterModel(
     : AI_LLM_ENDPOINT_MAX_TOKENS['ai-catalyst'];
   const schema = options.endpoint ? AI_LLM_SCHEMAS[options.endpoint] : undefined;
 
-  for (let attempt = 0; attempt <= AI_LLM_RETRY_MAX_ATTEMPTS; attempt += 1) {
-  // P10: il budget della richiesta si consuma per singola chiamata al provider.
+  // P10: un tentativo = una chiamata al provider, quindi un'unita' di budget
+  // anche quando e' un retry. Il budget negato restituisce `null`, cioe' lo
+  // stesso "modello assente" di prima: nessun percorso nuovo a valle.
+  return runWithLlmRetry<{
+    data: any;
+    keyInvalid?: boolean;
+    creditsExhausted?: boolean;
+    status?: number;
+    model?: string;
+    schemaError?: string;
+  } | null>(async () => {
   if (options.budget && !options.budget.tryConsume().ok) {
     console.info(`[OpenRouter] budget LLM esaurito per ${modelDesc}: chiamata non eseguita.`);
     return null;
@@ -4240,19 +4260,15 @@ async function callOpenRouterModel(
     // ripeterli brucia quota e nasconde l'errore.
     if (isRetryableLlmStatus(res.status)) {
       const errBody = await res.text().catch(() => '');
-      if (attempt < AI_LLM_RETRY_MAX_ATTEMPTS) {
-        const delayMs = aiLlmRetryDelayMs(
-          attempt,
-          parseRetryAfterMs(res.headers.get('retry-after'))
-        );
-        console.info(
-          `[OpenRouter] HTTP ${res.status} per ${modelDesc} — retry ${attempt + 1}/${AI_LLM_RETRY_MAX_ATTEMPTS} fra ${delayMs}ms.`
-        );
-        await sleepMs(delayMs);
-        continue;
-      }
-      applyOpenRouterCooldown(res.status, errBody, modelDesc);
-      return { data: null, creditsExhausted: true, status: res.status };
+      // Il cooldown resta dove era: solo quando i retry sono esauriti.
+      return aiLlmRetryRequest({
+        status: res.status,
+        retryAfterMs: parseRetryAfterMs(res.headers.get('retry-after')),
+        exhausted: () => {
+          applyOpenRouterCooldown(res.status, errBody, modelDesc);
+          return { data: null, creditsExhausted: true, status: res.status };
+        },
+      });
     }
 
     if (res.status === 402) {
@@ -4280,16 +4296,24 @@ async function callOpenRouterModel(
       .replace(/\s*```$/i, '')
       .trim();
 
-    const parsed = JSON.parse(cleaned);
+    let parsed = JSON.parse(cleaned);
     if (parsed && typeof parsed === 'object') {
-      // P10: lo schema si controlla PRIMA di leggere o completare i campi: una
-      // risposta fuori forma non diventa una risposta valida per omissione.
+      // P10: lo schema si controlla PRIMA di leggere o completare i campi. Solo
+      // i campi OBBLIGATORI possono far scartare la risposta: un campo
+      // facoltativo fuori tipo viene rimosso, un numero fuori intervallo
+      // riportato nel bordo, e la valutazione resta valida.
       if (schema) {
         const validated = validateAiLlmObject(parsed, schema);
         if (!validated.ok) {
           console.info(`[OpenRouter] risposta fuori schema per ${modelDesc}: ${validated.reason}.`);
           return { data: null, status: 0, schemaError: validated.reason };
         }
+        if (validated.dropped.length > 0 || validated.clamped.length > 0) {
+          console.info(
+            `[OpenRouter] risposta normalizzata per ${modelDesc}: rimossi [${validated.dropped.join(', ')}], riportati nel bordo [${validated.clamped.join(', ')}].`
+          );
+        }
+        parsed = validated.value;
       }
       const usedModel = json.model || (Array.isArray(modelOrModels) ? modelOrModels[0] : modelOrModels);
       // Coerce required fields if this is a trading signal evaluation
@@ -4310,8 +4334,12 @@ async function callOpenRouterModel(
     console.info(`[OpenRouter] ${modelDesc} temporaneamente non disponibile (${isAbort ? `timeout ${timeoutMs}ms` : err?.message || 'connessione'}), transizione a fallback.`);
     return null;
   }
-  }
-  return null;
+  }, {
+    onRetry: ({ attempt, status, delayMs }) =>
+      console.info(
+        `[OpenRouter] HTTP ${status} per ${modelDesc} — retry ${attempt}/${AI_LLM_RETRY_MAX_ATTEMPTS} fra ${delayMs}ms.`
+      ),
+  });
 }
 
 /**
@@ -4337,7 +4365,7 @@ async function callOpenRouterRawText(
     ? AI_LLM_ENDPOINT_MAX_TOKENS[options.endpoint]
     : AI_LLM_ENDPOINT_MAX_TOKENS['ai-scan-batch'];
 
-  for (let attempt = 0; attempt <= AI_LLM_RETRY_MAX_ATTEMPTS; attempt += 1) {
+  return runWithLlmRetry<{ text: string; model: string | null } | null>(async () => {
   if (options.budget && !options.budget.tryConsume().ok) {
     console.info(`[OpenRouter] budget LLM esaurito per ${modelDesc} (batch candidati): chiamata non eseguita.`);
     return null;
@@ -4378,19 +4406,14 @@ async function callOpenRouterRawText(
 
     if (isRetryableLlmStatus(res.status)) {
       const errBody = await res.text().catch(() => '');
-      if (attempt < AI_LLM_RETRY_MAX_ATTEMPTS) {
-        const delayMs = aiLlmRetryDelayMs(
-          attempt,
-          parseRetryAfterMs(res.headers.get('retry-after'))
-        );
-        console.info(
-          `[OpenRouter] HTTP ${res.status} per ${modelDesc} (batch candidati) — retry ${attempt + 1}/${AI_LLM_RETRY_MAX_ATTEMPTS} fra ${delayMs}ms.`
-        );
-        await sleepMs(delayMs);
-        continue;
-      }
-      applyOpenRouterCooldown(res.status, errBody, modelDesc);
-      return null;
+      return aiLlmRetryRequest({
+        status: res.status,
+        retryAfterMs: parseRetryAfterMs(res.headers.get('retry-after')),
+        exhausted: () => {
+          applyOpenRouterCooldown(res.status, errBody, modelDesc);
+          return null;
+        },
+      });
     }
     if (res.status === 402) {
       const errBody = await res.text().catch(() => '');
@@ -4419,8 +4442,12 @@ async function callOpenRouterRawText(
     );
     return null;
   }
-  }
-  return null;
+  }, {
+    onRetry: ({ attempt, status, delayMs }) =>
+      console.info(
+        `[OpenRouter] HTTP ${status} per ${modelDesc} (batch candidati) — retry ${attempt}/${AI_LLM_RETRY_MAX_ATTEMPTS} fra ${delayMs}ms.`
+      ),
+  });
 }
 
 // Helper: Invoca Gemini con gestione sicura degli errori di credito (402/RESOURCE_EXHAUSTED) e quote
@@ -4440,7 +4467,12 @@ async function callGeminiModel(
     : AI_LLM_ENDPOINT_MAX_TOKENS['ai-catalyst'];
   const schema = options.endpoint ? AI_LLM_SCHEMAS[options.endpoint] : undefined;
 
-  for (let attempt = 0; attempt <= AI_LLM_RETRY_MAX_ATTEMPTS; attempt += 1) {
+  return runWithLlmRetry<{
+    data: any;
+    quotaExhausted?: boolean;
+    model?: string;
+    schemaError?: string;
+  } | null>(async () => {
   if (options.budget && !options.budget.tryConsume().ok) {
     console.info('[AI Gemini] budget LLM esaurito: chiamata non eseguita.');
     return null;
@@ -4473,13 +4505,20 @@ async function callGeminiModel(
       console.info('[AI Gemini] risposta non JSON: nessun dato interpretato.');
       return null;
     }
-    // P10: schema prima dei campi, come sul percorso OpenRouter.
+    // P10: schema prima dei campi, come sul percorso OpenRouter. Solo i campi
+    // obbligatori possono far scartare la risposta.
     if (schema) {
       const validated = validateAiLlmObject(parsed, schema);
       if (!validated.ok) {
         console.info(`[AI Gemini] risposta fuori schema: ${validated.reason}.`);
         return { data: null, schemaError: validated.reason };
       }
+      if (validated.dropped.length > 0 || validated.clamped.length > 0) {
+        console.info(
+          `[AI Gemini] risposta normalizzata: rimossi [${validated.dropped.join(', ')}], riportati nel bordo [${validated.clamped.join(', ')}].`
+        );
+      }
+      parsed = validated.value;
     }
     // ADDITIVO (P5): anche Gemini dichiara il proprio modello nel log.
     return { data: parsed, model: `gemini:${GEMINI_MODEL}` };
@@ -4496,25 +4535,23 @@ async function callGeminiModel(
     }
 
     if (is429) {
-      // P10: prima di arrendersi, retry con backoff (massimo dichiarato).
-      if (attempt < AI_LLM_RETRY_MAX_ATTEMPTS) {
-        const delayMs = aiLlmRetryDelayMs(attempt);
-        console.info(
-          `[AI Gemini] HTTP 429 — retry ${attempt + 1}/${AI_LLM_RETRY_MAX_ATTEMPTS} fra ${delayMs}ms.`
-        );
-        await sleepMs(delayMs);
-        continue;
-      }
-      geminiQuotaExhaustedUntil = Date.now() + 15 * 60 * 1000;
-      console.info('[AI Gemini] Rate limit o quota raggiunta (HTTP 429). Cooldown 15m e transizione a fallback.');
-      return { data: null, quotaExhausted: true };
+      return aiLlmRetryRequest({
+        status: 429,
+        exhausted: () => {
+          geminiQuotaExhaustedUntil = Date.now() + 15 * 60 * 1000;
+          console.info('[AI Gemini] Rate limit o quota raggiunta (HTTP 429). Cooldown 15m e transizione a fallback.');
+          return { data: null, quotaExhausted: true };
+        },
+      });
     }
 
     console.info(`[AI Gemini] Modello non disponibile (${msg.slice(0, 100)}). Transizione a fallback.`);
     return null;
   }
-  }
-  return null;
+  }, {
+    onRetry: ({ attempt, status, delayMs }) =>
+      console.info(`[AI Gemini] HTTP ${status} — retry ${attempt}/${AI_LLM_RETRY_MAX_ATTEMPTS} fra ${delayMs}ms.`),
+  });
 }
 
 // Endpoint diagnostico per verificare la chiave OpenRouter
@@ -4893,6 +4930,9 @@ confidenza: numero intero da 0 a 100 sulla solidità del catalizzatore nel conte
         llmErrorDetail = 'openrouter:402/429';
       } else if (typeof openRouterRes?.status === 'number' && openRouterRes.status > 0) {
         llmErrorDetail = `openrouter:${openRouterRes.status}`;
+      } else if (openRouterRes?.schemaError) {
+        // P10 (revisione): un rifiuto per schema non e' "provider assente".
+        llmErrorDetail = 'openrouter:schema';
       }
     }
 
@@ -4966,6 +5006,8 @@ confidenza: numero intero da 0 a 100 sulla solidità del catalizzatore nel conte
         usedCatalystModel = gemRes.model || `gemini:${GEMINI_MODEL}`;
       } else if (gemRes?.quotaExhausted) {
         llmErrorDetail = 'gemini:402/429';
+      } else if (gemRes?.schemaError) {
+        llmErrorDetail = 'gemini:schema';
       }
     }
 

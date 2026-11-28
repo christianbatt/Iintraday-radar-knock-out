@@ -14,9 +14,11 @@ import {
   AI_LLM_RETRY_MAX_ATTEMPTS,
   AI_LLM_RETRY_MAX_DELAY_MS,
   aiLlmRetryDelayMs,
+  aiLlmRetryRequest,
   createAiLlmBudgetLedger,
   isRetryableLlmStatus,
   parseRetryAfterMs,
+  runWithLlmRetry,
 } from '../../server/aiLlmBudget';
 import {
   AI_LLM_SCHEMAS,
@@ -188,11 +190,45 @@ test('P10 schema catalizzatore: decisione nell\u2019enum e bonus dentro il tetto
   const noDecision = validateAiLlmObject({ newsBonusScore: 5 }, schema);
   assert.equal(noDecision.ok === false && noDecision.reason, 'missing:decisione');
 
-  const bonusOut = validateAiLlmObject({ decisione: 'TRADE', newsBonusScore: 16 }, schema);
-  assert.equal(bonusOut.ok === false && bonusOut.reason, 'field:newsBonusScore');
+});
 
+test('P10 schema: SOLO i campi obbligatori fanno scartare la risposta', () => {
+  const schema = AI_LLM_SCHEMAS['ai-catalyst'];
+
+  // Facoltativi fuori tipo o fuori enum: rimossi, risposta valida.
+  const dropped = validateAiLlmObject(
+    { decisione: 'TRADE', direzione: 'SU', punti_a_favore: 'no' },
+    schema
+  );
+  assert.equal(dropped.ok, true);
+  assert.equal(dropped.ok && 'direzione' in dropped.value, false);
+  assert.equal(dropped.ok && 'punti_a_favore' in dropped.value, false);
+  assert.deepEqual(dropped.ok && [...dropped.dropped].sort(), ['direzione', 'punti_a_favore']);
+
+  // Facoltativo numerico fuori intervallo: riportato nel bordo, non scartato.
+  const clamped = validateAiLlmObject({ decisione: 'TRADE', newsBonusScore: 99, confidenza: -5 }, schema);
+  assert.equal(clamped.ok, true);
+  assert.equal(clamped.ok && clamped.value.newsBonusScore, 15);
+  assert.equal(clamped.ok && clamped.value.confidenza, 0);
+  assert.deepEqual(clamped.ok && clamped.dropped, []);
+  assert.deepEqual(clamped.ok && [...clamped.clamped].sort(), ['confidenza', 'newsBonusScore']);
+
+  // Facoltativo di tipo sbagliato: ignorato, non errore (era lo scarto di P10 v1).
   const bonusType = validateAiLlmObject({ decisione: 'TRADE', newsBonusScore: '5' }, schema);
-  assert.equal(bonusType.ok === false && bonusType.reason, 'field:newsBonusScore');
+  assert.equal(bonusType.ok, true);
+  assert.equal(bonusType.ok && 'newsBonusScore' in bonusType.value, false);
+  assert.deepEqual(bonusType.ok && bonusType.dropped, ['newsBonusScore']);
+
+  // L'oggetto di partenza non viene mutato: la normalizzazione e' una copia.
+  const original: Record<string, unknown> = { decisione: 'TRADE', newsBonusScore: 99 };
+  validateAiLlmObject(original, schema);
+  assert.equal(original.newsBonusScore, 99);
+
+  // L'obbligatorio continua a far fallire la risposta.
+  const badDecision = validateAiLlmObject({ decisione: 'FORSE' }, schema);
+  assert.equal(badDecision.ok === false && badDecision.reason, 'field:decisione');
+  const emptyDecision = validateAiLlmObject({}, schema);
+  assert.equal(emptyDecision.ok === false && emptyDecision.reason, 'missing:decisione');
 });
 
 test('P10 schema post-mortem: uno fra executiveSummary e summary', () => {
@@ -259,4 +295,88 @@ test('P10 parseScanEvaluations usa lo schema condiviso: gli stessi numeri di pri
 
   const noList = parseScanEvaluations('{"altro":[1]}');
   assert.equal(noList.ok, false);
+});
+
+// --- Helper di retry (revisione di 612e42e) -----------------------------------
+
+test('P10 retry helper: nessun retry quando il primo tentativo riesce', async () => {
+  let calls = 0;
+  const sleeps: number[] = [];
+  const value = await runWithLlmRetry(async () => {
+    calls += 1;
+    return 'ok';
+  }, { sleep: async (ms) => { sleeps.push(ms); } });
+  assert.equal(value, 'ok');
+  assert.equal(calls, 1);
+  assert.deepEqual(sleeps, []);
+});
+
+test('P10 retry helper: ripete fino al successo col backoff dichiarato', async () => {
+  let calls = 0;
+  const sleeps: number[] = [];
+  const events: Array<{ attempt: number; status: number; delayMs: number }> = [];
+  const value = await runWithLlmRetry<number>(async () => {
+    calls += 1;
+    if (calls < 3) return aiLlmRetryRequest({ status: 429, exhausted: () => -1 });
+    return 42;
+  }, {
+    maxRetries: 3,
+    sleep: async (ms) => { sleeps.push(ms); },
+    onRetry: (info) => events.push(info),
+  });
+  assert.equal(value, 42);
+  assert.equal(calls, 3);
+  assert.deepEqual(sleeps, [AI_LLM_RETRY_BASE_MS, AI_LLM_RETRY_BASE_MS * 2]);
+  assert.deepEqual(events.map((e) => e.attempt), [1, 2]);
+  assert.deepEqual(events.map((e) => e.status), [429, 429]);
+});
+
+test('P10 retry helper: esauriti i tentativi restituisce il valore "exhausted" una volta sola', async () => {
+  let calls = 0;
+  let exhaustedCalls = 0;
+  const value = await runWithLlmRetry<string | null>(async () => {
+    calls += 1;
+    return aiLlmRetryRequest({
+      status: 429,
+      exhausted: () => {
+        exhaustedCalls += 1;
+        return null;
+      },
+    });
+  }, { maxRetries: 2, sleep: async () => {} });
+  assert.equal(value, null);
+  assert.equal(calls, 3, 'primo tentativo + 2 retry');
+  assert.equal(exhaustedCalls, 1, 'il cooldown scatta solo alla fine');
+});
+
+test('P10 retry helper: Retry-After ha la precedenza sul backoff', async () => {
+  const sleeps: number[] = [];
+  let calls = 0;
+  await runWithLlmRetry<null>(async () => {
+    calls += 1;
+    if (calls === 1) {
+      return aiLlmRetryRequest({ status: 503, retryAfterMs: 900, exhausted: () => null });
+    }
+    return null;
+  }, { sleep: async (ms) => { sleeps.push(ms); } });
+  assert.deepEqual(sleeps, [900]);
+});
+
+test('P10 budget: la negazione e un valore di ritorno, identico a "modello assente"', async () => {
+  const ledger = createAiLlmBudgetLedger({ maxCallsPerRequest: 1, maxCallsPerUser: 10 });
+  const budget = ledger.openRequest('u1');
+  let providerCalls = 0;
+  const attempt = async (): Promise<null> => {
+    if (!budget.tryConsume().ok) return null;
+    providerCalls += 1;
+    return null;
+  };
+
+  assert.equal(await runWithLlmRetry<null>(attempt, { sleep: async () => {} }), null);
+  assert.equal(providerCalls, 1);
+
+  // Fuori budget: il valore e' lo stesso `null` di un provider assente, e il
+  // provider non viene contattato (nessun percorso nuovo a valle).
+  assert.equal(await runWithLlmRetry<null>(attempt, { sleep: async () => {} }), null);
+  assert.equal(providerCalls, 1, 'fuori budget non si chiama il provider');
 });

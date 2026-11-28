@@ -215,6 +215,73 @@ export function parseRetryAfterMs(
 }
 
 /**
+ * Richiesta di retry restituita da un tentativo: e' un valore, non un'eccezione.
+ * Le funzioni di chiamata documentano "non lancia mai", e un throw per il
+ * controllo di flusso romperebbe quella promessa (il loro `catch` lo
+ * assorbirebbe come errore di rete). Il marcatore e' su un Symbol, quindi un
+ * valore normale non puo' essere scambiato per una richiesta di retry.
+ */
+const AI_LLM_RETRY = Symbol.for('freebuff.aiLlmRetry');
+
+export interface AiLlmRetryInfo {
+  status: number;
+  retryAfterMs?: number | null;
+  /** Valutato solo quando i tentativi sono esauriti (es. cooldown + valore). */
+  exhausted: () => unknown;
+}
+
+export interface AiLlmRetryRequest {
+  [AI_LLM_RETRY]: AiLlmRetryInfo;
+}
+
+/** Costruisce la richiesta di retry per un tentativo fallito con codice ritentabile. */
+export function aiLlmRetryRequest(info: AiLlmRetryInfo): AiLlmRetryRequest {
+  return { [AI_LLM_RETRY]: info };
+}
+
+function isAiLlmRetryRequest<T>(value: T | AiLlmRetryRequest): value is AiLlmRetryRequest {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    AI_LLM_RETRY in (value as Record<symbol, unknown>)
+  );
+}
+
+export interface AiLlmRetryRunOptions {
+  maxRetries?: number;
+  sleep?: (ms: number) => Promise<void>;
+  /** Notifica di ogni retry programmato (per il log del chiamante). */
+  onRetry?: (info: { attempt: number; status: number; delayMs: number }) => void;
+}
+
+/**
+ * Esegue `attempt` e ripete SOLO quando il tentativo restituisce una richiesta
+ * di retry (429/503), con il backoff dichiarato. Un solo posto che conosce
+ * tentativi, ritardi e `Retry-After`: i chiamanti descrivono un tentativo e il
+ * valore da restituire quando i tentativi finiscono.
+ */
+export async function runWithLlmRetry<T>(
+  attempt: () => Promise<T | AiLlmRetryRequest>,
+  options: AiLlmRetryRunOptions = {}
+): Promise<T> {
+  const maxRetries =
+    typeof options.maxRetries === 'number' && Number.isFinite(options.maxRetries) && options.maxRetries >= 0
+      ? Math.floor(options.maxRetries)
+      : AI_LLM_RETRY_MAX_ATTEMPTS;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+
+  for (let index = 0; ; index += 1) {
+    const out = await attempt();
+    if (!isAiLlmRetryRequest(out)) return out;
+    const info = out[AI_LLM_RETRY];
+    if (index >= maxRetries) return info.exhausted() as T;
+    const delayMs = aiLlmRetryDelayMs(index, info.retryAfterMs ?? null);
+    options.onRetry?.({ attempt: index + 1, status: info.status, delayMs });
+    await sleep(delayMs);
+  }
+}
+
+/**
  * Ritardo del prossimo tentativo: `Retry-After` se dichiarato, altrimenti
  * backoff esponenziale; sempre dentro il tetto. `jitterMs` e' un parametro
  * esplicito (0 = deterministico).

@@ -50,7 +50,19 @@ export type AiLlmSchemaFailure = {
 };
 
 export type AiLlmSchemaResult =
-  | { ok: true; value: Record<string, unknown> }
+  | {
+      ok: true;
+      /**
+       * Copia normalizzata dell'oggetto: i campi facoltativi fuori tipo o fuori
+       * enum sono stati rimossi, i numeri fuori intervallo sono stati riportati
+       * nel bordo. I campi non dichiarati restano com'erano.
+       */
+      value: Record<string, unknown>;
+      /** Campi facoltativi rimossi perche' fuori tipo o fuori enum. */
+      dropped: string[];
+      /** Campi facoltativi numerici riportati nel bordo dichiarato. */
+      clamped: string[];
+    }
   | AiLlmSchemaFailure;
 
 function matchesType(value: unknown, type: AiLlmFieldType): boolean {
@@ -70,46 +82,84 @@ function matchesType(value: unknown, type: AiLlmFieldType): boolean {
   }
 }
 
-/** Controlla un oggetto gia' decodificato contro lo schema dichiarato. */
+/**
+ * Controlla un oggetto gia' decodificato contro lo schema dichiarato.
+ *
+ * REGOLA (P10, revisione): **solo i campi obbligatori possono far fallire la
+ * risposta**. Un campo facoltativo con tipo o enum sbagliato viene rimosso
+ * (`dropped`), un numero facoltativo fuori intervallo viene riportato nel bordo
+ * (`clamped`): il chiamante ricade sui propri valori di ripiego, esattamente
+ * come faceva prima di P10 quando il campo mancava. Scartare un'intera risposta
+ * per `newsBonusScore: "5"` era una regressione: il resto della valutazione
+ * era valido.
+ */
 export function validateAiLlmObject(value: unknown, schema: AiLlmObjectSchema): AiLlmSchemaResult {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     return { ok: false, reason: 'not_object' };
   }
-  const record = value as Record<string, unknown>;
+  const source = value as Record<string, unknown>;
+  const record: Record<string, unknown> = { ...source };
+  const dropped: string[] = [];
+  const clamped: string[] = [];
+
+  const dropOptional = (name: string): void => {
+    if (!dropped.includes(name)) dropped.push(name);
+    delete record[name];
+  };
+
   for (const [name, spec] of Object.entries(schema.fields)) {
-    const present = record[name] !== undefined && record[name] !== null;
+    const present = source[name] !== undefined && source[name] !== null;
     if (!present) {
       if (spec.required) return { ok: false, reason: `missing:${name}` };
       continue;
     }
-    const fieldValue = record[name];
+    const fieldValue = source[name];
     // Un campo che partecipa ad `anyOf` non fa fallire la validazione da solo:
     // decide `anyOf` (es. `executiveSummary` vuoto con `summary` valido e' una
     // risposta usabile, non un errore di schema).
     const inAnyOf = schema.anyOf?.includes(name) ?? false;
+    const failOrDrop = (): AiLlmSchemaResult | null => {
+      if (spec.required) return { ok: false, reason: `field:${name}` };
+      if (!inAnyOf) dropOptional(name);
+      return null;
+    };
+
     if (!matchesType(fieldValue, spec.type)) {
-      if (inAnyOf) continue;
-      return { ok: false, reason: `field:${name}` };
+      const failed = failOrDrop();
+      if (failed) return failed;
+      continue;
     }
     if (spec.type === 'string') {
       const text = fieldValue as string;
       if (spec.nonEmpty && text.trim().length === 0) {
-        if (inAnyOf) continue;
-        return { ok: false, reason: `field:${name}` };
+        const failed = failOrDrop();
+        if (failed) return failed;
+        continue;
       }
       if (spec.enum && !spec.enum.includes(text)) {
-        return { ok: false, reason: `field:${name}` };
+        const failed = failOrDrop();
+        if (failed) return failed;
+        continue;
       }
     }
     if (spec.type === 'number') {
       const n = fieldValue as number;
-      if (typeof spec.min === 'number' && n < spec.min) return { ok: false, reason: `field:${name}` };
-      if (typeof spec.max === 'number' && n > spec.max) return { ok: false, reason: `field:${name}` };
+      const boundedLow = typeof spec.min === 'number' && n < spec.min;
+      const boundedHigh = typeof spec.max === 'number' && n > spec.max;
+      if (boundedLow || boundedHigh) {
+        if (spec.required) return { ok: false, reason: `field:${name}` };
+        // Normale, non errore: un bonus 16 su un tetto 15 vale 15, non getta
+        // via la valutazione. Un campo in `anyOf` non viene toccato qui.
+        if (!inAnyOf) {
+          record[name] = boundedLow ? spec.min : spec.max;
+          if (!clamped.includes(name)) clamped.push(name);
+        }
+      }
     }
   }
   if (schema.anyOf && schema.anyOf.length > 0) {
     const anyPresent = schema.anyOf.some((name) => {
-      const fieldValue = record[name];
+      const fieldValue = source[name];
       const spec = schema.fields[name];
       if (fieldValue === undefined || fieldValue === null) return false;
       if (!spec) return true;
@@ -121,7 +171,7 @@ export function validateAiLlmObject(value: unknown, schema: AiLlmObjectSchema): 
     });
     if (!anyPresent) return { ok: false, reason: 'any_of' };
   }
-  return { ok: true, value: record };
+  return { ok: true, value: record, dropped, clamped };
 }
 
 /** Toglie i recinti di codice attorno al JSON, come fanno i chiamanti esistenti. */
