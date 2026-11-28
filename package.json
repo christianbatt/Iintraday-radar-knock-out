@@ -50,7 +50,8 @@
     "audit:shadowv1live-backdating": "tsx scripts/audit_shadow_v1_live_backdating.ts",
     "news:lift": "tsx scripts/news_bonus_lift.ts",
     "learning:nightly": "tsx scripts/nightly_learning.ts",
-    "test:validator-mc": "tsx scripts/validator_mc.ts"
+    "test:validator-mc": "tsx scripts/validator_mc.ts",
+    "audit:cost-per-row": "tsx scripts/ai_cost_per_row.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

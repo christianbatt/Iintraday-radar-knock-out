@@ -91,6 +91,7 @@ export interface ShadowAiCalibrationView {
     meanR?: number | null;
     minR?: number | null;
     maxR?: number | null;
+    atFloor?: number;
   } | null;
   minSample?: number;
   counts?: {
@@ -136,8 +137,14 @@ export interface ShadowAiCalibrationView {
   } | null;
   /** Ordinalita' di ATTESA fra SCARTO e AZIONE. */
   ordinality?: { status?: string; detail?: string } | null;
-  /** R netto per trade delle tre policy di selezione. */
-  policies?: { code?: string; trades?: number; meanRNet?: number | null }[];
+  /** R netto per trade delle tre policy di selezione (Fase 6.2). */
+  policies?: {
+    code?: string;
+    trades?: number;
+    meanRNet?: number | null;
+    sumRNet?: number | null;
+    belowCostPct?: number | null;
+  }[];
   /** Edge per mercato/direzione e contraddizioni dichiarate. */
   strata?: { dimension?: string; value?: string; contradicts?: boolean }[];
   /** Calibrazione separata per versione di prompt (diagnostica). */
@@ -315,7 +322,11 @@ export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrati
           ? '—'
           : calibration.costSummary.meanR}{' '}
         R medio ({calibration.costSummary.perRow ?? 0} righe con costo misurato,{' '}
-        {calibration.costSummary.declared ?? 0} al tetto dichiarato)
+        {calibration.costSummary.declared ?? 0} al tetto dichiarato
+        {(calibration.costSummary.atFloor ?? 0) > 0
+          ? `, ${calibration.costSummary.atFloor} con spread al pavimento 0: costo limite inferiore`
+          : ''}
+        )
       </p>
     )}
     {typeof calibration.costR === 'number' && (
@@ -351,14 +362,19 @@ export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrati
     )}
     {(calibration.policies ?? []).some((policy) => (policy.trades ?? 0) > 0) && (
       <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-policies">
-        policy (R netto per trade):{' '}
+        policy (R netto):{' '}
         {(calibration.policies ?? [])
-          .map(
-            (policy) =>
-              `${policy.code ?? '—'} n=${policy.trades ?? 0} ${
-                policy.meanRNet === null || policy.meanRNet === undefined ? '—' : policy.meanRNet
-              }`
-          )
+          .map((policy) => {
+            const mean =
+              policy.meanRNet === null || policy.meanRNet === undefined ? '—' : policy.meanRNet;
+            const sum =
+              policy.sumRNet === null || policy.sumRNet === undefined ? '—' : policy.sumRNet;
+            const below =
+              policy.belowCostPct === null || policy.belowCostPct === undefined
+                ? '—'
+                : `${policy.belowCostPct}%`;
+            return `${policy.code ?? '—'} n=${policy.trades ?? 0} media ${mean} · somma ${sum} · sotto costo ${below}`;
+          })
           .join(' · ')}
       </p>
     )}

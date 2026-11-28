@@ -1265,3 +1265,69 @@ describe('aiCalibration — costo per riga (Fase 6.1)', () => {
     );
   });
 });
+
+describe('aiCalibration — convenienza per policy (Fase 6.2)', () => {
+  it('ogni policy porta n, media, somma e quota sotto costo', () => {
+    const entries: AiCalibrationEntry[] = [
+      entry({ id: 'p1', ticker: 'A1', candidateKey: 'p:A1', decision: 'AZIONE' }),
+      entry({ id: 'p2', ticker: 'A2', candidateKey: 'p:A2', decision: 'AZIONE' }),
+      entry({ id: 'p3', ticker: 'A3', candidateKey: 'p:A3', decision: 'AZIONE' }),
+      entry({ id: 'p4', ticker: 'S1', candidateKey: 'p:S1', decision: 'SCARTO' }),
+    ];
+    const forward: AiCalibrationForwardPoint[] = [
+      point({ key: 'sig:A1', ticker: 'A1', r: 1 }),
+      point({ key: 'sig:A2', ticker: 'A2', r: 0.1 }),
+      point({ key: 'sig:A3', ticker: 'A3', r: -1 }),
+      point({ key: 'sig:S1', ticker: 'S1', r: 0 }),
+    ];
+    const out = buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0), minSample: 2 });
+    const soloAzione = out.policies.find((policy) => policy.code === 'SOLO_AZIONE')!;
+    assert.equal(soloAzione.trades, 3);
+    // 1.00 - 0.36, 0.10 - 0.36, -1.00 - 0.36 => somma -0.98, media -0.3267
+    assert.equal(soloAzione.meanRNet, -0.3267);
+    assert.equal(soloAzione.sumRNet, -0.98);
+    assert.equal(soloAzione.belowCostPct, 66.67, 'due trade su tre sotto il costo');
+    const tutti = out.policies.find((policy) => policy.code === 'TUTTI_I_CLASSIFICATI')!;
+    assert.equal(tutti.trades, 4);
+    assert.equal(tutti.belowCostPct, 75);
+  });
+});
+
+describe('aiCalibration — costo per riga degli esiti controfattuali (Fase 6.1)', () => {
+  it('il mapping near-miss porta entryLevel/stopLossLevel e la barra del fill', () => {
+    const mapped = mapNearMissForwardPoints([
+      {
+        id: 'nm1',
+        ticker: 'UCG.MI',
+        decidedAtMs: NOW,
+        r: 0.5,
+        status: 'TARGET',
+        entryLevel: 5,
+        stopLossLevel: 4.9,
+        fillBarTs: NOW + 60_000,
+      },
+    ]);
+    assert.equal(mapped.length, 1);
+    assert.equal(mapped[0].entry, 5);
+    assert.equal(mapped[0].stop, 4.9);
+    assert.equal(mapped[0].fillBarTs, NOW + 60_000);
+  });
+
+  it('costSummary conta le righe al pavimento quando lo spread stimato e 0', () => {
+    const entries: AiCalibrationEntry[] = [
+      entry({ id: 'f1', ticker: 'AAA', candidateKey: 'f:AAA', decision: 'AZIONE' }),
+      entry({ id: 'f2', ticker: 'BBB', candidateKey: 'f:BBB', decision: 'SCARTO' }),
+    ];
+    const flat = [
+      { t: 1_000_000, o: 100, h: 100, l: 100, c: 100, v: 10 },
+      { t: 1_000_000 + 5 * 60_000, o: 100, h: 100, l: 100, c: 100, v: 10 },
+    ];
+    const forward: AiCalibrationForwardPoint[] = [
+      point({ key: 'sig:AAA', ticker: 'AAA', r: 1, entry: 100, stop: 90, bars: flat }),
+      point({ key: 'sig:BBB', ticker: 'BBB', r: -1, entry: 100, stop: 90, bars: flat }),
+    ];
+    const out = buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0), minSample: 2 });
+    assert.equal(out.costSummary?.atFloor, 2);
+    assert.equal(out.costSummary?.meanR, 0.2);
+  });
+});

@@ -1,0 +1,90 @@
+{
+  "generatedAt": "2026-11-28T14:29:09.535Z",
+  "source": "artifacts/shadow_v1_live/{signals,near_miss,rejected}.jsonl + bars.json",
+  "declaredCostR": 0.36,
+  "populations": [
+    {
+      "population": "signals",
+      "rows": 10,
+      "withBars": 10,
+      "bySource": [
+        {
+          "source": "per_row_cs",
+          "count": 10
+        }
+      ],
+      "meanCostR": 0.2605,
+      "minCostR": 0.2,
+      "maxCostR": 0.36,
+      "atFloorRows": 5,
+      "meanCostIfFloorIsUnmeasured": 0.3405,
+      "tradesBelowCost": 6,
+      "meanRNet": -0.2267,
+      "sumRNet": -2.267,
+      "baselineMeanRNetAt036": -0.3262,
+      "baselineSumRNetAt036": -3.2622
+    },
+    {
+      "population": "near_miss",
+      "rows": 30,
+      "withBars": 30,
+      "bySource": [
+        {
+          "source": "per_row_cs",
+          "count": 30
+        }
+      ],
+      "meanCostR": 0.2808,
+      "minCostR": 0.2,
+      "maxCostR": 0.36,
+      "atFloorRows": 12,
+      "meanCostIfFloorIsUnmeasured": 0.3448,
+      "tradesBelowCost": 18,
+      "meanRNet": -0.0849,
+      "sumRNet": -2.5481,
+      "baselineMeanRNetAt036": -0.1642,
+      "baselineSumRNetAt036": -4.925
+    },
+    {
+      "population": "rejected",
+      "rows": 17,
+      "withBars": 17,
+      "bySource": [
+        {
+          "source": "per_row_cs",
+          "count": 17
+        }
+      ],
+      "meanCostR": 0.3199,
+      "minCostR": 0.2,
+      "maxCostR": 0.36,
+      "atFloorRows": 3,
+      "meanCostIfFloorIsUnmeasured": 0.3481,
+      "tradesBelowCost": 9,
+      "meanRNet": -0.0958,
+      "sumRNet": -1.6286,
+      "baselineMeanRNetAt036": -0.1359,
+      "baselineSumRNetAt036": -2.3107
+    }
+  ],
+  "total": {
+    "rows": 57,
+    "withBars": 57,
+    "bySource": [
+      {
+        "source": "per_row_cs",
+        "count": 57
+      }
+    ],
+    "meanCostR": 0.2889,
+    "minCostR": 0.2,
+    "maxCostR": 0.36,
+    "atFloorRows": 20,
+    "meanCostIfFloorIsUnmeasured": 0.345,
+    "tradesBelowCost": 33,
+    "meanRNet": -0.113,
+    "sumRNet": -6.4437,
+    "baselineMeanRNetAt036": -0.1842,
+    "baselineSumRNetAt036": -10.4979
+  }
+}

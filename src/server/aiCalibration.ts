@@ -226,6 +226,8 @@ export interface AiCalibrationForwardPoint {
   leverage?: number | null;
   /** Due barre 5m consecutive che contengono il fill (per Corwin-Schultz). */
   bars?: readonly KnowledgeBar[] | null;
+  /** Barra del fill, quando la fonte la conosce: serve ad abbinare le barre. */
+  fillBarTs?: number | null;
   /**
    * Origine dell'esito: `signals` (setup emesso; default per le righe senza
    * campo), `near_miss` (setup bloccato da un solo gate e mai emesso) oppure
@@ -242,6 +244,15 @@ export interface AiCalibrationNearMissRecord {
   decidedAtMs: number;
   r: number | null;
   status: string;
+  /**
+   * ADDITIVO (Fase 6.1): prezzi del setup cosi' come li scrive il tracker
+   * (`entryLevel` / `stopLossLevel`). Servono al costo per riga; senza, la riga
+   * resta al costo dichiarato.
+   */
+  entryLevel?: number | null;
+  stopLossLevel?: number | null;
+  /** Barra del fill, per abbinare le due barre del costo. */
+  fillBarTs?: number | null;
 }
 
 const NEAR_MISS_RESOLVED_STATUSES = new Set(['TARGET', 'STOP', 'EXPIRED']);
@@ -282,6 +293,9 @@ function mapOutcomeForwardPoints(
       r: record.r,
       status: record.status as AiCalibrationForwardPoint['status'],
       source,
+      entry: finiteR(record.entryLevel) ? record.entryLevel : null,
+      stop: finiteR(record.stopLossLevel) ? record.stopLossLevel : null,
+      fillBarTs: finiteR(record.fillBarTs) ? record.fillBarTs : null,
     });
   }
   return points;
@@ -331,6 +345,8 @@ export interface AiCalibrationJoin {
   costR: number;
   /** Da dove viene il costo: barre+leva, barre, leva, oppure tetto dichiarato. */
   costSource: AiTradeCostSource;
+  /** Spread stimato al pavimento (0): il costo e' un limite inferiore. */
+  costAtFloor: boolean;
   forwardStatus: string;
   deltaMs: number;
   /** Versione del prompt della decisione; `null` per le righe storiche. */
@@ -435,6 +451,12 @@ export interface AiCalibrationPolicyRow {
   sumRNet: number | null;
   meanRNet: number | null;
   winRateNetPct: number | null;
+  /**
+   * ADDITIVO (Fase 6.2): quota di trade il cui R LORDO non copre il costo
+   * (`rNet < 0`), in percentuale. E' la domanda operativa: quanti trade della
+   * policy sono stati pagati a vuoto.
+   */
+  belowCostPct: number | null;
 }
 
 /**
@@ -513,7 +535,6 @@ export interface AiCalibrationResponse {
   edgeR: number | null;
   /** Stessa differenza sui valori netti (invariante a un costo costante). */
   edgeRNet: number | null;
-  /** Costo per trade applicato a ogni abbinamento, in R. */
   /** Costo dichiarato di riferimento (applicato solo alle righe senza dati). */
   costR: number;
   /** Modello di costo dichiarato (fonte e componenti). */
@@ -538,6 +559,8 @@ export interface AiCalibrationResponse {
     minR: number | null;
     maxR: number | null;
     bySource: { source: AiTradeCostSource; rows: number }[];
+    /** Righe con spread stimato al pavimento di Corwin-Schultz. */
+    atFloor?: number;
   };
   /** Incertezza campionaria dell'edge e del divario di successo (R netto). */
   uncertainty: AiCalibrationUncertainty;
@@ -863,6 +886,8 @@ function buildCostSummary(rows: readonly AiCalibrationJoin[]): {
   minR: number | null;
   maxR: number | null;
   bySource: { source: AiTradeCostSource; rows: number }[];
+  /** Righe con spread stimato al pavimento di Corwin-Schultz (0 = non misurabile). */
+  atFloor: number;
 } {
   const costs = rows.map((row) => row.costR).filter((value) => Number.isFinite(value));
   const bySourceMap = new Map<AiTradeCostSource, number>();
@@ -879,6 +904,7 @@ function buildCostSummary(rows: readonly AiCalibrationJoin[]): {
     bySource: [...bySourceMap.entries()]
       .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
       .map(([source, count]) => ({ source, rows: count })),
+    atFloor: rows.filter((row) => row.costAtFloor === true).length,
   };
 }
 
@@ -902,6 +928,10 @@ function buildPolicies(rows: readonly AiCalibrationJoin[]): AiCalibrationPolicyR
       sumRNet: values.length > 0 ? round(values.reduce((total, value) => total + value, 0), 4) : null,
       meanRNet: values.length > 0 ? round(mean(values), 4) : null,
       winRateNetPct: values.length > 0 ? round(winSharePct(values), 2) : null,
+      belowCostPct:
+        values.length > 0
+          ? round((values.filter((value) => value < 0).length / values.length) * 100, 2)
+          : null,
     };
   });
 }
@@ -1168,6 +1198,7 @@ export function buildAiCalibration(input: {
       rNet: rNetVal,
       costR: cost.costR,
       costSource: cost.costSource,
+      costAtFloor: cost.spreadAtFloor,
       forwardStatus: pair.point.status,
       deltaMs: Math.round(pair.point.decidedAtMs - atMs),
       promptVersion:

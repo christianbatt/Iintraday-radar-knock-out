@@ -143,3 +143,25 @@ describe('aiTradeCost — determinismo', () => {
     assert.deepEqual(resolveTradeCost(input), resolveTradeCost(input));
   });
 });
+
+describe('aiTradeCost — pavimento della stima', () => {
+  it('Corwin-Schultz a zero: costo 0,20 R ma la fonte dichiara il pavimento', () => {
+    // Due barre con range nullo: la formula produce 0, che e' il clamp di una
+    // stima negativa, non uno spread nullo misurato.
+    const flat = [
+      { t: 1_000_000, o: 100, h: 100, l: 100, c: 100, v: 10 },
+      { t: 1_000_000 + 5 * 60_000, o: 100, h: 100, l: 100, c: 100, v: 10 },
+    ];
+    const cost = resolveTradeCost({ entry: 100, stop: 90, bars: flat });
+    assert.equal(cost.estimatedSpread, true);
+    assert.equal(cost.spreadAtFloor, true);
+    assert.equal(cost.underlyingSpreadR, 0);
+    assert.equal(cost.costR, 0.2);
+    assert.ok(cost.detail.includes('pavimento'));
+  });
+
+  it('spread misurato sopra zero: nessun pavimento', () => {
+    const cost = resolveTradeCost({ entry: 100, stop: 90, bars: [BAR_A, BAR_B] });
+    assert.equal(cost.spreadAtFloor, false);
+  });
+});

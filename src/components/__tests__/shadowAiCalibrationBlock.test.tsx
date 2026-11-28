@@ -368,7 +368,7 @@ describe('ShadowAiCalibrationBlock — incertezza, copertura e policy', () => {
     assert.ok(out.includes('shadow-ai-calibration-coverage'));
     assert.ok(out.includes('copertura LLM: 30/120 candidati valutati (25%)'));
     assert.ok(out.includes('errori di parsing 1.67%'));
-    assert.ok(out.includes('SOLO_AZIONE n=20 0.44'));
+    assert.ok(out.includes('SOLO_AZIONE n=20 media 0.44'));
   });
 
   it('intervallo non calcolabile: lo dichiara invece di mostrare zeri', () => {
@@ -528,5 +528,37 @@ describe('ShadowAiCalibrationBlock — costo per riga (Fase 6.1)', () => {
       React.createElement(ShadowAiCalibrationBlock, { calibration: EVIDENCE })
     );
     assert.ok(!out.includes('data-testid="shadow-ai-calibration-cost"'));
+  });
+});
+
+describe('ShadowAiCalibrationBlock — convenienza per policy (Fase 6.2)', () => {
+  it('mostra n, media, somma e quota sotto costo per ogni policy', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, {
+        calibration: {
+          ...EVIDENCE,
+          policies: [
+            { code: 'SOLO_AZIONE', trades: 12, meanRNet: -0.21, sumRNet: -2.52, belowCostPct: 58.33 },
+            { code: 'TUTTI_I_CLASSIFICATI', trades: 30, meanRNet: -0.12, sumRNet: -3.6, belowCostPct: 63.33 },
+          ],
+        },
+      })
+    );
+    assert.ok(out.includes('data-testid="shadow-ai-calibration-policies"'));
+    assert.ok(out.includes('SOLO_AZIONE n=12 media -0.21 · somma -2.52 · sotto costo 58.33%'));
+    assert.ok(out.includes('TUTTI_I_CLASSIFICATI n=30 media -0.12 · somma -3.6 · sotto costo 63.33%'));
+  });
+
+  it('costo: dichiara quante righe stanno al pavimento della stima', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, {
+        calibration: {
+          ...EVIDENCE,
+          costR: 0.36,
+          costSummary: { rows: 30, perRow: 30, declared: 0, meanR: 0.2889, atFloor: 20 },
+        },
+      })
+    );
+    assert.ok(out.includes('20 con spread al pavimento 0: costo limite inferiore'));
   });
 });

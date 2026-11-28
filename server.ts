@@ -3037,6 +3037,21 @@ function barsAroundFill(
   return [bars[index - 1], bars[index]];
 }
 
+/**
+ * ADDITIVO (Fase 6.1): allega le due barre del fill ai punti forward che hanno
+ * gia' `fillBarTs` (near-miss e scarti). Senza barre il costo resta quello
+ * dichiarato; con le barre lo spread della riga diventa stimato.
+ */
+function attachBarsToPoints(
+  points: AiCalibrationForwardPoint[]
+): AiCalibrationForwardPoint[] {
+  const barsByTicker = loadShadowV1LiveBarsByTicker();
+  return points.map((point) => ({
+    ...point,
+    bars: barsAroundFill(barsByTicker.get(point.ticker), point.fillBarTs ?? null),
+  }));
+}
+
 const aiCalibrationDeps: AiCalibrationRegistrationDeps = {
   // Stesse voci del pannello: file locale + fallback Firestore quando il flag
   // SHADOW_AI_LOG_FIRESTORE e' acceso. Su disco effimero il file puo' essere
@@ -3089,15 +3104,19 @@ const aiCalibrationDeps: AiCalibrationRegistrationDeps = {
   // forniscono l'esito che manca ai candidati scartati: nessun nuovo
   // macchinario, solo la lettura del file che il tracker aggiorna gia'.
   readNearMissForward: () =>
-    mapNearMissForwardPoints(
-      loadNearMissRecords(path.join(process.cwd(), SHADOW_V1_NEAR_MISS_PATH))
+    attachBarsToPoints(
+      mapNearMissForwardPoints(
+        loadNearMissRecords(path.join(process.cwd(), SHADOW_V1_NEAR_MISS_PATH))
+      )
     ),
   // ADDITIVO: gli scarti fuori whitelist near-miss (due o piu' gate, veti)
   // hanno lo stesso esito deterministico sulle barre chiuse, in un file
   // dedicato: e' la popolazione che mancava al bucket SCARTO.
   readRejectedForward: () =>
-    mapRejectedForwardPoints(
-      loadRejectedRecords(path.join(process.cwd(), SHADOW_V1_REJECTED_PATH))
+    attachBarsToPoints(
+      mapRejectedForwardPoints(
+        loadRejectedRecords(path.join(process.cwd(), SHADOW_V1_REJECTED_PATH))
+      )
     ),
 };
 

@@ -74,7 +74,8 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 ## Fase 6 — Costo reale per trade
 
 - [x] **6.1 `costR` per riga** (fee + spread stimato se le barre hanno OHLC, altrimenti tetto dichiarato; scala con la leva), `costSource` per riga; test di equivalenza col costo costante. *(fatto 2026-11-28: `src/server/aiTradeCost.ts`; fee 0,20 R + Corwin-Schultz/stopPct (tetto 0,16 R) + spread certificato KO 2×0,2%/(leva·stopPct), tetto totale 0,25 R come Shadow V2. Fonti: `per_row_cs_leverage` / `per_row_cs` / `per_row_leverage` / `declared_ceiling`; le righe senza dati valgono **esattamente** 0,36 R, verificato a mano (stop 10% → 0,3063 R). Riepilogo in `costSummary` e riga nel pannello. **Limite dichiarato:** i record di V1-live non registrano la leva, quindi oggi il termine certificato vale 0 e la fonte è `per_row_cs`; il termine è coperto dai test ma non da dati reali)*
-- [ ] **6.2 Convenienza per policy** nel pannello (`meanRNet`, `sumRNet`, quota sotto costo) con `n` visibile.
+- [x] **6.2 Convenienza per policy** nel pannello (`meanRNet`, `sumRNet`, quota sotto costo) con `n` visibile. *(fatto 2026-11-28: `policies[].belowCostPct` = quota di trade con `rNet < 0`; il pannello mostra `CODICE n=… media … · somma … · sotto costo …%`. Test con numeri calcolati a mano: 3 AZIONE a +1,00/+0,10/−1,00 → somma −0,98, media −0,3267, 66,67% sotto costo)*
+- [x] **Misura sui dati reali** (`npm run audit:cost-per-row` → `artifacts/audit/cost-per-row-2026-11-28.json`): 57 esiti risolti, **tutti `per_row_cs`**, costo medio **0,2889 R** (min 0,20 max 0,36); 20/57 righe hanno lo spread al **pavimento** di Corwin-Schultz (0 = non misurabile), e trattandole come non misurate la media sale a **0,345 R**. R netto medio −0,113 R contro −0,184 R col costo costante: il desk resta in perdita in entrambi i casi.
 
 ## Fase 7 — Dal predicato alla feature ⚠️ richiede autorizzazione
 
@@ -113,7 +114,8 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 | 2026-11-28 | 5.1 potenza + 5.2 modulo intervallo | `414a57a` | tsc, lint, power (19), calibrazione; **CI rossa** sul passo Client process guard |
 | 2026-11-28 | correzione: potenza fuori dal perimetro server | `6985af5` | CI verde: 33 passi in locale |
 | 2026-11-28 | 5.2 agganciata (`avg_r_ci` diagnostico) + 5.3 Monte Carlo | `ffa04c2` | CI verde, 34 passi; MC: FP 3,0%, potenza 100% |
-| 2026-11-28 | 6.1 costo per riga (`aiTradeCost`) + `costSource` | vedi commit | equivalenza col costo costante verificata, stop 10% → 0,3063 R |
+| 2026-11-28 | 6.1 costo per riga (`aiTradeCost`) + `costSource` | `787cb04` | CI verde, 34 passi; equivalenza col costo costante, stop 10% → 0,3063 R |
+| 2026-11-28 | 6.1 misura sui dati reali + 6.2 policy nel pannello | vedi commit | 57 esiti: medio 0,2889 R (0,345 se il pavimento non è misura), 20/57 al pavimento |
 | 2026-11-28 | Fase 4 correzioni: rinnovo agganciato + mapping reale | `dc74673` | test su scansione vera, contatore preservato |
 | 2026-11-28 | Fase 4 (scadenza, revoca, prompt senza %) | `9ba80bc` | tsc, lint, ai-desk (23 nuove asserzioni), memoria scope/attribuzione |
 | 2026-11-28 | 3.1-3.2 memoria per-utente + autore + dataset | `258aaa4` | tsc, lint, ai_memory_scope (17), attribuzione, ai-desk, learningValidator, specialization, ai_shadow_log |

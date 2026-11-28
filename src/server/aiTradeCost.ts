@@ -89,6 +89,12 @@ export interface AiTradeCost {
   leverage: number | null;
   /** `true` solo quando lo spread viene da Corwin-Schultz sulle barre. */
   estimatedSpread: boolean;
+  /**
+   * `true` quando la stima e' 0 perche' Corwin-Schultz e' andato sotto zero e la
+   * formula lo azzera: e' un PAVIMENTO, non una misura. Il costo scende a 0,20 R
+   * e il numero va letto come limite inferiore, non come spread nullo certo.
+   */
+  spreadAtFloor: boolean;
   costSource: AiTradeCostSource;
   detail: string;
 }
@@ -145,6 +151,7 @@ export function resolveTradeCost(input: AiTradeCostInput = {}): AiTradeCost {
       stopPct: null,
       leverage,
       estimatedSpread: false,
+      spreadAtFloor: false,
       costSource: 'declared_ceiling',
       detail: DECLARED_DETAIL,
     };
@@ -172,11 +179,13 @@ export function resolveTradeCost(input: AiTradeCostInput = {}): AiTradeCost {
         ? 'per_row_leverage'
         : 'declared_ceiling';
 
+  const spreadAtFloor = measured === 0;
   const parts = [
     `fee ${AI_TRADE_COST_FEE_R} R`,
     measured === null
       ? `spread sottostante al tetto ${underlying} R (barre assenti)`
-      : `spread sottostante stimato ${underlying} R (Corwin-Schultz / stop ${round4(stopPct * 100)}%)`,
+      : `spread sottostante stimato ${underlying} R (Corwin-Schultz / stop ${round4(stopPct * 100)}%)` +
+        (spreadAtFloor ? ' al pavimento: stima non distinguibile da zero' : ''),
     leverage === null
       ? 'spread certificato non conteggiato: leva non nota'
       : `spread certificato ${cert} R (leva ${leverage})`,
@@ -194,6 +203,7 @@ export function resolveTradeCost(input: AiTradeCostInput = {}): AiTradeCost {
     stopPct,
     leverage,
     estimatedSpread: measured !== null,
+    spreadAtFloor,
     costSource,
     detail: parts.join(' + '),
   };
