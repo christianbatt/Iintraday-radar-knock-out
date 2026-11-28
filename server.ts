@@ -115,6 +115,18 @@ import {
   loadShadowV1LiveBarsByTicker,
   type ShadowV1LiveCostBarsByTicker,
 } from './src/server/aiTradeCostBars';
+// P10: budget e retry delle chiamate LLM, dichiarati in un solo modulo.
+import {
+  AI_LLM_ENDPOINT_MAX_TOKENS,
+  AI_LLM_RETRY_MAX_ATTEMPTS,
+  aiLlmRetryDelayMs,
+  isRetryableLlmStatus,
+  openAiLlmRequest,
+  parseRetryAfterMs,
+  type AiLlmEndpoint,
+  type AiLlmRequestBudget,
+} from './src/server/aiLlmBudget';
+import { AI_LLM_SCHEMAS, validateAiLlmObject } from './src/server/aiLlmResponseSchema';
 import { listArchivePaths, mergeRecordFiles } from './src/server/shadowV1LiveRetention';
 import {
   AI_CALIBRATION_MAX_ENTRIES,
@@ -3224,7 +3236,8 @@ function buildAiShadowLogEntries(
  */
 async function callScanBatchLlm(
   systemInstruction: string,
-  userPrompt: string
+  userPrompt: string,
+  budget: AiLlmRequestBudget | null = null
 ): Promise<{ text: string; model: string | null } | null> {
   const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
   if (openRouterKey) {
@@ -3233,12 +3246,16 @@ async function callScanBatchLlm(
       systemInstruction,
       userPrompt,
       openRouterKey,
-      15000
+      15000,
+      { endpoint: 'ai-scan-batch', budget }
     );
     if (raw != null && raw.text.trim().length > 0) return raw;
   }
   if (isGeminiAvailable()) {
-    const gemRes = await callGeminiModel(systemInstruction, userPrompt);
+    const gemRes = await callGeminiModel(systemInstruction, userPrompt, undefined, {
+      endpoint: 'ai-scan-batch',
+      budget,
+    });
     if (gemRes?.data) {
       return {
         text: JSON.stringify(gemRes.data),
@@ -3306,11 +3323,13 @@ async function logAutoScanCandidateEvaluations(
   autoScanEvalInFlight = true;
   inFlightScanRunIds.add(scanRunId);
   lastAutoScanEvalAtMs = scanStartedAtMs;
+  // P10: percorso automatico, nessun utente: vale il solo tetto per richiesta.
+  const scanBudget = openAiLlmRequest(null);
   try {
     const result = await evaluateScanCandidates(
       candidates,
       'scan',
-      (system, user) => callScanBatchLlm(system, user),
+      (system, user) => callScanBatchLlm(system, user, scanBudget),
       AI_SHADOW_BATCH_SIZE,
       {
         runId: scanRunId,
@@ -3348,11 +3367,17 @@ async function logAutoScanCandidateEvaluations(
  */
 async function logScanCandidateEvaluations(
   source: 'specialize' | 'desk',
-  input?: { bodyCandidates?: unknown; bodyRunId?: unknown }
+  input?: {
+    bodyCandidates?: unknown;
+    bodyRunId?: unknown;
+    /** P10: i batch consumano lo stesso budget della richiesta che li ha avviati. */
+    budget?: AiLlmRequestBudget | null;
+  }
 ): Promise<void> {
   const { bodyCandidates, bodyRunId } = input
     ? { bodyCandidates: input.bodyCandidates, bodyRunId: input.bodyRunId }
     : consumeHandlerScanInput();
+  const batchBudget = input?.budget ?? null;
   let trackedRunId: string | null = null;
   try {
     const { candidates, candidateSource, runId } = resolveScanCandidateInput(
@@ -3388,7 +3413,7 @@ async function logScanCandidateEvaluations(
       const result = await evaluateScanCandidates(
         batchCandidates,
         source,
-        (system, user) => callScanBatchLlm(system, user),
+        (system, user) => callScanBatchLlm(system, user, batchBudget),
         AI_SHADOW_BATCH_SIZE,
         { runId, candidateSource, evaluatedAtMs: anchoredAtMs }
       );
@@ -3455,6 +3480,20 @@ app.post('/api/ai/specialize', requireApiAuth, async (req: Request, res: Respons
 
     const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
 
+    // P10: budget della richiesta (tetto per richiesta e finestra oraria per
+    // utente, dichiarati in `aiLlmBudget`). Sotto i limiti: comportamento
+    // identico a prima; sopra: 429 esplicito invece di consumo silenzioso.
+    const llmBudget = openAiLlmRequest(userId);
+    const budgetGate = llmBudget.peek();
+    if (!budgetGate.ok) {
+      return res.status(429).json({
+        success: false,
+        error: 'llm_budget_exhausted',
+        scope: budgetGate.scope,
+        limit: budgetGate.limit,
+      });
+    }
+
     // Summary statistics for AI
     const winTrades = trades.filter((t) => t.outcome === 'WIN');
     const lossTrades = trades.filter((t) => t.outcome === 'LOSS');
@@ -3517,7 +3556,8 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
         systemInstruction,
         promptText,
         openRouterKey,
-        15000
+        15000,
+        { endpoint: 'ai-specialize', budget: llmBudget }
       );
       if (openRouterRes?.data?.newDirectives) {
         generated = openRouterRes.data;
@@ -3532,7 +3572,10 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
     }
 
     if (!generated && isGeminiAvailable()) {
-      const gemRes = await callGeminiModel(systemInstruction, promptText);
+      const gemRes = await callGeminiModel(systemInstruction, promptText, undefined, {
+        endpoint: 'ai-specialize',
+        budget: llmBudget,
+      });
       if (gemRes?.data?.newDirectives) {
         generated = gemRes.data;
         usedModel = gemRes.model ?? null;
@@ -3557,6 +3600,7 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
     void logScanCandidateEvaluations('specialize', {
       bodyCandidates: req.body?.scanCandidates,
       bodyRunId: req.body?.scanRunId,
+      budget: llmBudget,
     }).catch(() => undefined);
     const shapeValidDirectives = rawDirectives.filter(
       (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
@@ -3794,6 +3838,18 @@ app.post('/api/ai/desk-post-mortem', requireApiAuth, async (req: Request, res: R
 
     const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
 
+    // P10: stesso budget per richiesta e per utente del flusso di specializzazione.
+    const llmBudget = openAiLlmRequest(userId);
+    const budgetGate = llmBudget.peek();
+    if (!budgetGate.ok) {
+      return res.status(429).json({
+        success: false,
+        error: 'llm_budget_exhausted',
+        scope: budgetGate.scope,
+        limit: budgetGate.limit,
+      });
+    }
+
     let promptText = `Sei l'Head of Quantitative Trading & Senior Risk Officer di un desk proprietario intraday.
 Redigi il "POST-MORTEM UFFICIALE DEL DESK" analizzando le ultime sessioni operative (${market === 'EU' ? 'Europa' : market === 'US' ? 'USA' : 'Globale'}) includendo tutti i trade registrati a diario (sia eseguiti a mercato reale che in paper trading).
 
@@ -3855,7 +3911,8 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
         systemInstruction,
         promptText,
         openRouterKey,
-        18000
+        18000,
+        { endpoint: 'ai-desk-post-mortem', budget: llmBudget }
       );
       if (openRouterRes?.data?.executiveSummary || openRouterRes?.data?.summary) {
         generated = {
@@ -3873,7 +3930,10 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
     }
 
     if (!generated && isGeminiAvailable()) {
-      const gemRes = await callGeminiModel(systemInstruction, promptText);
+      const gemRes = await callGeminiModel(systemInstruction, promptText, undefined, {
+        endpoint: 'ai-desk-post-mortem',
+        budget: llmBudget,
+      });
       if (gemRes?.data?.executiveSummary || gemRes?.data?.summary) {
         generated = {
           ...gemRes.data,
@@ -3938,6 +3998,7 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
     void logScanCandidateEvaluations('desk', {
       bodyCandidates: req.body?.scanCandidates,
       bodyRunId: req.body?.scanRunId,
+      budget: llmBudget,
     }).catch(() => undefined);
     const shapeValidDirectives = rawDirectives.filter(
       (item: any) => typeof item?.topic === 'string' && typeof item?.directive === 'string'
@@ -4106,7 +4167,8 @@ async function callOpenRouterModel(
   systemInstruction: string,
   userPrompt: string,
   apiKey: string,
-  timeoutMs: number = 15000
+  timeoutMs: number = 15000,
+  options: { endpoint?: AiLlmEndpoint; budget?: AiLlmRequestBudget | null } = {}
 ): Promise<{
   data: any;
   keyInvalid?: boolean;
@@ -4114,14 +4176,28 @@ async function callOpenRouterModel(
   status?: number;
   /** ADDITIVO (P5): modello che ha davvero risposto, per il log shadow. */
   model?: string;
+  /** ADDITIVO (P10): motivo dello scarto quando la risposta non rispetta lo schema. */
+  schemaError?: string;
 } | null> {
   if (Date.now() < openRouterRateLimitedUntil) {
     return null;
   }
 
+  const modelDesc = Array.isArray(modelOrModels) ? modelOrModels.join(' -> ') : modelOrModels;
+  // P10: tetto di token dichiarato per endpoint (valori storici invariati).
+  const maxTokens = options.endpoint
+    ? AI_LLM_ENDPOINT_MAX_TOKENS[options.endpoint]
+    : AI_LLM_ENDPOINT_MAX_TOKENS['ai-catalyst'];
+  const schema = options.endpoint ? AI_LLM_SCHEMAS[options.endpoint] : undefined;
+
+  for (let attempt = 0; attempt <= AI_LLM_RETRY_MAX_ATTEMPTS; attempt += 1) {
+  // P10: il budget della richiesta si consuma per singola chiamata al provider.
+  if (options.budget && !options.budget.tryConsume().ok) {
+    console.info(`[OpenRouter] budget LLM esaurito per ${modelDesc}: chiamata non eseguita.`);
+    return null;
+  }
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  const modelDesc = Array.isArray(modelOrModels) ? modelOrModels.join(' -> ') : modelOrModels;
 
   try {
     const payload: any = {
@@ -4130,7 +4206,7 @@ async function callOpenRouterModel(
         { role: 'user', content: userPrompt },
       ],
       response_format: { type: 'json_object' },
-      max_tokens: 2500,
+      max_tokens: maxTokens,
       temperature: 0.1,
       reasoning: { enabled: OPENROUTER_ENABLE_REASONING },
     };
@@ -4160,7 +4236,26 @@ async function callOpenRouterModel(
       return { data: null, keyInvalid: true, status: 401 };
     }
 
-    if (res.status === 402 || res.status === 429) {
+    // P10: i 429 (e i 503) si ripetono con backoff; gli altri 4xx no, perche'
+    // ripeterli brucia quota e nasconde l'errore.
+    if (isRetryableLlmStatus(res.status)) {
+      const errBody = await res.text().catch(() => '');
+      if (attempt < AI_LLM_RETRY_MAX_ATTEMPTS) {
+        const delayMs = aiLlmRetryDelayMs(
+          attempt,
+          parseRetryAfterMs(res.headers.get('retry-after'))
+        );
+        console.info(
+          `[OpenRouter] HTTP ${res.status} per ${modelDesc} — retry ${attempt + 1}/${AI_LLM_RETRY_MAX_ATTEMPTS} fra ${delayMs}ms.`
+        );
+        await sleepMs(delayMs);
+        continue;
+      }
+      applyOpenRouterCooldown(res.status, errBody, modelDesc);
+      return { data: null, creditsExhausted: true, status: res.status };
+    }
+
+    if (res.status === 402) {
       const errBody = await res.text().catch(() => '');
       applyOpenRouterCooldown(res.status, errBody, modelDesc);
       return { data: null, creditsExhausted: true, status: res.status };
@@ -4187,6 +4282,15 @@ async function callOpenRouterModel(
 
     const parsed = JSON.parse(cleaned);
     if (parsed && typeof parsed === 'object') {
+      // P10: lo schema si controlla PRIMA di leggere o completare i campi: una
+      // risposta fuori forma non diventa una risposta valida per omissione.
+      if (schema) {
+        const validated = validateAiLlmObject(parsed, schema);
+        if (!validated.ok) {
+          console.info(`[OpenRouter] risposta fuori schema per ${modelDesc}: ${validated.reason}.`);
+          return { data: null, status: 0, schemaError: validated.reason };
+        }
+      }
       const usedModel = json.model || (Array.isArray(modelOrModels) ? modelOrModels[0] : modelOrModels);
       // Coerce required fields if this is a trading signal evaluation
       if (parsed.decisione) {
@@ -4206,6 +4310,8 @@ async function callOpenRouterModel(
     console.info(`[OpenRouter] ${modelDesc} temporaneamente non disponibile (${isAbort ? `timeout ${timeoutMs}ms` : err?.message || 'connessione'}), transizione a fallback.`);
     return null;
   }
+  }
+  return null;
 }
 
 /**
@@ -4219,15 +4325,25 @@ async function callOpenRouterRawText(
   systemInstruction: string,
   userPrompt: string,
   apiKey: string,
-  timeoutMs: number = 15000
+  timeoutMs: number = 15000,
+  options: { endpoint?: AiLlmEndpoint; budget?: AiLlmRequestBudget | null } = {}
 ): Promise<{ text: string; model: string | null } | null> {
   if (Date.now() < openRouterRateLimitedUntil) {
     return null;
   }
 
+  const modelDesc = Array.isArray(modelOrModels) ? modelOrModels.join(' -> ') : modelOrModels;
+  const maxTokens = options.endpoint
+    ? AI_LLM_ENDPOINT_MAX_TOKENS[options.endpoint]
+    : AI_LLM_ENDPOINT_MAX_TOKENS['ai-scan-batch'];
+
+  for (let attempt = 0; attempt <= AI_LLM_RETRY_MAX_ATTEMPTS; attempt += 1) {
+  if (options.budget && !options.budget.tryConsume().ok) {
+    console.info(`[OpenRouter] budget LLM esaurito per ${modelDesc} (batch candidati): chiamata non eseguita.`);
+    return null;
+  }
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  const modelDesc = Array.isArray(modelOrModels) ? modelOrModels.join(' -> ') : modelOrModels;
 
   try {
     const payload: any = {
@@ -4236,7 +4352,7 @@ async function callOpenRouterRawText(
         { role: 'user', content: userPrompt },
       ],
       response_format: { type: 'json_object' },
-      max_tokens: 2800,
+      max_tokens: maxTokens,
       temperature: 0.1,
       reasoning: { enabled: OPENROUTER_ENABLE_REASONING },
     };
@@ -4260,7 +4376,23 @@ async function callOpenRouterRawText(
 
     clearTimeout(timeoutId);
 
-    if (res.status === 402 || res.status === 429) {
+    if (isRetryableLlmStatus(res.status)) {
+      const errBody = await res.text().catch(() => '');
+      if (attempt < AI_LLM_RETRY_MAX_ATTEMPTS) {
+        const delayMs = aiLlmRetryDelayMs(
+          attempt,
+          parseRetryAfterMs(res.headers.get('retry-after'))
+        );
+        console.info(
+          `[OpenRouter] HTTP ${res.status} per ${modelDesc} (batch candidati) — retry ${attempt + 1}/${AI_LLM_RETRY_MAX_ATTEMPTS} fra ${delayMs}ms.`
+        );
+        await sleepMs(delayMs);
+        continue;
+      }
+      applyOpenRouterCooldown(res.status, errBody, modelDesc);
+      return null;
+    }
+    if (res.status === 402) {
       const errBody = await res.text().catch(() => '');
       applyOpenRouterCooldown(res.status, errBody, modelDesc);
       return null;
@@ -4287,22 +4419,37 @@ async function callOpenRouterRawText(
     );
     return null;
   }
+  }
+  return null;
 }
 
 // Helper: Invoca Gemini con gestione sicura degli errori di credito (402/RESOURCE_EXHAUSTED) e quote
 async function callGeminiModel(
   systemInstruction: string,
   userPrompt: string,
-  responseSchema?: any
-): Promise<{ data: any; quotaExhausted?: boolean; model?: string } | null> {
+  responseSchema?: any,
+  options: { endpoint?: AiLlmEndpoint; budget?: AiLlmRequestBudget | null } = {}
+): Promise<{ data: any; quotaExhausted?: boolean; model?: string; schemaError?: string } | null> {
   if (!isGeminiAvailable()) {
     return null;
   }
 
+  // P10: tetto di token dichiarato per endpoint, anche sul provider di fallback.
+  const maxTokens = options.endpoint
+    ? AI_LLM_ENDPOINT_MAX_TOKENS[options.endpoint]
+    : AI_LLM_ENDPOINT_MAX_TOKENS['ai-catalyst'];
+  const schema = options.endpoint ? AI_LLM_SCHEMAS[options.endpoint] : undefined;
+
+  for (let attempt = 0; attempt <= AI_LLM_RETRY_MAX_ATTEMPTS; attempt += 1) {
+  if (options.budget && !options.budget.tryConsume().ok) {
+    console.info('[AI Gemini] budget LLM esaurito: chiamata non eseguita.');
+    return null;
+  }
   try {
     const config: any = {
       systemInstruction,
       responseMimeType: 'application/json',
+      maxOutputTokens: maxTokens,
     };
     if (responseSchema) {
       config.responseSchema = responseSchema;
@@ -4319,7 +4466,21 @@ async function callGeminiModel(
       .replace(/\s*```$/i, '')
       .trim();
 
-    const parsed = JSON.parse(clean || '{}');
+    let parsed: any;
+    try {
+      parsed = JSON.parse(clean || '{}');
+    } catch {
+      console.info('[AI Gemini] risposta non JSON: nessun dato interpretato.');
+      return null;
+    }
+    // P10: schema prima dei campi, come sul percorso OpenRouter.
+    if (schema) {
+      const validated = validateAiLlmObject(parsed, schema);
+      if (!validated.ok) {
+        console.info(`[AI Gemini] risposta fuori schema: ${validated.reason}.`);
+        return { data: null, schemaError: validated.reason };
+      }
+    }
     // ADDITIVO (P5): anche Gemini dichiara il proprio modello nel log.
     return { data: parsed, model: `gemini:${GEMINI_MODEL}` };
   } catch (err: any) {
@@ -4335,6 +4496,15 @@ async function callGeminiModel(
     }
 
     if (is429) {
+      // P10: prima di arrendersi, retry con backoff (massimo dichiarato).
+      if (attempt < AI_LLM_RETRY_MAX_ATTEMPTS) {
+        const delayMs = aiLlmRetryDelayMs(attempt);
+        console.info(
+          `[AI Gemini] HTTP 429 — retry ${attempt + 1}/${AI_LLM_RETRY_MAX_ATTEMPTS} fra ${delayMs}ms.`
+        );
+        await sleepMs(delayMs);
+        continue;
+      }
       geminiQuotaExhaustedUntil = Date.now() + 15 * 60 * 1000;
       console.info('[AI Gemini] Rate limit o quota raggiunta (HTTP 429). Cooldown 15m e transizione a fallback.');
       return { data: null, quotaExhausted: true };
@@ -4343,6 +4513,8 @@ async function callGeminiModel(
     console.info(`[AI Gemini] Modello non disponibile (${msg.slice(0, 100)}). Transizione a fallback.`);
     return null;
   }
+  }
+  return null;
 }
 
 // Endpoint diagnostico per verificare la chiave OpenRouter
@@ -4686,6 +4858,20 @@ confidenza: numero intero da 0 a 100 sulla solidità del catalizzatore nel conte
     let llmErrorDetail: string | null = null;
     const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
     const catalystStartedAt = Date.now();
+    // P10: budget per richiesta e per utente anche sul catalizzatore, che e'
+    // l'endpoint chiamato piu' spesso (uno per candidato analizzato).
+    const catalystUid =
+      typeof res.locals.authenticatedUid === 'string' ? res.locals.authenticatedUid : null;
+    const llmBudget = openAiLlmRequest(catalystUid);
+    const budgetGate = llmBudget.peek();
+    if (!budgetGate.ok) {
+      return res.status(429).json({
+        success: false,
+        error: 'llm_budget_exhausted',
+        scope: budgetGate.scope,
+        limit: budgetGate.limit,
+      });
+    }
 
     // 1. TIER 1 & 2: OpenRouter
     if (openRouterKey) {
@@ -4694,7 +4880,8 @@ confidenza: numero intero da 0 a 100 sulla solidità del catalizzatore nel conte
         systemInstruction,
         userPrompt,
         openRouterKey,
-        15000
+        15000,
+        { endpoint: 'ai-catalyst', budget: llmBudget }
       );
 
       if (openRouterRes?.data?.decisione) {
@@ -4772,7 +4959,7 @@ confidenza: numero intero da 0 a 100 sulla solidità del catalizzatore nel conte
           'condizioni_invalidazione',
           'fonti',
         ],
-      });
+      }, { endpoint: 'ai-catalyst', budget: llmBudget });
 
       if (gemRes?.data?.decisione) {
         parsed = gemRes.data;

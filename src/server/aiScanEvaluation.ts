@@ -18,6 +18,11 @@ import type {
   AiShadowLogEntry,
 } from './aiShadowLog';
 import { AI_SHADOW_DECISIONS, AI_SHADOW_DISCARD_REASONS, isAiShadowDecision } from './aiShadowLog';
+import {
+  AI_LLM_SCHEMAS,
+  parseAiLlmJson,
+  validateScanEvaluationRow,
+} from './aiLlmResponseSchema';
 
 export interface ScanCandidateSnapshot {
   ticker: string;
@@ -581,12 +586,7 @@ export function splitScanCandidatesInBatches(
   return batches;
 }
 
-function stripCodeFences(raw: string): string {
-  return raw
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
-}
+
 
 /**
  * Parser dell'output LLM. Accetta solo JSON valido con `scanEvaluations` array;
@@ -597,34 +597,27 @@ export function parseScanEvaluations(raw: string): { ok: boolean; evaluations: S
   if (typeof raw !== 'string' || raw.trim().length === 0) {
     return { ok: false, evaluations: [] };
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stripCodeFences(raw));
-  } catch {
-    return { ok: false, evaluations: [] };
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { ok: false, evaluations: [] };
-  }
-  const list = (parsed as Record<string, unknown>).scanEvaluations;
-  if (!Array.isArray(list)) {
-    return { ok: false, evaluations: [] };
-  }
+  // ADDITIVO (P10): lo schema e' validato PRIMA di leggere i campi: una risposta
+  // con la forma sbagliata e' un `parse_error` dichiarato, non una lista vuota
+  // che sembra una risposta valida. Lo schema e' quello condiviso con gli altri
+  // endpoint (`AI_LLM_SCHEMAS['ai-scan-batch']`).
+  const shaped = parseAiLlmJson(raw, AI_LLM_SCHEMAS['ai-scan-batch']);
+  if (!shaped.ok) return { ok: false, evaluations: [] };
+  const list = shaped.value.scanEvaluations as unknown[];
   const evaluations: ScanEvaluation[] = [];
   for (const item of list) {
-    if (!item || typeof item !== 'object') continue;
-    const row = item as Record<string, unknown>;
-    const ticker = typeof row.ticker === 'string' ? row.ticker.trim() : '';
-    const aiOutcome = typeof row.aiOutcome === 'string' ? row.aiOutcome.trim() : '';
-    if (ticker.length === 0 || aiOutcome.length === 0) continue;
-    const aiCategory =
-      typeof row.aiCategory === 'string' && row.aiCategory.trim().length > 0
-        ? row.aiCategory.trim()
-        : null;
+    const row = validateScanEvaluationRow(item, AI_SHADOW_DECISIONS);
+    if (!row.ok) continue;
     // Solo i tre valori ammessi: qualunque altra cosa (o l'assenza) resta null,
     // cosi' la calibrazione non deve indovinare.
-    const decision = isAiShadowDecision(row.decision) ? row.decision : null;
-    evaluations.push({ ticker, aiOutcome, aiCategory, decision });
+    const decision =
+      row.decision !== null && isAiShadowDecision(row.decision) ? row.decision : null;
+    evaluations.push({
+      ticker: row.ticker,
+      aiOutcome: row.aiOutcome,
+      aiCategory: row.aiCategory,
+      decision,
+    });
   }
   return { ok: true, evaluations };
 }

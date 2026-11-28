@@ -97,6 +97,16 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 
 ---
 
+## Fase 9 — Budget, schema e retry delle chiamate LLM (proposta P10 dell'audit)
+
+Nessun numero di score cambia: sono i guardrail delle chiamate ai modelli. Una chiamata LLM costa e può fallire in tre modi che il codice trattava come uno solo («modello assente»).
+
+- [x] **9.1 `maxTokens` per endpoint, in una tabella sola.** *(fatto 2026-11-28)* `src/server/aiLlmBudget.ts` → `AI_LLM_ENDPOINT_MAX_TOKENS` (`ai-specialize` 2500, `ai-desk-post-mortem` 2500, `ai-catalyst` 2500, `ai-scan-batch` 2800, `ai-test-openrouter` 300). I valori sono quelli già in uso: il budget li rende espliciti e modificabili in un punto solo, non li cambia. Il tetto arriva su entrambi i provider (`max_tokens` su OpenRouter, `maxOutputTokens` sul `config` di Gemini, che prima non ne aveva uno).
+- [x] **9.2 Tetto di chiamate per richiesta e per utente.** *(fatto 2026-11-28)* `createAiLlmBudgetLedger({ now, maxCallsPerRequest, maxCallsPerUser, userWindowMs })` con finestra **scorrevole** di un'ora (`AI_LLM_MAX_CALLS_PER_USER = 60`) e tetto per richiesta `AI_LLM_MAX_CALLS_PER_REQUEST = 12`, sopra il massimo osservabile del caso normale (2 provider per la chiamata principale + 4 batch × 2 = 10). Ogni chiamata al provider consuma una unità; `peek()` rifiuta la richiesta prima del lavoro inutile. Gli handler `specialize`, `desk-post-mortem` e `analyze-catalyst` rispondono `429 { error: 'llm_budget_exhausted', scope, limit }` solo quando il tetto è superato; i batch shadow condividono il budget della richiesta che li ha avviati e degradano a `llm_missing` come già facevano. I 57 esiti e i conteggi della calibrazione non cambiano.
+- [x] **9.3 Validazione dello schema PRIMA del parse.** *(fatto 2026-11-28)* `src/server/aiLlmResponseSchema.ts`: schema dichiarati per endpoint (`AI_LLM_SCHEMAS`) e validatore puro con motivi stabili (`json`, `not_object`, `missing:<campo>`, `field:<campo>`, `any_of`). Applicato in `callOpenRouterModel` e `callGeminiModel` prima di leggere o completare i campi, e in `parseScanEvaluations` (che ora usa lo stesso schema condiviso) prima di mappare le righe. `decision` resta **leniente** (valore fuori enum → `null`, mai un quarto valore): è il contratto storico, ora dichiarato e testato. Una risposta fuori schema non diventa più una risposta valida per omissione.
+- [x] **9.4 Retry con backoff sui 429.** *(fatto 2026-11-28)* `AI_LLM_RETRY_MAX_ATTEMPTS = 2` (fino a 3 tentativi), backoff esponenziale da 400 ms con tetto 2000 ms, `Retry-After` rispettato quando il provider lo manda (`parseRetryAfterMs` accetta secondi e data HTTP). Solo 429/503: 401/402/400 non si ripetono, perché ripeterli brucia quota e nasconde l'errore. Il cooldown di 90 s/60 m di OpenRouter e i 15/30 m di Gemini scattano **dopo** i retry, non al primo 429.
+- **Limiti dichiarati:** la finestra per utente è in memoria di processo (un riavvio la azzera e due istanze non la condividono); i tetti sono costanti, non configurabili da ambiente; il retry non copre timeout e errori di rete (restano un fallimento immediato, come prima); il costo reale per chiamata non è misurato — il budget limita il numero, non i token spesi.
+
 ## Diario dei passi
 
 | Data | Passo | Commit | Esito |
@@ -117,7 +127,8 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 | 2026-11-28 | 5.2 agganciata (`avg_r_ci` diagnostico) + 5.3 Monte Carlo | `ffa04c2` | CI verde, 34 passi; MC: FP 3,0%, potenza 100% |
 | 2026-11-28 | 6.1 costo per riga (`aiTradeCost`) + `costSource` | `787cb04` | CI verde, 34 passi; equivalenza col costo costante, stop 10% → 0,3063 R |
 | 2026-11-28 | 6.1 misura sui dati reali + 6.2 policy nel pannello | `d80772e` | 57 esiti: medio 0,2889 R (0,345 se il pavimento non è misura), 20/57 al pavimento |
-| 2026-11-28 | 6.3 una sola lettura di `bars.json` per richiesta + `selectedLeverage` persistito | vedi commit | lint, build, 6+14+60+66+21+101+25+5 test, client guard; misura reale invariata (57 esiti, medio 0,2889 R) |
+| 2026-11-28 | 6.3 una sola lettura di `bars.json` per richiesta + `selectedLeverage` persistito | `39be13e` | lint, build, 6+14+60+66+21+101+25+5 test, client guard; misura reale invariata (57 esiti, medio 0,2889 R) |
+| 2026-11-28 | Fase 9 (P10): maxTokens per endpoint, tetti per richiesta/utente, schema prima del parse, retry 429 | vedi commit | 18 test nuovi; `test:ai-shadow`, `test:ai-calibration`, `test:ai-desk`, client guard verdi |
 | 2026-11-28 | Fase 4 correzioni: rinnovo agganciato + mapping reale | `dc74673` | test su scansione vera, contatore preservato |
 | 2026-11-28 | Fase 4 (scadenza, revoca, prompt senza %) | `9ba80bc` | tsc, lint, ai-desk (23 nuove asserzioni), memoria scope/attribuzione |
 | 2026-11-28 | 3.1-3.2 memoria per-utente + autore + dataset | `258aaa4` | tsc, lint, ai_memory_scope (17), attribuzione, ai-desk, learningValidator, specialization, ai_shadow_log |
