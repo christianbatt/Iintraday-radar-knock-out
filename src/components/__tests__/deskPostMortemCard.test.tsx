@@ -89,9 +89,9 @@ describe('DeskPostMortemCard — nessuna sezione vuota', () => {
 
   it('mostra il conteggio delle direttive solo se positivo', () => {
     const zero = renderToStaticMarkup(<DeskPostMortemCard report={report()} directivesAdded={0} />);
-    assert.equal(zero.includes('nuove direttive qualitative'), false);
+    assert.equal(zero.includes('direttive registrate nella memoria'), false);
     const two = renderToStaticMarkup(<DeskPostMortemCard report={report()} directivesAdded={2} />);
-    assert.ok(two.includes('2 nuove direttive qualitative'));
+    assert.ok(two.includes('2 direttive registrate nella memoria'));
   });
 });
 
@@ -176,5 +176,19 @@ describe('DeskPostMortemCard — analisi ancorata al fascicolo', () => {
     assert.ok(html.includes('non disponibile in questa risposta'));
     assert.equal(html.includes('desk-anchored-analysis'), false);
     assert.ok(html.includes('Sintesi delle sessioni EU.'), 'la prosa resta visibile');
+  });
+});
+
+describe('DeskPostMortemCard — direttive: nessuna promessa di filtro', () => {
+  it('dichiara che le direttive non filtrano setup', () => {
+    const html = renderToStaticMarkup(<DeskPostMortemCard report={report()} directivesAdded={2} />);
+    assert.equal(html.includes('attive per filtrare'), false, 'nessuna promessa di filtro');
+    assert.ok(html.includes('non filtrano setup'), 'il limite e dichiarato');
+    assert.ok(html.includes('prompt del catalizzatore'), 'il canale reale e dichiarato');
+  });
+
+  it('senza direttive nuove il messaggio non compare', () => {
+    const html = renderToStaticMarkup(<DeskPostMortemCard report={report()} directivesAdded={0} />);
+    assert.equal(html.includes('non filtrano setup'), false);
   });
 });

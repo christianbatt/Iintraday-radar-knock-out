@@ -809,7 +809,7 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5 text-[11px]">
-                          <span className="text-slate-400">{d.confidence == null ? 'Stato:' : 'Score statistico (1-q):'}</span>
+                          <span className="text-slate-400">{d.confidence == null ? 'Stato:' : '1 − q (non è una probabilità):'}</span>
                           <span className={`font-bold font-mono ${d.confidence == null ? 'text-amber-300' : 'text-emerald-400'}`}>
                             {d.confidence == null ? 'IPOTESI NON VALIDATA' : `${d.confidence}%`}
                           </span>
@@ -841,7 +841,7 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
           <div className="flex items-center gap-2 text-slate-400 text-center sm:text-left">
             <HelpCircle className="w-4 h-4 text-slate-500 shrink-0" />
             <span className="text-[11px]">
-              L'autoanalisi converte i falsi negativi in apprendimento continuo, allentando i filtri solo quando i dati reali confermano profitti persi.
+              L'autoanalisi registra regole dai trade chiusi. Una regola non cambia soglie né filtri finché il validatore deterministico non la conferma su esiti reali; fino ad allora resta un'ipotesi dichiarata.
             </span>
           </div>
 

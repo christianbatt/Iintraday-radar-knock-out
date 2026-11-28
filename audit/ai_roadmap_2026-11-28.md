@@ -32,10 +32,22 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 ## Fase 1 — Verità economica
 
 - [x] **1.1 Check `net_profitability` nel validatore.** *(fatto 2026-11-28)* `AI_DESK_VALIDATION_MIN_NET_R = 0.1`, check su `meanRNet(AZIONE)`; assente ⇒ `insufficient` (mai `CONFERMATO` senza il dato); bump `ai-desk-validation@1` → `@2` e aggiornamento di test, UI e commenti.
-- [ ] **1.2 UI onesta.** `DeskPostMortemCard`: rimuovere "Ora attive per filtrare…"; badge "non misurata" sulle regole senza `confidence`; `n` sempre accanto ai numeri.
+- [x] **1.2 UI onesta.** *(fatto 2026-11-28)* `DeskPostMortemCard`: rimuovere "Ora attive per filtrare…"; badge "non misurata" sulle regole senza `confidence`; `n` sempre accanto ai numeri.
 
 ## Fase 2 — Misurare l'AI che decide (catalizzatore)
 
+> **Stato 2026-11-28:** il commit `0e5f917` ("update AI models and refresh diagnostics") ha
+> implementato gran parte di questa fase, con una forma diversa da quella prevista qui:
+> log `source: 'catalyst'` in entrambi i rami (LLM e fallback), `promptVersion` `ai-catalyst@3`,
+> `candidateKey` prefissato `catalyst:` per non collide­re con la riga `scan`, `durationMs`,
+> `model`, e `catalystLift` (con/senza bonus, allineato/opposto) nella calibrazione con blocco
+> nel pannello. Inoltre il bonus è stato limitato (max +5, 0 sotto confidenza 55) e `newsFilter.ts`
+> filtra freschezza e pertinenza dei titoli. **Non serve rifare 2.1–2.3:** restano solo le lacune
+> elencate sotto (2.5, 2.6).
+
+- [x] **2.1–2.3 Log e calibrazione del catalizzatore.** *(fatto in `0e5f917`, forma: campi in `aiCategory` e `catalystLift`)*
+- [ ] **2.5 Provenienza della memoria nel prompt.** `memoryRuleIds` sulla riga del catalizzatore: quali regole apprese sono state iniettate (con `validUntil`), così l'effetto di una regola è attribuibile e non solo ipotizzato.
+- [ ] **2.6 Veto strutturato.** `vetoReason` (`EARNINGS` / `FUNDAMENTAL` / `NONE`) e `vetoSource` (`llm` / `text-legacy`) al posto della sola euristica testuale in `calculator.ts`: oggi una squalifica può dipendere da `includes('nessuna notizia')`.
 - [ ] **2.1 Contratto di log.** `source: 'catalyst'`, `catalystDecision`, `newsBonus` 0–15, `newsBonusBand` (`0` / `1-7` / `8-15`, costante dichiarata), `hasNews`, `vetoReason`, `vetoSource` (`llm` | `text-legacy`), `memoryRuleIds`.
 - [ ] **2.2 Wiring in `POST /api/analyze-catalyst`** (`server.ts:4028`): log di ogni esito, inclusi ramo fallback deterministico e `NESSUN_TRADE`; `promptVersion: 'ai-catalyst@1'`; nessun cambio di selezione (test di non-regressione).
 - [ ] **2.3 Calibrazione del catalizzatore.** Aggregato `catalyst` nel join esistente, **fuori** dai bucket AZIONE/ATTESA/SCARTO: test gemelli che dimostrano verdetto principale invariato.
@@ -90,3 +102,5 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 | 2026-11-28 | piano registrato | — | attivo |
 | 2026-11-28 | 0.1 baseline (`ai-baseline@1`) | vedi commit | verde: 12 test, 24.000 barre OHLC |
 | 2026-11-28 | 1.1 `net_profitability` (`ai-desk-validation@2`) | vedi commit | verde: 54+20+27 test calibrazione, 11 nuovi test validatore |
+| 2026-11-28 | rebase su `0e5f917` + CI dei nuovi test AI | `7e7f0b2` | CI verde: 34 passi in locale, 1 annotazione Node 20 |
+| 2026-11-28 | Fase 2 rivalutata: 2.1–2.3 già fatte in `0e5f917` | — | restano 2.5 e 2.6 |

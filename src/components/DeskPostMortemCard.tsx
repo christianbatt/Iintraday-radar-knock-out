@@ -210,8 +210,8 @@ export const DeskPostMortemCard: React.FC<DeskPostMortemCardProps> = ({
         <div className="p-2.5 rounded-lg bg-purple-950/80 border border-purple-700 text-purple-200 text-[11px] flex items-center gap-2 font-mono">
           <CheckCircle2 className="w-4 h-4 text-purple-300 shrink-0" />
           <span>
-            {directivesAdded} nuove direttive qualitative salvate nella Memoria Continua! Ora attive per filtrare
-            trappole o convalidare catalizzatori.
+            {directivesAdded} direttive registrate nella memoria. Entrano nel prompt del catalizzatore, non nei
+            gate: non filtrano setup finché un validatore non le conferma su esiti reali.
           </span>
         </div>
       )}
