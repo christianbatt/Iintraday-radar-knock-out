@@ -37,3 +37,6 @@ artifacts/prod_bars/
 artifacts/_baseline_residuo/
 artifacts/aa_replay_*/
 # artifacts/shadow_v2/signals.jsonl è versionato intenzionalmente: non aggiungere regole di ignore.
+
+# Fase 3: mirror locale della memoria per-utente (runtime, non versionato)
+ai_specialization_memory.*.json

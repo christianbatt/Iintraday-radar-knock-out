@@ -7,9 +7,20 @@ import { LearningResult, MIN_REAL_TRADE_SAMPLE } from './learningValidator';
 
 const DEFAULT_MEMORY_FILE = fileURLToPath(new URL('../../ai_specialization_memory.json', import.meta.url));
 
+/**
+ * Fase 3: chi scrive. Quando presente, la regola dichiara il proprietario e
+ * l'autore, e il campione su cui è stata validata (`datasetHash`).
+ */
+export interface AIMemoryOwner {
+  ownerUid: string;
+  datasetHash: string | null;
+  runId: string | null;
+}
+
 export function updateAIMemory(
   results: LearningResult[],
-  memoryPath: string = DEFAULT_MEMORY_FILE
+  memoryPath: string = DEFAULT_MEMORY_FILE,
+  owner: AIMemoryOwner | null = null
 ): void {
   let memory: AILearnedInsight[] = [];
   try {
@@ -51,6 +62,20 @@ export function updateAIMemory(
                   )
                 )].slice(0, 8)
               : [],
+            // ADDITIVO (Fase 3): autore e campione, sanificati come il resto.
+            writerUid:
+              typeof rawProvenance.writerUid === 'string' && rawProvenance.writerUid.trim().length > 0
+                ? rawProvenance.writerUid.trim()
+                : null,
+            datasetHash:
+              typeof rawProvenance.datasetHash === 'string' &&
+              /^[a-f0-9]{64}$/.test(rawProvenance.datasetHash.trim())
+                ? rawProvenance.datasetHash.trim()
+                : null,
+            runId:
+              typeof rawProvenance.runId === 'string' && rawProvenance.runId.trim().length > 0
+                ? rawProvenance.runId.trim()
+                : null,
           }
         : null;
 
@@ -74,6 +99,21 @@ export function updateAIMemory(
     // Presente solo quando c'e' una provenienza reale: le regole storiche non
     // cambiano forma e chi legge non deve distinguere due schemi.
     if (provenance !== null) insight.provenance = provenance;
+
+    // Fase 3: proprietà e autore. Senza `owner` la regola resta com'era
+    // (regola storica/globale), quindi nessun comportamento cambia per i
+    // chiamanti che non passano il nuovo argomento.
+    if (owner !== null) {
+      insight.ownerUid = owner.ownerUid;
+      insight.legacy = false;
+      const base = insight.provenance ?? { promptVersion: null, model: null, evidenceRefs: [] };
+      insight.provenance = {
+        ...base,
+        writerUid: owner.ownerUid,
+        datasetHash: owner.datasetHash,
+        runId: owner.runId,
+      };
+    }
 
     const existingIndex = memory.findIndex((entry) => entry.topic === result.topic);
     if (existingIndex >= 0) memory[existingIndex] = insight;

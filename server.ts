@@ -42,6 +42,14 @@ import {
   LearningResult,
 } from './src/utils/learningValidator';
 import { updateAIMemory } from './src/utils/memoryUpdater';
+import {
+  aiMemoryFirestorePath,
+  aiMemoryLocalFileName,
+  computeDatasetHash,
+  filterMemoryForUser,
+  isScopedMemoryUid,
+  migrateLegacyMemory,
+} from './src/server/aiMemoryScope';
 import { resolveSpecializationOutcome } from './src/utils/specializationReason';
 import {
   safeAppendAiShadowLog,
@@ -237,11 +245,20 @@ function saveSharedAppStateToDisk() {
 // AI Continuous Specialization & Qualitative Optimization Memory Store
 const AI_MEMORY_FILE = path.join(__dirname, 'ai_specialization_memory.json');
 
-function loadAIMemoryFromDisk(): AILearnedInsight[] {
+/**
+ * Fase 3: ogni scope ha il proprio mirror locale. Il globale mantiene il nome
+ * storico, un utente ha `ai_specialization_memory.<uid>.json`: un uid non
+ * scrive mai il file di un altro (e il nome e' gia' validato dal modulo).
+ */
+function aiMemoryFilePathFor(uid: string): string {
+  return uid === AI_MEMORY_SYSTEM_UID ? AI_MEMORY_FILE : path.join(__dirname, aiMemoryLocalFileName(uid));
+}
+
+function loadAIMemoryFromDisk(uid: string = AI_MEMORY_SYSTEM_UID): AILearnedInsight[] {
   try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(AI_MEMORY_FILE, 'utf-8'));
+    const parsed: unknown = JSON.parse(fs.readFileSync(aiMemoryFilePathFor(uid), 'utf-8'));
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((entry): entry is AILearnedInsight =>
+    const valid = parsed.filter((entry): entry is AILearnedInsight =>
       entry &&
       typeof entry === 'object' &&
       typeof entry.id === 'string' &&
@@ -249,16 +266,19 @@ function loadAIMemoryFromDisk(): AILearnedInsight[] {
       typeof entry.directive === 'string' &&
       (entry.confidence === null || typeof entry.confidence === 'number')
     );
+    // Migrazione idempotente: una regola senza proprietario e' storica/globale.
+    return migrateLegacyMemory(valid);
   } catch {
     return [];
   }
 }
 
-function saveAIMemoryLocally(memory: AILearnedInsight[]): void {
-  const temporaryPath = `${AI_MEMORY_FILE}.tmp-${process.pid}-${randomUUID()}`;
+function saveAIMemoryLocally(memory: AILearnedInsight[], uid: string = AI_MEMORY_SYSTEM_UID): void {
+  const filePath = aiMemoryFilePathFor(uid);
+  const temporaryPath = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
   try {
     fs.writeFileSync(temporaryPath, JSON.stringify(memory, null, 2), 'utf-8');
-    fs.renameSync(temporaryPath, AI_MEMORY_FILE);
+    fs.renameSync(temporaryPath, filePath);
   } catch (error) {
     console.warn('[AI Specialization] Impossibile aggiornare il mirror locale:', error);
     if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
@@ -307,12 +327,6 @@ let firebaseAdminApp: ReturnType<typeof initializeFirebaseAdminApp> | null = nul
 let firebaseAdminAuth: ReturnType<typeof getFirebaseAdminAuth> | null = null;
 let firebaseAdminFirestore: ReturnType<typeof getFirebaseAdminFirestore> | null = null;
 const AI_MEMORY_SYSTEM_UID = process.env.AI_MEMORY_SYSTEM_UID || 'system';
-const AI_MEMORY_FIRESTORE_PATH = [
-  'users',
-  AI_MEMORY_SYSTEM_UID,
-  'ai_specialization_memory',
-  'current',
-] as const;
 if (firebaseProjectId) {
   try {
     firebaseAdminApp = getFirebaseAdminApps().find((candidate) => candidate.name === 'intraday-radar-auth') ||
@@ -332,11 +346,13 @@ if (startupAuthWarning) {
   console.warn(startupAuthWarning);
 }
 
-async function loadPersistentAIMemory(): Promise<AILearnedInsight[]> {
-  const localMemory = loadAIMemoryFromDisk();
+async function loadPersistentAIMemory(uid: string = AI_MEMORY_SYSTEM_UID): Promise<AILearnedInsight[]> {
+  // Fase 3: un uid non valido non diventa un percorso; ricade nello scope globale.
+  const scope = isScopedMemoryUid(uid) ? uid : AI_MEMORY_SYSTEM_UID;
+  const localMemory = loadAIMemoryFromDisk(scope);
   if (firebaseAdminFirestore) {
     try {
-      const reference = firebaseAdminFirestore.doc(AI_MEMORY_FIRESTORE_PATH.join('/'));
+      const reference = firebaseAdminFirestore.doc(aiMemoryFirestorePath(scope));
       const snapshot = await reference.get();
       const documentData = snapshot.data();
       const storedMemory: unknown = documentData?.memory;
@@ -349,34 +365,60 @@ async function loadPersistentAIMemory(): Promise<AILearnedInsight[]> {
           typeof entry.directive === 'string' &&
           (entry.confidence === null || typeof entry.confidence === 'number')
         );
-        const localUpdatedAt = fs.existsSync(AI_MEMORY_FILE) ? fs.statSync(AI_MEMORY_FILE).mtimeMs : 0;
+        const localUpdatedAt = fs.existsSync(aiMemoryFilePathFor(scope)) ? fs.statSync(aiMemoryFilePathFor(scope)).mtimeMs : 0;
         const remoteUpdatedAt = Date.parse(String(documentData?.updatedAt || '')) || 0;
 
         if (remoteMemory.length > 0 && (remoteUpdatedAt >= localUpdatedAt || localMemory.length === 0)) {
-          saveAIMemoryLocally(remoteMemory);
-          return remoteMemory;
+          saveAIMemoryLocally(remoteMemory, scope);
+          return migrateLegacyMemory(remoteMemory);
         }
         const memoryMatches = JSON.stringify(localMemory) === JSON.stringify(remoteMemory);
         if (localMemory.length > 0 && !memoryMatches) {
-          await persistAIMemoryToFirestore(localMemory);
+          await persistAIMemoryToFirestore(localMemory, scope);
         }
-        return localMemory.length > 0 ? localMemory : remoteMemory;
+        return localMemory.length > 0 ? localMemory : migrateLegacyMemory(remoteMemory);
       }
 
       if (localMemory.length > 0) {
-        await persistAIMemoryToFirestore(localMemory);
+        await persistAIMemoryToFirestore(localMemory, scope);
       }
       return localMemory;
     } catch (error) {
       console.warn('[AI Specialization] Firestore non disponibile; fallback alla memoria locale:', error);
     }
   }
-  return loadAIMemoryFromDisk();
+  return loadAIMemoryFromDisk(scope);
 }
 
-async function persistAIMemoryToFirestore(memory: AILearnedInsight[]): Promise<void> {
+/**
+ * Fase 3: uid della richiesta. Il vecchio auth condiviso (`legacy`) resta nello
+ * scope globale, cosi' il comportamento preesistente non cambia.
+ */
+function aiMemoryScopeUidOf(res: Response): string {
+  const uid = typeof res.locals.authenticatedUid === 'string' ? res.locals.authenticatedUid : '';
+  if (!isScopedMemoryUid(uid) || uid === 'legacy') return AI_MEMORY_SYSTEM_UID;
+  return uid;
+}
+
+/**
+ * Fase 3: cio' che un utente vede. Le proprie regole piu' le storiche globali,
+ * marcate `legacy`: leggibili, non possedute, e mai riscritte nel suo documento.
+ */
+async function loadAIMemoryForUser(uid: string): Promise<AILearnedInsight[]> {
+  const scope = isScopedMemoryUid(uid) ? uid : AI_MEMORY_SYSTEM_UID;
+  const own = await loadPersistentAIMemory(scope);
+  if (scope === AI_MEMORY_SYSTEM_UID) return migrateLegacyMemory(own);
+  const legacy = await loadPersistentAIMemory(AI_MEMORY_SYSTEM_UID);
+  return filterMemoryForUser([...migrateLegacyMemory(legacy), ...migrateLegacyMemory(own)], scope);
+}
+
+async function persistAIMemoryToFirestore(
+  memory: AILearnedInsight[],
+  uid: string = AI_MEMORY_SYSTEM_UID
+): Promise<void> {
   if (!firebaseAdminFirestore) return;
-  const reference = firebaseAdminFirestore.doc(AI_MEMORY_FIRESTORE_PATH.join('/'));
+  const scope = isScopedMemoryUid(uid) ? uid : AI_MEMORY_SYSTEM_UID;
+  const reference = firebaseAdminFirestore.doc(aiMemoryFirestorePath(scope));
   await firebaseAdminFirestore.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(reference);
     const previousVersion = snapshot.data()?.version;
@@ -2894,8 +2936,11 @@ app.post('/api/sync/state', requireApiAuth, async (req: Request, res: Response) 
 
 // GET /api/ai/memory: Restituisce le regole auree di trading e le direttive apprese dall'AI
 app.get(['/api/ai/memory', '/api/ai-memory'], requireApiAuth, async (_req: Request, res: Response) => {
-  aiLearnedMemory = await loadPersistentAIMemory();
+  // Fase 3: si restituisce solo cio' che questo utente puo' vedere.
+  const memoryScopeUid = aiMemoryScopeUidOf(res);
+  aiLearnedMemory = await loadAIMemoryForUser(memoryScopeUid);
   res.json({
+    scope: memoryScopeUid,
     totalRules: aiLearnedMemory.length,
     lastUpdated: aiLearnedMemory[aiLearnedMemory.length - 1]?.learnedAt || new Date().toISOString(),
     memory: aiLearnedMemory,
@@ -3456,7 +3501,12 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
         );
       }
     }
-    aiLearnedMemory = await loadPersistentAIMemory();
+    // Fase 3: memoria per-utente. `writerUid` e `datasetHash` firmano la regola
+    // scritta; le regole storiche globali restano visibili ma non le si riscrive
+    // nel documento di questo utente.
+    const memoryScopeUid = aiMemoryScopeUidOf(res);
+    const memoryDatasetHash = computeDatasetHash(trades);
+    aiLearnedMemory = await loadAIMemoryForUser(memoryScopeUid);
     const memoryBefore = new Map(aiLearnedMemory.map((entry) => [entry.topic, entry.learnedAt]));
 
     // ADDITIVO (v10): scansione deterministica dei 14 predicati chiusi.
@@ -3486,11 +3536,15 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
     // direttive non attribuibili con model=null su disco/Firestore).
     if (winnerResults.length > 0 && usedModel !== null) {
       // R3: persistenza tramite le funzioni esistenti; i gate (n, q, avgR, profitFactor) sono dentro updateAIMemory.
-      updateAIMemory(winnerResults);
-      aiLearnedMemory = loadAIMemoryFromDisk();
+      updateAIMemory(winnerResults, aiMemoryFilePathFor(memoryScopeUid), {
+        ownerUid: memoryScopeUid,
+        datasetHash: memoryDatasetHash,
+        runId: getLastScanRunId() ?? null,
+      });
+      aiLearnedMemory = loadAIMemoryFromDisk(memoryScopeUid);
       if (firebaseAdminFirestore) {
         try {
-          await persistAIMemoryToFirestore(aiLearnedMemory);
+          await persistAIMemoryToFirestore(aiLearnedMemory, memoryScopeUid);
         } catch (persistError) {
           console.warn('[AI Specialization] Persistenza Firestore fallita:', persistError);
         }
@@ -3501,6 +3555,8 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
           persistedCount += 1;
         }
       }
+      // La risposta mostra cio' che l'utente vede: le sue regole piu' le storiche.
+      aiLearnedMemory = await loadAIMemoryForUser(memoryScopeUid);
     }
 
     // ADDITIVO (v10, Parte 3.4): gateDetail coerente col ramo (n=0/30 solo se non testato).
@@ -3766,7 +3822,10 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
         );
       }
     }
-    aiLearnedMemory = await loadPersistentAIMemory();
+    // Fase 3: stesso perimetro per il post-mortem del desk.
+    const deskMemoryScopeUid = aiMemoryScopeUidOf(res);
+    const deskDatasetHash = computeDatasetHash(sessionTrades);
+    aiLearnedMemory = await loadAIMemoryForUser(deskMemoryScopeUid);
     const deskMemoryBefore = new Map(aiLearnedMemory.map((entry) => [entry.topic, entry.learnedAt]));
 
     // ADDITIVO (v10, Parte 3.6): stessa scansione deterministica su sessionTrades + deskExcluded reali.
@@ -3792,11 +3851,15 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
 
     let deskPersistedCount = 0;
     if (deskWinnerResults.length > 0 && usedModel !== null) {
-      updateAIMemory(deskWinnerResults);
-      aiLearnedMemory = loadAIMemoryFromDisk();
+      updateAIMemory(deskWinnerResults, aiMemoryFilePathFor(deskMemoryScopeUid), {
+        ownerUid: deskMemoryScopeUid,
+        datasetHash: deskDatasetHash,
+        runId: getLastScanRunId() ?? null,
+      });
+      aiLearnedMemory = loadAIMemoryFromDisk(deskMemoryScopeUid);
       if (firebaseAdminFirestore) {
         try {
-          await persistAIMemoryToFirestore(aiLearnedMemory);
+          await persistAIMemoryToFirestore(aiLearnedMemory, deskMemoryScopeUid);
         } catch (persistError) {
           console.warn('[AI Desk Post-Mortem] Persistenza Firestore fallita:', persistError);
         }
@@ -3807,6 +3870,7 @@ Forma: ({ "topic": string, "market": "${market}", "predicateId": string, "direct
           deskPersistedCount += 1;
         }
       }
+      aiLearnedMemory = await loadAIMemoryForUser(deskMemoryScopeUid);
     }
 
     const deskGateDetail =
@@ -4388,7 +4452,8 @@ app.post('/api/analyze-catalyst', requireApiAuth, async (req: Request, res: Resp
     const candMarket: 'EU' | 'US' = candidate.market === 'US' ? 'US' : 'EU';
     const vetoContextLine = readEmpiricalVetoContext(candMarket, candidateSetupScore.veto);
 
-    aiLearnedMemory = await loadPersistentAIMemory();
+    // Fase 3: il prompt del catalizzatore inietta solo la memoria di questo utente.
+    aiLearnedMemory = await loadAIMemoryForUser(aiMemoryScopeUidOf(res));
     // ADDITIVO (2.5): le stesse regole che entrano nel testo restano attribuibili.
     // La riga di log del catalizzatore porta i loro id, cosi' un effetto si puo'
     // misurare su una regola precisa e non su "la memoria" in blocco.

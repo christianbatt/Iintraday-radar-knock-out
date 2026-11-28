@@ -55,9 +55,9 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 
 ## Fase 3 — Sicurezza e attribuzione della memoria
 
-- [ ] **3.1 Provenienza estesa:** `writerUid`, `runId`, `datasetHash` (SHA-256 degli `id` ordinati), `minRealizedAt`.
-- [ ] **3.2 Memoria per-utente** `ai_memory/{uid}` con fallback `legacy: true` dichiarato; mai mescolanze silenziose.
-- [ ] **3.3 Campione canonico**: niente scritture da `req.body`, dedupe per `id`, rifiuto timestamp futuri, `datasetSource` nella risposta, test di poisoning.
+- [x] **3.1 Provenienza estesa:** `writerUid`, `runId`, `datasetHash` (SHA-256 degli `id` unici ordinati). *(fatto 2026-11-28; `minRealizedAt` non ancora)*
+- [x] **3.2 Memoria per-utente** `users/{uid}/ai_specialization_memory/current` con regole storiche visibili come `legacy: true`, mai riscritte nel documento dell'utente. *(fatto 2026-11-28: `src/server/aiMemoryScope.ts`, migrazione idempotente, file locale per uid)*
+- [ ] **3.3 Campione canonico** *(parziale)*: il `datasetHash` ignora i duplicati e firma il campione usato, ma la fonte resta `req.body.trades` quando presente: manca il rifiuto dei timestamp non plausibili, `datasetSource` e il test di poisoning end-to-end.
 
 ## Fase 4 — Ciclo di vita delle regole
 
@@ -106,4 +106,5 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 | 2026-11-28 | Fase 2 rivalutata: 2.1–2.3 già fatte in `0e5f917` | — | restano 2.5 e 2.6 |
 | 2026-11-28 | 1.2 UI onesta (tre frasi + test) | `965c511` | CI verde |
 | 2026-11-28 | 2.5 `memoryRuleIds` + prompt senza "score" | `682b1ce` | CI verde |
-| 2026-11-28 | 2.6 veto strutturato (`NO_NEWS`/`COUNTER_REGIME`) | vedi commit | tsc, lint, ai-desk, phase1, vwap x3, radar_visibility, audit fissi |
+| 2026-11-28 | 2.6 veto strutturato (`NO_NEWS`/`COUNTER_REGIME`) | `74cd645` | CI verde |
+| 2026-11-28 | 3.1-3.2 memoria per-utente + autore + dataset | vedi commit | tsc, lint, ai_memory_scope (17), attribuzione, ai-desk, learningValidator, specialization, ai_shadow_log |

@@ -328,6 +328,16 @@ export interface AILearnedProvenance {
   model: string | null;
   /** Chiavi del fascicolo citate dalla proposta, deduplicate e limitate. */
   evidenceRefs: string[];
+  /**
+   * ADDITIVO (Fase 3): chi ha scritto la regola. Prima la provenienza diceva
+   * prompt e modello, non l'autore: una regola iniettata non era attribuibile
+   * a una persona.
+   */
+  writerUid?: string | null;
+  /** ADDITIVO (Fase 3): SHA-256 degli id del campione usato per validarla. */
+  datasetHash?: string | null;
+  /** ADDITIVO (Fase 3): esecuzione (runId) che ha prodotto la regola. */
+  runId?: string | null;
 }
 
 export interface AILearnedInsight {
@@ -340,6 +350,13 @@ export interface AILearnedInsight {
   sampleEvidence: string;
   /** ADDITIVO (P8): provenienza della direttiva, assente nelle regole storiche. */
   provenance?: AILearnedProvenance | null;
+  /**
+   * ADDITIVO (Fase 3): documento di memoria a cui la regola appartiene.
+   * Assente nelle regole storiche, che valgono come `system` (globali).
+   */
+  ownerUid?: string | null;
+  /** ADDITIVO (Fase 3): regola storica globale, visibile ma non posseduta. */
+  legacy?: boolean;
 }
 
 /**
