@@ -47,7 +47,7 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 
 - [x] **2.1–2.3 Log e calibrazione del catalizzatore.** *(fatto in `0e5f917`, forma: campi in `aiCategory` e `catalystLift`)*
 - [x] **2.5 Provenienza della memoria nel prompt.** *(fatto 2026-11-28: `memoryRuleIds` sanificato, dedupe, tetto 8; manca ancora `validUntil` nel log)* `memoryRuleIds` sulla riga del catalizzatore: quali regole apprese sono state iniettate (con `validUntil`), così l'effetto di una regola è attribuibile e non solo ipotizzato.
-- [ ] **2.6 Veto strutturato.** `vetoReason` (`EARNINGS` / `FUNDAMENTAL` / `NONE`) e `vetoSource` (`llm` / `text-legacy`) al posto della sola euristica testuale in `calculator.ts`: oggi una squalifica può dipendere da `includes('nessuna notizia')`.
+- [x] **2.6 Veto strutturato.** *(fatto 2026-11-28: `vetoReason` `NO_NEWS` / `COUNTER_REGIME` + `vetoSource`, il testo resta solo fallback)* `vetoReason` (`EARNINGS` / `FUNDAMENTAL` / `NONE`) e `vetoSource` (`llm` / `text-legacy`) al posto della sola euristica testuale in `calculator.ts`: oggi una squalifica può dipendere da `includes('nessuna notizia')`.
 - [ ] **2.1 Contratto di log.** `source: 'catalyst'`, `catalystDecision`, `newsBonus` 0–15, `newsBonusBand` (`0` / `1-7` / `8-15`, costante dichiarata), `hasNews`, `vetoReason`, `vetoSource` (`llm` | `text-legacy`), `memoryRuleIds`.
 - [ ] **2.2 Wiring in `POST /api/analyze-catalyst`** (`server.ts:4028`): log di ogni esito, inclusi ramo fallback deterministico e `NESSUN_TRADE`; `promptVersion: 'ai-catalyst@1'`; nessun cambio di selezione (test di non-regressione).
 - [ ] **2.3 Calibrazione del catalizzatore.** Aggregato `catalyst` nel join esistente, **fuori** dai bucket AZIONE/ATTESA/SCARTO: test gemelli che dimostrano verdetto principale invariato.
@@ -105,4 +105,5 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 | 2026-11-28 | rebase su `0e5f917` + CI dei nuovi test AI | `7e7f0b2` | CI verde: 34 passi in locale, 1 annotazione Node 20 |
 | 2026-11-28 | Fase 2 rivalutata: 2.1–2.3 già fatte in `0e5f917` | — | restano 2.5 e 2.6 |
 | 2026-11-28 | 1.2 UI onesta (tre frasi + test) | `965c511` | CI verde |
-| 2026-11-28 | 2.5 `memoryRuleIds` + prompt senza "score" | vedi commit | tsc, lint, 5 suite AI verdi |
+| 2026-11-28 | 2.5 `memoryRuleIds` + prompt senza "score" | `682b1ce` | CI verde |
+| 2026-11-28 | 2.6 veto strutturato (`NO_NEWS`/`COUNTER_REGIME`) | vedi commit | tsc, lint, ai-desk, phase1, vwap x3, radar_visibility, audit fissi |

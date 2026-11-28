@@ -678,6 +678,39 @@ export function isWarmupIncomplete(indicators: SetupIndicators | null | undefine
  * con volume confermato (solo se VWAP_VETO_ENABLED). Un veto scarta il candidato
  * indipendentemente dal punteggio.
  */
+/**
+ * ADDITIVO (2.6): un `NESSUN_TRADE` del catalizzatore blocca il titolo tranne
+ * quando il motivo e' la sola assenza di notizie.
+ *
+ * Con `vetoReason` la risposta e' deterministica e non dipende da come il
+ * modello ha scritto la frase; senza il campo (righe storiche o risposta LLM
+ * non classificata) resta l'euristica testuale di sempre, invariata.
+ */
+export function isCatalystAbsenceOfNewsOnly(
+  cat: { vetoReason?: string | null; catalizzatore?: unknown; rischi?: unknown } | null | undefined
+): boolean {
+  if (!cat) return false;
+  if (cat.vetoReason === 'NO_NEWS') return true;
+  // Qualsiasi altro motivo dichiarato dal server resta bloccante.
+  if (typeof cat.vetoReason === 'string' && cat.vetoReason.length > 0) return false;
+  const prose = typeof cat.catalizzatore === 'string' ? cat.catalizzatore.toLowerCase() : '';
+  if (
+    prose.includes('nessuna notizia') ||
+    prose.includes('assenza di catalizzatore') ||
+    prose.includes('assenza di notizie')
+  ) {
+    return true;
+  }
+  const rischi = Array.isArray(cat.rischi) ? cat.rischi : [];
+  if (rischi.length !== 1 || typeof rischi[0] !== 'string') return false;
+  const onlyRisk = rischi[0].toLowerCase();
+  return (
+    onlyRisk.includes('mancanza di notizie') ||
+    onlyRisk.includes('assenza di catalizzatore') ||
+    onlyRisk.includes('assenza di notizie')
+  );
+}
+
 export function evaluateSetupVetoes(
   direction: 'LONG' | 'SHORT',
   indicators: SetupIndicators | null | undefined,
@@ -4173,17 +4206,7 @@ export function generateFilteringAuditReport(
 
     // 5. Catalyst Gate
     const cat = catalystCache[q.ticker];
-    if (cat && cat.decisione === 'NESSUN_TRADE') {
-      const isAbsenceOfNewsOnly =
-        cat.catalizzatore?.toLowerCase().includes('nessuna notizia') ||
-        cat.catalizzatore?.toLowerCase().includes('assenza di catalizzatore') ||
-        cat.catalizzatore?.toLowerCase().includes('assenza di notizie') ||
-        (cat.rischi?.length === 1 &&
-          (cat.rischi[0]?.toLowerCase().includes('mancanza di notizie') ||
-           cat.rischi[0]?.toLowerCase().includes('assenza di catalizzatore') ||
-           cat.rischi[0]?.toLowerCase().includes('assenza di notizie')));
-      if (!isAbsenceOfNewsOnly) return false;
-    }
+    if (cat && cat.decisione === 'NESSUN_TRADE' && !isCatalystAbsenceOfNewsOnly(cat)) return false;
 
     return true;
   };

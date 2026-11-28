@@ -39,7 +39,7 @@
     "test:specialization": "tsx src/utils/__tests__/specialization_reasons.test.ts",
     "test:strategy-fixes": "tsx src/utils/__tests__/strategy_fixes.test.ts",
     "test:veto-outcomes": "tsx src/utils/__tests__/veto_outcome_log.test.ts",
-    "test:ai-desk": "tsx src/utils/__tests__/ai_evidence_pack.test.ts && tsx src/utils/__tests__/ai_desk_contract.test.ts && tsx src/components/__tests__/deskPostMortemCard.test.tsx",
+    "test:ai-desk": "tsx src/utils/__tests__/ai_evidence_pack.test.ts && tsx src/utils/__tests__/ai_desk_contract.test.ts && tsx src/components/__tests__/deskPostMortemCard.test.tsx && tsx src/utils/__tests__/catalyst_veto_reason.test.ts",
     "test:ai-baseline": "tsx src/utils/__tests__/ai_baseline.test.ts",
     "test:ai-calibration": "tsx src/utils/__tests__/ai_calibration.test.ts && tsx src/utils/__tests__/ai_desk_validator.test.ts && tsx src/components/__tests__/shadowAiCalibrationBlock.test.tsx",
     "test:ai-forward": "npm run -s test:ai-calibration && npm run -s test:shadowv1liverejected",

@@ -4342,6 +4342,9 @@ app.post('/api/analyze-catalyst', requireApiAuth, async (req: Request, res: Resp
       return res.json({
         decisione: 'NESSUN_TRADE',
         direzione: 'NESSUNA',
+        // ADDITIVO (2.6): il motivo e' dichiarato, non dedotto dalla prosa.
+        vetoReason: 'NO_NEWS',
+        vetoSource: 'deterministic',
         catalizzatore:
           `Assenza di notizie verificate nelle ultime 72 ore per ${candidate.ticker}${discardDetail}: nessun catalizzatore fondamentale confermato.`,
         punti_a_favore: [],
@@ -4689,6 +4692,8 @@ confidenza: numero intero da 0 a 100 sulla solidità del catalizzatore nel conte
       parsed.decisione = 'NESSUN_TRADE';
       parsed.direzione = 'NESSUNA';
       normalizedBonus = 0;
+      parsed.vetoReason = 'COUNTER_REGIME';
+      parsed.vetoSource = 'deterministic';
       const existingRisks = Array.isArray(parsed.rischi) ? parsed.rischi : [];
       parsed.rischi = [
         ...existingRisks,

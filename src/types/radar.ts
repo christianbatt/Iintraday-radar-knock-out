@@ -298,7 +298,22 @@ export interface GeminiCatalystAnalysis {
   }[];
   newsBonusScore?: number;
   confidenza?: number; // 0-100: abbassata da uno stato VWAP contrario, non rifiuta mai il setup
+  /**
+   * ADDITIVO (2.6): motivo strutturato di un `NESSUN_TRADE` deciso dal server.
+   * Assente/null quando la decisione arriva dal modello e non e' classificata:
+   * in quel caso chi legge usa il testo, come prima.
+   */
+  vetoReason?: CatalystVetoReason | null;
+  /** Chi ha classificato il motivo: il server o la prosa del modello. */
+  vetoSource?: 'deterministic' | 'llm' | null;
 }
+
+/**
+ * Motivi di veto del catalizzatore che il server puo' dichiarare senza
+ * interpretare il testo: assenza di notizie fresche e contro-regime. Ogni
+ * altro caso resta al modello, che non e' classificabile a priori.
+ */
+export type CatalystVetoReason = 'NO_NEWS' | 'COUNTER_REGIME';
 
 /**
  * ADDITIVO (P8): provenienza di una direttiva appresa.
