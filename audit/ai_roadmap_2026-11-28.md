@@ -61,9 +61,9 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 
 ## Fase 4 — Ciclo di vita delle regole
 
-- [x] **4.1** `validUntil` (90 giorni), `lastTestedAt`, `testCount`, `revokedAt` + `isRuleActive(entry, nowMs)` usata dall'iniezione nel prompt. *(fatto 2026-11-28 in `src/server/aiMemoryLifecycle.ts`; le regole storiche ricevono la scadenza derivata da `learnedAt`)*
+- [x] **4.1** `validUntil` (90 giorni), `lastTestedAt`, `testCount`, `revokedAt` + `isRuleActive(entry, nowMs)` usata dall'iniezione nel prompt. *(fatto 2026-11-28 in `src/server/aiMemoryLifecycle.ts`; le regole storiche ricevono la scadenza derivata da `learnedAt`)* **Corretto il 28/11:** `stampTestedRule` non era mai chiamata, quindi un re-test superato non rinnovava nulla. Ora `renewRulesForPassingPredicates` gira in `/api/ai/specialize` prima della revoca, non dipende dal modello (un re-test deterministico è un fatto) e non resuscita una regola revocata; `updateAIMemory` conserva e incrementa `testCount` quando riscrive la stessa regola.
 - [x] **4.2 Prompt senza percentuali.** *(fatto, con una deviazione dichiarata: il blocco vive in `aiMemoryLifecycle.ts` invece che in un nuovo `aiMemoryPrompt.ts`; mostra `q`, `n`, `validUntil`, `model` e un test impone l'assenza di `%`)*
-- [x] **4.3 Revoca su re-test fallito**, registro append-only `logs/ai_memory_revocations.jsonl`. *(fatto solo in `/api/ai/specialize`: il post-mortem non revoca)*
+- [x] **4.3 Revoca su re-test fallito**, registro append-only `logs/ai_memory_revocations.jsonl`. *(fatto solo in `/api/ai/specialize`: il post-mortem non revoca)* **Corretto il 28/11:** il mapping era rotto — la scansione scrive il topic come `PREDICATO_<id>`, mentre il confronto usava l'id nudo (`LEVERAGE_5`), quindi la revoca non scattava mai. Ora `ruleTopicForPredicateRow` è l'unico punto che deriva il nome, e il mapping è verificato su una scansione reale (40 vincenti a leva 5, 40 perdenti a leva 10) in `ai_memory_lifecycle.test.ts`.
 
 ## Fase 5 — Potenza statistica e falsificazione
 
@@ -109,5 +109,6 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 | 2026-11-28 | 2.6 veto strutturato (`NO_NEWS`/`COUNTER_REGIME`) | `74cd645` | CI verde |
 | 2026-11-28 | 3.3 campione canonico + runId reale | `a8494c7` | CI verde |
 | 2026-11-28 | UI: messaggio per diario canonico vuoto | vedi commit | formatter puro + test, agganciato al modal |
-| 2026-11-28 | Fase 4 (scadenza, revoca, prompt senza %) | vedi commit | tsc, lint, ai-desk (23 nuove asserzioni), memoria scope/attribuzione |
+| 2026-11-28 | Fase 4 correzioni: rinnovo agganciato + mapping reale | vedi commit | test su scansione vera, contatore preservato |
+| 2026-11-28 | Fase 4 (scadenza, revoca, prompt senza %) | `9ba80bc` | tsc, lint, ai-desk (23 nuove asserzioni), memoria scope/attribuzione |
 | 2026-11-28 | 3.1-3.2 memoria per-utente + autore + dataset | `258aaa4` | tsc, lint, ai_memory_scope (17), attribuzione, ai-desk, learningValidator, specialization, ai_shadow_log |

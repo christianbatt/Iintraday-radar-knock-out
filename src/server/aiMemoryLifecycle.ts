@@ -99,9 +99,65 @@ export function revokeRule(entry: AILearnedInsight, reason: string, nowMs: numbe
 
 export interface LearningPredicateRowLike {
   predicateId: string;
+  /**
+   * Topic con cui la scansione scrive la regola (`PREDICATO_<id>`). Se assente
+   * si deriva da `predicateId`: e' l'unico punto in cui il nome viene costruito.
+   */
+  topic?: string | null;
   tested: boolean;
   passesGates: boolean;
   n: number;
+}
+
+/**
+ * Topic reale di una riga di scansione.
+ *
+ * La scansione chiama `validateLearningPattern(..., `PREDICATO_${predicateId}`)`:
+ * confrontare `row.predicateId` con `entry.topic` non trovava mai nulla, quindi
+ * revoca e rinnovo non scattavano mai.
+ */
+export function ruleTopicForPredicateRow(row: LearningPredicateRowLike): string {
+  const explicit = typeof row.topic === 'string' ? row.topic.trim() : '';
+  return explicit.length > 0 ? explicit : `PREDICATO_${row.predicateId}`;
+}
+
+export interface MemoryRenewal {
+  at: string;
+  topic: string;
+  testCount: number;
+}
+
+export interface RenewalOutcome {
+  memory: AILearnedInsight[];
+  renewed: MemoryRenewal[];
+}
+
+/**
+ * Rinnova le regole il cui predicato e' stato ri-testato con successo.
+ *
+ * Non dipende dal modello: un re-test deterministico che passa e' un fatto, e la
+ * regola non deve scadere perche' nessuna LLM ha risposto. Una regola revocata
+ * resta revocata: il rinnovo non annulla una decisione gia' presa.
+ */
+export function renewRulesForPassingPredicates(
+  own: readonly AILearnedInsight[],
+  rows: readonly LearningPredicateRowLike[],
+  nowMs: number
+): RenewalOutcome {
+  const passing = new Set(rows.filter((row) => row.tested && row.passesGates).map(ruleTopicForPredicateRow));
+  const renewed: MemoryRenewal[] = [];
+  const memory = own.map((entry) => {
+    if (typeof entry.revokedAt === 'string' && entry.revokedAt.trim().length > 0) return entry;
+    if (!passing.has(entry.topic)) return entry;
+    const next = stampTestedRule(entry, nowMs);
+    renewed.push({
+      at: new Date(nowMs).toISOString(),
+      topic: entry.topic,
+      testCount: typeof next.testCount === 'number' ? next.testCount : 1,
+    });
+    return next;
+  });
+  return { memory, renewed };
 }
 
 export interface MemoryRevocation {
@@ -131,7 +187,7 @@ export function revokeRulesForFailedPredicates(
 ): RevocationOutcome {
   const failed = new Map<string, number>();
   for (const row of rows) {
-    if (row.tested && !row.passesGates) failed.set(row.predicateId, row.n);
+    if (row.tested && !row.passesGates) failed.set(ruleTopicForPredicateRow(row), row.n);
   }
   const revoked: MemoryRevocation[] = [];
   const memory = own.map((entry) => {

@@ -47,6 +47,7 @@ import {
   AI_MEMORY_REVOCATION_LOG_RELATIVE_PATH,
   appendRevocationLog,
   buildMemoryPromptBlock,
+  renewRulesForPassingPredicates,
   revokeRulesForFailedPredicates,
   selectActiveRules,
 } from './src/server/aiMemoryLifecycle';
@@ -3536,18 +3537,25 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
     // Fase 4.3: un predicato ri-testato che non passa piu' i gate revoca la sua
     // regola (non la cancella) e lascia una riga nel registro append-only. Un
     // predicato senza campione non e' una smentita e non revoca nulla.
-    const revocation = revokeRulesForFailedPredicates(
-      loadAIMemoryFromDisk(memoryScopeUid),
-      scan,
-      Date.now()
-    );
-    if (revocation.revoked.length > 0) {
+    // La scansione nomina il topic `PREDICATO_<id>`: si passa il topic reale,
+    // altrimenti ne' il rinnovo ne' la revoca troverebbero la regola.
+    const predicateRows = scan.map((entry) => ({
+      predicateId: entry.predicateId,
+      topic: entry.result?.topic ?? `PREDICATO_${entry.predicateId}`,
+      tested: entry.tested,
+      passesGates: entry.passesGates,
+      n: entry.n,
+    }));
+    const ownMemoryBeforeRetest = loadAIMemoryFromDisk(memoryScopeUid);
+    const renewal = renewRulesForPassingPredicates(ownMemoryBeforeRetest, predicateRows, Date.now());
+    const revocation = revokeRulesForFailedPredicates(renewal.memory, predicateRows, Date.now());
+    if (renewal.renewed.length > 0 || revocation.revoked.length > 0) {
       saveAIMemoryLocally(revocation.memory, memoryScopeUid);
       if (firebaseAdminFirestore) {
         try {
           await persistAIMemoryToFirestore(revocation.memory, memoryScopeUid);
         } catch (revokePersistError) {
-          console.warn('[AI Specialization] Persistenza revoche fallita:', revokePersistError);
+          console.warn('[AI Specialization] Persistenza re-test fallita:', revokePersistError);
         }
       }
       appendRevocationLog(
@@ -3642,6 +3650,8 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
       rejectedTrades: canonicalSample.rejected,
       revokedCount: revocation.revoked.length,
       revokedTopics: revocation.revoked.map((entry) => entry.topic),
+      renewedCount: renewal.renewed.length,
+      renewedTopics: renewal.renewed.map((entry) => entry.topic),
       reason,
       reasonDetail,
       addedCount: persistedCount,

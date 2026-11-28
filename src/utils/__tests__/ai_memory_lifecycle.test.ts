@@ -17,12 +17,15 @@ import {
   applyLifecycleDefaults,
   buildMemoryPromptBlock,
   isRuleActive,
+  renewRulesForPassingPredicates,
   revokeRulesForFailedPredicates,
   ruleExpiryIso,
+  ruleTopicForPredicateRow,
   selectActiveRules,
   stampTestedRule,
 } from '../../server/aiMemoryLifecycle';
-import type { AILearnedInsight } from '../../types/radar';
+import { scanLearningPredicates } from '../../utils/learningValidator';
+import type { AILearnedInsight, TradeJournalEntry } from '../../types/radar';
 
 const NOW = Date.parse('2026-11-28T10:00:00.000Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -131,8 +134,9 @@ describe('prompt della memoria', () => {
 
 describe('re-test e revoca', () => {
   it('un predicato testato e fallito revoca la regola, che resta nel file', () => {
+    // Il topic reale è `PREDICATO_<id>`: la riga senza `topic` lo deriva.
     const outcome = revokeRulesForFailedPredicates(
-      [rule()],
+      [rule({ topic: 'PREDICATO_LEVERAGE_5' })],
       [{ predicateId: 'LEVERAGE_5', tested: true, passesGates: false, n: 55 }],
       NOW
     );
@@ -183,7 +187,7 @@ describe('re-test e revoca', () => {
     const file = path.join(dir, 'revocations.jsonl');
     try {
       const outcome = revokeRulesForFailedPredicates(
-        [rule()],
+        [rule({ topic: 'PREDICATO_LEVERAGE_5' })],
         [{ predicateId: 'LEVERAGE_5', tested: true, passesGates: false, n: 55 }],
         NOW
       );
@@ -192,12 +196,114 @@ describe('re-test e revoca', () => {
       const lines = fs.readFileSync(file, 'utf8').trim().split('\n');
       assert.equal(lines.length, 2);
       const first = JSON.parse(lines[0]) as { topic: string; reason: string };
-      assert.equal(first.topic, 'LEVERAGE_5');
+      assert.equal(first.topic, 'PREDICATO_LEVERAGE_5');
       assert.equal(first.reason, AI_MEMORY_REVOCATION_RETEST_FAILED);
       // La prima riga resta identica: il registro non si riscrive.
       assert.equal(lines[0], lines[1]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('mapping con una scansione reale', () => {
+  // 40 vincenti a leva 5 (predicato che passa) e 40 perdenti a leva 10
+  // (predicato testato che fallisce): il campione minimo e' 30.
+  function scannedTrade(
+    id: string,
+    over: Record<string, unknown>
+  ): TradeJournalEntry {
+    return {
+      id,
+      status: 'CLOSED',
+      market: 'EU',
+      session: 'EU',
+      direction: 'LONG',
+      entryMode: 'MANUAL_FREEZE',
+      ...over,
+    } as unknown as TradeJournalEntry;
+  }
+
+  const trades: TradeJournalEntry[] = [
+    ...Array.from({ length: 40 }, (_, i) =>
+      scannedTrade(`win-${i}`, { selectedLeverage: 5, outcome: 'WIN', rMultiple: 1.5 })
+    ),
+    ...Array.from({ length: 40 }, (_, i) =>
+      scannedTrade(`loss-${i}`, { selectedLeverage: 10, outcome: 'LOSS', rMultiple: -1 })
+    ),
+  ];
+  const scan = scanLearningPredicates(trades, []);
+  const rows = scan.map((entry) => ({
+    predicateId: entry.predicateId,
+    topic: entry.result?.topic ?? null,
+    tested: entry.tested,
+    passesGates: entry.passesGates,
+    n: entry.n,
+  }));
+
+  it('la scansione scrive PREDICATO_<id>, non l’id nudo', () => {
+    const row5 = scan.find((entry) => entry.predicateId === 'LEVERAGE_5');
+    assert.ok(row5, 'la scansione deve contenere il predicato LEVERAGE_5');
+    assert.equal(row5!.result?.topic, 'PREDICATO_LEVERAGE_5');
+    assert.notEqual(row5!.result?.topic, 'LEVERAGE_5');
+  });
+
+  it('riconosce un predicato testato che passa e uno testato che fallisce', () => {
+    const row5 = scan.find((entry) => entry.predicateId === 'LEVERAGE_5')!;
+    const row10 = scan.find((entry) => entry.predicateId === 'LEVERAGE_10')!;
+    assert.equal(row5.tested && row5.passesGates, true);
+    assert.equal(row10.tested, true);
+    assert.equal(row10.passesGates, false);
+    assert.ok(row10.n >= 30);
+  });
+
+  it('il rinnovo trova la regola scritta dalla scansione e la rinnova', () => {
+    const outcome = renewRulesForPassingPredicates(
+      [rule({ topic: 'PREDICATO_LEVERAGE_5', testCount: 1, validUntil: new Date(NOW - DAY).toISOString() })],
+      rows,
+      NOW
+    );
+    assert.equal(outcome.renewed.length, 1);
+    assert.equal(outcome.renewed[0].topic, 'PREDICATO_LEVERAGE_5');
+    assert.equal(outcome.renewed[0].testCount, 2);
+    assert.equal(outcome.memory[0].lastTestedAt, new Date(NOW).toISOString());
+    // La regola scaduta torna attiva perché è stata ri-testata.
+    assert.equal(isRuleActive(outcome.memory[0], NOW), true);
+  });
+
+  it('la revoca trova la regola del predicato fallito', () => {
+    const outcome = revokeRulesForFailedPredicates(
+      [rule({ topic: 'PREDICATO_LEVERAGE_10' })],
+      rows,
+      NOW
+    );
+    assert.equal(outcome.revoked.length, 1);
+    assert.equal(outcome.revoked[0].topic, 'PREDICATO_LEVERAGE_10');
+  });
+
+  it('con l’id nudo la regola non viene né rinnovata né revocata: era il difetto', () => {
+    const bare = [rule({ topic: 'LEVERAGE_5' }), rule({ topic: 'LEVERAGE_10', id: 'ai-x' })];
+    const renewed = renewRulesForPassingPredicates(bare, rows, NOW);
+    const revoked = revokeRulesForFailedPredicates(bare, rows, NOW);
+    assert.equal(renewed.renewed.length, 0);
+    assert.equal(revoked.revoked.length, 0);
+  });
+
+  it('una riga senza topic deriva PREDICATO_<id>', () => {
+    assert.equal(ruleTopicForPredicateRow({ predicateId: 'LEVERAGE_5', tested: true, passesGates: true, n: 40 }), 'PREDICATO_LEVERAGE_5');
+    assert.equal(
+      ruleTopicForPredicateRow({ predicateId: 'LEVERAGE_5', topic: '  ', tested: true, passesGates: true, n: 40 }),
+      'PREDICATO_LEVERAGE_5'
+    );
+  });
+
+  it('una regola revocata non viene rinnovata da un re-test che passa', () => {
+    const outcome = renewRulesForPassingPredicates(
+      [rule({ topic: 'PREDICATO_LEVERAGE_5', revokedAt: new Date(NOW - DAY).toISOString(), revocationReason: 'ALTRO' })],
+      rows,
+      NOW
+    );
+    assert.equal(outcome.renewed.length, 0);
+    assert.equal(outcome.memory[0].revokedAt, new Date(NOW - DAY).toISOString());
   });
 });

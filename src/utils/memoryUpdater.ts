@@ -121,8 +121,14 @@ export function updateAIMemory(
     }
 
     // Fase 4: una regola nasce con scadenza (90 giorni), data di test e contatore.
-    const withLifecycle = applyLifecycleDefaults(insight);
+    // Se la regola esiste, il contatore cresce invece di ripartire da 1: un
+    // re-test superato non deve sembrare il primo.
     const existingIndex = memory.findIndex((entry) => entry.topic === result.topic);
+    const previousTestCount =
+      existingIndex >= 0 && typeof memory[existingIndex].testCount === 'number'
+        ? memory[existingIndex].testCount
+        : 0;
+    const withLifecycle = applyLifecycleDefaults({ ...insight, testCount: Math.max(1, previousTestCount + 1) });
     if (existingIndex >= 0) memory[existingIndex] = withLifecycle;
     else memory.push(withLifecycle);
   }

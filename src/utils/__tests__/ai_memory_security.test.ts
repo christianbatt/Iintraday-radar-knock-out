@@ -85,6 +85,18 @@ describe('runId — l’id è dell’esecuzione che scrive, non di un’altra', 
     });
   });
 
+  it('riscrivere la stessa regola cresce il contatore di re-test', () => {
+    withTempDir((dir) => {
+      const file = path.join(dir, 'mem.json');
+      const owner = { ownerUid: 'u1', datasetHash: null, runId: 'req-1' };
+      updateAIMemory([winningResult()], file, owner);
+      updateAIMemory([winningResult()], file, owner);
+      const written = JSON.parse(readFileSync(file, 'utf8')) as AILearnedInsight[];
+      assert.equal(written.length, 1, 'la stessa regola non si duplica');
+      assert.equal(written[0].testCount, 2);
+    });
+  });
+
   it('senza runId reale resta null, non un id preso altrove', () => {
     withTempDir((dir) => {
       const file = path.join(dir, 'mem.json');
