@@ -70,7 +70,7 @@ import {
   AI_POWER_TARGET_EFFECT_R,
   requiredSampleSize,
   sampleVariance,
-} from './aiPowerAnalysis';
+} from '../utils/aiPowerAnalysis';
 export const AI_CALIBRATION_CONFIDENCE = 0.95;
 /**
  * Copertura minima del log: sotto questa quota di candidati davvero valutati il

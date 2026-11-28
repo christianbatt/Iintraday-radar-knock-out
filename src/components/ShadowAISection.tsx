@@ -4,7 +4,7 @@ import {
   isShadowAiSectionEnabled,
   type ShadowAiSectionFlag,
 } from '../config/shadowAiSection';
-import { formatPowerLine } from '../server/aiPowerAnalysis';
+import { formatPowerLine } from '../utils/aiPowerAnalysis';
 
 export interface AiShadowLogEntry {
   id: string;

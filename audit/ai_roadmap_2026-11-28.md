@@ -67,7 +67,7 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 
 ## Fase 5 — Potenza statistica e falsificazione
 
-- [x] **5.1 `requiredSampleSize({varianceR, effectR, alpha, power})`** + "servono N trade, ne hai M" nel pannello. *(fatto 2026-11-28: `src/server/aiPowerAnalysis.ts`, quantili normali Acklam, formula n = (z_{1-α/2}+z_power)²σ²/δ²; `power` dentro `uncertainty` della calibrazione e riga nel pannello. Approssimazione normale dichiarata, non un test t esatto)*
+- [x] **5.1 `requiredSampleSize({varianceR, effectR, alpha, power})`** + "servono N trade, ne hai M" nel pannello. *(fatto 2026-11-28: `src/utils/aiPowerAnalysis.ts` — non `src/server`, perché il pannello lo importa e il guard client vieta moduli server nel bundle; quantili normali Acklam, formula n = (z_{1-α/2}+z_power)²σ²/δ²; `power` dentro `uncertainty` della calibrazione e riga nel pannello. Approssimazione normale dichiarata, non un test t esatto)*
 - [ ] **5.2 IC bootstrap deterministico su `avgR(AZIONE)`** *(parziale: `src/server/aiMeanInterval.ts` con seed fissa e test di determinismo è pronto, ma non è ancora agganciato al validatore come `avg_r_ci` né mostrato come intervallo sul R di AZIONE; il check resta fuori dal verdetto)*
 - [ ] **5.3 Harness Monte Carlo** (`scripts/validator_mc.ts`, seed fisse): falsi positivi a edge nullo e potenza a edge noto, con asserzioni che falliscono se le soglie sono troppo permissive. *(non iniziato)*
 

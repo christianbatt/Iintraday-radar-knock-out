@@ -14,7 +14,7 @@ import {
   normalQuantile,
   requiredSampleSize,
   sampleVariance,
-} from '../../server/aiPowerAnalysis';
+} from '../../utils/aiPowerAnalysis';
 import { bootstrapMeanInterval } from '../../server/aiMeanInterval';
 
 describe('quantili normali', () => {
