@@ -67,9 +67,9 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 
 ## Fase 5 — Potenza statistica e falsificazione
 
-- [ ] **5.1 `requiredSampleSize({varianceR, effectR, alpha, power})`** + "servono N trade, ne hai M" nel pannello.
-- [ ] **5.2 IC bootstrap deterministico su `avgR(AZIONE)`** + check opzionale `avg_r_ci` (fuori dal verdetto finché non autorizzato).
-- [ ] **5.3 Harness Monte Carlo** (`scripts/validator_mc.ts`, seed fisse): falsi positivi a edge nullo e potenza a edge noto, con asserzioni che falliscono se le soglie sono troppo permissive.
+- [x] **5.1 `requiredSampleSize({varianceR, effectR, alpha, power})`** + "servono N trade, ne hai M" nel pannello. *(fatto 2026-11-28: `src/server/aiPowerAnalysis.ts`, quantili normali Acklam, formula n = (z_{1-α/2}+z_power)²σ²/δ²; `power` dentro `uncertainty` della calibrazione e riga nel pannello. Approssimazione normale dichiarata, non un test t esatto)*
+- [ ] **5.2 IC bootstrap deterministico su `avgR(AZIONE)`** *(parziale: `src/server/aiMeanInterval.ts` con seed fissa e test di determinismo è pronto, ma non è ancora agganciato al validatore come `avg_r_ci` né mostrato come intervallo sul R di AZIONE; il check resta fuori dal verdetto)*
+- [ ] **5.3 Harness Monte Carlo** (`scripts/validator_mc.ts`, seed fisse): falsi positivi a edge nullo e potenza a edge noto, con asserzioni che falliscono se le soglie sono troppo permissive. *(non iniziato)*
 
 ## Fase 6 — Costo reale per trade
 
@@ -109,6 +109,8 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 | 2026-11-28 | 2.6 veto strutturato (`NO_NEWS`/`COUNTER_REGIME`) | `74cd645` | CI verde |
 | 2026-11-28 | 3.3 campione canonico + runId reale | `a8494c7` | CI verde |
 | 2026-11-28 | UI: messaggio per diario canonico vuoto | vedi commit | formatter puro + test, agganciato al modal |
-| 2026-11-28 | Fase 4 correzioni: rinnovo agganciato + mapping reale | vedi commit | test su scansione vera, contatore preservato |
+| 2026-11-28 | Fase 4: un re-test, un conteggio | `e73c162` | CI verde |
+| 2026-11-28 | 5.1 potenza + 5.2 modulo intervallo | vedi commit | tsc, lint, power (19), calibrazione |
+| 2026-11-28 | Fase 4 correzioni: rinnovo agganciato + mapping reale | `dc74673` | test su scansione vera, contatore preservato |
 | 2026-11-28 | Fase 4 (scadenza, revoca, prompt senza %) | `9ba80bc` | tsc, lint, ai-desk (23 nuove asserzioni), memoria scope/attribuzione |
 | 2026-11-28 | 3.1-3.2 memoria per-utente + autore + dataset | `258aaa4` | tsc, lint, ai_memory_scope (17), attribuzione, ai-desk, learningValidator, specialization, ai_shadow_log |

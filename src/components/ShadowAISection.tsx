@@ -4,6 +4,7 @@ import {
   isShadowAiSectionEnabled,
   type ShadowAiSectionFlag,
 } from '../config/shadowAiSection';
+import { formatPowerLine } from '../server/aiPowerAnalysis';
 
 export interface AiShadowLogEntry {
   id: string;
@@ -112,6 +113,8 @@ export interface ShadowAiCalibrationView {
     iterations?: number;
     edgeR?: { lower: number; upper: number } | null;
     winRateGapPct?: { lower: number; upper: number } | null;
+    /** Fase 5.1: quanti trade servono per rilevare l'effetto target. */
+    power?: { effectR?: number; requiredN?: number | null; observedN?: number } | null;
   } | null;
   /** Copertura della pipeline LLM sui candidati del log. */
   coverage?: {
@@ -266,6 +269,15 @@ export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrati
         {calibration.uncertainty.winRateGapPct
           ? ` · divario [${calibration.uncertainty.winRateGapPct.lower}, ${calibration.uncertainty.winRateGapPct.upper}] punti`
           : ''}
+      </p>
+    )}
+    {calibration.uncertainty?.power && (
+      <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-power">
+        {formatPowerLine({
+          requiredN: calibration.uncertainty.power.requiredN ?? null,
+          observedN: calibration.uncertainty.power.observedN ?? 0,
+          effectR: calibration.uncertainty.power.effectR,
+        })}
       </p>
     )}
     {calibration.uncertainty?.edgeR === null && calibration.uncertainty && (

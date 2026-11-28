@@ -66,6 +66,11 @@ export const AI_CALIBRATION_MAX_ENTRIES = 2000;
  */
 export const AI_CALIBRATION_BOOTSTRAP_ITERATIONS = 2000;
 export const AI_CALIBRATION_BOOTSTRAP_SEED = 0x5eed1a7e;
+import {
+  AI_POWER_TARGET_EFFECT_R,
+  requiredSampleSize,
+  sampleVariance,
+} from './aiPowerAnalysis';
 export const AI_CALIBRATION_CONFIDENCE = 0.95;
 /**
  * Copertura minima del log: sotto questa quota di candidati davvero valutati il
@@ -326,6 +331,15 @@ export interface AiCalibrationUncertainty {
   edgeR: AiCalibrationInterval | null;
   winRateGapPct: AiCalibrationInterval | null;
   note: string;
+  /**
+   * ADDITIVO (Fase 5.1): quanti trade servirebbero per rilevare `effectR` con la
+   * varianza osservata su AZIONE. Diagnostica: non entra nel verdetto.
+   */
+  power?: {
+    effectR: number;
+    requiredN: number | null;
+    observedN: number;
+  };
 }
 
 /**
@@ -583,6 +597,17 @@ function buildUncertainty(
   action: readonly number[],
   skip: readonly number[]
 ): AiCalibrationUncertainty {
+  // Fase 5.1: la potenza si calcola sulla varianza osservata, non su una
+  // assunzione. Se il campione non basta a stimarla, `requiredN` resta null.
+  const varianceR = sampleVariance(action);
+  const power = {
+    effectR: AI_POWER_TARGET_EFFECT_R,
+    requiredN:
+      varianceR === null
+        ? null
+        : (requiredSampleSize({ varianceR, effectR: AI_POWER_TARGET_EFFECT_R })?.n ?? null),
+    observedN: action.filter((value) => Number.isFinite(value)).length,
+  };
   return {
     method: 'bootstrap-percentile',
     iterations: AI_CALIBRATION_BOOTSTRAP_ITERATIONS,
@@ -606,6 +631,7 @@ function buildUncertainty(
     note:
       'Bootstrap percentile deterministico sul R netto (seed fissa): descrive ' +
       'l incertezza campionaria del segno, non una probabilita di profitto.',
+    power,
   };
 }
 
