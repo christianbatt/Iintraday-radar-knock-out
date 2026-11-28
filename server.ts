@@ -3547,7 +3547,24 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
       n: entry.n,
     }));
     const ownMemoryBeforeRetest = loadAIMemoryFromDisk(memoryScopeUid);
-    const renewal = renewRulesForPassingPredicates(ownMemoryBeforeRetest, predicateRows, Date.now());
+    // I topic che questo run riscrivera' con `updateAIMemory` vengono rinnovati
+    // dal percorso di scrittura: rinnovarli anche qui conterebbe lo stesso
+    // re-test due volte. Senza modello non si scrive nulla, quindi il rinnovo
+    // resta necessario.
+    const topicsWrittenThisRun =
+      usedModel !== null
+        ? new Set(
+            scan
+              .filter((entry) => entry.passesGates)
+              .map((entry) => entry.result?.topic ?? `PREDICATO_${entry.predicateId}`)
+          )
+        : new Set<string>();
+    const renewal = renewRulesForPassingPredicates(
+      ownMemoryBeforeRetest,
+      predicateRows,
+      Date.now(),
+      topicsWrittenThisRun
+    );
     const revocation = revokeRulesForFailedPredicates(renewal.memory, predicateRows, Date.now());
     if (renewal.renewed.length > 0 || revocation.revoked.length > 0) {
       saveAIMemoryLocally(revocation.memory, memoryScopeUid);

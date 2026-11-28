@@ -25,7 +25,38 @@ import {
   stampTestedRule,
 } from '../../server/aiMemoryLifecycle';
 import { scanLearningPredicates } from '../../utils/learningValidator';
+import type { LearningResult } from '../../utils/learningValidator';
+import { updateAIMemory } from '../../utils/memoryUpdater';
 import type { AILearnedInsight, TradeJournalEntry } from '../../types/radar';
+
+function withTempDir(fn: (dir: string) => void): void {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-mem-lifecycle-'));
+  try {
+    fn(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** LearningResult minimo che supera i gate di `updateAIMemory`. */
+function winningResult(topic: string): LearningResult {
+  return {
+    topic,
+    market: 'GLOBAL',
+    directive: 'Direttiva di prova',
+    confidence: 0.95,
+    evidence: ['t1'],
+    stats: {
+      n: 40,
+      winRate: 0.7,
+      avgR: 0.6,
+      profitFactor: 1.8,
+      pValue: 0.0001,
+      adjustedPValue: 0.0004,
+      counterfactual: { n: 0, wins: 0, losses: 0, expired: 0 },
+    },
+  } as unknown as LearningResult;
+}
 
 const NOW = Date.parse('2026-11-28T10:00:00.000Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -295,6 +326,32 @@ describe('mapping con una scansione reale', () => {
       ruleTopicForPredicateRow({ predicateId: 'LEVERAGE_5', topic: '  ', tested: true, passesGates: true, n: 40 }),
       'PREDICATO_LEVERAGE_5'
     );
+  });
+
+  it('un re-test conta una volta sola: rinnovo e riscrittura non sommano', () => {
+    withTempDir((dir) => {
+      const file = path.join(dir, 'mem.json');
+      const owner = { ownerUid: 'u1', datasetHash: null, runId: 'req-1' };
+      const topic = 'PREDICATO_LEVERAGE_5';
+      updateAIMemory([winningResult(topic)], file, owner);
+      const beforeRun = JSON.parse(fs.readFileSync(file, 'utf8')) as AILearnedInsight[];
+      assert.equal(beforeRun[0].testCount, 1);
+
+      // Lo stesso run riscriverà questo topic: il rinnovo lo salta.
+      const renewal = renewRulesForPassingPredicates(
+        beforeRun,
+        rows,
+        NOW,
+        new Set([topic])
+      );
+      assert.equal(renewal.renewed.length, 0);
+      assert.equal(renewal.memory[0].testCount, 1, 'il rinnovo non anticipa il conteggio');
+
+      // La scrittura del run incrementa il contatore una volta sola.
+      updateAIMemory([winningResult(topic)], file, owner);
+      const afterRun = JSON.parse(fs.readFileSync(file, 'utf8')) as AILearnedInsight[];
+      assert.equal(afterRun[0].testCount, 2, 'un re-test, un incremento');
+    });
   });
 
   it('una regola revocata non viene rinnovata da un re-test che passa', () => {

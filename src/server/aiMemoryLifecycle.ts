@@ -142,13 +142,20 @@ export interface RenewalOutcome {
 export function renewRulesForPassingPredicates(
   own: readonly AILearnedInsight[],
   rows: readonly LearningPredicateRowLike[],
-  nowMs: number
+  nowMs: number,
+  /**
+   * Topic che lo stesso run riscriverà tramite `updateAIMemory`: quel percorso
+   * incrementa già il contatore, quindi rinnovarli anche qui conterebbe due
+   * volte lo stesso re-test.
+   */
+  skipTopics: ReadonlySet<string> = new Set<string>()
 ): RenewalOutcome {
   const passing = new Set(rows.filter((row) => row.tested && row.passesGates).map(ruleTopicForPredicateRow));
   const renewed: MemoryRenewal[] = [];
   const memory = own.map((entry) => {
     if (typeof entry.revokedAt === 'string' && entry.revokedAt.trim().length > 0) return entry;
     if (!passing.has(entry.topic)) return entry;
+    if (skipTopics.has(entry.topic)) return entry;
     const next = stampTestedRule(entry, nowMs);
     renewed.push({
       at: new Date(nowMs).toISOString(),
