@@ -82,7 +82,16 @@ export interface ShadowAiCalibrationView {
   edgeR?: number | null;
   edgeRNet?: number | null;
   costR?: number;
-  netModel?: { feeR?: number; spreadR?: number; totalR?: number; source?: string };
+  netModel?: { feeR?: number; spreadR?: number; totalR?: number; source?: string; perRow?: boolean };
+  /** Fase 6.1: riepilogo del costo per riga (quante righe misurate, quante al tetto). */
+  costSummary?: {
+    rows?: number;
+    perRow?: number;
+    declared?: number;
+    meanR?: number | null;
+    minR?: number | null;
+    maxR?: number | null;
+  } | null;
   minSample?: number;
   counts?: {
     matched?: number;
@@ -297,6 +306,16 @@ export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrati
     {calibration.uncertainty?.edgeR === null && calibration.uncertainty && (
       <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-uncertainty">
         IC: non calcolabile (meno di 2 esiti per lato)
+      </p>
+    )}
+    {calibration.costSummary && (calibration.costSummary.rows ?? 0) > 0 && (
+      <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-cost">
+        costo per trade:{' '}
+        {calibration.costSummary.meanR === null || calibration.costSummary.meanR === undefined
+          ? '—'
+          : calibration.costSummary.meanR}{' '}
+        R medio ({calibration.costSummary.perRow ?? 0} righe con costo misurato,{' '}
+        {calibration.costSummary.declared ?? 0} al tetto dichiarato)
       </p>
     )}
     {typeof calibration.costR === 'number' && (

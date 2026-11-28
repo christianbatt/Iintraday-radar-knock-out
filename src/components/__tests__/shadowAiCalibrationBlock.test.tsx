@@ -505,3 +505,28 @@ describe('ShadowAiCalibrationBlock — intervallo sulla media di AZIONE (5.2)', 
     assert.ok(!out.includes('data-testid="shadow-ai-calibration-avg-r"'));
   });
 });
+
+describe('ShadowAiCalibrationBlock — costo per riga (Fase 6.1)', () => {
+  it('mostra costo medio e quante righe sono al tetto dichiarato', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, {
+        calibration: {
+          ...EVIDENCE,
+          costR: 0.36,
+          costSummary: { rows: 30, perRow: 26, declared: 4, meanR: 0.2987 },
+        },
+      })
+    );
+    assert.ok(out.includes('data-testid="shadow-ai-calibration-cost"'));
+    assert.ok(out.includes('costo per trade: 0.2987 R medio'));
+    assert.ok(out.includes('26 righe con costo misurato'));
+    assert.ok(out.includes('4 al tetto dichiarato'));
+  });
+
+  it('senza riepilogo la riga non compare', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, { calibration: EVIDENCE })
+    );
+    assert.ok(!out.includes('data-testid="shadow-ai-calibration-cost"'));
+  });
+});

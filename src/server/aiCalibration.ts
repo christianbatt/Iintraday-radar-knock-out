@@ -36,7 +36,7 @@
  */
 
 import { isAiShadowDecision } from './aiShadowLog';
-import { SHADOW_V2_HYPOTHESES } from '../knowledge/shadowV2';
+import type { KnowledgeBar } from '../knowledge/shadowAlgorithms';
 import {
   AI_DESK_VALIDATION_MIN_PER_BUCKET,
   AI_DESK_VALIDATION_VERSION,
@@ -44,6 +44,13 @@ import {
   type AiDeskValidation,
 } from './aiDeskValidator';
 import { bootstrapMeanInterval } from './aiMeanInterval';
+import {
+  AI_TRADE_COST_DECLARED_R,
+  AI_TRADE_COST_FEE_R,
+  AI_TRADE_COST_SPREAD_CEILING_R,
+  resolveTradeCost,
+  type AiTradeCostSource,
+} from './aiTradeCost';
 import {
   AI_POWER_TARGET_EFFECT_R,
   requiredSampleSize,
@@ -93,15 +100,18 @@ export const AI_CALIBRATION_MIN_EVALUATED_SHARE = 0.5;
  *   quindi si usa il TETTO dichiarato `UNDERLYING_SPREAD_MAX_R` (0.16 R) come
  *   costo conservativo, non misurato;
  * - totale 0.36 R per trade, uguale su AZIONE e SCARTO.
+ *
+ * FASE 6.1: questo e' il costo di FALLBACK, applicato alle sole righe senza dati
+ * di prezzo (`costSource: 'declared_ceiling'`). Quando la riga porta entry/stop
+ * e le due barre del fill, il costo viene calcolato riga per riga da
+ * `resolveTradeCost` (spread Corwin-Schultz / stopPct + termine del certificato
+ * KO quando la leva e' nota). Il modello costante resta quindi il pavimento
+ * conservativo, non piu' l'unico numero.
  */
-export const AI_CALIBRATION_NET_FEE_R = Math.round(
-  (SHADOW_V2_HYPOTHESES.FEE_ROUNDTRIP_EUR /
-    (SHADOW_V2_HYPOTHESES.REFERENCE_CAPITAL_EUR * SHADOW_V2_HYPOTHESES.RISK_PCT)) *
-    10_000
-) / 10_000;
-export const AI_CALIBRATION_NET_SPREAD_R = SHADOW_V2_HYPOTHESES.UNDERLYING_SPREAD_MAX_R;
-export const AI_CALIBRATION_NET_COST_R =
-  Math.round((AI_CALIBRATION_NET_FEE_R + AI_CALIBRATION_NET_SPREAD_R) * 10_000) / 10_000;
+export const AI_CALIBRATION_NET_FEE_R = AI_TRADE_COST_FEE_R;
+export const AI_CALIBRATION_NET_SPREAD_R = AI_TRADE_COST_SPREAD_CEILING_R;
+/** Costo del modello dichiarato, applicato solo alle righe senza dati di prezzo. */
+export const AI_CALIBRATION_NET_COST_R = AI_TRADE_COST_DECLARED_R;
 
 /**
  * Allarmi di formato: sotto questi denominatori una percentuale e' rumore,
@@ -208,6 +218,15 @@ export interface AiCalibrationForwardPoint {
   r: number;
   status: 'STOP' | 'TARGET' | 'EXPIRED';
   /**
+   * ADDITIVO (Fase 6.1): dati di prezzo della riga, quando la fonte li ha.
+   * Servono al costo per riga; senza, vale il costo dichiarato.
+   */
+  entry?: number | null;
+  stop?: number | null;
+  leverage?: number | null;
+  /** Due barre 5m consecutive che contengono il fill (per Corwin-Schultz). */
+  bars?: readonly KnowledgeBar[] | null;
+  /**
    * Origine dell'esito: `signals` (setup emesso; default per le righe senza
    * campo), `near_miss` (setup bloccato da un solo gate e mai emesso) oppure
    * `rejected` (altro scarto con livelli coerenti, mai emesso). Gli ultimi due
@@ -306,8 +325,12 @@ export interface AiCalibrationJoin {
   decision: AiDecisionClass;
   aiOutcome: string | null;
   r: number;
-  /** R al netto dei costi dichiarati. */
+  /** R al netto del costo della RIGA (Fase 6.1). */
   rNet: number;
+  /** Costo applicato a questa riga, in R. */
+  costR: number;
+  /** Da dove viene il costo: barre+leva, barre, leva, oppure tetto dichiarato. */
+  costSource: AiTradeCostSource;
   forwardStatus: string;
   deltaMs: number;
   /** Versione del prompt della decisione; `null` per le righe storiche. */
@@ -491,6 +514,7 @@ export interface AiCalibrationResponse {
   /** Stessa differenza sui valori netti (invariante a un costo costante). */
   edgeRNet: number | null;
   /** Costo per trade applicato a ogni abbinamento, in R. */
+  /** Costo dichiarato di riferimento (applicato solo alle righe senza dati). */
   costR: number;
   /** Modello di costo dichiarato (fonte e componenti). */
   netModel: {
@@ -498,6 +522,22 @@ export interface AiCalibrationResponse {
     spreadR: number;
     totalR: number;
     source: string;
+    /** ADDITIVO (Fase 6.1): il costo e' per riga, non unico. */
+    perRow?: boolean;
+  };
+  /**
+   * ADDITIVO (Fase 6.1): riepilogo dei costi applicati riga per riga. `meanR`
+   * e' la media dei costi effettivi; `declared` conta le righe rimaste al tetto
+   * dichiarato, che sono le sole a valere esattamente `costR`.
+   */
+  costSummary?: {
+    rows: number;
+    perRow: number;
+    declared: number;
+    meanR: number | null;
+    minR: number | null;
+    maxR: number | null;
+    bySource: { source: AiTradeCostSource; rows: number }[];
   };
   /** Incertezza campionaria dell'edge e del divario di successo (R netto). */
   uncertainty: AiCalibrationUncertainty;
@@ -810,6 +850,38 @@ function buildSlices(
   return slices;
 }
 
+/**
+ * Riepilogo dei costi riga per riga (Fase 6.1). `declared` conta le righe a cui
+ * e' stato applicato il tetto dichiarato: sono le uniche in cui il costo vale
+ * esattamente `AI_CALIBRATION_NET_COST_R`.
+ */
+function buildCostSummary(rows: readonly AiCalibrationJoin[]): {
+  rows: number;
+  perRow: number;
+  declared: number;
+  meanR: number | null;
+  minR: number | null;
+  maxR: number | null;
+  bySource: { source: AiTradeCostSource; rows: number }[];
+} {
+  const costs = rows.map((row) => row.costR).filter((value) => Number.isFinite(value));
+  const bySourceMap = new Map<AiTradeCostSource, number>();
+  for (const row of rows) {
+    bySourceMap.set(row.costSource, (bySourceMap.get(row.costSource) ?? 0) + 1);
+  }
+  return {
+    rows: rows.length,
+    perRow: rows.filter((row) => row.costSource !== 'declared_ceiling').length,
+    declared: rows.filter((row) => row.costSource === 'declared_ceiling').length,
+    meanR: costs.length > 0 ? round(mean(costs), 4) : null,
+    minR: costs.length > 0 ? round(Math.min(...costs), 4) : null,
+    maxR: costs.length > 0 ? round(Math.max(...costs), 4) : null,
+    bySource: [...bySourceMap.entries()]
+      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+      .map(([source, count]) => ({ source, rows: count })),
+  };
+}
+
 function buildPolicies(rows: readonly AiCalibrationJoin[]): AiCalibrationPolicyRow[] {
   const definitions: {
     code: AiCalibrationPolicyRow['code'];
@@ -1058,7 +1130,16 @@ export function buildAiCalibration(input: {
     if (pair.point.source === 'near_miss') nearMissMatched += 1;
     if (pair.point.source === 'rejected') rejectedMatched += 1;
     const { entry, ticker, atMs } = pair.candidate;
-    const rNetVal = round(pair.point.r - AI_CALIBRATION_NET_COST_R, 4);
+    // Fase 6.1: il costo dipende dalla riga (spread stimato sulle barre e leva,
+    // quando ci sono). Senza dati di prezzo `resolveTradeCost` restituisce
+    // esattamente il costo dichiarato, quindi le righe storiche non cambiano.
+    const cost = resolveTradeCost({
+      entry: pair.point.entry ?? null,
+      stop: pair.point.stop ?? null,
+      leverage: pair.point.leverage ?? null,
+      bars: pair.point.bars ?? null,
+    });
+    const rNetVal = round(pair.point.r - cost.costR, 4);
     if (entry.source === 'catalyst') {
       const catMeta = typeof entry.aiCategory === 'string' ? entry.aiCategory : '';
       const bonusMatch = catMeta.match(/newsBonus=(\d+)/i);
@@ -1085,6 +1166,8 @@ export function buildAiCalibration(input: {
       aiOutcome: entry.aiOutcome ?? null,
       r: pair.point.r,
       rNet: rNetVal,
+      costR: cost.costR,
+      costSource: cost.costSource,
       forwardStatus: pair.point.status,
       deltaMs: Math.round(pair.point.decidedAtMs - atMs),
       promptVersion:
@@ -1309,10 +1392,14 @@ export function buildAiCalibration(input: {
       feeR: AI_CALIBRATION_NET_FEE_R,
       spreadR: AI_CALIBRATION_NET_SPREAD_R,
       totalR: AI_CALIBRATION_NET_COST_R,
+      perRow: true,
       source:
-        'Shadow V2: fee Trade Republic 2.00 EUR round-trip sul rischio di riferimento 10 EUR ' +
-        '+ proxy spread al tetto UNDERLYING_SPREAD_MAX_R (non misurato sulle barre V1-live)',
+        'Shadow V2, per riga: fee Trade Republic 2.00 EUR round-trip sul rischio di riferimento 10 EUR ' +
+        '+ spread sottostante stimato con Corwin-Schultz sulle due barre 5m del fill (al tetto ' +
+        'UNDERLYING_SPREAD_MAX_R quando le barre mancano) + spread del certificato KO ' +
+        '(2 x 0.2% per lato, diviso leva e distanza dello stop), con tetto totale VAR_SPREAD_MAX_R',
     },
+    costSummary: buildCostSummary(joined),
     uncertainty,
     coverage,
     ordinality,
@@ -1334,10 +1421,13 @@ export function buildAiCalibration(input: {
       'Sola lettura: nessuna scrittura, nessun cambio di memoria AI, gate o selezione setup.',
       'Il join e\' per ticker e prossimita\' temporale (finestra fissa); non dimostra che la decisione AI abbia causato l\'esito.',
       'L\'R di V1-live e\' di prezzo e solo su setup emessi con decisione TRADE: gli altri candidati restano non abbinati, tranne i near-miss e gli altri scarti registrati (esiti controfattuali).',
-      `R netto: a ogni abbinamento si sottrae ${AI_CALIBRATION_NET_COST_R} R di costi dichiarati ` +
-        `(${AI_CALIBRATION_NET_FEE_R} R di fee round-trip + ${AI_CALIBRATION_NET_SPREAD_R} R di proxy spread al tetto, non misurato). ` +
-        'Un costo costante non cambia edgeR, ma abbassa meanR e win rate: il verdetto del validatore usa i valori netti.',
-      'Nessuna leva nel R: il moltiplicatore del certificato non entra nel calcolo, quindi il R netto non e\' un P&L.',
+      `R netto: a ogni abbinamento si sottrae il costo della RIGA (fee ${AI_CALIBRATION_NET_FEE_R} R + ` +
+        'spread sottostante stimato + spread certificato KO quando la leva e\' nota). Le righe senza ' +
+        `prezzo o senza barre restano al costo dichiarato di ${AI_CALIBRATION_NET_COST_R} R ` +
+        `(${AI_CALIBRATION_NET_FEE_R} R di fee + ${AI_CALIBRATION_NET_SPREAD_R} R di tetto spread): ` +
+        'la loro fonte e\' `declared_ceiling`. Il costo abbassa meanR e win rate; finche\' e\' costante non cambia edgeR, ma appena e\' diverso per riga CAMBIA anche il divario netto: non e\' piu\' una costante che si semplifica.',
+      'Spread stimato, non misurato dal book: Corwin-Schultz su barre a 5 minuti e\' un proxy, e il termine del certificato KO vale solo per le righe con la leva dichiarata.',
+      'Nessuna leva nel R: il moltiplicatore del certificato non entra nel calcolo dell\'esito, quindi il R netto non e\' un P&L.',
       ...(nearMissForwardPoints > 0
         ? [
             `${nearMissMatched} abbinamenti usano un esito near-miss controfattuale: il setup era bloccato da un solo gate (ADX borderline, G4, G5, G7, G8/G9, G11) e non e' mai stato emesso. L'esito e' calcolato sulle barre chiuse con lo stesso motore di V1-live, ma non e' un trade reale.`,

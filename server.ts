@@ -97,6 +97,7 @@ import {
   registerShadowV1LiveCollector,
   shadowV1LiveBodyLimitErrorHandler,
   shadowV1LiveBodyLimitParser,
+  SHADOW_V1_LIVE_BARS_PATH,
   SHADOW_V1_LIVE_OBSERVE_PATH,
 } from './src/server/shadowV1LiveCollector';
 import {
@@ -2977,6 +2978,65 @@ const AI_DESK_POSTMORTEM_PROMPT_VERSION = 'ai-desk-postmortem@1';
  * sola definizione: la sezione `calibration` del fascicolo non puo' descrivere
  * un campione diverso da quello che il pannello mostra.
  */
+/**
+ * ADDITIVO (Fase 6.1): barre 5m persistite da V1-live, indicizzate per ticker.
+ * Servono solo al costo per riga (Corwin-Schultz sulle due barre del fill).
+ * Best-effort: file assente o illeggibile => mappa vuota, e ogni riga resta al
+ * costo dichiarato. Nessuna eccezione esce da qui.
+ */
+function loadShadowV1LiveBarsByTicker(): Map<
+  string,
+  Array<{ t: number; o: number; h: number; l: number; c: number; v: number }>
+> {
+  const byTicker = new Map<string, Array<{ t: number; o: number; h: number; l: number; c: number; v: number }>>();
+  try {
+    const barsPath = path.join(process.cwd(), SHADOW_V1_LIVE_BARS_PATH);
+    if (!fs.existsSync(barsPath)) return byTicker;
+    const parsed: unknown = JSON.parse(fs.readFileSync(barsPath, 'utf8'));
+    const entries = (parsed as { entries?: unknown })?.entries;
+    const list = Array.isArray(entries)
+      ? entries
+      : entries && typeof entries === 'object'
+        ? Object.values(entries)
+        : [];
+    for (const entry of list as Array<{ ticker?: unknown; bars?: unknown }>) {
+      if (!entry || typeof entry.ticker !== 'string' || !Array.isArray(entry.bars)) continue;
+      const bars = (entry.bars as Array<Record<string, unknown>>).filter(
+        (bar) =>
+          bar &&
+          Number.isFinite(bar.t) &&
+          Number.isFinite(bar.h) &&
+          Number.isFinite(bar.l) &&
+          Number.isFinite(bar.o) &&
+          Number.isFinite(bar.c)
+      ) as Array<{ t: number; o: number; h: number; l: number; c: number; v: number }>;
+      if (bars.length > 0) byTicker.set(entry.ticker, bars);
+    }
+  } catch {
+    // Nessuna barra: il costo resta quello dichiarato, e la fonte lo dice.
+  }
+  return byTicker;
+}
+
+/**
+ * Le due barre consecutive che contengono il fill: quella del fill e la
+ * precedente. `null` quando il fill non e' databile o la serie non le ha.
+ */
+function barsAroundFill(
+  bars: Array<{ t: number; o: number; h: number; l: number; c: number; v: number }> | undefined,
+  fillBarTs: unknown
+): Array<{ t: number; o: number; h: number; l: number; c: number; v: number }> | null {
+  if (!Array.isArray(bars) || bars.length < 2) return null;
+  if (typeof fillBarTs !== 'number' || !Number.isFinite(fillBarTs)) return null;
+  let index = -1;
+  for (let i = 0; i < bars.length; i += 1) {
+    if (bars[i].t <= fillBarTs) index = i;
+    else break;
+  }
+  if (index < 1) return null;
+  return [bars[index - 1], bars[index]];
+}
+
 const aiCalibrationDeps: AiCalibrationRegistrationDeps = {
   // Stesse voci del pannello: file locale + fallback Firestore quando il flag
   // SHADOW_AI_LOG_FIRESTORE e' acceso. Su disco effimero il file puo' essere
@@ -2998,16 +3058,29 @@ const aiCalibrationDeps: AiCalibrationRegistrationDeps = {
     const files = [signalsPath, ...listArchivePaths(signalsPath)].filter((file) => existsSync(file));
     if (files.length === 0) return [];
     const merged = mergeRecordFiles(files, loadRecords);
+    const barsByTicker = loadShadowV1LiveBarsByTicker();
     const points: AiCalibrationForwardPoint[] = [];
     for (const record of merged.records) {
       if (record.status !== 'STOP' && record.status !== 'TARGET' && record.status !== 'EXPIRED') continue;
       if (typeof record.r !== 'number' || !Number.isFinite(record.r)) continue;
+      // Fase 6.1: prezzo di ingresso/stop e due barre del fill per il costo
+      // della riga. La leva non e' registrata da V1-live: quando manca, il
+      // termine certificato non viene contato e `costSource` lo dichiara.
+      const leverage =
+        typeof (record as { leverage?: unknown }).leverage === 'number' &&
+        Number.isFinite((record as { leverage?: number }).leverage)
+          ? ((record as { leverage?: number }).leverage as number)
+          : null;
       points.push({
         key: record.key,
         ticker: record.ticker,
         decidedAtMs: record.decidedAtMs,
         r: record.r,
         status: record.status,
+        entry: typeof record.entry === 'number' ? record.entry : null,
+        stop: typeof record.stop === 'number' ? record.stop : null,
+        leverage,
+        bars: barsAroundFill(barsByTicker.get(record.ticker), record.fillBarTs),
       });
     }
     return points;

@@ -1214,3 +1214,54 @@ describe('aiCalibration — tagli per promptVersion e per modello', () => {
     );
   });
 });
+
+describe('aiCalibration — costo per riga (Fase 6.1)', () => {
+  function sampleWithPrices(withPrices: boolean) {
+    const entries: AiCalibrationEntry[] = [
+      entry({ id: 'c1', ticker: 'AAA', candidateKey: 'c:AAA', decision: 'AZIONE' }),
+      entry({ id: 'c2', ticker: 'BBB', candidateKey: 'c:BBB', decision: 'SCARTO' }),
+    ];
+    const bars = [
+      { t: 1_000_000, o: 100, h: 101, l: 99, c: 100.5, v: 1000 },
+      { t: 1_000_000 + 5 * 60_000, o: 100.5, h: 100.8, l: 99.4, c: 100.2, v: 900 },
+    ];
+    // Stop al 10%: lo spread stimato (cs/stopPct = 0,1063) sta sotto il tetto
+    // 0,16, quindi il costo per riga e' 0,3063 R e NON 0,36.
+    const extra = withPrices ? { entry: 100, stop: 90, bars } : {};
+    const forward: AiCalibrationForwardPoint[] = [
+      point({ key: 'sig:AAA', ticker: 'AAA', r: 1, status: 'TARGET', ...extra }),
+      point({ key: 'sig:BBB', ticker: 'BBB', r: -1, status: 'STOP', ...extra }),
+    ];
+    return buildAiCalibration({ entries, forward, nowMs: NOW, generatedAt: iso(0), minSample: 2 });
+  }
+
+  it('senza prezzi il costo resta quello dichiarato: equivalenza col modello costante', () => {
+    const out = sampleWithPrices(false);
+    const azione = out.buckets.find((bucket) => bucket.decision === 'AZIONE');
+    assert.equal(azione?.meanRNet, 0.64, '1.00 - 0.36 come prima della Fase 6.1');
+    assert.equal(out.costSummary?.declared, 2);
+    assert.equal(out.costSummary?.perRow, 0);
+    assert.equal(out.costSummary?.meanR, 0.36);
+    assert.equal(out.netModel.perRow, true);
+  });
+
+  it('con barre e stop il costo e quello della riga e la fonte lo dichiara', () => {
+    const out = sampleWithPrices(true);
+    const azione = out.buckets.find((bucket) => bucket.decision === 'AZIONE');
+    assert.equal(out.costSummary?.perRow, 2);
+    assert.equal(out.costSummary?.declared, 0);
+    assert.ok(
+      out.costSummary?.bySource.some((row) => row.source === 'per_row_cs' && row.rows === 2),
+      'la fonte per riga e dichiarata nel riepilogo'
+    );
+    assert.equal(out.costSummary?.meanR, 0.3063, 'fee 0,20 + spread stimato 0,1063');
+    assert.ok(
+      Math.abs(azione!.meanRNet! - (1 - out.costSummary!.meanR!)) < 1e-6,
+      'il netto usa il costo effettivo della riga'
+    );
+    // I join espongono il costo per riga, non solo l'aggregato.
+    assert.ok(
+      out.skippedWinners.every((row) => typeof row.costR === 'number' && row.costSource !== undefined)
+    );
+  });
+});
