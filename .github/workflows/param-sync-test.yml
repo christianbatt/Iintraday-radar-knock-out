@@ -73,6 +73,8 @@ jobs:
         run: npm run test:ai-baseline
       - name: AI calibration tests (net R + validatore deterministico)
         run: npm run test:ai-calibration
+      - name: AI validator Monte Carlo (falsi positivi a edge nullo)
+        run: npm run test:validator-mc
       - name: AI desk contract tests
         run: npm run test:ai-desk
       - name: AI audit fixes tests

@@ -66,6 +66,7 @@ export type AiDeskValidationCheckCode =
   | 'sample_integrity'
   | 'edge_r'
   | 'edge_r_ci'
+  | 'avg_r_ci'
   | 'win_rate_gap'
   | 'net_profitability';
 /**
@@ -84,6 +85,12 @@ export interface AiDeskValidationCheck {
   threshold: number;
   unit: 'count' | 'R' | 'pct' | 'share';
   detail: string;
+  /**
+   * Check informativo: compare nella risposta ma non entra nel verdetto. Serve
+   * a mostrare quanto e' stretto un numero senza trasformare una diagnostica
+   * in una regola di validazione.
+   */
+  diagnostic?: boolean;
 }
 
 export interface AiDeskValidation {
@@ -140,6 +147,11 @@ export interface AiDeskValidationInput {
   uncertainty?: {
     edgeR?: { lower: number; upper: number } | null;
     winRateGapPct?: { lower: number; upper: number } | null;
+    /**
+     * Intervallo sulla media netta di AZIONE (Fase 5.2). Alimenta il check
+     * DIAGNOSTICO `avg_r_ci`: non concorre al verdetto.
+     */
+    avgRNet?: { lower: number; upper: number; mean?: number; n?: number } | null;
   } | null;
 }
 
@@ -340,8 +352,40 @@ export function validateAiDeskSample(input: AiDeskValidationInput): AiDeskValida
     });
   }
 
-  const insufficient = checks.filter((check) => check.status === 'insufficient');
-  const failed = checks.filter((check) => check.status === 'fail');
+  // Fase 5.2: intervallo sulla MEDIA di AZIONE, dichiaratamente diagnostico.
+  // Non entra nel verdetto: la regola di validazione resta sulla stima
+  // puntuale (`edge_r`, `net_profitability`).
+  if (uncertainty) {
+    const avgInterval =
+      uncertainty.avgRNet &&
+      finite(uncertainty.avgRNet.lower) &&
+      finite(uncertainty.avgRNet.upper)
+        ? uncertainty.avgRNet
+        : null;
+    checks.push({
+      code: 'avg_r_ci',
+      label: 'R medio di AZIONE al 95%',
+      status: avgInterval === null ? 'insufficient' : avgInterval.lower > 0 ? 'pass' : 'fail',
+      observed: avgInterval === null ? null : avgInterval.lower,
+      threshold: 0,
+      unit: 'R',
+      detail:
+        avgInterval === null
+          ? 'intervallo sulla media non calcolabile: servono almeno 2 esiti di AZIONE.'
+          : `R netto medio di AZIONE ${finite(avgInterval.mean) ? avgInterval.mean : 'n.d.'} R, ` +
+            `IC95% [${avgInterval.lower}, ${avgInterval.upper}]` +
+            (finite(avgInterval.n) ? `, n ${avgInterval.n}` : '') +
+            ': ' +
+            (avgInterval.lower > 0
+              ? 'la media resta positiva anche nel caso sfavorevole.'
+              : 'la media mostrata non si distingue da zero: diagnostica, non un risultato.'),
+      diagnostic: true,
+    });
+  }
+
+  const decisive = checks.filter((check) => check.diagnostic !== true);
+  const insufficient = decisive.filter((check) => check.status === 'insufficient');
+  const failed = decisive.filter((check) => check.status === 'fail');
   const verdict: AiDeskValidationVerdict =
     insufficient.length > 0 ? 'INSUFFICIENTE' : failed.length > 0 ? 'NON_CONFERMATO' : 'CONFERMATO';
 
@@ -372,6 +416,7 @@ export function validateAiDeskSample(input: AiDeskValidationInput): AiDeskValida
       'Redditività: `edge_r` e `win_rate_gap` misurano una differenza fra AZIONE e SCARTO, in cui un costo costante per trade si semplifica. Solo `net_profitability` chiede che AZIONE sia positiva al netto (soglia +0,1 R): un desk può discriminare bene e perdere su ogni trade preso.',
       'Le soglie sono dichiarate prima dei dati e inclusive sul bordo; un campione troncato o sporco resta INSUFFICIENTE.',
       'Se forniti, gli intervalli bootstrap richiedono solo un edge di segno positivo (limite inferiore > 0): non dimostrano che l edge superi 0.2 R con il 95% di confidenza.',
+      'Il check `avg_r_ci` (intervallo sulla media netta di AZIONE) e diagnostico: compare nella risposta, non concorre al verdetto.',
     ],
   };
 }

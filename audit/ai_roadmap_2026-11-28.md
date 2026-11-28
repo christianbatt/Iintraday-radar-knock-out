@@ -68,8 +68,8 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 ## Fase 5 — Potenza statistica e falsificazione
 
 - [x] **5.1 `requiredSampleSize({varianceR, effectR, alpha, power})`** + "servono N trade, ne hai M" nel pannello. *(fatto 2026-11-28: `src/utils/aiPowerAnalysis.ts` — non `src/server`, perché il pannello lo importa e il guard client vieta moduli server nel bundle; quantili normali Acklam, formula n = (z_{1-α/2}+z_power)²σ²/δ²; `power` dentro `uncertainty` della calibrazione e riga nel pannello. Approssimazione normale dichiarata, non un test t esatto)*
-- [ ] **5.2 IC bootstrap deterministico su `avgR(AZIONE)`** *(parziale: `src/server/aiMeanInterval.ts` con seed fissa e test di determinismo è pronto, ma non è ancora agganciato al validatore come `avg_r_ci` né mostrato come intervallo sul R di AZIONE; il check resta fuori dal verdetto)*
-- [ ] **5.3 Harness Monte Carlo** (`scripts/validator_mc.ts`, seed fisse): falsi positivi a edge nullo e potenza a edge noto, con asserzioni che falliscono se le soglie sono troppo permissive. *(non iniziato)*
+- [x] **5.2 IC bootstrap deterministico su `avgR(AZIONE)`** *(fatto 2026-11-28: `src/server/aiMeanInterval.ts` agganciato in `buildUncertainty` → `uncertainty.avgRNet`; il validatore espone il check **diagnostico** `avg_r_ci` (`diagnostic: true`, escluso dal calcolo del verdetto) e il pannello mostra media, IC95% e `n` con la dicitura "diagnostica, non entra nel verdetto". Seed derivata `AI_CALIBRATION_BOOTSTRAP_SEED + 2`, nessun orologio)*
+- [x] **5.3 Harness Monte Carlo** (`scripts/validator_mc.ts`, seed fisse): falsi positivi a edge nullo e potenza a edge noto, con asserzioni che falliscono se le soglie sono troppo permissive. *(fatto 2026-11-28, `npm run test:validator-mc` in CI. Misurato: edge nullo 20+20 casi, 400 repliche → **3,0% CONFERMATO** (tetto dichiarato 5%); edge vero 1 R, 100+100 casi, 300 repliche → **100% CONFERMATO** (minimo 90%); due esecuzioni identiche. Risultato collaterale dichiarato: senza il gate IC sull'edge le stime puntuali confermano il **12,8%** dei campioni a edge nullo, quindi è l'IC a tenere a bada i falsi positivi. Limiti: R normali e bucket indipendenti, ipotesi non verificabile su dati reali)*
 
 ## Fase 6 — Costo reale per trade
 
@@ -110,7 +110,9 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 | 2026-11-28 | 3.3 campione canonico + runId reale | `a8494c7` | CI verde |
 | 2026-11-28 | UI: messaggio per diario canonico vuoto | vedi commit | formatter puro + test, agganciato al modal |
 | 2026-11-28 | Fase 4: un re-test, un conteggio | `e73c162` | CI verde |
-| 2026-11-28 | 5.1 potenza + 5.2 modulo intervallo | vedi commit | tsc, lint, power (19), calibrazione |
+| 2026-11-28 | 5.1 potenza + 5.2 modulo intervallo | `414a57a` | tsc, lint, power (19), calibrazione; **CI rossa** sul passo Client process guard |
+| 2026-11-28 | correzione: potenza fuori dal perimetro server | `6985af5` | CI verde: 33 passi in locale |
+| 2026-11-28 | 5.2 agganciata (`avg_r_ci` diagnostico) + 5.3 Monte Carlo | vedi commit | 34 passi CI in locale, MC: FP 3,0%, potenza 100% |
 | 2026-11-28 | Fase 4 correzioni: rinnovo agganciato + mapping reale | `dc74673` | test su scansione vera, contatore preservato |
 | 2026-11-28 | Fase 4 (scadenza, revoca, prompt senza %) | `9ba80bc` | tsc, lint, ai-desk (23 nuove asserzioni), memoria scope/attribuzione |
 | 2026-11-28 | 3.1-3.2 memoria per-utente + autore + dataset | `258aaa4` | tsc, lint, ai_memory_scope (17), attribuzione, ai-desk, learningValidator, specialization, ai_shadow_log |

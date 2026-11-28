@@ -49,7 +49,8 @@
     "veto:report": "tsx scripts/veto_outcome_report.ts",
     "audit:shadowv1live-backdating": "tsx scripts/audit_shadow_v1_live_backdating.ts",
     "news:lift": "tsx scripts/news_bonus_lift.ts",
-    "learning:nightly": "tsx scripts/nightly_learning.ts"
+    "learning:nightly": "tsx scripts/nightly_learning.ts",
+    "test:validator-mc": "tsx scripts/validator_mc.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

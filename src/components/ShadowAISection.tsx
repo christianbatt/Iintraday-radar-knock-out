@@ -115,6 +115,8 @@ export interface ShadowAiCalibrationView {
     winRateGapPct?: { lower: number; upper: number } | null;
     /** Fase 5.1: quanti trade servono per rilevare l'effetto target. */
     power?: { effectR?: number; requiredN?: number | null; observedN?: number } | null;
+    /** Fase 5.2: intervallo bootstrap sulla media netta di AZIONE. */
+    avgRNet?: { lower: number; upper: number; mean?: number; n?: number } | null;
   } | null;
   /** Copertura della pipeline LLM sui candidati del log. */
   coverage?: {
@@ -278,6 +280,18 @@ export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrati
           observedN: calibration.uncertainty.power.observedN ?? 0,
           effectR: calibration.uncertainty.power.effectR,
         })}
+      </p>
+    )}
+    {calibration.uncertainty?.avgRNet && (
+      <p className="text-[10px] text-slate-500" data-testid="shadow-ai-calibration-avg-r">
+        IC{Math.round((calibration.uncertainty.confidence ?? 0.95) * 100)}% R netto medio di AZIONE:
+        {' '}
+        {calibration.uncertainty.avgRNet.mean ?? '—'} [
+        {calibration.uncertainty.avgRNet.lower}, {calibration.uncertainty.avgRNet.upper}]
+        {typeof calibration.uncertainty.avgRNet.n === 'number'
+          ? ` · n ${calibration.uncertainty.avgRNet.n}`
+          : ''}
+        {' '}· diagnostica, non entra nel verdetto
       </p>
     )}
     {calibration.uncertainty?.edgeR === null && calibration.uncertainty && (

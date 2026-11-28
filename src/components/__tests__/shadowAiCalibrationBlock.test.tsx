@@ -476,3 +476,32 @@ describe('ShadowAiCalibrationBlock — tagli per prompt e modello', () => {
     assert.ok(out.includes('openrouter:m1'));
   });
 });
+
+describe('ShadowAiCalibrationBlock — intervallo sulla media di AZIONE (5.2)', () => {
+  it('mostra media, IC e n dichiarandolo diagnostico', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, {
+        calibration: {
+          ...EVIDENCE,
+          uncertainty: {
+            confidence: 0.95,
+            avgRNet: { lower: 0.11, upper: 0.73, mean: 0.42, n: 20 },
+          },
+        },
+      })
+    );
+    assert.ok(out.includes('data-testid="shadow-ai-calibration-avg-r"'));
+    assert.ok(out.includes('0.42 [0.11, 0.73]'));
+    assert.ok(out.includes('n 20'));
+    assert.ok(out.includes('diagnostica, non entra nel verdetto'));
+  });
+
+  it('senza intervallo la riga non compare', () => {
+    const out = renderToStaticMarkup(
+      React.createElement(ShadowAiCalibrationBlock, {
+        calibration: { ...EVIDENCE, uncertainty: { confidence: 0.95, avgRNet: null } },
+      })
+    );
+    assert.ok(!out.includes('data-testid="shadow-ai-calibration-avg-r"'));
+  });
+});

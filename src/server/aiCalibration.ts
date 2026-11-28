@@ -43,6 +43,12 @@ import {
   validateAiDeskSample,
   type AiDeskValidation,
 } from './aiDeskValidator';
+import { bootstrapMeanInterval } from './aiMeanInterval';
+import {
+  AI_POWER_TARGET_EFFECT_R,
+  requiredSampleSize,
+  sampleVariance,
+} from '../utils/aiPowerAnalysis';
 
 export const AI_CALIBRATION_VERSION = 'ai-calibration@1';
 export const AI_CALIBRATION_PATH = '/api/shadow/ai-calibration';
@@ -66,11 +72,6 @@ export const AI_CALIBRATION_MAX_ENTRIES = 2000;
  */
 export const AI_CALIBRATION_BOOTSTRAP_ITERATIONS = 2000;
 export const AI_CALIBRATION_BOOTSTRAP_SEED = 0x5eed1a7e;
-import {
-  AI_POWER_TARGET_EFFECT_R,
-  requiredSampleSize,
-  sampleVariance,
-} from '../utils/aiPowerAnalysis';
 export const AI_CALIBRATION_CONFIDENCE = 0.95;
 /**
  * Copertura minima del log: sotto questa quota di candidati davvero valutati il
@@ -330,6 +331,17 @@ export interface AiCalibrationUncertainty {
   net: true;
   edgeR: AiCalibrationInterval | null;
   winRateGapPct: AiCalibrationInterval | null;
+  /**
+   * ADDITIVO (Fase 5.2): intervallo bootstrap sulla MEDIA del R netto di
+   * AZIONE. Diagnostica: dice quanto e' stretto il numero mostrato, non entra
+   * nel verdetto.
+   */
+  avgRNet?: {
+    lower: number;
+    upper: number;
+    mean: number;
+    n: number;
+  } | null;
   note: string;
   /**
    * ADDITIVO (Fase 5.1): quanti trade servirebbero per rilevare `effectR` con la
@@ -593,6 +605,25 @@ function bootstrapInterval(
   };
 }
 
+/**
+ * Intervallo bootstrap dell'edge netto, esposto perche' l'harness Monte Carlo
+ * misuri la STESSA procedura della produzione invece di una copia. Il seed e'
+ * opzionale: l'harness lo varia per replica, la produzione usa quello fisso.
+ */
+export function bootstrapEdgeInterval(
+  action: readonly number[],
+  skip: readonly number[],
+  seed: number = AI_CALIBRATION_BOOTSTRAP_SEED
+): AiCalibrationInterval | null {
+  return bootstrapInterval(
+    action,
+    skip,
+    AI_CALIBRATION_BOOTSTRAP_ITERATIONS,
+    meanDiff,
+    seed
+  );
+}
+
 function buildUncertainty(
   action: readonly number[],
   skip: readonly number[]
@@ -608,6 +639,16 @@ function buildUncertainty(
         : (requiredSampleSize({ varianceR, effectR: AI_POWER_TARGET_EFFECT_R })?.n ?? null),
     observedN: action.filter((value) => Number.isFinite(value)).length,
   };
+  // Fase 5.2: intervallo sulla media di AZIONE, con una seed derivata per non
+  // riusare la stessa sequenza degli intervalli sull'edge.
+  const avgR = bootstrapMeanInterval(action, {
+    iterations: AI_CALIBRATION_BOOTSTRAP_ITERATIONS,
+    seed: AI_CALIBRATION_BOOTSTRAP_SEED + 2,
+    confidence: AI_CALIBRATION_CONFIDENCE,
+  });
+  const avgRNet = avgR
+    ? { lower: avgR.lower, upper: avgR.upper, mean: avgR.mean, n: avgR.n }
+    : null;
   return {
     method: 'bootstrap-percentile',
     iterations: AI_CALIBRATION_BOOTSTRAP_ITERATIONS,
@@ -628,6 +669,7 @@ function buildUncertainty(
       (sampleA, sampleB) => winSharePct(sampleA) - winSharePct(sampleB),
       AI_CALIBRATION_BOOTSTRAP_SEED + 1
     ),
+    avgRNet,
     note:
       'Bootstrap percentile deterministico sul R netto (seed fissa): descrive ' +
       'l incertezza campionaria del segno, non una probabilita di profitto.',
@@ -1213,7 +1255,11 @@ export function buildAiCalibration(input: {
     edgeR: edgeRNet ?? edgeR,
     edgeRNet,
     alerts,
-    uncertainty: { edgeR: uncertainty.edgeR, winRateGapPct: uncertainty.winRateGapPct },
+    uncertainty: {
+      edgeR: uncertainty.edgeR,
+      winRateGapPct: uncertainty.winRateGapPct,
+      avgRNet: uncertainty.avgRNet ?? null,
+    },
   });
 
   return {

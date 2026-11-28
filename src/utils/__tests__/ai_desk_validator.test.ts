@@ -275,6 +275,37 @@ describe('aiDeskValidator — incertezza e copertura', () => {
     assert.equal(out.verdict, 'INSUFFICIENTE');
   });
 
+  it('avg_r_ci e diagnostico: un intervallo negativo non cambia il verdetto', () => {
+    const out = validateAiDeskSample(
+      strongSample({
+        uncertainty: {
+          edgeR: { lower: 0.05, upper: 1.1 },
+          avgRNet: { lower: -0.08, upper: 0.4, mean: 0.12, n: 20 },
+        },
+      })
+    );
+    const check = out.checks.find((item) => item.code === 'avg_r_ci');
+    assert.equal(check?.status, 'fail');
+    assert.equal(check?.observed, -0.08);
+    assert.equal(check?.diagnostic, true);
+    assert.equal(out.verdict, 'CONFERMATO', 'il check diagnostico non concorre al verdetto');
+  });
+
+  it('avg_r_ci senza intervallo: insufficient, verdetto invariato', () => {
+    const out = validateAiDeskSample(
+      strongSample({
+        uncertainty: { edgeR: { lower: 0.05, upper: 1.1 }, avgRNet: null },
+      })
+    );
+    assert.equal(out.checks.find((item) => item.code === 'avg_r_ci')?.status, 'insufficient');
+    assert.equal(out.verdict, 'CONFERMATO');
+  });
+
+  it('senza intervalli non esiste nemmeno avg_r_ci', () => {
+    const out = validateAiDeskSample(strongSample());
+    assert.equal(out.checks.some((check) => check.code === 'avg_r_ci'), false);
+  });
+
   it('COVERAGE_LOW degrada il campione come un formato rotto', () => {
     const out = validateAiDeskSample(strongSample({ alerts: [{ code: 'COVERAGE_LOW' }] }));
     assert.equal(

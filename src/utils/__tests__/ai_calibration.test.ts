@@ -957,6 +957,20 @@ describe('aiCalibration — incertezza deterministica sul R netto', () => {
     const out = sample([1], [-1]);
     assert.equal(out.uncertainty.edgeR, null);
     assert.equal(out.uncertainty.winRateGapPct, null);
+    assert.equal(out.uncertainty.avgRNet, null);
+  });
+
+  it('espone l intervallo sulla media netta di AZIONE e lo passa al validatore', () => {
+    const out = sample([1, 0.5, 0.8, 1.2, 0.4], [-1, -0.5, -0.8, -1.2, -0.4]);
+    const avg = out.uncertainty.avgRNet!;
+    assert.ok(avg, 'campione sufficiente: intervallo presente');
+    const bucket = out.buckets.find((item) => item.decision === 'AZIONE')!;
+    assert.equal(avg.mean, bucket.meanRNet, 'la media e quella del bucket AZIONE');
+    assert.equal(avg.n, 5);
+    assert.ok(avg.lower <= avg.mean && avg.mean <= avg.upper);
+    const check = out.validation.checks.find((item) => item.code === 'avg_r_ci');
+    assert.equal(check?.diagnostic, true);
+    assert.equal(check?.status, avg.lower > 0 ? 'pass' : 'fail');
   });
 });
 
