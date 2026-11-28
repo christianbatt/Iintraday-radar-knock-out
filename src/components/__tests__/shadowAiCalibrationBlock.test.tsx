@@ -220,7 +220,7 @@ describe('ShadowAiCalibrationBlock — validatore deterministico', () => {
         calibration: {
           ...EVIDENCE,
           validation: {
-            version: 'ai-desk-validation@1',
+            version: 'ai-desk-validation@2',
             verdict: 'NON_CONFERMATO',
             deskStatus: 'NON_VALIDATO',
             headline: 'NON CONFERMATO: edgeR 0.05 R (soglia +0.2 R).',
@@ -229,7 +229,7 @@ describe('ShadowAiCalibrationBlock — validatore deterministico', () => {
       })
     );
     assert.ok(out.includes('data-testid="shadow-ai-calibration-validator"'));
-    assert.ok(out.includes('validatore ai-desk-validation@1: NON_CONFERMATO'));
+    assert.ok(out.includes('validatore ai-desk-validation@2: NON_CONFERMATO'));
     assert.ok(out.includes('desk NON_VALIDATO'));
     assert.ok(out.includes('NON CONFERMATO: edgeR 0.05 R'));
   });

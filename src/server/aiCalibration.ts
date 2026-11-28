@@ -498,7 +498,7 @@ export interface AiCalibrationResponse {
   alerts: AiCalibrationAlert[];
   verdict: 'insufficient' | 'evidence';
   /**
-   * Verdetto del validatore deterministico (`ai-desk-validation@1`): soglie
+   * Verdetto del validatore deterministico (`ai-desk-validation@2`): soglie
    * fisse applicate al campione aggregato, nessun effetto su gate o selezione.
    */
   validation: AiDeskValidation;

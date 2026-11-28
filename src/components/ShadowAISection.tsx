@@ -99,7 +99,7 @@ export interface ShadowAiCalibrationView {
   readLimit?: number;
   /** Allarmi di formato calcolati dal server (vuoto = nessun degrado). */
   alerts?: { code: string; message: string }[];
-  /** Verdetto del validatore deterministico (`ai-desk-validation@1`). */
+  /** Verdetto del validatore deterministico (`ai-desk-validation@2`). */
   validation?: {
     version?: string;
     verdict?: string;
@@ -216,7 +216,7 @@ export const ShadowAiCalibrationBlock: React.FC<{ calibration: ShadowAiCalibrati
           calibration.validation.verdict === 'CONFERMATO' ? 'text-emerald-300' : 'text-slate-400'
         }`}
       >
-        validatore {calibration.validation.version ?? 'ai-desk-validation@1'}:{' '}
+        validatore {calibration.validation.version ?? 'ai-desk-validation@2'}:{' '}
         {calibration.validation.verdict} · desk {calibration.validation.deskStatus ?? 'NON_VALIDATO'}
       </p>
     )}

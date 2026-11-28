@@ -1,5 +1,5 @@
 /**
- * VALIDATORE DETERMINISTICO DEL DESK AI (`ai-desk-validation@1`).
+ * VALIDATORE DETERMINISTICO DEL DESK AI (`ai-desk-validation@2`).
  *
  * La calibrazione (PR-C, `src/server/aiCalibration.ts`) misura lo scarto di
  * rendimento fra cio' che il desk AI ha approvato (`AZIONE`) e cio' che ha
@@ -22,6 +22,14 @@
  * | `sample_integrity` | SCONOSCIUTO <= 30% degli abbinamenti                 |
  * | `edge_r`           | edgeR >= +0.2 R                                      |
  * | `win_rate_gap`     | successo AZIONE - successo SCARTO >= 10 punti        |
+ * | `net_profitability`| meanRNet(AZIONE) >= +0,1 R (redditività assoluta)   |
+ *
+ * Perche' serve `net_profitability`: `edge_r` e' una DIFFERENZA di medie, e un
+ * costo costante per trade si semplifica nella differenza. Un desk puo' quindi
+ * discriminare bene ed essere comunque in perdita su ogni trade preso. Il
+ * check chiede che la spazzatura non venga chiamata validazione: AZIONE deve
+ * essere positiva al netto dei costi dichiarati. Senza il dato il check e'
+ * `insufficient`, mai un pass implicito.
  *
  * Puro e deterministico: nessun I/O, nessuna LLM, nessun orologio, nessuna
  * scrittura. Stesso input => stesso verdetto. Non tocca gate, memoria AI o
@@ -29,7 +37,7 @@
  * log storico: pubblica solo il verdetto su questa vista.
  */
 
-export const AI_DESK_VALIDATION_VERSION = 'ai-desk-validation@1';
+export const AI_DESK_VALIDATION_VERSION = 'ai-desk-validation@2';
 
 /** Soglia di campione classificato (la stessa della calibrazione). */
 export const AI_DESK_VALIDATION_MIN_CLASSIFIED = 30;
@@ -44,6 +52,12 @@ export const AI_DESK_VALIDATION_MIN_EDGE_R = 0.2;
 export const AI_DESK_VALIDATION_MIN_WIN_RATE_GAP_PCT = 10;
 /** Quota massima di abbinamenti in SCONOSCIUTO: oltre, il campione e' sporco. */
 export const AI_DESK_VALIDATION_MAX_UNKNOWN_SHARE = 0.3;
+/**
+ * Redditività minima per trade di AZIONE, al netto dei costi dichiarati.
+ * Una soglia positiva (non solo `> 0`) lascia un margine: un desk che guadagna
+ * 0,01 R per trade non copre la varianza che si porta dietro.
+ */
+export const AI_DESK_VALIDATION_MIN_NET_R = 0.1;
 
 export type AiDeskValidationVerdict = 'CONFERMATO' | 'NON_CONFERMATO' | 'INSUFFICIENTE';
 export type AiDeskValidationCheckCode =
@@ -52,7 +66,8 @@ export type AiDeskValidationCheckCode =
   | 'sample_integrity'
   | 'edge_r'
   | 'edge_r_ci'
-  | 'win_rate_gap';
+  | 'win_rate_gap'
+  | 'net_profitability';
 /**
  * `insufficient` non e' un fallimento del desk: e' l'impossibilita' di
  * misurare (campione corto, bucket vuoto, quoziente non calcolabile).
@@ -83,6 +98,8 @@ export interface AiDeskValidation {
   minEdgeR: number;
   minWinRateGapPct: number;
   maxUnknownShare: number;
+  /** Soglia di redditività netta applicata ad AZIONE. */
+  minNetR: number;
   checks: AiDeskValidationCheck[];
   limitations: string[];
 }
@@ -92,6 +109,11 @@ export interface AiDeskValidationBucket {
   decision: string;
   n: number;
   meanR?: number | null;
+  /**
+   * R medio al netto dei costi dichiarati. Serve al check `net_profitability`:
+   * `meanR` lordo non dice se il trade ha guadagnato davvero.
+   */
+  meanRNet?: number | null;
   winRatePct?: number | null;
   /** Successo al netto dei costi dichiarati: preferito a `winRatePct` quando c'e'. */
   winRateNetPct?: number | null;
@@ -263,6 +285,32 @@ export function validateAiDeskSample(input: AiDeskValidationInput): AiDeskValida
           `(soglia ${AI_DESK_VALIDATION_MIN_WIN_RATE_GAP_PCT}).`,
   });
 
+  // Redditività ASSOLUTA. `edge_r` misura una differenza di medie: un costo
+  // costante per trade si semplifica, quindi un desk può discriminare bene ed
+  // essere comunque in perdita. Questo check chiede che AZIONE sia positiva al
+  // netto; senza il dato resta `insufficient`, mai un pass implicito.
+  const actionMeanRNet = action && finite(action.meanRNet) ? action.meanRNet : null;
+  checks.push({
+    code: 'net_profitability',
+    label: 'redditività netta di AZIONE',
+    status:
+      actionMeanRNet === null
+        ? 'insufficient'
+        : actionMeanRNet >= AI_DESK_VALIDATION_MIN_NET_R
+          ? 'pass'
+          : 'fail',
+    observed: actionMeanRNet,
+    threshold: AI_DESK_VALIDATION_MIN_NET_R,
+    unit: 'R',
+    detail:
+      actionMeanRNet === null
+        ? 'meanRNet(AZIONE) non disponibile: la differenza edgeR non basta a dire se il desk guadagna.'
+        : `meanRNet(AZIONE) ${actionMeanRNet} R (soglia +${AI_DESK_VALIDATION_MIN_NET_R} R): ` +
+          (actionMeanRNet >= AI_DESK_VALIDATION_MIN_NET_R
+            ? 'positiva al netto dei costi dichiarati.'
+            : 'la differenza fra AZIONE e SCARTO non compensa il costo per trade.'),
+  });
+
   // Incertezza: solo se il chiamante fornisce gli intervalli. Regola dichiarata:
   // il limite inferiore dell'edge netto deve stare sopra zero. E' una richiesta
   // di SEGNO, non di magnitudine: la soglia +0.2 R resta sul punto.
@@ -315,11 +363,13 @@ export function validateAiDeskSample(input: AiDeskValidationInput): AiDeskValida
     minEdgeR: AI_DESK_VALIDATION_MIN_EDGE_R,
     minWinRateGapPct: AI_DESK_VALIDATION_MIN_WIN_RATE_GAP_PCT,
     maxUnknownShare: AI_DESK_VALIDATION_MAX_UNKNOWN_SHARE,
+    minNetR: AI_DESK_VALIDATION_MIN_NET_R,
     checks,
     limitations: [
       'Deterministico e in sola lettura: nessun I/O, nessuna LLM, nessuna scrittura; lo stesso campione produce sempre lo stesso verdetto.',
       'Conferma solo questa vista: non riscrive lo status NON_VALIDATO delle righe del log, non cambia memoria AI, gate o selezione dei setup.',
       'Con edgeR/misure nette fornite, le regole si applicano al netto dei costi; senza, restano sul lordo di prezzo. In nessun caso dimostrano che la decisione AI abbia causato l esito.',
+      'Redditività: `edge_r` e `win_rate_gap` misurano una differenza fra AZIONE e SCARTO, in cui un costo costante per trade si semplifica. Solo `net_profitability` chiede che AZIONE sia positiva al netto (soglia +0,1 R): un desk può discriminare bene e perdere su ogni trade preso.',
       'Le soglie sono dichiarate prima dei dati e inclusive sul bordo; un campione troncato o sporco resta INSUFFICIENTE.',
       'Se forniti, gli intervalli bootstrap richiedono solo un edge di segno positivo (limite inferiore > 0): non dimostrano che l edge superi 0.2 R con il 95% di confidenza.',
     ],

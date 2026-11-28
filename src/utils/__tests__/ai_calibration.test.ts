@@ -729,10 +729,10 @@ describe('aiCalibration — esiti near-miss per i candidati scartati', () => {
       'invariante dei bucket'
     );
     // Il validatore non si accontenta di un caso per lato: resta senza verdetto.
-    assert.equal(out.validation.version, 'ai-desk-validation@1');
+    assert.equal(out.validation.version, 'ai-desk-validation@2');
     assert.equal(out.validation.verdict, 'INSUFFICIENTE');
     assert.equal(out.validation.deskStatus, 'NON_VALIDATO');
-    assert.match(out.note, /ai-desk-validation@1: INSUFFICIENTE/);
+    assert.match(out.note, /ai-desk-validation@2: INSUFFICIENTE/);
     assert.ok(
       out.limitations.some(
         (line) => line.includes('NON_VALIDATO') && line.includes('INSUFFICIENTE')
@@ -770,7 +770,7 @@ describe('aiCalibration — esiti near-miss per i candidati scartati', () => {
     assert.equal(out.validation.verdict, 'CONFERMATO');
     assert.equal(out.validation.deskStatus, 'VALIDATO');
     assert.ok(out.validation.checks.every((check) => check.status !== 'fail'));
-    assert.match(out.note, /ai-desk-validation@1: CONFERMATO/);
+    assert.match(out.note, /ai-desk-validation@2: CONFERMATO/);
     assert.ok(
       out.limitations.some((line) => line.includes('le righe del log non vengono promosse')),
       'il verdetto non riscrive lo status NON_VALIDATO delle righe'

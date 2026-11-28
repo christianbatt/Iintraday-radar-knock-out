@@ -13,6 +13,7 @@ import {
   AI_DESK_VALIDATION_MAX_UNKNOWN_SHARE,
   AI_DESK_VALIDATION_MIN_CLASSIFIED,
   AI_DESK_VALIDATION_MIN_EDGE_R,
+  AI_DESK_VALIDATION_MIN_NET_R,
   AI_DESK_VALIDATION_MIN_PER_BUCKET,
   AI_DESK_VALIDATION_MIN_WIN_RATE_GAP_PCT,
   AI_DESK_VALIDATION_VERSION,
@@ -25,10 +26,10 @@ function strongSample(override: Partial<AiDeskValidationInput> = {}): AiDeskVali
   return {
     classified: 40,
     buckets: [
-      { decision: 'AZIONE', n: 20, meanR: 0.8, winRatePct: 60 },
-      { decision: 'ATTESA', n: 6, meanR: 0.1, winRatePct: 50 },
-      { decision: 'SCARTO', n: 14, meanR: 0.1, winRatePct: 40 },
-      { decision: 'SCONOSCIUTO', n: 2, meanR: null, winRatePct: null },
+      { decision: 'AZIONE', n: 20, meanR: 0.8, meanRNet: 0.44, winRatePct: 60 },
+      { decision: 'ATTESA', n: 6, meanR: 0.1, meanRNet: -0.26, winRatePct: 50 },
+      { decision: 'SCARTO', n: 14, meanR: 0.1, meanRNet: -0.26, winRatePct: 40 },
+      { decision: 'SCONOSCIUTO', n: 2, meanR: null, meanRNet: null, winRatePct: null },
     ],
     edgeR: 0.7,
     alerts: [],
@@ -38,12 +39,13 @@ function strongSample(override: Partial<AiDeskValidationInput> = {}): AiDeskVali
 
 describe('aiDeskValidator — soglie dichiarate', () => {
   it('espone le costanti usate nei controlli', () => {
-    assert.equal(AI_DESK_VALIDATION_VERSION, 'ai-desk-validation@1');
+    assert.equal(AI_DESK_VALIDATION_VERSION, 'ai-desk-validation@2');
     assert.equal(AI_DESK_VALIDATION_MIN_CLASSIFIED, 30);
     assert.equal(AI_DESK_VALIDATION_MIN_PER_BUCKET, 10);
     assert.equal(AI_DESK_VALIDATION_MIN_EDGE_R, 0.2);
     assert.equal(AI_DESK_VALIDATION_MIN_WIN_RATE_GAP_PCT, 10);
     assert.equal(AI_DESK_VALIDATION_MAX_UNKNOWN_SHARE, 0.3);
+    assert.equal(AI_DESK_VALIDATION_MIN_NET_R, 0.1);
   });
 });
 
@@ -100,9 +102,9 @@ describe('aiDeskValidator — verdetto', () => {
     const out = validateAiDeskSample(
       strongSample({
         buckets: [
-          { decision: 'AZIONE', n: 20, meanR: 0.8, winRatePct: 52 },
-          { decision: 'SCARTO', n: 14, meanR: 0.1, winRatePct: 46 },
-          { decision: 'SCONOSCIUTO', n: 0, meanR: null, winRatePct: null },
+          { decision: 'AZIONE', n: 20, meanR: 0.8, meanRNet: 0.44, winRatePct: 52 },
+          { decision: 'SCARTO', n: 14, meanR: 0.1, meanRNet: -0.26, winRatePct: 46 },
+          { decision: 'SCONOSCIUTO', n: 0, meanR: null, meanRNet: null, winRatePct: null },
         ],
       })
     );
@@ -116,8 +118,8 @@ describe('aiDeskValidator — verdetto', () => {
       classified: 40,
       buckets: [
         // Lordo: 60% vs 40% (gap 20). Netto: 48% vs 42% (gap 6, sotto soglia 10).
-        { decision: 'AZIONE', n: 20, meanR: 0.8, winRatePct: 60, winRateNetPct: 48 },
-        { decision: 'SCARTO', n: 14, meanR: 0.1, winRatePct: 40, winRateNetPct: 42 },
+        { decision: 'AZIONE', n: 20, meanR: 0.8, meanRNet: 0.44, winRatePct: 60, winRateNetPct: 48 },
+        { decision: 'SCARTO', n: 14, meanR: 0.1, meanRNet: -0.26, winRatePct: 40, winRateNetPct: 42 },
         { decision: 'SCONOSCIUTO', n: 0, meanR: null, winRatePct: null },
       ],
       edgeR: 0.7,
@@ -161,9 +163,10 @@ describe('aiDeskValidator — bordi e determinismo', () => {
     const out = validateAiDeskSample({
       classified: 30,
       buckets: [
-        { decision: 'AZIONE', n: 10, meanR: 0.3, winRatePct: 50 },
-        { decision: 'ATTESA', n: 10, meanR: 0, winRatePct: 50 },
-        { decision: 'SCARTO', n: 10, meanR: 0.1, winRatePct: 40 },
+        // meanRNet esattamente sulla soglia: la regola e' inclusiva sul bordo.
+        { decision: 'AZIONE', n: 10, meanR: 0.3, meanRNet: 0.1, winRatePct: 50 },
+        { decision: 'ATTESA', n: 10, meanR: 0, meanRNet: -0.36, winRatePct: 50 },
+        { decision: 'SCARTO', n: 10, meanR: 0.1, meanRNet: -0.26, winRatePct: 40 },
       ],
       edgeR: 0.2,
     });
@@ -177,15 +180,67 @@ describe('aiDeskValidator — bordi e determinismo', () => {
     const second = validateAiDeskSample(input);
     assert.deepEqual(first, second);
     assert.equal(JSON.stringify(input), snapshot);
-    assert.equal(first.version, 'ai-desk-validation@1');
+    assert.equal(first.version, 'ai-desk-validation@2');
     assert.ok(first.limitations.some((line) => line.includes('NON_VALIDATO')));
   });
 
   it('input vuoto: INSUFFICIENTE senza lanciare', () => {
     const out = validateAiDeskSample({});
     assert.equal(out.verdict, 'INSUFFICIENTE');
-    assert.equal(out.checks.length, 5);
+    assert.equal(out.checks.length, 6);
     assert.equal(out.checks.find((check) => check.code === 'win_rate_gap')?.observed, null);
+  });
+});
+
+describe('aiDeskValidator — redditività netta (ai-desk-validation@2)', () => {
+  it('edge forte ma AZIONE in perdita al netto: NON_CONFERMATO', () => {
+    const out = validateAiDeskSample({
+      classified: 40,
+      buckets: [
+        { decision: 'AZIONE', n: 20, meanR: 0.2, meanRNet: -0.16, winRatePct: 60 },
+        { decision: 'SCARTO', n: 14, meanR: 0.1, meanRNet: -0.26, winRatePct: 40 },
+      ],
+      edgeR: 0.1,
+      edgeRNet: 0.1,
+    });
+    // edgeR sotto soglia concorrerebbe, ma qui conta il check nuovo: il desk
+    // discrimina (0.1 R) e perde comunque: entrambe le regole lo dicono.
+    const net = out.checks.find((check) => check.code === 'net_profitability');
+    assert.equal(net?.status, 'fail');
+    assert.equal(net?.observed, -0.16);
+    assert.equal(out.verdict, 'NON_CONFERMATO');
+    assert.match(net?.detail ?? '', /non compensa il costo per trade/);
+  });
+
+  it('edge e gap ottimi ma redditività sotto soglia: NON_CONFERMATO', () => {
+    const out = validateAiDeskSample(
+      strongSample({
+        buckets: [
+          { decision: 'AZIONE', n: 20, meanR: 0.8, meanRNet: 0.05, winRatePct: 60 },
+          { decision: 'SCARTO', n: 14, meanR: 0.1, meanRNet: -0.26, winRatePct: 40 },
+        ],
+      })
+    );
+    assert.equal(out.checks.find((check) => check.code === 'edge_r')?.status, 'pass');
+    assert.equal(out.checks.find((check) => check.code === 'win_rate_gap')?.status, 'pass');
+    assert.equal(out.checks.find((check) => check.code === 'net_profitability')?.status, 'fail');
+    assert.equal(out.verdict, 'NON_CONFERMATO');
+  });
+
+  it('dato assente: insufficient, mai un CONFERMATO implicito', () => {
+    const out = validateAiDeskSample(
+      strongSample({
+        buckets: [
+          { decision: 'AZIONE', n: 20, meanR: 0.8, winRatePct: 60 },
+          { decision: 'SCARTO', n: 14, meanR: 0.1, winRatePct: 40 },
+        ],
+      })
+    );
+    const net = out.checks.find((check) => check.code === 'net_profitability');
+    assert.equal(net?.status, 'insufficient');
+    assert.equal(net?.observed, null);
+    assert.equal(out.verdict, 'INSUFFICIENTE');
+    assert.equal(out.minNetR, 0.1);
   });
 });
 
