@@ -320,3 +320,29 @@ test('App.tsx: l\u2019aggancio e\u2019 un solo effect che chiama il ponte per EU
   assert.equal(calls.length, 2, 'una chiamata per mercato');
   assert.ok(source.includes('}, [setupEU, setupUS]);'), 'effect con dipendenze sui due setup');
 });
+
+// --- Fase 6.3: leva KO nel payload -------------------------------------------
+
+test('buildShadowV1LivePayload: leva KO solo se reale, nessun ripiego', () => {
+  const withLev = buildShadowV1LivePayload(setup({ selectedLeverage: 10 })) as ShadowV1LiveBridgePayload;
+  assert.equal(withLev.selectedLeverage, 10);
+  assert.equal(Object.keys(withLev).length, 8);
+
+  const noLev = buildShadowV1LivePayload(setup()) as ShadowV1LiveBridgePayload;
+  assert.equal('selectedLeverage' in noLev, false, 'senza leva il payload resta a 7 campi');
+
+  const nullLev = buildShadowV1LivePayload(setup({ selectedLeverage: null })) as ShadowV1LiveBridgePayload;
+  assert.equal('selectedLeverage' in nullLev, false);
+
+  const zeroLev = buildShadowV1LivePayload(setup({ selectedLeverage: 0 })) as ShadowV1LiveBridgePayload;
+  assert.equal('selectedLeverage' in zeroLev, false, 'zero non e una leva');
+});
+
+test('notifyShadowV1Live: la leva viaggia nel body della POST', async () => {
+  const fetcher = fakeFetch();
+  notifyShadowV1Live(setup({ selectedLeverage: 15 }), { enabled: true, fetchImpl: fetcher.impl });
+  await flush();
+  assert.equal(fetcher.calls.length, 1);
+  const body = JSON.parse(fetcher.calls[0].init.body) as { selectedLeverage?: number };
+  assert.equal(body.selectedLeverage, 15);
+});

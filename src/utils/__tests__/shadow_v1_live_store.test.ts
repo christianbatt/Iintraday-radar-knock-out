@@ -1009,3 +1009,59 @@ test('P10 source: record storici senza campo validi, valori non stringa scartati
     'il record storico senza source resta valido'
   );
 });
+
+// --- Fase 6.3: leva KO persistita --------------------------------------------
+
+test('Fase 6.3: selectedLeverage persistita all\'inserimento e conservata negli aggiornamenti', () => {
+  const inserted = upsertObservation(
+    [],
+    observation('PENDING_FILL', { selectedLeverage: 10 }),
+    D0 + BAR_MS
+  );
+  assert.equal(inserted.records[0].selectedLeverage, 10);
+
+  // Un aggiornamento che non porta la leva non la cancella.
+  const openWithoutLev = upsertObservation(
+    inserted.records,
+    observation('OPEN', { fillBarTs: D0 + BAR_MS }),
+    D0 + BAR_MS
+  );
+  assert.equal(openWithoutLev.outcome, 'UPDATED');
+  assert.equal(openWithoutLev.records[0].selectedLeverage, 10);
+});
+
+test('Fase 6.3: record non terminale senza leva la riceve al primo update che la porta', () => {
+  const noLev = recordFrom(observation('PENDING_FILL'));
+  assert.equal(noLev.selectedLeverage, undefined);
+
+  const backfilled = upsertObservation(
+    [noLev],
+    observation('OPEN', { fillBarTs: D0 + BAR_MS, selectedLeverage: 20 }),
+    D0 + BAR_MS
+  );
+  assert.equal(backfilled.outcome, 'UPDATED');
+  assert.equal(backfilled.records[0].selectedLeverage, 20);
+});
+
+test('Fase 6.3: i terminali senza leva restano immutabili (nessun backfill)', () => {
+  const terminal = recordFrom(observation('STOP', { r: -1 }));
+  const after = upsertObservation(
+    [terminal],
+    observation('STOP', { r: -1, selectedLeverage: 5 }),
+    D0 + BAR_MS
+  );
+  assert.equal(after.outcome, 'UNCHANGED');
+  assert.equal(after.records[0].selectedLeverage, undefined);
+});
+
+test('Fase 6.3: una leva non positiva rende il record fuori schema a lettura', () => {
+  const dir = tmpDir();
+  const file = path.join(dir, 'bad-leverage.jsonl');
+  const good = recordFrom(observation('OPEN', { fillBarTs: D0 + BAR_MS }));
+  const bad = { ...good, key: 'bad', selectedLeverage: 0 };
+  fs.writeFileSync(file, `${JSON.stringify(good)}\n${JSON.stringify(bad)}\n`, 'utf8');
+
+  const res = loadRecords(file);
+  assert.equal(res.records.length, 1);
+  assert.equal(res.skipped, 1);
+});

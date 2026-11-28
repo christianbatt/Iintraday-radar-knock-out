@@ -705,6 +705,20 @@ const PAYLOAD_KEYS = [
   'stop',
   'target',
   'calculatedAt',
+  // ADDITIVO (Fase 6.3): leva KO del setup, opzionale. Fuori da qui resta un
+  // campo non atteso e il payload viene rifiutato come prima.
+  'selectedLeverage',
+] as const;
+
+/** Campi obbligatori: `selectedLeverage` e' l'unico ammesso e facoltativo. */
+const REQUIRED_PAYLOAD_KEYS = [
+  'ticker',
+  'market',
+  'direction',
+  'entry',
+  'stop',
+  'target',
+  'calculatedAt',
 ] as const;
 
 const TICKER_MAX_LENGTH = 20;
@@ -720,6 +734,8 @@ export interface ParsedObservePayload {
   target: number;
   calculatedAt: string;
   decidedAtMs: number;
+  /** Leva KO dichiarata dal setup; `null` quando il payload non la porta. */
+  selectedLeverage: number | null;
 }
 
 export type ParseObservePayloadResult =
@@ -749,9 +765,19 @@ export function parseObservePayload(
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) return { ok: false, reason: `campo non atteso: ${key}` };
   }
-  for (const key of PAYLOAD_KEYS) {
+  for (const key of REQUIRED_PAYLOAD_KEYS) {
     if (key === 'calculatedAt') continue;
     if (!(key in raw)) return { ok: false, reason: `campo mancante: ${key}` };
+  }
+
+  // Leva facoltativa ma, se presente, deve essere un numero positivo finito:
+  // nessuna coercizione di stringhe e nessun `0`/`NaN` scritto sui record.
+  let selectedLeverage: number | null = null;
+  if ('selectedLeverage' in raw && raw.selectedLeverage !== null) {
+    if (!isFinitePositive(raw.selectedLeverage)) {
+      return { ok: false, reason: 'selectedLeverage non finito o <= 0' };
+    }
+    selectedLeverage = raw.selectedLeverage;
   }
 
   const ticker = raw.ticker;
@@ -799,6 +825,7 @@ export function parseObservePayload(
       target: raw.target,
       calculatedAt: new Date(serverNowMs).toISOString(),
       decidedAtMs: serverNowMs,
+      selectedLeverage,
     },
   };
 }
@@ -880,6 +907,11 @@ function contextFromRecord(record: PersistedShadowV1LiveRecord): ShadowV1LiveObs
     target: record.target,
     decidedAtMs: record.decidedAtMs,
     sessionCloseMs: record.sessionCloseMs,
+    // La leva gia' persistita accompagna la rivalutazione del ciclo: senza,
+    // l'osservazione non la porterebbe e il record la perderebbe al primo update.
+    ...(record.selectedLeverage != null
+      ? { selectedLeverage: record.selectedLeverage }
+      : {}),
   };
 }
 
@@ -1212,6 +1244,9 @@ export function createObserveHandler(deps: CollectorDeps): ObserveHandler {
           decidedAtMs,
           sessionCloseMs,
           ...(req.source ? { source: req.source } : {}),
+          ...(setup.selectedLeverage != null
+            ? { selectedLeverage: setup.selectedLeverage }
+            : {}),
         };
         const evalPayload = {
           candidate: { ticker: setup.ticker },

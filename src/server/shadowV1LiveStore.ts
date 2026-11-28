@@ -118,6 +118,13 @@ export interface PersistedShadowV1LiveRecord {
    * riscritti ne' ricalcolati (P18).
    */
   moduleVersion?: string;
+  /**
+   * ADDITIVO (Fase 6.3): leva del certificato KO scelta dal setup al momento
+   * dell'emissione (`selectedLeverage`). Assente nei record scritti prima del
+   * campo: quelli non hanno la leva e il costo per riga non conta il termine
+   * certificato (la fonte lo dichiara). Non viene mai inventata ne' stimata.
+   */
+  selectedLeverage?: number;
   updatedAtMs: number;
   /** Opzionale: assente nei record scritti prima dell'introduzione del campo. */
   source?: ShadowV1LiveRecordSource;
@@ -135,6 +142,8 @@ export interface ShadowV1LiveObservationContext {
   sessionCloseMs: number;
   /** Provenienza da persistere sui nuovi record; assente = nessuna etichetta. */
   source?: ShadowV1LiveRecordSource;
+  /** Leva KO del setup emesso, se il produttore la conosce. */
+  selectedLeverage?: number;
 }
 
 export interface ShadowV1LiveObservation {
@@ -154,6 +163,7 @@ export interface ShadowV1LiveObservation {
   exitBarTs: number | null;
   exitPrice: number | null;
   source?: ShadowV1LiveRecordSource;
+  selectedLeverage?: number;
 }
 
 export type UpsertOutcome =
@@ -235,6 +245,9 @@ export function observationFromResult(
     exitBarTs: result.exitBarTs,
     exitPrice: result.exitPrice,
     ...(context.source ? { source: context.source } : {}),
+    ...(context.selectedLeverage !== undefined
+      ? { selectedLeverage: context.selectedLeverage }
+      : {}),
   };
 }
 
@@ -289,6 +302,9 @@ export function upsertObservation(
       moduleVersion: SHADOW_V1_LIVE_MODULE_VERSION,
       updatedAtMs: nowMs,
       ...(observation.source ? { source: observation.source } : {}),
+      ...(observation.selectedLeverage !== undefined
+        ? { selectedLeverage: observation.selectedLeverage }
+        : {}),
     };
     const next = [...records, inserted].sort(byOrder);
     return { records: next, changed: true, outcome: 'INSERTED' };
@@ -296,7 +312,20 @@ export function upsertObservation(
 
   const existing = records[index];
 
-  if (existing.status === observation.status && samePayload(existing, observation)) {
+  // Fase 6.3: un record non terminale nato senza leva riceve quella del setup
+  // alla prima osservazione che la porta. Non e' un ricalcolo: e' lo stesso
+  // dato che il produttore aveva gia' al momento dell'emissione, solo scritto
+  // dopo. I terminali restano immutabili come prima.
+  const canBackfillLeverage =
+    !isTerminal(existing.status) &&
+    existing.selectedLeverage == null &&
+    observation.selectedLeverage != null;
+
+  if (
+    !canBackfillLeverage &&
+    existing.status === observation.status &&
+    samePayload(existing, observation)
+  ) {
     return { records: [...records], changed: false, outcome: 'UNCHANGED' };
   }
 
@@ -334,6 +363,9 @@ export function upsertObservation(
     moduleVersion:
       existing.fillBarTs !== null ? existing.moduleVersion : SHADOW_V1_LIVE_MODULE_VERSION,
     updatedAtMs: nowMs,
+    ...(existing.selectedLeverage ?? observation.selectedLeverage) !== undefined
+      ? { selectedLeverage: (existing.selectedLeverage ?? observation.selectedLeverage) as number }
+      : {},
   };
   const next = [...records];
   next[index] = updated;
@@ -421,6 +453,9 @@ export function isValidPersistedRecord(value: unknown): value is PersistedShadow
   for (const field of ['fillBarTs', 'exitBarTs', 'exitPrice'] as const) {
     const v = r[field];
     if (v !== null && !isFiniteNumber(v)) return false;
+  }
+  if (r.selectedLeverage !== undefined && (!isFiniteNumber(r.selectedLeverage) || r.selectedLeverage <= 0)) {
+    return false;
   }
   // `moduleVersion` e' opzionale: un record senza campo e' legacy (metodo v1),
   // non fuori schema. Se presente deve essere una stringa non vuota.

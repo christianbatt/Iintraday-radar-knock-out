@@ -2436,3 +2436,32 @@ test('deferInitialCycle: evita la rivalutazione prima della idratazione ed esegu
     clearShadowV1LiveBarsForTest();
   }
 });
+
+// --- Fase 6.3: leva KO nel payload observe ------------------------------------
+
+test('Fase 6.3 parseObservePayload: selectedLeverage facoltativa e validata', () => {
+  const withLev = parseObservePayload(validBody({ selectedLeverage: 10 }));
+  assert.equal(withLev.ok, true);
+  assert.equal(withLev.ok ? withLev.value.selectedLeverage : null, 10);
+
+  const without = parseObservePayload(validBody());
+  assert.equal(without.ok, true);
+  assert.equal(without.ok ? without.value.selectedLeverage : null, null);
+
+  const nullLev = parseObservePayload(validBody({ selectedLeverage: null }));
+  assert.equal(nullLev.ok, true, 'null vale come assente');
+
+  for (const bad of [0, -5, Number.NaN, '10', Number.POSITIVE_INFINITY]) {
+    assert.equal(parseObservePayload(validBody({ selectedLeverage: bad })).ok, false, String(bad));
+  }
+});
+
+test('Fase 6.3 route observe: selectedLeverage finisce nel record persistito', async () => {
+  const file = tmpPath();
+  const res = await post(deps(file), validBody({ selectedLeverage: 15 }));
+  assert.equal(res.status, 200);
+  const first = JSON.parse(fs.readFileSync(file, 'utf8').trim().split('\n')[0]) as {
+    selectedLeverage?: number;
+  };
+  assert.equal(first.selectedLeverage, 15);
+});

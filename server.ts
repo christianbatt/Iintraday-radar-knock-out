@@ -109,6 +109,12 @@ import {
 import { registerShadowV1LiveViewRoute } from './src/server/shadowV1LiveView';
 import { apiAuthErrorMessage, resolveApiAuth, type ApiAuthResolution } from './src/server/apiAuth';
 import { loadRecords, SHADOW_V1_LIVE_SIGNALS_PATH } from './src/server/shadowV1LiveStore';
+import {
+  barsAroundFill,
+  createShadowV1LiveBarsOnce,
+  loadShadowV1LiveBarsByTicker,
+  type ShadowV1LiveCostBarsByTicker,
+} from './src/server/aiTradeCostBars';
 import { listArchivePaths, mergeRecordFiles } from './src/server/shadowV1LiveRetention';
 import {
   AI_CALIBRATION_MAX_ENTRIES,
@@ -2979,80 +2985,37 @@ const AI_DESK_POSTMORTEM_PROMPT_VERSION = 'ai-desk-postmortem@1';
  * un campione diverso da quello che il pannello mostra.
  */
 /**
- * ADDITIVO (Fase 6.1): barre 5m persistite da V1-live, indicizzate per ticker.
- * Servono solo al costo per riga (Corwin-Schultz sulle due barre del fill).
- * Best-effort: file assente o illeggibile => mappa vuota, e ogni riga resta al
- * costo dichiarato. Nessuna eccezione esce da qui.
- */
-function loadShadowV1LiveBarsByTicker(): Map<
-  string,
-  Array<{ t: number; o: number; h: number; l: number; c: number; v: number }>
-> {
-  const byTicker = new Map<string, Array<{ t: number; o: number; h: number; l: number; c: number; v: number }>>();
-  try {
-    const barsPath = path.join(process.cwd(), SHADOW_V1_LIVE_BARS_PATH);
-    if (!fs.existsSync(barsPath)) return byTicker;
-    const parsed: unknown = JSON.parse(fs.readFileSync(barsPath, 'utf8'));
-    const entries = (parsed as { entries?: unknown })?.entries;
-    const list = Array.isArray(entries)
-      ? entries
-      : entries && typeof entries === 'object'
-        ? Object.values(entries)
-        : [];
-    for (const entry of list as Array<{ ticker?: unknown; bars?: unknown }>) {
-      if (!entry || typeof entry.ticker !== 'string' || !Array.isArray(entry.bars)) continue;
-      const bars = (entry.bars as Array<Record<string, unknown>>).filter(
-        (bar) =>
-          bar &&
-          Number.isFinite(bar.t) &&
-          Number.isFinite(bar.h) &&
-          Number.isFinite(bar.l) &&
-          Number.isFinite(bar.o) &&
-          Number.isFinite(bar.c)
-      ) as Array<{ t: number; o: number; h: number; l: number; c: number; v: number }>;
-      if (bars.length > 0) byTicker.set(entry.ticker, bars);
-    }
-  } catch {
-    // Nessuna barra: il costo resta quello dichiarato, e la fonte lo dice.
-  }
-  return byTicker;
-}
-
-/**
- * Le due barre consecutive che contengono il fill: quella del fill e la
- * precedente. `null` quando il fill non e' databile o la serie non le ha.
- */
-function barsAroundFill(
-  bars: Array<{ t: number; o: number; h: number; l: number; c: number; v: number }> | undefined,
-  fillBarTs: unknown
-): Array<{ t: number; o: number; h: number; l: number; c: number; v: number }> | null {
-  if (!Array.isArray(bars) || bars.length < 2) return null;
-  if (typeof fillBarTs !== 'number' || !Number.isFinite(fillBarTs)) return null;
-  let index = -1;
-  for (let i = 0; i < bars.length; i += 1) {
-    if (bars[i].t <= fillBarTs) index = i;
-    else break;
-  }
-  if (index < 1) return null;
-  return [bars[index - 1], bars[index]];
-}
-
-/**
  * ADDITIVO (Fase 6.1): allega le due barre del fill ai punti forward che hanno
  * gia' `fillBarTs` (near-miss e scarti). Senza barre il costo resta quello
  * dichiarato; con le barre lo spread della riga diventa stimato.
+ *
+ * Fase 6.3: la mappa arriva dal chiamante — una sola lettura di `bars.json` per
+ * richiesta condivisa dai tre lettori — invece di essere riletta qui.
  */
 function attachBarsToPoints(
-  points: AiCalibrationForwardPoint[]
+  points: AiCalibrationForwardPoint[],
+  barsByTicker: ShadowV1LiveCostBarsByTicker
 ): AiCalibrationForwardPoint[] {
-  const barsByTicker = loadShadowV1LiveBarsByTicker();
   return points.map((point) => ({
     ...point,
     bars: barsAroundFill(barsByTicker.get(point.ticker), point.fillBarTs ?? null),
   }));
 }
 
-const aiCalibrationDeps: AiCalibrationRegistrationDeps = {
+/**
+ * ADDITIVO (Fase 6.3): dipendenze della calibrazione costruite PER RICHIESTA.
+ *
+ * `bars.json` pesa alcuni MB e la calibrazione lo leggeva tre volte per
+ * richiesta (forward, near-miss, scarti). Qui la mappa si carica una sola volta
+ * per istanza di deps e i tre lettori la condividono: stessi numeri del costo,
+ * un solo parsing. La factory e' per richiesta, non per processo: una cache di
+ * processo servirebbe barre vecchie.
+ */
+function createAiCalibrationDeps(): AiCalibrationRegistrationDeps {
+  const barsOnce = createShadowV1LiveBarsOnce(() =>
+    loadShadowV1LiveBarsByTicker(path.join(process.cwd(), SHADOW_V1_LIVE_BARS_PATH))
+  );
+  return {
   // Stesse voci del pannello: file locale + fallback Firestore quando il flag
   // SHADOW_AI_LOG_FIRESTORE e' acceso. Su disco effimero il file puo' essere
   // vuoto mentre i documenti restano su Firestore.
@@ -3073,18 +3036,21 @@ const aiCalibrationDeps: AiCalibrationRegistrationDeps = {
     const files = [signalsPath, ...listArchivePaths(signalsPath)].filter((file) => existsSync(file));
     if (files.length === 0) return [];
     const merged = mergeRecordFiles(files, loadRecords);
-    const barsByTicker = loadShadowV1LiveBarsByTicker();
+    const barsByTicker = barsOnce();
     const points: AiCalibrationForwardPoint[] = [];
     for (const record of merged.records) {
       if (record.status !== 'STOP' && record.status !== 'TARGET' && record.status !== 'EXPIRED') continue;
       if (typeof record.r !== 'number' || !Number.isFinite(record.r)) continue;
       // Fase 6.1: prezzo di ingresso/stop e due barre del fill per il costo
-      // della riga. La leva non e' registrata da V1-live: quando manca, il
-      // termine certificato non viene contato e `costSource` lo dichiara.
+      // della riga. Fase 6.3: `selectedLeverage` e' persistito nei record nuovi
+      // (prima non lo era), quindi il termine certificato KO si conta sui dati
+      // reali. `leverage` resta come ripiego per eventuali record che lo usano.
+      const leverageRaw =
+        (record as { selectedLeverage?: unknown }).selectedLeverage ??
+        (record as { leverage?: unknown }).leverage;
       const leverage =
-        typeof (record as { leverage?: unknown }).leverage === 'number' &&
-        Number.isFinite((record as { leverage?: number }).leverage)
-          ? ((record as { leverage?: number }).leverage as number)
+        typeof leverageRaw === 'number' && Number.isFinite(leverageRaw) && leverageRaw > 0
+          ? leverageRaw
           : null;
       points.push({
         key: record.key,
@@ -3107,7 +3073,8 @@ const aiCalibrationDeps: AiCalibrationRegistrationDeps = {
     attachBarsToPoints(
       mapNearMissForwardPoints(
         loadNearMissRecords(path.join(process.cwd(), SHADOW_V1_NEAR_MISS_PATH))
-      )
+      ),
+      barsOnce()
     ),
   // ADDITIVO: gli scarti fuori whitelist near-miss (due o piu' gate, veti)
   // hanno lo stesso esito deterministico sulle barre chiuse, in un file
@@ -3116,9 +3083,11 @@ const aiCalibrationDeps: AiCalibrationRegistrationDeps = {
     attachBarsToPoints(
       mapRejectedForwardPoints(
         loadRejectedRecords(path.join(process.cwd(), SHADOW_V1_REJECTED_PATH))
-      )
+      ),
+      barsOnce()
     ),
-};
+  };
+}
 
 /**
  * ADDITIVO (P5): calibrazione gia' aggregata da consegnare al fascicolo. Non
@@ -3127,7 +3096,7 @@ const aiCalibrationDeps: AiCalibrationRegistrationDeps = {
  */
 async function loadDeskCalibration(): Promise<unknown | null> {
   try {
-    const out = await createAiCalibrationHandler(aiCalibrationDeps);
+    const out = await createAiCalibrationHandler(createAiCalibrationDeps());
     return out.status === 200 ? out.body : null;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -5117,7 +5086,9 @@ async function startServer() {
   // Nessuna scrittura, nessun cambio di memoria o gate: legge il log AI shadow
   // e gli esiti gia' persistiti da Shadow V1-live (segnali emessi + near-miss)
   // e li abbina per ticker + tempo.
-  registerAiCalibrationRoute(app, aiCalibrationDeps);
+  // Factory, non oggetto: le barre del costo si leggono una volta per richiesta
+  // (Fase 6.3), non una volta per processo.
+  registerAiCalibrationRoute(app, createAiCalibrationDeps);
   // L'auth viaggia con la registrazione della route (non come middleware
   // registrato a parte): la garanzia non dipende dall'ordine di registrazione e
   // la stessa logica resta unica (resolveApiAuth).

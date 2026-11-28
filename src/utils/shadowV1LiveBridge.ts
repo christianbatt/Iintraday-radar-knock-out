@@ -45,6 +45,13 @@ export interface ShadowV1LiveBridgePayload {
   stop: number;
   target: number;
   calculatedAt: string;
+  /**
+   * ADDITIVO (Fase 6.3): leva del certificato KO scelta dal setup. Opzionale:
+   * senza leva il record resta valido e il costo per riga lo dichiara. Serve a
+   * far contare il termine certificato sui dati reali invece che dichiararlo
+   * solo nei test.
+   */
+  selectedLeverage?: number;
 }
 
 export interface BridgeResponse {
@@ -127,6 +134,10 @@ export function buildShadowV1LivePayload(
   const market = setup.marketType ?? setup.candidate?.market;
   if (market !== 'EU' && market !== 'US') return null;
 
+  // Solo una leva reale del setup: nessun valore di ripiego, cosi' il record
+  // non dichiara una leva che il produttore non aveva scelto.
+  const leverage = setup.selectedLeverage;
+
   return {
     ticker: ticker.trim(),
     market,
@@ -135,6 +146,7 @@ export function buildShadowV1LivePayload(
     stop,
     target,
     calculatedAt,
+    ...(isPositiveFinite(leverage) ? { selectedLeverage: leverage } : {}),
   };
 }
 

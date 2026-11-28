@@ -1636,10 +1636,14 @@ export async function createAiCalibrationHandler(
 
 export function registerAiCalibrationRoute(
   app: MinimalApp,
-  deps: AiCalibrationRegistrationDeps
+  deps: AiCalibrationRegistrationDeps | (() => AiCalibrationRegistrationDeps)
 ): void {
   app.get(AI_CALIBRATION_PATH, (_req, res) => {
-    void createAiCalibrationHandler(deps)
+    // Una factory viene invocata UNA volta per richiesta: chi ne ha bisogno puo'
+    // condividere una lettura (per esempio le barre del costo) fra i lettori
+    // della stessa richiesta senza tenerla viva fra richieste diverse.
+    const resolved = typeof deps === 'function' ? deps() : deps;
+    void createAiCalibrationHandler(resolved)
       .then((out) => {
         (res as MinimalResponse).status(out.status).json(out.body);
       })
