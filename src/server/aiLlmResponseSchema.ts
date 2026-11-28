@@ -149,7 +149,8 @@ export function validateAiLlmObject(value: unknown, schema: AiLlmObjectSchema): 
       if (boundedLow || boundedHigh) {
         if (spec.required) return { ok: false, reason: `field:${name}` };
         // Normale, non errore: un bonus 16 su un tetto 15 vale 15, non getta
-        // via la valutazione. Un campo in `anyOf` non viene toccato qui.
+        // via la valutazione. Un campo in `anyOf` si risolve dopo, insieme
+        // all'alternativa.
         if (!inAnyOf) {
           record[name] = boundedLow ? spec.min : spec.max;
           if (!clamped.includes(name)) clamped.push(name);
@@ -158,20 +159,32 @@ export function validateAiLlmObject(value: unknown, schema: AiLlmObjectSchema): 
     }
   }
   if (schema.anyOf && schema.anyOf.length > 0) {
-    const anyPresent = schema.anyOf.some((name) => {
-      const fieldValue = source[name];
-      const spec = schema.fields[name];
-      if (fieldValue === undefined || fieldValue === null) return false;
-      if (!spec) return true;
-      if (!matchesType(fieldValue, spec.type)) return false;
-      if (spec.type === 'string' && spec.nonEmpty && (fieldValue as string).trim().length === 0) {
-        return false;
-      }
-      return true;
-    });
-    if (!anyPresent) return { ok: false, reason: 'any_of' };
+    const usable = schema.anyOf.filter((name) => anyOfFieldUsable(source[name], schema.fields[name]));
+    if (usable.length === 0) return { ok: false, reason: 'any_of' };
+    // Un campo `anyOf` invalido NON resta nel valore normalizzato: se resta, il
+    // chiamante lo usa al posto dell'alternativa valida (prima un
+    // `executiveSummary` oggetto vinceva su un `summary` stringa corretto,
+    // perche' "truthy"). Si rimuovono solo gli invalidi: quelli usabili restano.
+    for (const name of schema.anyOf) {
+      if (!usable.includes(name)) dropOptional(name);
+    }
   }
   return { ok: true, value: record, dropped, clamped };
+}
+
+/**
+ * Un campo che partecipa ad `anyOf` e' usabile quando esiste, ha il tipo
+ * dichiarato e (per le stringhe) non e' vuoto. Stessa regola usata per decidere
+ * se l'`anyOf` e' soddisfatto e per decidere cosa rimuovere.
+ */
+function anyOfFieldUsable(value: unknown, spec: AiLlmFieldSpec | undefined): boolean {
+  if (value === undefined || value === null) return false;
+  if (!spec) return true;
+  if (!matchesType(value, spec.type)) return false;
+  if (spec.type === 'string' && spec.nonEmpty && (value as string).trim().length === 0) {
+    return false;
+  }
+  return true;
 }
 
 /** Toglie i recinti di codice attorno al JSON, come fanno i chiamanti esistenti. */

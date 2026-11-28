@@ -241,7 +241,25 @@ test('P10 schema post-mortem: uno fra executiveSummary e summary', () => {
   assert.equal(empty.ok === false && empty.reason, 'any_of');
 
   // Uno vuoto e l'altro valido: la risposta resta usabile, come nel handler.
-  assert.equal(validateAiLlmObject({ executiveSummary: '   ', summary: 'ok' }, schema).ok, true);
+  const emptyFirst = validateAiLlmObject({ executiveSummary: '   ', summary: 'ok' }, schema);
+  assert.equal(emptyFirst.ok, true);
+  assert.equal(emptyFirst.ok && emptyFirst.value.summary, 'ok');
+
+  // L'invalido di un `anyOf` non resta nel valore normalizzato: altrimenti il
+  // chiamante (`executiveSummary || summary`) userebbe l'invalido.
+  const typed = validateAiLlmObject({ executiveSummary: { testo: 'x' }, summary: 'ok' }, schema);
+  assert.equal(typed.ok, true);
+  assert.equal(typed.ok && 'executiveSummary' in typed.value, false);
+  assert.equal(typed.ok && typed.value.summary, 'ok');
+  assert.deepEqual(typed.ok && typed.dropped, ['executiveSummary']);
+
+  // Stessa cosa con il vuoto: sparisce e resta solo il valido.
+  assert.equal(emptyFirst.ok && 'executiveSummary' in emptyFirst.value, false);
+  assert.deepEqual(emptyFirst.ok && emptyFirst.dropped, ['executiveSummary']);
+
+  // Entrambi invalidi: nessuna alternativa usabile.
+  const bothBad = validateAiLlmObject({ executiveSummary: 42, summary: '   ' }, schema);
+  assert.equal(bothBad.ok === false && bothBad.reason, 'any_of');
 });
 
 test('P10 schema specializzazione: newDirectives obbligatorio e array', () => {
@@ -379,4 +397,32 @@ test('P10 budget: la negazione e un valore di ritorno, identico a "modello assen
   // provider non viene contattato (nessun percorso nuovo a valle).
   assert.equal(await runWithLlmRetry<null>(attempt, { sleep: async () => {} }), null);
   assert.equal(providerCalls, 1, 'fuori budget non si chiama il provider');
+});
+
+test('P10 schema anyOf: il campo invalido viene rimosso, non usato al posto dell\u2019alternativa', () => {
+  const schema = AI_LLM_SCHEMAS['ai-desk-post-mortem'];
+
+  // Caso del difetto: `executiveSummary` e un oggetto (truthy) e `summary` e la
+  // stringa valida. Senza rimozione il chiamante userebbe l'oggetto.
+  const out = validateAiLlmObject({ executiveSummary: { testo: 'x' }, summary: 'riassunto' }, schema);
+  assert.equal(out.ok, true);
+  if (!out.ok) return;
+  assert.equal('executiveSummary' in out.value, false);
+  assert.equal(out.value.summary, 'riassunto');
+  assert.deepEqual(out.dropped, ['executiveSummary']);
+  // La stessa scelta che fa l'handler: `executiveSummary || summary`.
+  assert.equal(out.value.executiveSummary || out.value.summary, 'riassunto');
+
+  // Con un array al posto della stringa: stesso esito.
+  const array = validateAiLlmObject({ executiveSummary: ['x'], summary: 'ok' }, schema);
+  assert.equal(array.ok && 'executiveSummary' in (array.ok ? array.value : {}), false);
+
+  // Se l'invalido e l'unico campo di anyOf, la risposta resta non valida.
+  const onlyBad = validateAiLlmObject({ executiveSummary: { testo: 'x' } }, schema);
+  assert.equal(onlyBad.ok === false && onlyBad.reason, 'any_of');
+
+  // I campi fuori da anyOf non vengono toccati da questa regola.
+  const withDirectives = validateAiLlmObject({ summary: 'ok', newDirectives: 'no' }, schema);
+  assert.equal(withDirectives.ok, true);
+  assert.equal(withDirectives.ok && 'newDirectives' in withDirectives.value, false);
 });
