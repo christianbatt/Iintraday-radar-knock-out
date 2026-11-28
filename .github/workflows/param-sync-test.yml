@@ -75,5 +75,9 @@ jobs:
         run: npm run test:ai-calibration
       - name: AI desk contract tests
         run: npm run test:ai-desk
+      - name: AI audit fixes tests
+        run: npx tsx src/utils/__tests__/ai_audit_fixes.test.ts
+      - name: AI P0/P1/P2 tests
+        run: npx tsx src/utils/__tests__/ai_p0_p1_p2.test.ts
       - name: Specialization reasons tests
         run: npm run test:specialization
