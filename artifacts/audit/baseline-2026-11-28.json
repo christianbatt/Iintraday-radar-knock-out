@@ -1,0 +1,144 @@
+{
+  "version": "ai-baseline@1",
+  "generatedAt": "2026-11-28T01:28:34.211Z",
+  "aiScans": {
+    "path": "shadow_ai_scans.jsonl",
+    "exists": true,
+    "bytes": 76360,
+    "rows": 160,
+    "unparsable": 0,
+    "byField": {
+      "source": {
+        "scan": 160
+      },
+      "evaluated": {
+        "false": 160
+      },
+      "decision": {
+        "null": 160
+      },
+      "discardReason": {
+        "NON_INVIATO_ALLA_LLM": 160
+      }
+    },
+    "meanR": null,
+    "meanRN": 0
+  },
+  "aiLog": {
+    "path": "shadow_ai_log.jsonl",
+    "exists": false,
+    "bytes": null,
+    "rows": 0,
+    "unparsable": 0,
+    "byField": {
+      "source": {},
+      "evaluated": {},
+      "decision": {}
+    },
+    "meanR": null,
+    "meanRN": 0
+  },
+  "signals": {
+    "path": "artifacts/shadow_v1_live/signals.jsonl",
+    "exists": true,
+    "bytes": 4440,
+    "rows": 10,
+    "unparsable": 0,
+    "byField": {
+      "status": {
+        "STOP": 5,
+        "EXPIRED": 2,
+        "TARGET": 3
+      },
+      "market": {
+        "EU": 10
+      },
+      "direction": {
+        "SHORT": 7,
+        "LONG": 3
+      }
+    },
+    "meanR": 0.0338,
+    "meanRN": 10
+  },
+  "nearMiss": {
+    "path": "artifacts/shadow_v1_live/near_miss.jsonl",
+    "exists": true,
+    "bytes": 9554,
+    "rows": 19,
+    "unparsable": 0,
+    "byField": {
+      "status": {
+        "EXPIRED": 3,
+        "STOP": 8,
+        "TARGET": 4,
+        "NOT_FILLED": 4
+      },
+      "nearMissGate": {
+        "G11_SCORE": 12,
+        "ADX_BORDERLINE": 3,
+        "G5_EXPIRED": 3,
+        "G4_EXTENDED": 1
+      }
+    },
+    "meanR": -0.0399,
+    "meanRN": 15
+  },
+  "rejected": {
+    "path": "artifacts/shadow_v1_live/rejected.jsonl",
+    "exists": false,
+    "bytes": null,
+    "rows": 0,
+    "unparsable": 0,
+    "byField": {
+      "status": {},
+      "primaryGate": {}
+    },
+    "meanR": null,
+    "meanRN": 0
+  },
+  "bars": {
+    "path": "artifacts/shadow_v1_live/bars.json",
+    "exists": true,
+    "bytes": 2423871,
+    "parsed": true,
+    "shape": "wrapper-list",
+    "tickers": 40,
+    "bars": 24000,
+    "barKeys": [
+      "c",
+      "h",
+      "l",
+      "o",
+      "t"
+    ],
+    "hasOhlc": true,
+    "sampledBars": 200
+  },
+  "memory": {
+    "path": "ai_specialization_memory.json",
+    "exists": true,
+    "bytes": 1374,
+    "parsed": true,
+    "rules": 3,
+    "validated": 0,
+    "topics": [
+      "PERSISTENZA_MOMENTUM_CONTRATTI",
+      "TRAP_RILASCIO_UTILI_INTRADAY",
+      "GAP_MINIMO_RELAXATION"
+    ]
+  },
+  "shadowV2Summary": {
+    "path": "artifacts/shadow_v2/summary.json",
+    "exists": true,
+    "bytes": 36626
+  },
+  "availability": {
+    "barsPresent": true,
+    "barsHaveOhlc": true,
+    "barsCount": 24000,
+    "aiDecisions": 0,
+    "resolvedForward": 25,
+    "validatedRules": 0
+  }
+}
