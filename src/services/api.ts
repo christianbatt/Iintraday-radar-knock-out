@@ -223,6 +223,13 @@ export async function triggerAISpecialization(
   sampleDecisive?: number;
   minSample?: number;
   deskAnalysis?: DeskAnalysisPayload;
+  /** Fase 3.3: da dove viene il campione (solo diario canonico server-side). */
+  datasetSource?: string;
+  datasetHash?: string | null;
+  rejectedTrades?: { invalid?: number; duplicates?: number; futureTimestamps?: number };
+  /** Fase 4: regole revocate da questo run di re-test. */
+  revokedCount?: number;
+  revokedTopics?: string[];
 }> {
   try {
     const res = await fetchWithFirebaseAuth('/api/ai/specialize', {
@@ -240,7 +247,17 @@ export async function triggerAISpecialization(
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      return { success: false, newInsightsCount: 0, memory: [], message: err.error || 'Errore server' };
+      return {
+        success: false,
+        newInsightsCount: 0,
+        memory: [],
+        message: err.error || 'Errore server',
+        // Campi strutturati: senza questi la UI non distingue un diario vuoto da
+        // un errore di rete.
+        datasetSource: typeof err.datasetSource === 'string' ? err.datasetSource : undefined,
+        datasetHash: typeof err.datasetHash === 'string' ? err.datasetHash : null,
+        rejectedTrades: err.rejectedTrades,
+      };
     }
     return res.json();
   } catch (err: any) {

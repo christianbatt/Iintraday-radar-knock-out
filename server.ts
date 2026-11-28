@@ -44,6 +44,13 @@ import {
 import { updateAIMemory } from './src/utils/memoryUpdater';
 import { buildCanonicalSample } from './src/server/canonicalTradeSample';
 import {
+  AI_MEMORY_REVOCATION_LOG_RELATIVE_PATH,
+  appendRevocationLog,
+  buildMemoryPromptBlock,
+  revokeRulesForFailedPredicates,
+  selectActiveRules,
+} from './src/server/aiMemoryLifecycle';
+import {
   aiMemoryFirestorePath,
   aiMemoryLocalFileName,
   computeDatasetHash,
@@ -3525,6 +3532,30 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
 
     // ADDITIVO (v10): scansione deterministica dei 14 predicati chiusi.
     const scan = scanLearningPredicates(trades, excluded);
+
+    // Fase 4.3: un predicato ri-testato che non passa piu' i gate revoca la sua
+    // regola (non la cancella) e lascia una riga nel registro append-only. Un
+    // predicato senza campione non e' una smentita e non revoca nulla.
+    const revocation = revokeRulesForFailedPredicates(
+      loadAIMemoryFromDisk(memoryScopeUid),
+      scan,
+      Date.now()
+    );
+    if (revocation.revoked.length > 0) {
+      saveAIMemoryLocally(revocation.memory, memoryScopeUid);
+      if (firebaseAdminFirestore) {
+        try {
+          await persistAIMemoryToFirestore(revocation.memory, memoryScopeUid);
+        } catch (revokePersistError) {
+          console.warn('[AI Specialization] Persistenza revoche fallita:', revokePersistError);
+        }
+      }
+      appendRevocationLog(
+        revocation.revoked,
+        path.join(process.cwd(), AI_MEMORY_REVOCATION_LOG_RELATIVE_PATH)
+      );
+      aiLearnedMemory = await loadAIMemoryForUser(memoryScopeUid);
+    }
     const testedPredicates = scan.filter((entry) => entry.tested);
     const winningPredicates = scan.filter((entry) => entry.passesGates);
     const decisiveSample = Math.max(0, ...scan.map((entry) => entry.n));
@@ -3609,6 +3640,8 @@ Non dichiarare una confidence statistica e non affermare che le proposte sono st
       datasetSource: canonicalSample.source,
       datasetHash: memoryDatasetHash,
       rejectedTrades: canonicalSample.rejected,
+      revokedCount: revocation.revoked.length,
+      revokedTopics: revocation.revoked.map((entry) => entry.topic),
       reason,
       reasonDetail,
       addedCount: persistedCount,
@@ -4484,21 +4517,14 @@ app.post('/api/analyze-catalyst', requireApiAuth, async (req: Request, res: Resp
     // ADDITIVO (2.5): le stesse regole che entrano nel testo restano attribuibili.
     // La riga di log del catalizzatore porta i loro id, cosi' un effetto si puo'
     // misurare su una regola precisa e non su "la memoria" in blocco.
-    const memoryRulesUsed = aiLearnedMemory
-      .filter((directive) => directive.confidence != null)
-      .slice(-6);
+    // Fase 4.1-4.2: entrano nel prompt solo regole validate, non revocate, non
+    // scadute e ri-testate negli ultimi 90 giorni. Il testo non contiene
+    // percentuali: mostra q, n, scadenza e modello.
+    const memoryRulesUsed = selectActiveRules(aiLearnedMemory, Date.now()).slice(-6);
     const memoryRuleIds = memoryRulesUsed
       .map((directive) => (typeof directive.id === 'string' ? directive.id.trim() : ''))
       .filter((id) => id.length > 0);
-    const activeDirectives = memoryRulesUsed
-      .map(
-        (directive, index) =>
-          `[Pattern statistico ${index + 1} - ${directive.topic} (${directive.market})]: ${directive.directive} ` +
-          // `confidence` e' 100*(1-q): chiamarlo "score" invitava a leggerlo come
-          // probabilita' di successo, che non e'.
-          `(1-q ${directive.confidence}% — non e una probabilita di successo; evidenza: ${directive.sampleEvidence})`
-      )
-      .join('\n');
+    const activeDirectives = buildMemoryPromptBlock(memoryRulesUsed, Date.now());
 
     const systemInstruction = `Sei un analista di trading intraday rigoroso. Ricevi dati di mercato già calcolati dal codice e notizie reali con fonti.
 REGOLE TASSATIVE:

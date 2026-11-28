@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AILearnedInsight } from '../types/radar';
 import { LearningResult, MIN_REAL_TRADE_SAMPLE } from './learningValidator';
+import { applyLifecycleDefaults } from '../server/aiMemoryLifecycle';
 
 const DEFAULT_MEMORY_FILE = fileURLToPath(new URL('../../ai_specialization_memory.json', import.meta.url));
 
@@ -96,6 +97,10 @@ export function updateAIMemory(
         `(WIN ${result.stats.counterfactual.wins}, LOSS ${result.stats.counterfactual.losses}, ` +
         `EXPIRED ${result.stats.counterfactual.expired}); non inclusi nel campione statistico.`,
     };
+    // Fase 4: campione dichiarato nella regola, così il prompt può mostrare n
+    // senza dedurlo dal testo di `sampleEvidence`.
+    insight.sampleSize = result.stats.n;
+
     // Presente solo quando c'e' una provenienza reale: le regole storiche non
     // cambiano forma e chi legge non deve distinguere due schemi.
     if (provenance !== null) insight.provenance = provenance;
@@ -115,9 +120,11 @@ export function updateAIMemory(
       };
     }
 
+    // Fase 4: una regola nasce con scadenza (90 giorni), data di test e contatore.
+    const withLifecycle = applyLifecycleDefaults(insight);
     const existingIndex = memory.findIndex((entry) => entry.topic === result.topic);
-    if (existingIndex >= 0) memory[existingIndex] = insight;
-    else memory.push(insight);
+    if (existingIndex >= 0) memory[existingIndex] = withLifecycle;
+    else memory.push(withLifecycle);
   }
 
   if (memory.length > 50) memory = memory.slice(-50);

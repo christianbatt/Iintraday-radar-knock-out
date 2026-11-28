@@ -61,9 +61,9 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 
 ## Fase 4 — Ciclo di vita delle regole
 
-- [ ] **4.1 `validUntil` (90 giorni), `lastTestedAt`, `testCount`, `revokedAt` + `isRuleActive(entry, nowMs)` usata dall'iniezione nel prompt.
-- [ ] **4.2 Prompt senza percentuali:** estrarre in `src/server/aiMemoryPrompt.ts` (puro), mostrare `q`, `n`, `validUntil`, `model`; test che il blocco non contiene `%`.
-- [ ] **4.3 Revoca su re-test fallito**, registro append-only delle revoche.
+- [x] **4.1** `validUntil` (90 giorni), `lastTestedAt`, `testCount`, `revokedAt` + `isRuleActive(entry, nowMs)` usata dall'iniezione nel prompt. *(fatto 2026-11-28 in `src/server/aiMemoryLifecycle.ts`; le regole storiche ricevono la scadenza derivata da `learnedAt`)*
+- [x] **4.2 Prompt senza percentuali.** *(fatto, con una deviazione dichiarata: il blocco vive in `aiMemoryLifecycle.ts` invece che in un nuovo `aiMemoryPrompt.ts`; mostra `q`, `n`, `validUntil`, `model` e un test impone l'assenza di `%`)*
+- [x] **4.3 Revoca su re-test fallito**, registro append-only `logs/ai_memory_revocations.jsonl`. *(fatto solo in `/api/ai/specialize`: il post-mortem non revoca)*
 
 ## Fase 5 — Potenza statistica e falsificazione
 
@@ -107,5 +107,7 @@ Questo file è la **memoria di lavoro**: si aggiorna a ogni passo concluso, segn
 | 2026-11-28 | 1.2 UI onesta (tre frasi + test) | `965c511` | CI verde |
 | 2026-11-28 | 2.5 `memoryRuleIds` + prompt senza "score" | `682b1ce` | CI verde |
 | 2026-11-28 | 2.6 veto strutturato (`NO_NEWS`/`COUNTER_REGIME`) | `74cd645` | CI verde |
-| 2026-11-28 | 3.3 campione canonico + runId reale | vedi commit |
+| 2026-11-28 | 3.3 campione canonico + runId reale | `a8494c7` | CI verde |
+| 2026-11-28 | UI: messaggio per diario canonico vuoto | vedi commit | formatter puro + test, agganciato al modal |
+| 2026-11-28 | Fase 4 (scadenza, revoca, prompt senza %) | vedi commit | tsc, lint, ai-desk (23 nuove asserzioni), memoria scope/attribuzione |
 | 2026-11-28 | 3.1-3.2 memoria per-utente + autore + dataset | `258aaa4` | tsc, lint, ai_memory_scope (17), attribuzione, ai-desk, learningValidator, specialization, ai_shadow_log |

@@ -357,6 +357,17 @@ export interface AILearnedInsight {
   ownerUid?: string | null;
   /** ADDITIVO (Fase 3): regola storica globale, visibile ma non posseduta. */
   legacy?: boolean;
+  /** ADDITIVO (Fase 4): campione su cui la regola è stata validata. */
+  sampleSize?: number | null;
+  /** ADDITIVO (Fase 4): oltre questa data la regola non entra nel prompt. */
+  validUntil?: string | null;
+  /** ADDITIVO (Fase 4): ultimo re-test del predicato. */
+  lastTestedAt?: string | null;
+  /** ADDITIVO (Fase 4): quante volte il predicato è stato ri-testato. */
+  testCount?: number | null;
+  /** ADDITIVO (Fase 4): revoca, con data. La regola resta, non si cancella. */
+  revokedAt?: string | null;
+  revocationReason?: string | null;
 }
 
 /**

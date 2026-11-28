@@ -12,6 +12,7 @@
 
 import { createHash } from 'node:crypto';
 import type { AILearnedInsight } from '../types/radar';
+import { applyLifecycleDefaults } from './aiMemoryLifecycle';
 
 /** Proprietario delle regole storiche: il documento globale di prima. */
 export const AI_MEMORY_LEGACY_OWNER = 'system';
@@ -76,12 +77,19 @@ export function ownerUidOf(insight: AILearnedInsight): string {
  * Migrazione idempotente: una regola già scritta resta, ma dichiara di chi è.
  * Non cambia direttive, confidenze o date: solo la proprietà.
  */
-export function migrateLegacyMemory(memory: readonly AILearnedInsight[]): AILearnedInsight[] {
-  return memory.map((insight) =>
-    typeof insight.ownerUid === 'string' && insight.ownerUid.trim().length > 0
-      ? insight
-      : { ...insight, ownerUid: AI_MEMORY_LEGACY_OWNER }
-  );
+export function migrateLegacyMemory(
+  memory: readonly AILearnedInsight[],
+  nowMs: number = Date.now()
+): AILearnedInsight[] {
+  return memory.map((insight) => {
+    const owned =
+      typeof insight.ownerUid === 'string' && insight.ownerUid.trim().length > 0
+        ? insight
+        : { ...insight, ownerUid: AI_MEMORY_LEGACY_OWNER };
+    // Fase 4: anche una regola storica riceve scadenza e data di test, derivate
+    // da `learnedAt`. Nessuna regola resta valida per omissione.
+    return applyLifecycleDefaults(owned, nowMs);
+  });
 }
 
 /**

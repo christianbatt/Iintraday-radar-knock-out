@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { specializationFailureMessage } from '../utils/specializationFailure';
 import {
   X,
   Target,
@@ -129,10 +130,16 @@ export const ExcludedSetupsAnalyzerModal: React.FC<ExcludedSetupsAnalyzerModalPr
             : null
         );
         setSpecializeFeedback(
-          res.message || 'Eventuali proposte LLM non sono state persistite; la memoria richiede validazione statistica sui trade reali.'
+          (res.message ||
+            'Eventuali proposte LLM non sono state persistite; la memoria richiede validazione statistica sui trade reali.') +
+            (typeof res.revokedCount === 'number' && res.revokedCount > 0
+              ? ` Revocate ${res.revokedCount} regole che non superano più i gate: ${(res.revokedTopics ?? []).join(', ')}.`
+              : '')
         );
       } else {
-        setSpecializeFeedback(res.message || 'Operazione completata.');
+        // Fase 3.3: se il campione non viene dal diario canonico il messaggio lo
+        // dice, invece di sembrare un errore di rete.
+        setSpecializeFeedback(specializationFailureMessage(res));
       }
     } catch (e: any) {
       setSpecializeFeedback(`Errore durante la sintesi AI: ${e.message}`);
