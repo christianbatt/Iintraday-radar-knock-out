@@ -4386,13 +4386,22 @@ app.post('/api/analyze-catalyst', requireApiAuth, async (req: Request, res: Resp
     const vetoContextLine = readEmpiricalVetoContext(candMarket, candidateSetupScore.veto);
 
     aiLearnedMemory = await loadPersistentAIMemory();
-    const activeDirectives = aiLearnedMemory
+    // ADDITIVO (2.5): le stesse regole che entrano nel testo restano attribuibili.
+    // La riga di log del catalizzatore porta i loro id, cosi' un effetto si puo'
+    // misurare su una regola precisa e non su "la memoria" in blocco.
+    const memoryRulesUsed = aiLearnedMemory
       .filter((directive) => directive.confidence != null)
-      .slice(-6)
+      .slice(-6);
+    const memoryRuleIds = memoryRulesUsed
+      .map((directive) => (typeof directive.id === 'string' ? directive.id.trim() : ''))
+      .filter((id) => id.length > 0);
+    const activeDirectives = memoryRulesUsed
       .map(
         (directive, index) =>
           `[Pattern statistico ${index + 1} - ${directive.topic} (${directive.market})]: ${directive.directive} ` +
-          `(score 1-q: ${directive.confidence}%; evidenza: ${directive.sampleEvidence})`
+          // `confidence` e' 100*(1-q): chiamarlo "score" invitava a leggerlo come
+          // probabilita' di successo, che non e'.
+          `(1-q ${directive.confidence}% — non e una probabilita di successo; evidenza: ${directive.sampleEvidence})`
       )
       .join('\n');
 
@@ -4593,6 +4602,7 @@ confidenza: numero intero da 0 a 100 sulla solidità del catalizzatore nel conte
           durationMs: catalystDurationMs,
           promptVersion: AI_CATALYST_PROMPT_VERSION,
           model: null,
+          memoryRuleIds,
         },
         path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
       );
@@ -4749,6 +4759,7 @@ confidenza: numero intero da 0 a 100 sulla solidità del catalizzatore nel conte
         durationMs: catalystDurationMs,
         promptVersion: AI_CATALYST_PROMPT_VERSION,
         model: usedCatalystModel,
+        memoryRuleIds,
       },
       path.join(process.cwd(), AI_SHADOW_LOG_RELATIVE_PATH)
     );

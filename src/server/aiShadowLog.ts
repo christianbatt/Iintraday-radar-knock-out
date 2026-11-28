@@ -96,6 +96,33 @@ export interface AiShadowLogEntry {
    * valutazione senza modello non e' attribuibile, non e' "il desk".
    */
   model?: string | null;
+  /**
+   * ADDITIVO (2.5): id delle regole di memoria iniettate nel prompt che ha
+   * prodotto la riga. Solo il percorso catalizzatore le inietta. `null` quando
+   * nessuna regola e' stata usata (o per le righe storiche): senza questo
+   * campo l'effetto di una regola e' indistinguibile dall'effetto del prompt.
+   */
+  memoryRuleIds?: string[] | null;
+}
+
+/** Tetto degli id conservati per riga (piu' di cosi' non ne vengono iniettati). */
+export const AI_SHADOW_MAX_MEMORY_RULE_IDS = 8;
+
+/**
+ * Id delle regole iniettate: trim, dedupe, tetto; `null` quando non ce ne sono.
+ * Un id non stringa viene ignorato, mai convertito in `String(...)`.
+ */
+export function normalizeMemoryRuleIds(raw: unknown): string[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'string') continue;
+    const id = item.trim();
+    if (id.length === 0 || out.includes(id)) continue;
+    out.push(id);
+    if (out.length >= AI_SHADOW_MAX_MEMORY_RULE_IDS) break;
+  }
+  return out.length > 0 ? out : null;
 }
 
 export interface AiShadowLogWriteResult {
@@ -207,6 +234,7 @@ function normalizeEntries(input: unknown): AiShadowLogEntry[] {
             : null,
         model:
           typeof r.model === 'string' && r.model.trim().length > 0 ? r.model.trim() : null,
+        memoryRuleIds: normalizeMemoryRuleIds(r.memoryRuleIds),
       });
       continue;
     }
@@ -255,6 +283,7 @@ function normalizeEntries(input: unknown): AiShadowLogEntry[] {
           ? r.promptVersion.trim()
           : null,
       model: typeof r.model === 'string' && r.model.trim().length > 0 ? r.model.trim() : null,
+      memoryRuleIds: normalizeMemoryRuleIds(r.memoryRuleIds),
     });
   }
   return out;
@@ -333,6 +362,7 @@ export function buildScanCandidateEntries(
     // Placeholder di scansione: nessun prompt e nessun modello hanno valutato.
     promptVersion: null,
     model: null,
+    memoryRuleIds: null,
   }));
 }
 
